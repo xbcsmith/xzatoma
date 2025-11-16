@@ -1,0 +1,65 @@
+[package]
+name = "xzatoma"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["XZatoma Contributors"]
+description = "Autonomous AI agent CLI for task execution through conversation"
+license = "MIT"
+repository = "https://github.com/xbcsmith/xzatoma"
+keywords = ["ai", "agent", "cli", "automation"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+# CLI and configuration
+clap = { version = "4.4", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+async-trait = "0.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+
+# Security and credentials
+keyring = "2.3"
+chrono = { version = "0.4", features = ["serde"] }
+
+# File operations and utilities
+walkdir = "2.4"
+similar = "2.3"
+
+# Interactive CLI
+rustyline = "13.0"
+
+# Regex for validation
+regex = "1.10"
+
+[dev-dependencies]
+mockall = "0.12"
+tempfile = "3.8"
+tokio-test = "0.4"
+wiremock = "0.5"
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true

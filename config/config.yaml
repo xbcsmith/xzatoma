@@ -1,0 +1,54 @@
+# XZatoma Configuration File
+#
+# This file configures the XZatoma autonomous AI agent.
+# All settings can be overridden via environment variables or CLI arguments.
+
+provider:
+  # Provider type: "copilot" or "ollama"
+  type: ollama
+
+  # GitHub Copilot configuration
+  copilot:
+    # Model to use (e.g., gpt-4o, gpt-4-turbo)
+    model: gpt-4o
+
+  # Ollama configuration
+  ollama:
+    # Ollama server host
+    host: http://localhost:11434
+    # Model to use (e.g., qwen2.5-coder, llama3, codellama)
+    model: qwen2.5-coder
+
+agent:
+  # Maximum number of agent turns before stopping
+  max_turns: 50
+
+  # Timeout for entire agent execution (seconds)
+  timeout_seconds: 300
+
+  # Conversation management settings
+  conversation:
+    # Maximum tokens allowed in conversation context
+    max_tokens: 100000
+    # Minimum number of turns to retain when pruning
+    min_retain_turns: 5
+    # Token threshold to trigger pruning (0.0-1.0)
+    prune_threshold: 0.8
+
+  # Tool execution settings
+  tools:
+    # Maximum size of tool output (bytes)
+    max_output_size: 1048576
+    # Maximum size of file to read (bytes)
+    max_file_read_size: 10485760
+
+  # Terminal execution settings
+  terminal:
+    # Execution mode: interactive, restricted_autonomous, full_autonomous
+    default_mode: restricted_autonomous
+    # Timeout for terminal commands (seconds)
+    timeout_seconds: 30
+    # Maximum stdout size (bytes)
+    max_stdout_bytes: 1048576
+    # Maximum stderr size (bytes)
+    max_stderr_bytes: 262144
