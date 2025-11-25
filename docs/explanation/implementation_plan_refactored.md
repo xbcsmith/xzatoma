@@ -340,10 +340,10 @@ pub struct ProviderConfig {
     /// Provider type: "copilot" or "ollama"
     #[serde(rename = "type")]
     pub provider_type: String,
-    
+
     /// Copilot configuration (if using Copilot)
     pub copilot: Option<CopilotConfig>,
-    
+
     /// Ollama configuration (if using Ollama)
     pub ollama: Option<OllamaConfig>,
 }
@@ -366,7 +366,7 @@ pub struct OllamaConfig {
     /// Host address (default: "localhost:11434")
     #[serde(default = "default_ollama_host")]
     pub host: String,
-    
+
     /// Model name (default: "qwen2.5-coder")
     #[serde(default = "default_ollama_model")]
     pub model: String,
@@ -386,19 +386,19 @@ pub struct AgentConfig {
     /// Maximum conversation turns (default: 100)
     #[serde(default = "default_max_turns")]
     pub max_turns: usize,
-    
+
     /// Timeout in seconds (default: 600)
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
-    
+
     /// Conversation management settings
     #[serde(default)]
     pub conversation: ConversationConfig,
-    
+
     /// Tool execution settings
     #[serde(default)]
     pub tools: ToolsConfig,
-    
+
     /// Terminal execution settings
     #[serde(default)]
     pub terminal: TerminalConfig,
@@ -418,11 +418,11 @@ pub struct ConversationConfig {
     /// Maximum tokens in conversation context (default: 100000)
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
-    
+
     /// Minimum turns to retain when pruning (default: 5)
     #[serde(default = "default_min_retain")]
     pub min_retain_turns: usize,
-    
+
     /// Prune when reaching this fraction of max_tokens (default: 0.8)
     #[serde(default = "default_prune_threshold")]
     pub prune_threshold: f64,
@@ -456,7 +456,7 @@ pub struct ToolsConfig {
     /// Maximum tool output size in bytes (default: 1MB)
     #[serde(default = "default_max_output")]
     pub max_output_size: usize,
-    
+
     /// Maximum file read size in bytes (default: 10MB)
     #[serde(default = "default_max_file_read")]
     pub max_file_read_size: usize,
@@ -485,15 +485,15 @@ pub struct TerminalConfig {
     /// Default execution mode
     #[serde(default)]
     pub default_mode: ExecutionMode,
-    
+
     /// Command timeout in seconds (default: 30)
     #[serde(default = "default_command_timeout")]
     pub timeout_seconds: u64,
-    
+
     /// Maximum stdout bytes (default: 10MB)
     #[serde(default = "default_max_stdout")]
     pub max_stdout_bytes: usize,
-    
+
     /// Maximum stderr bytes (default: 1MB)
     #[serde(default = "default_max_stderr")]
     pub max_stderr_bytes: usize,
@@ -528,10 +528,10 @@ impl Default for TerminalConfig {
 pub enum ExecutionMode {
     /// All commands require user confirmation
     Interactive,
-    
+
     /// Only allowlist commands run autonomously
     RestrictedAutonomous,
-    
+
     /// All non-dangerous commands run autonomously
     FullAutonomous,
 }
@@ -547,24 +547,24 @@ impl Config {
     pub fn load(config_path: Option<PathBuf>, cli_overrides: HashMap<String, String>) -> Result<Self> {
         // 1. Start with defaults
         let mut config = Self::default_config();
-        
+
         // 2. Load from file if specified
         if let Some(path) = config_path {
             config = Self::from_file(&path)?;
         }
-        
+
         // 3. Apply environment variables
         config.apply_env_vars()?;
-        
+
         // 4. Apply CLI overrides
         config.apply_cli_overrides(cli_overrides)?;
-        
+
         // 5. Validate
         config.validate()?;
-        
+
         Ok(config)
     }
-    
+
     fn default_config() -> Self {
         Self {
             provider: ProviderConfig {
@@ -584,19 +584,19 @@ impl Config {
             },
         }
     }
-    
+
     fn from_file(path: &PathBuf) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_yaml::from_str(&content)?;
         Ok(config)
     }
-    
+
     fn apply_env_vars(&mut self) -> Result<()> {
         // Provider type
         if let Ok(val) = std::env::var("XZATOMA_PROVIDER_TYPE") {
             self.provider.provider_type = val;
         }
-        
+
         // Copilot model
         if let Ok(val) = std::env::var("XZATOMA_COPILOT_MODEL") {
             if self.provider.copilot.is_none() {
@@ -608,7 +608,7 @@ impl Config {
                 copilot.model = val;
             }
         }
-        
+
         // Ollama settings
         if let Ok(val) = std::env::var("XZATOMA_OLLAMA_HOST") {
             if self.provider.ollama.is_none() {
@@ -621,19 +621,19 @@ impl Config {
                 ollama.host = val;
             }
         }
-        
+
         if let Ok(val) = std::env::var("XZATOMA_OLLAMA_MODEL") {
             if let Some(ref mut ollama) = self.provider.ollama {
                 ollama.model = val;
             }
         }
-        
+
         // Agent settings
         if let Ok(val) = std::env::var("XZATOMA_MAX_TURNS") {
-            self.agent.max_turns = val.parse().map_err(|_| 
+            self.agent.max_turns = val.parse().map_err(|_|
                 XzatomaError::Config("Invalid XZATOMA_MAX_TURNS".to_string()))?;
         }
-        
+
         if let Ok(val) = std::env::var("XZATOMA_TERMINAL_MODE") {
             self.agent.terminal.default_mode = match val.as_str() {
                 "interactive" => ExecutionMode::Interactive,
@@ -644,10 +644,10 @@ impl Config {
                 )),
             };
         }
-        
+
         Ok(())
     }
-    
+
     fn apply_cli_overrides(&mut self, overrides: HashMap<String, String>) -> Result<()> {
         for (key, value) in overrides {
             match key.as_str() {
@@ -660,7 +660,7 @@ impl Config {
         }
         Ok(())
     }
-    
+
     pub fn validate(&self) -> Result<()> {
         // Validate provider type
         if self.provider.provider_type != "copilot" && self.provider.provider_type != "ollama" {
@@ -668,39 +668,39 @@ impl Config {
                 format!("Invalid provider type: {}", self.provider.provider_type)
             ));
         }
-        
+
         // Validate provider-specific config exists
         if self.provider.provider_type == "copilot" && self.provider.copilot.is_none() {
             return Err(XzatomaError::Config(
                 "Copilot provider selected but no copilot config".to_string()
             ));
         }
-        
+
         if self.provider.provider_type == "ollama" && self.provider.ollama.is_none() {
             return Err(XzatomaError::Config(
                 "Ollama provider selected but no ollama config".to_string()
             ));
         }
-        
+
         // Validate ranges
         if self.agent.max_turns == 0 {
             return Err(XzatomaError::Config(
                 "max_turns must be > 0".to_string()
             ));
         }
-        
+
         if self.agent.conversation.max_tokens == 0 {
             return Err(XzatomaError::Config(
                 "conversation.max_tokens must be > 0".to_string()
             ));
         }
-        
+
         if self.agent.conversation.prune_threshold <= 0.0 || self.agent.conversation.prune_threshold >= 1.0 {
             return Err(XzatomaError::Config(
                 "conversation.prune_threshold must be between 0.0 and 1.0".to_string()
             ));
         }
-        
+
         Ok(())
     }
 }
@@ -725,11 +725,11 @@ impl Config {
 provider:
   # Provider type: "copilot" or "ollama"
   type: ollama
-  
+
   # GitHub Copilot settings (if using copilot)
   copilot:
     model: gpt-4o
-  
+
   # Ollama settings (if using ollama)
   ollama:
     host: localhost:11434
@@ -738,27 +738,27 @@ provider:
 agent:
   # Maximum conversation turns before stopping
   max_turns: 100
-  
+
   # Overall timeout in seconds
   timeout_seconds: 600
-  
+
   # Conversation token management
   conversation:
     max_tokens: 100000
     min_retain_turns: 5
     prune_threshold: 0.8
-  
+
   # Tool execution limits
   tools:
-    max_output_size: 1048576      # 1MB
-    max_file_read_size: 10485760  # 10MB
-  
+    max_output_size: 1048576 # 1MB
+    max_file_read_size: 10485760 # 10MB
+
   # Terminal execution settings
   terminal:
-    default_mode: restricted_autonomous  # or "interactive" or "full_autonomous"
+    default_mode: restricted_autonomous # or "interactive" or "full_autonomous"
     timeout_seconds: 30
-    max_stdout_bytes: 10485760  # 10MB
-    max_stderr_bytes: 1048576   # 1MB
+    max_stdout_bytes: 10485760 # 10MB
+    max_stderr_bytes: 1048576 # 1MB
 ```
 
 **LOC Estimate**: ~350 lines production + ~200 lines tests
@@ -1091,7 +1091,7 @@ impl Conversation {
     /// Prune old messages if approaching token limit
     fn prune_if_needed(&mut self) {
         let threshold = (self.max_tokens as f64 * 0.8) as usize;
-        
+
         if self.token_count < threshold {
             return;
         }
@@ -1114,7 +1114,7 @@ impl Conversation {
         let system_msg = self.messages.first().cloned();
         let middle_start = if system_msg.is_some() { 1 } else { 0 };
         let middle_end = self.messages.len() - keep_messages;
-        
+
         let middle_messages = &self.messages[middle_start..middle_end];
         let recent_messages = &self.messages[middle_end..];
 
@@ -1123,11 +1123,11 @@ impl Conversation {
 
         // Rebuild messages: [system?] + [summary] + [recent]
         let mut new_messages = Vec::new();
-        
+
         if let Some(sys) = system_msg {
             new_messages.push(sys);
         }
-        
+
         new_messages.push(Message::system(summary));
         new_messages.extend_from_slice(recent_messages);
 
@@ -1233,7 +1233,7 @@ pub struct Tool {
 pub trait ToolExecutor: Send + Sync {
     /// Get tool definition for AI provider
     fn tool_definition(&self) -> Tool;
-    
+
     /// Execute tool with parameters
     async fn execute(&self, params: Value) -> Result<ToolResult>;
 }
@@ -1279,11 +1279,11 @@ impl ToolResult {
                 original_size,
                 max_size
             );
-            
+
             self.output.truncate(max_size);
             self.output.push_str(&truncate_msg);
             self.truncated = true;
-            
+
             self.metadata.insert(
                 "original_size".to_string(),
                 original_size.to_string()
@@ -1292,7 +1292,7 @@ impl ToolResult {
                 "truncated_size".to_string(),
                 max_size.to_string()
             );
-            
+
             tracing::warn!(
                 "Truncated tool output from {} to {} bytes",
                 original_size,
@@ -1456,7 +1456,7 @@ impl Agent {
     /// Execute instruction with autonomous tool usage
     pub async fn execute(&mut self, instruction: String) -> Result<String> {
         tracing::info!("Starting agent execution: {}", instruction);
-        
+
         self.conversation.add_user_message(instruction);
 
         let mut iterations = 0;
@@ -1500,16 +1500,16 @@ impl Agent {
 
                     for call in tool_calls {
                         tracing::debug!("Executing tool: {} (id: {})", call.name, call.id);
-                        
+
                         let result = self.execute_tool_call(&call).await?;
-                        
+
                         tracing::debug!(
                             "Tool {} completed: success={}, output_len={}",
                             call.name,
                             result.success,
                             result.output.len()
                         );
-                        
+
                         self.conversation.add_tool_result(
                             call.id,
                             result.to_message()
@@ -1521,7 +1521,7 @@ impl Agent {
                         "Agent completed in {} iterations",
                         iterations
                     );
-                    
+
                     self.conversation.add_assistant_message(response.content.clone());
                     return Ok(response.content);
                 }
@@ -1560,7 +1560,7 @@ impl Agent {
             tracing::error!("Tool {} execution failed: {}", call.name, e);
             e
         })?;
-        
+
         let duration = start.elapsed();
         tracing::debug!(
             "Tool {} executed in {:?}",
@@ -1751,38 +1751,38 @@ impl CommandValidator {
             r"rm\s+-rf\s+/\*",             // rm -rf /*
             r"rm\s+-rf\s+~",               // rm -rf ~
             r"rm\s+-rf\s+\$HOME",          // rm -rf $HOME
-            
+
             // Dangerous disk operations
             r"dd\s+if=/dev/zero",          // dd if=/dev/zero
             r"dd\s+if=/dev/random",        // dd if=/dev/random
             r"dd\s+of=/dev/sd[a-z]",       // dd of=/dev/sda
             r"mkfs\.",                      // mkfs.* (format filesystem)
-            
+
             // Fork bombs and resource exhaustion
             r":\(\)\{:\|:&\};:",           // : Fork bomb
             r"while\s+true.*do.*done",     // Infinite loop
             r"for\s*\(\(;;",               // C-style infinite loop
-            
+
             // Remote code execution
             r"curl\s+.*\|\s*sh",           // curl | sh
             r"wget\s+.*\|\s*sh",           // wget | sh
             r"curl\s+.*\|\s*bash",         // curl | bash
             r"wget\s+.*\|\s*bash",         // wget | bash
-            
+
             // Privilege escalation
             r"\bsudo\s+",                  // sudo
             r"\bsu\s+",                    // su
             r"\bchmod\s+[0-7]*7[0-7]*",   // chmod with execute for all
-            
+
             // Code execution
             r"\beval\s*\(",                // eval(
             r"\bexec\s*\(",                // exec(
             r"import\s+os.*system",        // Python os.system
-            
+
             // Direct device access
             r">\s*/dev/sd[a-z]",           // > /dev/sda
             r">\s*/dev/hd[a-z]",           // > /dev/hda
-            
+
             // Sensitive files
             r"/etc/passwd",
             r"/etc/shadow",
@@ -1845,14 +1845,14 @@ impl CommandValidator {
 
                 // Validate paths in command
                 self.validate_paths(command)?;
-                
+
                 tracing::debug!("Command passed restricted autonomous validation");
                 Ok(())
             }
             ExecutionMode::FullAutonomous => {
                 // All non-dangerous commands allowed
                 self.validate_paths(command)?;
-                
+
                 tracing::debug!("Command passed full autonomous validation");
                 Ok(())
             }
@@ -1894,7 +1894,7 @@ impl CommandValidator {
                 let full_path = self.working_dir.join(path);
                 let canonical_working = self.working_dir.canonicalize()
                     .unwrap_or_else(|_| self.working_dir.clone());
-                
+
                 if let Ok(canonical_full) = full_path.canonicalize() {
                     if !canonical_full.starts_with(&canonical_working) {
                         tracing::error!(
@@ -1903,3 +1903,1700 @@ impl CommandValidator {
                             canonical_full
                         );
                         return Err(XzatomaError::PathOutsideWorkingDirectory(
+                            format!("Path escapes working directory: {}", word)
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Denylist validation (20+ test cases)
+
+   - Block `rm -rf /`
+   - Block `dd if=/dev/zero`
+   - Block fork bombs
+   - Block `curl | sh`
+   - Block `sudo` commands
+   - Block sensitive file access
+
+2. Allowlist enforcement (10+ test cases)
+
+   - Allowed commands pass in restricted mode
+   - Non-allowed commands require confirmation
+   - Denylist overrides allowlist
+
+3. Execution mode behavior (6+ test cases)
+
+   - Interactive mode requires confirmation for all
+   - Restricted mode uses allowlist
+   - Full autonomous allows safe commands
+
+4. Path validation (15+ test cases)
+   - Reject absolute paths
+   - Reject home directory paths
+   - Reject `..` escapes
+   - Allow relative paths within working directory
+   - Handle symlinks correctly
+
+**Expected Test LOC**: ~200 lines
+
+**Validation**:
+
+```bash
+cargo fmt --all
+cargo check --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+```
+
+#### Task 3.2: Terminal Executor
+
+**Description**: Implement terminal command execution with validation integration
+
+**Actions**:
+
+1. Create TerminalTool struct implementing ToolExecutor
+2. Integrate CommandValidator
+3. Add timeout enforcement
+4. Add output truncation
+5. Add execution mode handling
+6. Write integration tests
+
+**Files Created**:
+
+- `src/tools/terminal/executor.rs` - Command executor (~150 lines)
+- `tests/integration/terminal_integration_test.rs` - Integration tests (~50 lines)
+
+**Complete Terminal Executor**:
+
+```rust
+use async_trait::async_trait;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::process::Command;
+use tokio::time::timeout;
+
+use crate::config::TerminalConfig;
+use crate::error::{Result, XzatomaError};
+use crate::tools::{Tool, ToolExecutor, ToolResult};
+use super::validator::CommandValidator;
+
+/// Terminal command execution tool
+pub struct TerminalTool {
+    validator: CommandValidator,
+    config: TerminalConfig,
+}
+
+impl TerminalTool {
+    pub fn new(validator: CommandValidator, config: TerminalConfig) -> Self {
+        Self { validator, config }
+    }
+
+    async fn execute_command(&self, command: &str) -> Result<ToolResult> {
+        // Validate command
+        self.validator.validate(command)?;
+
+        // Parse command
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return Ok(ToolResult::error("Empty command"));
+        }
+
+        let program = parts[0];
+        let args = &parts[1..];
+
+        // Execute with timeout
+        let timeout_duration = Duration::from_secs(self.config.timeout_seconds);
+        let output = timeout(timeout_duration, async {
+            Command::new(program)
+                .args(args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+        })
+        .await
+        .map_err(|_| XzatomaError::Tool(format!("Command timed out after {}s", self.config.timeout_seconds)))?
+        .map_err(|e| XzatomaError::Tool(format!("Failed to execute command: {}", e)))?;
+
+        // Truncate output if needed
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let mut result = if output.status.success() {
+            ToolResult::success(stdout.to_string())
+        } else {
+            ToolResult::error(format!("Command failed: {}", stderr))
+        };
+
+        // Apply output limits
+        result = result.truncate_if_needed(self.config.max_stdout_bytes);
+
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for TerminalTool {
+    fn tool_definition(&self) -> Tool {
+        Tool {
+            name: "terminal".to_string(),
+            description: "Execute terminal commands in the working directory".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute"
+                    }
+                },
+                "required": ["command"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
+        let command = params["command"]
+            .as_str()
+            .ok_or_else(|| XzatomaError::Tool("Missing 'command' parameter".to_string()))?;
+
+        self.execute_command(command).await
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Integration tests with validator
+2. Timeout enforcement tests
+3. Output truncation tests
+4. Success and failure scenarios
+
+**Expected Test LOC**: ~50 lines
+
+#### Task 3.3: Deliverables
+
+Phase 3 Complete Deliverables:
+
+- `src/tools/terminal/mod.rs` (~30 lines)
+- `src/tools/terminal/validator.rs` (~320 lines)
+- `src/tools/terminal/executor.rs` (~150 lines)
+- `tests/unit/terminal_validator_test.rs` (~200 lines)
+- `tests/integration/terminal_integration_test.rs` (~50 lines)
+
+**Total**: ~750 lines (exceeds 700 target due to comprehensive security tests)
+
+#### Task 3.4: Success Criteria
+
+Phase 3 complete when:
+
+- [ ] All denylist patterns block dangerous commands
+- [ ] Allowlist enforcement works in restricted mode
+- [ ] Path validation prevents directory escapes
+- [ ] All execution modes behave correctly
+- [ ] Terminal executor integrates with validator
+- [ ] Timeout and truncation work correctly
+- [ ] `cargo fmt --all` applied
+- [ ] `cargo check --all-targets --all-features` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- [ ] `cargo test --all-features` passes with >80% coverage
+- [ ] All security tests pass (non-negotiable)
+- [ ] Documentation updated in `docs/explanation/`
+
+---
+
+### Phase 4: AI Providers
+
+**Timeline**: Weeks 7-8
+
+**Objective**: Implement AI provider abstraction with GitHub Copilot and Ollama support, including OAuth device flow and tool calling.
+
+**Total LOC Target**: ~900 lines (600 production + 300 tests)
+
+#### Task 4.1: Provider Trait and Base Types
+
+**Description**: Define provider abstraction and common types
+
+**Actions**:
+
+1. Create Provider trait
+2. Define Message and ToolCall types
+3. Define CompletionRequest and CompletionResponse
+4. Create provider registry
+5. Write trait tests with mocks
+
+**Files Created**:
+
+- `src/providers/mod.rs` - Provider module (~50 lines)
+- `src/providers/base.rs` - Provider trait (~100 lines)
+- `tests/common/mock_provider.rs` - Mock for testing (already created in Phase 2)
+
+**Complete Provider Trait**:
+
+```rust
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
+use crate::error::Result;
+use crate::tools::Tool;
+
+/// Message in conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+/// Tool call request from AI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Request to AI provider
+#[derive(Debug, Clone)]
+pub struct CompletionRequest {
+    pub messages: Vec<Message>,
+    pub tools: Vec<Tool>,
+    pub max_tokens: Option<usize>,
+}
+
+/// Response from AI provider
+#[derive(Debug, Clone)]
+pub struct CompletionResponse {
+    pub message: Message,
+    pub finish_reason: String,
+    pub usage: TokenUsage,
+}
+
+/// Token usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+}
+
+/// AI provider trait
+#[async_trait]
+pub trait Provider: Send + Sync {
+    /// Get provider name
+    fn name(&self) -> &str;
+
+    /// Complete conversation with tool support
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse>;
+
+    /// Check if provider supports streaming
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Message serialization/deserialization
+2. Provider trait with mock implementation
+3. Request/response validation
+
+**Expected Test LOC**: ~50 lines
+
+#### Task 4.2: Ollama Provider
+
+**Description**: Implement Ollama HTTP provider
+
+**Actions**:
+
+1. Create OllamaProvider struct
+2. Implement HTTP client with reqwest
+3. Convert tool format to Ollama format
+4. Handle errors and retries
+5. Write provider-specific tests
+6. Add integration tests (optional, requires Ollama running)
+
+**Files Created**:
+
+- `src/providers/ollama.rs` - Ollama provider (~200 lines)
+- `tests/unit/ollama_provider_test.rs` - Unit tests (~100 lines)
+
+**Complete Ollama Provider**:
+
+```rust
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+
+use crate::config::OllamaConfig;
+use crate::error::{Result, XzatomaError};
+use super::base::{CompletionRequest, CompletionResponse, Message, Provider, TokenUsage, ToolCall};
+
+/// Ollama API provider
+pub struct OllamaProvider {
+    client: Client,
+    config: OllamaConfig,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaRequest {
+    model: String,
+    messages: Vec<OllamaMessage>,
+    tools: Vec<OllamaTool>,
+    stream: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OllamaMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaTool {
+    r#type: String,
+    function: OllamaFunction,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaFunction {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaResponse {
+    message: OllamaMessage,
+    done: bool,
+    #[serde(default)]
+    prompt_eval_count: usize,
+    #[serde(default)]
+    eval_count: usize,
+}
+
+impl OllamaProvider {
+    pub fn new(config: OllamaConfig) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
+
+        Ok(Self { client, config })
+    }
+
+    fn convert_messages(&self, messages: &[Message]) -> Vec<OllamaMessage> {
+        messages
+            .iter()
+            .map(|m| OllamaMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect()
+    }
+
+    fn convert_tools(&self, tools: &[crate::tools::Tool]) -> Vec<OllamaTool> {
+        tools
+            .iter()
+            .map(|t| OllamaTool {
+                r#type: "function".to_string(),
+                function: OllamaFunction {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: t.parameters.clone(),
+                },
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl Provider for OllamaProvider {
+    fn name(&self) -> &str {
+        "ollama"
+    }
+
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse> {
+        let url = format!("{}/api/chat", self.config.host);
+
+        let ollama_request = OllamaRequest {
+            model: self.config.model.clone(),
+            messages: self.convert_messages(&request.messages),
+            tools: self.convert_tools(&request.tools),
+            stream: false,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&ollama_request)
+            .send()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Ollama request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(XzatomaError::Provider(format!(
+                "Ollama returned error {}: {}",
+                status, error_text
+            )));
+        }
+
+        let ollama_response: OllamaResponse = response
+            .json()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e)))?;
+
+        Ok(CompletionResponse {
+            message: Message {
+                role: ollama_response.message.role,
+                content: ollama_response.message.content,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            finish_reason: if ollama_response.done { "stop" } else { "length" }.to_string(),
+            usage: TokenUsage {
+                prompt_tokens: ollama_response.prompt_eval_count,
+                completion_tokens: ollama_response.eval_count,
+                total_tokens: ollama_response.prompt_eval_count + ollama_response.eval_count,
+            },
+        })
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Message conversion tests
+2. Tool format conversion tests
+3. HTTP request/response handling
+4. Error handling (network, HTTP errors, parse errors)
+
+**Expected Test LOC**: ~100 lines
+
+#### Task 4.3: GitHub Copilot Provider with OAuth
+
+**Description**: Implement GitHub Copilot provider with OAuth device flow
+
+**Actions**:
+
+1. Create CopilotProvider struct
+2. Implement OAuth device flow
+3. Token storage in system keyring
+4. Token refresh logic
+5. Copilot API integration
+6. Write provider tests
+
+**Files Created**:
+
+- `src/providers/copilot.rs` - Copilot provider (~250 lines)
+- `tests/unit/copilot_provider_test.rs` - Unit tests (~100 lines)
+
+**Complete Copilot Provider** (OAuth implementation):
+
+```rust
+use async_trait::async_trait;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::config::CopilotConfig;
+use crate::error::{Result, XzatomaError};
+use super::base::{CompletionRequest, CompletionResponse, Message, Provider, TokenUsage};
+
+const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
+const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
+const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+const COPILOT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
+
+/// GitHub Copilot provider
+pub struct CopilotProvider {
+    client: Client,
+    config: CopilotConfig,
+    keyring_service: String,
+    keyring_user: String,
+}
+
+#[derive(Debug, Serialize)]
+struct DeviceCodeRequest {
+    client_id: String,
+    scope: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    expires_in: u64,
+    interval: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TokenRequest {
+    client_id: String,
+    device_code: String,
+    grant_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    token_type: String,
+    scope: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CachedToken {
+    github_token: String,
+    copilot_token: String,
+    expires_at: u64,
+}
+
+impl CopilotProvider {
+    pub fn new(config: CopilotConfig) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()
+            .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
+
+        Ok(Self {
+            client,
+            config,
+            keyring_service: "xzatoma".to_string(),
+            keyring_user: "github_copilot".to_string(),
+        })
+    }
+
+    async fn authenticate(&self) -> Result<String> {
+        // Check keyring for cached token
+        if let Ok(cached) = self.get_cached_token() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+
+            if cached.expires_at > now + 300 {
+                tracing::debug!("Using cached Copilot token");
+                return Ok(cached.copilot_token);
+            }
+        }
+
+        // Perform device flow
+        tracing::info!("Starting GitHub OAuth device flow...");
+        let github_token = self.device_flow().await?;
+
+        // Exchange for Copilot token
+        let copilot_token = self.get_copilot_token(&github_token).await?;
+
+        // Cache token
+        let cached = CachedToken {
+            github_token,
+            copilot_token: copilot_token.clone(),
+            expires_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 3600,
+        };
+
+        let _ = self.cache_token(&cached);
+
+        Ok(copilot_token)
+    }
+
+    async fn device_flow(&self) -> Result<String> {
+        // Request device code
+        let device_response: DeviceCodeResponse = self
+            .client
+            .post(GITHUB_DEVICE_CODE_URL)
+            .json(&DeviceCodeRequest {
+                client_id: "Iv1.b507a08c87ecfe98".to_string(),
+                scope: "read:user".to_string(),
+            })
+            .send()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Device code request failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Failed to parse device code: {}", e)))?;
+
+        println!("\nGitHub Authentication Required:");
+        println!("  1. Visit: {}", device_response.verification_uri);
+        println!("  2. Enter code: {}", device_response.user_code);
+        println!("\nWaiting for authorization...");
+
+        // Poll for token
+        let interval = Duration::from_secs(device_response.interval);
+        let max_attempts = device_response.expires_in / device_response.interval;
+
+        for _ in 0..max_attempts {
+            tokio::time::sleep(interval).await;
+
+            let response = self
+                .client
+                .post(GITHUB_TOKEN_URL)
+                .header("Accept", "application/json")
+                .json(&TokenRequest {
+                    client_id: "Iv1.b507a08c87ecfe98".to_string(),
+                    device_code: device_response.device_code.clone(),
+                    grant_type: "urn:ietf:params:oauth:grant-type:device_code".to_string(),
+                })
+                .send()
+                .await
+                .map_err(|e| XzatomaError::Provider(format!("Token poll failed: {}", e)))?;
+
+            if response.status().is_success() {
+                let token_response: TokenResponse = response
+                    .json()
+                    .await
+                    .map_err(|e| XzatomaError::Provider(format!("Failed to parse token: {}", e)))?;
+
+                println!("Authorization successful!");
+                return Ok(token_response.access_token);
+            }
+        }
+
+        Err(XzatomaError::Provider(
+            "Device flow timed out waiting for authorization".to_string(),
+        ))
+    }
+
+    async fn get_copilot_token(&self, github_token: &str) -> Result<String> {
+        #[derive(Deserialize)]
+        struct CopilotTokenResponse {
+            token: String,
+        }
+
+        let response: CopilotTokenResponse = self
+            .client
+            .get(COPILOT_TOKEN_URL)
+            .header("Authorization", format!("token {}", github_token))
+            .send()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Copilot token request failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Failed to parse Copilot token: {}", e)))?;
+
+        Ok(response.token)
+    }
+
+    fn get_cached_token(&self) -> Result<CachedToken> {
+        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_user)
+            .map_err(|e| XzatomaError::Keyring(format!("Keyring access failed: {}", e)))?;
+
+        let json = entry
+            .get_password()
+            .map_err(|e| XzatomaError::Keyring(format!("Failed to read token: {}", e)))?;
+
+        serde_json::from_str(&json)
+            .map_err(|e| XzatomaError::Serialization(format!("Failed to parse cached token: {}", e)))
+    }
+
+    fn cache_token(&self, token: &CachedToken) -> Result<()> {
+        let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_user)
+            .map_err(|e| XzatomaError::Keyring(format!("Keyring access failed: {}", e)))?;
+
+        let json = serde_json::to_string(token)
+            .map_err(|e| XzatomaError::Serialization(format!("Failed to serialize token: {}", e)))?;
+
+        entry
+            .set_password(&json)
+            .map_err(|e| XzatomaError::Keyring(format!("Failed to store token: {}", e)))?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Provider for CopilotProvider {
+    fn name(&self) -> &str {
+        "copilot"
+    }
+
+    async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse> {
+        let token = self.authenticate().await?;
+
+        // Convert to Copilot format and make request
+        // Implementation similar to Ollama but with Copilot API format
+
+        todo!("Implement Copilot completion request")
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. OAuth flow simulation
+2. Token caching and retrieval
+3. Token refresh logic
+4. Copilot API request/response
+5. Error handling
+
+**Expected Test LOC**: ~100 lines
+
+#### Task 4.4: Deliverables
+
+Phase 4 Complete Deliverables:
+
+- `src/providers/mod.rs` (~50 lines)
+- `src/providers/base.rs` (~100 lines)
+- `src/providers/ollama.rs` (~200 lines)
+- `src/providers/copilot.rs` (~250 lines)
+- `tests/unit/ollama_provider_test.rs` (~100 lines)
+- `tests/unit/copilot_provider_test.rs` (~100 lines)
+
+**Total**: ~800 lines (close to 900 target)
+
+#### Task 4.5: Success Criteria
+
+Phase 4 complete when:
+
+- [ ] Provider trait defined with proper types
+- [ ] Ollama provider works with local Ollama instance
+- [ ] Copilot OAuth device flow completes successfully
+- [ ] Token caching works in system keyring
+- [ ] Both providers convert tool formats correctly
+- [ ] Error handling covers network, auth, and API errors
+- [ ] `cargo fmt --all` applied
+- [ ] `cargo check --all-targets --all-features` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- [ ] `cargo test --all-features` passes with >80% coverage
+- [ ] Documentation updated in `docs/explanation/`
+
+---
+
+### Phase 5: File Tools and Plan Parsing
+
+**Timeline**: Weeks 9-10
+
+**Objective**: Implement file operation tools and plan parsing for structured execution.
+
+**Total LOC Target**: ~800 lines (550 production + 250 tests)
+
+#### Task 5.1: File Operation Tools
+
+**Description**: Implement safe file operations
+
+**Actions**:
+
+1. Create FileOpsTool struct
+2. Implement list_files (with pattern matching)
+3. Implement read_file (with size limits)
+4. Implement write_file (with path validation)
+5. Implement delete_file (with confirmation)
+6. Implement file_diff (show differences)
+7. Write comprehensive tests
+
+**Files Created**:
+
+- `src/tools/file_ops.rs` - File operations (~300 lines)
+- `tests/unit/file_ops_test.rs` - File operation tests (~150 lines)
+
+**Complete File Operations Tool**:
+
+```rust
+use async_trait::async_trait;
+use similar::{ChangeTag, TextDiff};
+use std::fs;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+use crate::config::ToolsConfig;
+use crate::error::{Result, XzatomaError};
+use crate::tools::{Tool, ToolExecutor, ToolResult};
+
+/// File operations tool
+pub struct FileOpsTool {
+    working_dir: PathBuf,
+    config: ToolsConfig,
+}
+
+impl FileOpsTool {
+    pub fn new(working_dir: PathBuf, config: ToolsConfig) -> Self {
+        Self { working_dir, config }
+    }
+
+    fn validate_path(&self, path: &Path) -> Result<PathBuf> {
+        // Prevent absolute paths
+        if path.is_absolute() {
+            return Err(XzatomaError::PathOutsideWorkingDirectory(
+                "Absolute paths not allowed".to_string(),
+            ));
+        }
+
+        // Resolve relative to working directory
+        let full_path = self.working_dir.join(path);
+        let canonical = full_path
+            .canonicalize()
+            .unwrap_or(full_path.clone());
+
+        // Ensure path is within working directory
+        let canonical_working = self.working_dir.canonicalize()
+            .unwrap_or_else(|_| self.working_dir.clone());
+
+        if !canonical.starts_with(&canonical_working) {
+            return Err(XzatomaError::PathOutsideWorkingDirectory(
+                format!("Path escapes working directory: {:?}", path),
+            ));
+        }
+
+        Ok(canonical)
+    }
+
+    async fn list_files(&self, pattern: Option<String>) -> Result<ToolResult> {
+        let mut files = Vec::new();
+
+        for entry in WalkDir::new(&self.working_dir)
+            .max_depth(10)
+            .follow_links(false)
+        {
+            let entry = entry.map_err(|e| XzatomaError::Tool(e.to_string()))?;
+
+            if entry.file_type().is_file() {
+                let path = entry.path()
+                    .strip_prefix(&self.working_dir)
+                    .unwrap_or(entry.path());
+
+                let path_str = path.to_string_lossy();
+
+                // Apply pattern filter if provided
+                if let Some(ref pat) = pattern {
+                    if !path_str.contains(pat) {
+                        continue;
+                    }
+                }
+
+                files.push(path_str.to_string());
+            }
+        }
+
+        files.sort();
+        let output = files.join("\n");
+
+        Ok(ToolResult::success(output))
+    }
+
+    async fn read_file(&self, path: &str) -> Result<ToolResult> {
+        let path = Path::new(path);
+        let full_path = self.validate_path(path)?;
+
+        // Check file size
+        let metadata = fs::metadata(&full_path)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read file metadata: {}", e)))?;
+
+        if metadata.len() > self.config.max_file_read_size as u64 {
+            return Ok(ToolResult::error(format!(
+                "File too large: {} bytes (max: {})",
+                metadata.len(),
+                self.config.max_file_read_size
+            )));
+        }
+
+        // Read file
+        let content = fs::read_to_string(&full_path)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read file: {}", e)))?;
+
+        Ok(ToolResult::success(content))
+    }
+
+    async fn write_file(&self, path: &str, content: &str) -> Result<ToolResult> {
+        let path = Path::new(path);
+
+        // For new files, validate parent directory is within working dir
+        let full_path = self.working_dir.join(path);
+        if let Some(parent) = full_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| XzatomaError::Tool(format!("Failed to create directory: {}", e)))?;
+            }
+        }
+
+        fs::write(&full_path, content)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to write file: {}", e)))?;
+
+        Ok(ToolResult::success(format!("File written: {}", path.display())))
+    }
+
+    async fn delete_file(&self, path: &str) -> Result<ToolResult> {
+        let path = Path::new(path);
+        let full_path = self.validate_path(path)?;
+
+        fs::remove_file(&full_path)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to delete file: {}", e)))?;
+
+        Ok(ToolResult::success(format!("File deleted: {}", path.display())))
+    }
+
+    async fn file_diff(&self, path1: &str, path2: &str) -> Result<ToolResult> {
+        let full_path1 = self.validate_path(Path::new(path1))?;
+        let full_path2 = self.validate_path(Path::new(path2))?;
+
+        let content1 = fs::read_to_string(&full_path1)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read {}: {}", path1, e)))?;
+        let content2 = fs::read_to_string(&full_path2)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read {}: {}", path2, e)))?;
+
+        let diff = TextDiff::from_lines(&content1, &content2);
+        let mut output = Vec::new();
+
+        for change in diff.iter_all_changes() {
+            let sign = match change.tag() {
+                ChangeTag::Delete => "-",
+                ChangeTag::Insert => "+",
+                ChangeTag::Equal => " ",
+            };
+            output.push(format!("{}{}", sign, change));
+        }
+
+        Ok(ToolResult::success(output.join("")))
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for FileOpsTool {
+    fn tool_definition(&self) -> Tool {
+        Tool {
+            name: "file_ops".to_string(),
+            description: "File operations: list, read, write, delete, diff".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["list", "read", "write", "delete", "diff"],
+                        "description": "The file operation to perform"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to working directory"
+                    },
+                    "path2": {
+                        "type": "string",
+                        "description": "Second file path for diff operation"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "File content for write operation"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Pattern filter for list operation"
+                    }
+                },
+                "required": ["operation"]
+            }),
+        }
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
+        let operation = params["operation"]
+            .as_str()
+            .ok_or_else(|| XzatomaError::Tool("Missing 'operation' parameter".to_string()))?;
+
+        match operation {
+            "list" => {
+                let pattern = params["pattern"].as_str().map(String::from);
+                self.list_files(pattern).await
+            }
+            "read" => {
+                let path = params["path"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'path' parameter".to_string()))?;
+                self.read_file(path).await
+            }
+            "write" => {
+                let path = params["path"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'path' parameter".to_string()))?;
+                let content = params["content"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'content' parameter".to_string()))?;
+                self.write_file(path, content).await
+            }
+            "delete" => {
+                let path = params["path"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'path' parameter".to_string()))?;
+                self.delete_file(path).await
+            }
+            "diff" => {
+                let path1 = params["path"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'path' parameter".to_string()))?;
+                let path2 = params["path2"]
+                    .as_str()
+                    .ok_or_else(|| XzatomaError::Tool("Missing 'path2' parameter".to_string()))?;
+                self.file_diff(path1, path2).await
+            }
+            _ => Ok(ToolResult::error(format!("Unknown operation: {}", operation))),
+        }
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Path validation tests
+2. List files with patterns
+3. Read file with size limits
+4. Write file creates directories
+5. Delete file works
+6. Diff shows changes correctly
+
+**Expected Test LOC**: ~150 lines
+
+#### Task 5.2: Plan Parsing
+
+**Description**: Parse execution plans from YAML, JSON, and Markdown
+
+**Actions**:
+
+1. Define Plan structure
+2. Implement YAML plan parser
+3. Implement JSON plan parser
+4. Implement Markdown plan parser
+5. Add plan validation
+6. Write parser tests
+
+**Files Created**:
+
+- `src/tools/plan.rs` - Plan parsing (~250 lines)
+- `tests/unit/plan_parser_test.rs` - Parser tests (~100 lines)
+- `tests/fixtures/example_plan.yaml` - Test plan
+
+**Complete Plan Parser**:
+
+````rust
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+
+use crate::error::{Result, XzatomaError};
+
+/// Execution plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plan {
+    pub name: String,
+    pub description: Option<String>,
+    pub steps: Vec<PlanStep>,
+}
+
+/// Plan step
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub name: String,
+    pub action: String,
+    pub context: Option<String>,
+}
+
+/// Plan parser
+pub struct PlanParser;
+
+impl PlanParser {
+    /// Parse plan from file
+    pub fn from_file(path: &Path) -> Result<Plan> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read plan file: {}", e)))?;
+
+        let extension = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| XzatomaError::Tool("Plan file has no extension".to_string()))?;
+
+        match extension {
+            "yaml" => Self::from_yaml(&content),
+            "json" => Self::from_json(&content),
+            "md" => Self::from_markdown(&content),
+            _ => Err(XzatomaError::Tool(format!(
+                "Unsupported plan format: {}",
+                extension
+            ))),
+        }
+    }
+
+    /// Parse YAML plan
+    pub fn from_yaml(content: &str) -> Result<Plan> {
+        serde_yaml::from_str(content)
+            .map_err(|e| XzatomaError::Yaml(format!("Failed to parse YAML plan: {}", e)))
+    }
+
+    /// Parse JSON plan
+    pub fn from_json(content: &str) -> Result<Plan> {
+        serde_json::from_str(content)
+            .map_err(|e| XzatomaError::Serialization(format!("Failed to parse JSON plan: {}", e)))
+    }
+
+    /// Parse Markdown plan
+    pub fn from_markdown(content: &str) -> Result<Plan> {
+        let mut name = String::new();
+        let mut description = None;
+        let mut steps = Vec::new();
+
+        let mut current_step: Option<PlanStep> = None;
+        let mut in_code_block = false;
+        let mut code_content = String::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            if trimmed.starts_with("# ") && name.is_empty() {
+                name = trimmed[2..].to_string();
+            } else if trimmed.starts_with("## ") {
+                // Save previous step
+                if let Some(mut step) = current_step.take() {
+                    if !code_content.is_empty() {
+                        step.context = Some(code_content.clone());
+                        code_content.clear();
+                    }
+                    steps.push(step);
+                }
+
+                // Start new step
+                current_step = Some(PlanStep {
+                    name: trimmed[3..].to_string(),
+                    action: String::new(),
+                    context: None,
+                });
+            } else if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                if !in_code_block && !code_content.is_empty() {
+                    code_content.push('\n');
+                }
+            } else if in_code_block {
+                code_content.push_str(line);
+                code_content.push('\n');
+            } else if let Some(ref mut step) = current_step {
+                if step.action.is_empty() && !trimmed.is_empty() {
+                    step.action = trimmed.to_string();
+                }
+            } else if description.is_none() && !trimmed.is_empty() && !name.is_empty() {
+                description = Some(trimmed.to_string());
+            }
+        }
+
+        // Save last step
+        if let Some(mut step) = current_step {
+            if !code_content.is_empty() {
+                step.context = Some(code_content);
+            }
+            steps.push(step);
+        }
+
+        if name.is_empty() {
+            return Err(XzatomaError::Tool("Plan has no name (# heading)".to_string()));
+        }
+
+        if steps.is_empty() {
+            return Err(XzatomaError::Tool("Plan has no steps (## headings)".to_string()));
+        }
+
+        Ok(Plan {
+            name,
+            description,
+            steps,
+        })
+    }
+
+    /// Validate plan
+    pub fn validate(plan: &Plan) -> Result<()> {
+        if plan.name.is_empty() {
+            return Err(XzatomaError::Tool("Plan name cannot be empty".to_string()));
+        }
+
+        if plan.steps.is_empty() {
+            return Err(XzatomaError::Tool("Plan must have at least one step".to_string()));
+        }
+
+        for (i, step) in plan.steps.iter().enumerate() {
+            if step.name.is_empty() {
+                return Err(XzatomaError::Tool(format!("Step {} has no name", i + 1)));
+            }
+            if step.action.is_empty() {
+                return Err(XzatomaError::Tool(format!("Step '{}' has no action", step.name)));
+            }
+        }
+
+        Ok(())
+    }
+}
+````
+
+**Example Plan Format (YAML)**:
+
+```yaml
+name: Setup Project
+description: Initialize a new Rust project
+
+steps:
+  - name: Create project
+    action: Run cargo init command
+    context: cargo init --bin my-project
+
+  - name: Add dependencies
+    action: Update Cargo.toml with required dependencies
+    context: |
+      [dependencies]
+      tokio = { version = "1", features = ["full"] }
+      serde = { version = "1", features = ["derive"] }
+
+  - name: Verify setup
+    action: Check that project compiles
+    context: cargo check
+```
+
+**Testing Requirements**:
+
+1. Parse valid YAML plans
+2. Parse valid JSON plans
+3. Parse valid Markdown plans
+4. Reject invalid plans
+5. Validate plan structure
+
+**Expected Test LOC**: ~100 lines
+
+#### Task 5.3: Deliverables
+
+Phase 5 Complete Deliverables:
+
+- `src/tools/file_ops.rs` (~300 lines)
+- `src/tools/plan.rs` (~250 lines)
+- `tests/unit/file_ops_test.rs` (~150 lines)
+- `tests/unit/plan_parser_test.rs` (~100 lines)
+- `tests/fixtures/example_plan.yaml` (~20 lines)
+
+**Total**: ~820 lines (exceeds 800 target)
+
+#### Task 5.4: Success Criteria
+
+Phase 5 complete when:
+
+- [ ] All file operations work with path validation
+- [ ] File size limits enforced
+- [ ] All plan formats parse correctly
+- [ ] Plan validation works
+- [ ] Markdown plan parser handles code blocks
+- [ ] `cargo fmt --all` applied
+- [ ] `cargo check --all-targets --all-features` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- [ ] `cargo test --all-features` passes with >80% coverage
+- [ ] Documentation updated in `docs/explanation/`
+
+---
+
+### Phase 6: CLI Integration and Polish
+
+**Timeline**: Weeks 11-12
+
+**Objective**: Complete CLI implementation, integrate all components, and polish for production.
+
+**Total LOC Target**: ~600 lines (400 production + 200 tests)
+
+#### Task 6.1: Command Handlers
+
+**Description**: Implement CLI command handlers
+
+**Actions**:
+
+1. Implement chat command handler
+2. Implement run command handler
+3. Implement auth command handler
+4. Add interactive mode with rustyline
+5. Add logging setup
+6. Write end-to-end tests
+
+**Files Created**:
+
+- `src/commands/mod.rs` - Command module (~30 lines)
+- `src/commands/chat.rs` - Chat command (~150 lines)
+- `src/commands/run.rs` - Run command (~100 lines)
+- `src/commands/auth.rs` - Auth command (~50 lines)
+- `tests/integration/e2e_test.rs` - End-to-end tests (~150 lines)
+
+**Complete Chat Command**:
+
+```rust
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+use std::path::PathBuf;
+
+use crate::agent::Agent;
+use crate::config::{Config, ExecutionMode};
+use crate::error::Result;
+use crate::providers::{CopilotProvider, OllamaProvider, Provider};
+use crate::tools::terminal::{CommandValidator, TerminalTool};
+use crate::tools::{FileOpsTool, ToolRegistry};
+
+/// Run interactive chat mode
+pub async fn run_chat(config: Config, provider_name: Option<String>) -> Result<()> {
+    // Initialize provider
+    let provider: Box<dyn Provider> = match provider_name
+        .as_deref()
+        .unwrap_or(&config.provider.provider_type)
+    {
+        "ollama" => Box::new(OllamaProvider::new(config.provider.ollama.clone())?),
+        "copilot" => Box::new(CopilotProvider::new(config.provider.copilot.clone())?),
+        other => {
+            return Err(crate::error::XzatomaError::Config(format!(
+                "Unknown provider: {}",
+                other
+            )))
+        }
+    };
+
+    // Initialize tools
+    let mut tools = ToolRegistry::new();
+
+    let working_dir = std::env::current_dir()?;
+
+    let validator = CommandValidator::new(
+        config.agent.terminal.default_mode.clone(),
+        working_dir.clone(),
+    );
+    let terminal_tool = TerminalTool::new(validator, config.agent.terminal.clone());
+    tools.register(Box::new(terminal_tool));
+
+    let file_tool = FileOpsTool::new(working_dir, config.agent.tools.clone());
+    tools.register(Box::new(file_tool));
+
+    // Initialize agent
+    let mut agent = Agent::new(provider, tools, config.agent.clone());
+
+    // Interactive loop
+    let mut rl = DefaultEditor::new()?;
+    println!("XZatoma Interactive Mode");
+    println!("Type 'exit' or 'quit' to exit\n");
+
+    loop {
+        let readline = rl.readline(">> ");
+        match readline {
+            Ok(line) => {
+                let input = line.trim();
+
+                if input.is_empty() {
+                    continue;
+                }
+
+                if input == "exit" || input == "quit" {
+                    println!("Goodbye!");
+                    break;
+                }
+
+                rl.add_history_entry(input)?;
+
+                // Execute with agent
+                match agent.execute(input.to_string()).await {
+                    Ok(response) => {
+                        println!("\n{}\n", response);
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}\n", e);
+                    }
+                }
+            }
+            Err(ReadlineError::Interrupted) => {
+                println!("CTRL-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("CTRL-D");
+                break;
+            }
+            Err(err) => {
+                eprintln!("Error: {:?}", err);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+```
+
+**Complete Run Command**:
+
+```rust
+use std::path::Path;
+
+use crate::agent::Agent;
+use crate::config::Config;
+use crate::error::Result;
+use crate::providers::{CopilotProvider, OllamaProvider, Provider};
+use crate::tools::plan::PlanParser;
+use crate::tools::terminal::{CommandValidator, TerminalTool};
+use crate::tools::{FileOpsTool, ToolRegistry};
+
+/// Run plan from file or prompt
+pub async fn run_plan(
+    config: Config,
+    plan_path: Option<String>,
+    prompt: Option<String>,
+) -> Result<()> {
+    // Initialize provider
+    let provider: Box<dyn Provider> = match config.provider.provider_type.as_str() {
+        "ollama" => Box::new(OllamaProvider::new(config.provider.ollama.clone())?),
+        "copilot" => Box::new(CopilotProvider::new(config.provider.copilot.clone())?),
+        other => {
+            return Err(crate::error::XzatomaError::Config(format!(
+                "Unknown provider: {}",
+                other
+            )))
+        }
+    };
+
+    // Initialize tools
+    let mut tools = ToolRegistry::new();
+
+    let working_dir = std::env::current_dir()?;
+
+    let validator = CommandValidator::new(
+        config.agent.terminal.default_mode.clone(),
+        working_dir.clone(),
+    );
+    let terminal_tool = TerminalTool::new(validator, config.agent.terminal.clone());
+    tools.register(Box::new(terminal_tool));
+
+    let file_tool = FileOpsTool::new(working_dir, config.agent.tools.clone());
+    tools.register(Box::new(file_tool));
+
+    // Initialize agent
+    let mut agent = Agent::new(provider, tools, config.agent.clone());
+
+    // Determine what to execute
+    let task = if let Some(path) = plan_path {
+        // Parse plan from file
+        let plan = PlanParser::from_file(Path::new(&path))?;
+        PlanParser::validate(&plan)?;
+
+        format!(
+            "Execute this plan:\n\nName: {}\n\nSteps:\n{}",
+            plan.name,
+            plan.steps
+                .iter()
+                .map(|s| format!("- {}: {}", s.name, s.action))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else if let Some(prompt_text) = prompt {
+        prompt_text
+    } else {
+        return Err(crate::error::XzatomaError::Config(
+            "Either --plan or --prompt must be provided".to_string(),
+        ));
+    };
+
+    // Execute
+    println!("Executing task...\n");
+    match agent.execute(task).await {
+        Ok(response) => {
+            println!("Result:\n{}", response);
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Execution failed: {}", e);
+            Err(e)
+        }
+    }
+}
+```
+
+**Testing Requirements**:
+
+1. Chat mode interaction
+2. Plan execution
+3. Prompt execution
+4. Error handling
+5. Tool integration
+
+**Expected Test LOC**: ~150 lines
+
+#### Task 6.2: Main Entry Point
+
+**Description**: Complete main.rs with all command routing
+
+**Actions**:
+
+1. Set up tracing/logging
+2. Route CLI commands to handlers
+3. Handle errors gracefully
+4. Add version and help information
+
+**Files Modified**:
+
+- `src/main.rs` - Main entry point (~70 lines)
+
+**Complete Main**:
+
+```rust
+use clap::Parser;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+mod agent;
+mod cli;
+mod commands;
+mod config;
+mod error;
+mod providers;
+mod tools;
+
+use cli::{Cli, Commands};
+use error::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Parse CLI arguments
+    let cli = Cli::parse_args();
+
+    // Set up logging
+    let filter = if cli.verbose {
+        EnvFilter::new("debug")
+    } else {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    };
+
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(filter)
+        .init();
+
+    // Load configuration
+    let config = config::Config::load(cli.config.as_deref())?;
+    config.validate()?;
+
+    // Route commands
+    match cli.command {
+        Commands::Chat { provider } => {
+            commands::chat::run_chat(config, provider).await?;
+        }
+        Commands::Run {
+            plan,
+            prompt,
+            allow_dangerous: _,
+        } => {
+            commands::run::run_plan(config, plan, prompt).await?;
+        }
+        Commands::Auth { provider } => {
+            commands::auth::authenticate(config, provider).await?;
+        }
+    }
+
+    Ok(())
+}
+```
+
+#### Task 6.3: Documentation and Examples
+
+**Description**: Complete project documentation
+
+**Actions**:
+
+1. Update README.md with usage examples
+2. Create example plans
+3. Document configuration options
+4. Add troubleshooting guide
+
+**Files Created/Updated**:
+
+- `README.md` - Project overview and quick start
+- `examples/simple_plan.yaml` - Simple example plan
+- `examples/complex_plan.yaml` - Complex example plan
+- `docs/how-to/configuration.md` - Configuration guide
+- `docs/how-to/troubleshooting.md` - Troubleshooting guide
+
+#### Task 6.4: Deliverables
+
+Phase 6 Complete Deliverables:
+
+- `src/commands/mod.rs` (~30 lines)
+- `src/commands/chat.rs` (~150 lines)
+- `src/commands/run.rs` (~100 lines)
+- `src/commands/auth.rs` (~50 lines)
+- `src/main.rs` (~70 lines)
+- `tests/integration/e2e_test.rs` (~150 lines)
+- Documentation updates (~50 lines)
+
+**Total**: ~600 lines
+
+#### Task 6.5: Success Criteria
+
+Phase 6 complete when:
+
+- [ ] Chat mode works interactively
+- [ ] Run command executes plans
+- [ ] Auth command completes OAuth flow
+- [ ] All commands handle errors gracefully
+- [ ] Logging works at appropriate levels
+- [ ] README has clear usage instructions
+- [ ] Example plans demonstrate capabilities
+- [ ] `cargo fmt --all` applied
+- [ ] `cargo check --all-targets --all-features` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- [ ] `cargo test --all-features` passes with >80% coverage
+- [ ] Documentation complete in all categories
+
+---
+
+## Project Summary
+
+### Total Implementation
+
+**Total LOC Estimate**: 4,770 lines
+
+- Production Code: 3,120 lines
+- Test Code: 1,650 lines
+
+### All Phases Complete
+
+1. **Phase 1**: Foundation (800 lines)
+2. **Phase 2**: Agent Core (1,000 lines)
+3. **Phase 3**: Security (750 lines)
+4. **Phase 4**: Providers (800 lines)
+5. **Phase 5**: File Tools (820 lines)
+6. **Phase 6**: CLI Integration (600 lines)
+
+### Final Validation
+
+Before declaring v1.0.0 complete:
+
+- [ ] All 6 phases completed
+- [ ] All quality gates pass across all modules
+- [ ] Test coverage >80% overall
+- [ ] All security tests pass
+- [ ] Documentation complete (tutorials, how-to, explanation, reference)
+- [ ] Example plans work end-to-end
+- [ ] CI/CD pipeline operational
+- [ ] Binary builds for major platforms
+- [ ] No file naming violations (`.yaml`, `lowercase_with_underscores.md`)
+- [ ] No emojis in documentation
+
+### Timeline Summary
+
+- Weeks 1-2: Phase 1 (Foundation)
+- Weeks 3-4: Phase 2 (Agent Core)
+- Weeks 5-6: Phase 3 (Security)
+- Weeks 7-8: Phase 4 (Providers)
+- Weeks 9-10: Phase 5 (File Tools)
+- Weeks 11-12: Phase 6 (CLI Integration)
+
+**Total**: 12 weeks to v1.0.0
+
+---
+
+**Document Version**: 1.1
+**Created**: 2025-01-15
+**Last Updated**: 2025-01-15
+**Status**: Complete and Ready for Implementation

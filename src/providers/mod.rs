@@ -12,6 +12,8 @@ pub mod copilot;
 pub mod ollama;
 
 pub use base::{FunctionCall, Message, Provider, ToolCall};
+pub use copilot::CopilotProvider;
+pub use ollama::OllamaProvider;
 
 use crate::error::Result;
 

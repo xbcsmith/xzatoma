@@ -8,6 +8,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 mod agent;
 mod cli;
+mod commands;
 mod config;
 mod error;
 mod providers;
@@ -34,10 +35,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Chat { provider } => {
             tracing::info!("Starting interactive chat mode");
-            if let Some(p) = provider {
+            if let Some(p) = &provider {
                 tracing::debug!("Using provider override: {}", p);
             }
-            println!("Chat mode not yet implemented");
+
+            // Delegate to the chat command handler
+            // Moves `config` into the handler (match arms are exclusive)
+            commands::chat::run_chat(config, provider).await?;
             Ok(())
         }
         Commands::Run {
@@ -46,21 +50,25 @@ async fn main() -> Result<()> {
             allow_dangerous,
         } => {
             tracing::info!("Starting plan execution mode");
-            if let Some(plan_path) = plan {
+            if let Some(plan_path) = &plan {
                 tracing::debug!("Loading plan from: {}", plan_path.display());
             }
-            if let Some(prompt_text) = prompt {
+            if let Some(prompt_text) = &prompt {
                 tracing::debug!("Using prompt: {}", prompt_text);
             }
             if allow_dangerous {
                 tracing::warn!("Dangerous commands are allowed!");
             }
-            println!("Run mode not yet implemented");
+
+            // Convert plan PathBuf to String before passing it to the command handler.
+            let plan_str = plan.map(|p| p.to_string_lossy().to_string());
+            commands::run::run_plan_with_options(config, plan_str, prompt, allow_dangerous).await?;
             Ok(())
         }
         Commands::Auth { provider } => {
             tracing::info!("Starting authentication for provider: {}", provider);
-            println!("Auth mode not yet implemented");
+            // `provider` is a String – pass it directly
+            commands::auth::authenticate(config, provider).await?;
             Ok(())
         }
     }
