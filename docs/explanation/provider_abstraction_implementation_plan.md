@@ -51,7 +51,7 @@ interface Provider {
     async complete(messages: Message[], tools: Tool[]) -> Result<Response>
     get_model_config() -> ModelConfig
     get_name() -> string
-    
+
     // Optional methods with default implementations
     async complete_fast(messages: Message[], tools: Tool[]) -> Result<Response>
     supports_streaming() -> bool

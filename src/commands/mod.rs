@@ -21,7 +21,7 @@ use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::providers::{CopilotProvider, OllamaProvider};
 use crate::tools::plan::PlanParser;
-use crate::tools::terminal::CommandValidator;
+use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::{FileOpsTool, ToolExecutor, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
@@ -70,6 +70,13 @@ pub mod chat {
         let file_tool = FileOpsTool::new(working_dir.clone(), config.agent.tools.clone());
         let file_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(file_tool);
         tools.register("file_ops", file_tool_executor);
+
+        // Register Terminal tool (validated)
+        let terminal_validator =
+            CommandValidator::new(config.agent.terminal.default_mode, working_dir.clone());
+        let terminal_tool = TerminalTool::new(terminal_validator, config.agent.terminal.clone());
+        let terminal_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(terminal_tool);
+        tools.register("terminal", terminal_tool_executor);
 
         // Build the Agent using a concrete provider implementation
         let agent = match provider_type {
@@ -220,12 +227,17 @@ pub mod r#run {
         }
 
         // Instantiate the validator with the resolved mode (reserved for use by a TerminalTool)
-        let _validator = CommandValidator::new(mode, working_dir.clone());
+        let validator = CommandValidator::new(mode, working_dir.clone());
 
         // Register FileOps tool
         let file_tool = FileOpsTool::new(working_dir.clone(), config.agent.tools.clone());
         let file_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(file_tool);
         tools.register("file_ops", file_tool_executor);
+
+        // Register Terminal tool (validated)
+        let terminal_tool = TerminalTool::new(validator, config.agent.terminal.clone());
+        let terminal_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(terminal_tool);
+        tools.register("terminal", terminal_tool_executor);
 
         // Create agent using concrete providers
         let agent = match config.provider.provider_type.as_str() {

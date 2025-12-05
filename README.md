@@ -109,8 +109,8 @@ The agent has no specialized features - it accomplishes complex tasks by using b
 
 ## Project Status
 
-**Current Phase**: Planning Complete  
-**Next Milestone**: Phase 1 - Foundation  
+**Current Phase**: Planning Complete
+**Next Milestone**: Phase 1 - Foundation
 **Target Release**: v1.0.0 (14-19 weeks)
 
 See [Implementation Plan](docs/explanation/implementation_plan.md) for details.

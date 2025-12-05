@@ -201,7 +201,7 @@ The provider checks the cache before each request:
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
     let token = self.authenticate().await?;
-    
+
     let response = self.client
         .post(COPILOT_COMPLETIONS_URL)
         .header("Authorization", format!("Bearer {}", token))
@@ -310,19 +310,19 @@ async fn example() -> Result<()> {
         host: "http://localhost:11434".to_string(),
         model: "qwen2.5-coder".to_string(),
     };
-    
+
     let provider = OllamaProvider::new(config)?;
-    
+
     let messages = vec![
         Message::system("You are a helpful coding assistant"),
         Message::user("Write a hello world function in Rust"),
     ];
-    
+
     let tools = vec![]; // No tools for this example
-    
+
     let response = provider.complete(&messages, &tools).await?;
     println!("Response: {:?}", response.content);
-    
+
     Ok(())
 }
 ```
@@ -337,13 +337,13 @@ async fn example() -> Result<()> {
     let config = CopilotConfig {
         model: "gpt-4o".to_string(),
     };
-    
+
     let provider = CopilotProvider::new(config)?;
-    
+
     // First call will trigger OAuth device flow
     let messages = vec![Message::user("Hello!")];
     let response = provider.complete(&messages, &[]).await?;
-    
+
     // Subsequent calls use cached token
     let messages2 = vec![
         Message::user("Hello!"),
@@ -351,7 +351,7 @@ async fn example() -> Result<()> {
         Message::user("How are you?"),
     ];
     let response2 = provider.complete(&messages2, &[]).await?;
-    
+
     Ok(())
 }
 ```
@@ -364,10 +364,10 @@ use xzatoma::providers::{create_provider, Message};
 
 async fn example(config: ProviderConfig) -> Result<()> {
     let provider = create_provider(&config.provider_type, &config)?;
-    
+
     let messages = vec![Message::user("Hello!")];
     let response = provider.complete(&messages, &[]).await?;
-    
+
     Ok(())
 }
 ```

@@ -333,8 +333,8 @@ XZatoma is similar to Zed's agent chat but:
 
 ## Project Status
 
-**Current Phase**: Planning Complete  
-**Next Milestone**: Phase 1 - Foundation  
+**Current Phase**: Planning Complete
+**Next Milestone**: Phase 1 - Foundation
 **Target Release**: v1.0.0 (10-14 weeks)
 
 ## Resources
@@ -382,7 +382,7 @@ The power comes from the AI's ability to use these simple tools creatively to ac
 
 ---
 
-**Status**: Planning Complete  
-**Version**: 0.1.0-planning  
-**Last Updated**: 2025-01-07  
+**Status**: Planning Complete
+**Version**: 0.1.0-planning
+**Last Updated**: 2025-01-07
 **Maintained By**: XZatoma Development Team

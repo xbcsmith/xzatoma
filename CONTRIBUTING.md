@@ -150,7 +150,7 @@ Then create a pull request on GitHub.
    pub fn load_config(path: &Path) -> Result<Config> {
        let content = fs::read_to_string(path)
            .context("Failed to read config file")?;
-       
+
        serde_yaml::from_str(&content)
            .context("Failed to parse config")
    }
@@ -164,7 +164,7 @@ Then create a pull request on GitHub.
            .get(url)
            .send()
            .await?;
-       
+
        response.json().await
    }
    ```

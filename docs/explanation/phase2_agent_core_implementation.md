@@ -153,13 +153,13 @@ Updated the `Provider` trait for simpler message handling:
 
 **Old Signature:**
 ```rust
-async fn complete(&self, messages: &[Message], tools: &[Tool]) 
+async fn complete(&self, messages: &[Message], tools: &[Tool])
     -> Result<CompletionResponse>;
 ```
 
 **New Signature:**
 ```rust
-async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) 
+async fn complete(&self, messages: &[Message], tools: &[serde_json::Value])
     -> Result<Message>;
 ```
 
@@ -334,10 +334,10 @@ use xzatoma::tools::ToolRegistry;
 async fn run_agent(provider: impl Provider) -> Result<String> {
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    
+
     let agent = Agent::new(provider, tools, config)?;
     let result = agent.execute("Write a hello world program").await?;
-    
+
     Ok(result)
 }
 ```
@@ -356,8 +356,8 @@ let mut conversation = Conversation::new(
 conversation.add_user_message("Hello!");
 conversation.add_assistant_message("Hi there!");
 
-println!("Tokens used: {}/{}", 
-    conversation.token_count(), 
+println!("Tokens used: {}/{}",
+    conversation.token_count(),
     conversation.max_tokens()
 );
 ```
@@ -384,7 +384,7 @@ impl ToolExecutor for MyTool {
             }
         })
     }
-    
+
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
         let input = args["input"].as_str().unwrap_or("");
         Ok(ToolResult::success(format!("Processed: {}", input)))

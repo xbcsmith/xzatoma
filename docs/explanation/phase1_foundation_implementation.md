@@ -227,7 +227,7 @@ pub trait Provider: Send + Sync {
         messages: &[Message],
         tools: &[Tool],
     ) -> Result<CompletionResponse>;
-    
+
     fn name(&self) -> &str;
 }
 ```
@@ -313,7 +313,7 @@ async fn main() -> anyhow::Result<()> {
     let config_path = cli.config.as_deref().unwrap_or("config/config.yaml");
     let config = Config::load(config_path, &cli)?;
     config.validate()?;
-    
+
     println!("Loaded config for provider: {}", config.provider.provider_type);
     Ok(())
 }

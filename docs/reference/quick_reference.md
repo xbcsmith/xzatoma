@@ -243,12 +243,12 @@ steps:
   - id: scan
     description: Scan repository
     action: scan_repository
-    
+
   - id: analyze
     description: Analyze code
     action: analyze_code
     dependencies: [scan]
-    
+
   - id: generate
     description: Generate docs
     action: generate_documentation
@@ -307,13 +307,13 @@ use anyhow::{Context, Result};
 pub fn load_config(path: &Path) -> Result<Config> {
     let content = fs::read_to_string(path)
         .context("Failed to read config file")?;
-    
+
     let config: Config = serde_yaml::from_str(&content)
         .context("Failed to parse config")?;
-    
+
     config.validate()
         .context("Config validation failed")?;
-    
+
     Ok(config)
 }
 ```
@@ -349,9 +349,9 @@ mod tests {
 async fn test_workflow_execution() {
     let plan = Plan::from_yaml(EXAMPLE_PLAN)?;
     let executor = WorkflowExecutor::new(plan, agent);
-    
+
     let result = executor.execute().await?;
-    
+
     assert_eq!(result.steps_completed, 3);
     assert!(result.deliverables.contains(&"docs/api.md"));
 }
@@ -403,7 +403,7 @@ impl Provider for MyProvider {
             // ...
         }
     }
-    
+
     async fn complete(
         &self,
         messages: Vec<Message>,
@@ -424,10 +424,10 @@ impl ToolExecutor for MyTool {
     async fn execute(&self, params: Value) -> Result<ToolResult> {
         // Parse parameters
         let args: MyArgs = serde_json::from_value(params)?;
-        
+
         // Execute logic
         let result = self.do_work(&args).await?;
-        
+
         // Return result
         Ok(ToolResult {
             success: true,
@@ -556,6 +556,6 @@ cargo flamegraph --bin xzatoma
 
 ---
 
-**Version**: 0.1.0  
-**Last Updated**: 2025-01-07  
+**Version**: 0.1.0
+**Last Updated**: 2025-01-07
 **Maintained By**: XZatoma Development Team

@@ -465,16 +465,16 @@ pub struct ResponseChunk {
 pub struct ToolResult {
     /// Whether tool executed successfully
     pub success: bool,
-    
+
     /// Tool output (stdout or return value)
     pub output: String,
-    
+
     /// Error message if success=false
     pub error: Option<String>,
-    
+
     /// Whether output was truncated due to size
     pub truncated: bool,
-    
+
     /// Additional metadata (execution time, file size, etc.)
     pub metadata: HashMap<String, String>,
 }
@@ -585,7 +585,7 @@ CONTEXT:
 
 INSTRUCTIONS (follow as guidance):
 1. List all API endpoint files
-2. Extract function signatures  
+2. Extract function signatures
 3. Create OpenAPI spec
 
 Use the available tools to accomplish this goal. You may adapt your approach as needed, but try to follow the instructions provided.
@@ -650,13 +650,13 @@ Configuration is merged from multiple sources with the following precedence (hig
 
 1. **Command-line arguments** - Highest priority
    - Example: `xzatoma --provider ollama`
-   
+
 2. **Environment variables** - Override config file
    - Example: `XZATOMA_PROVIDER=ollama`
-   
+
 3. **Configuration file** - `~/.config/xzatoma/config.yaml`
    - Loaded if present
-   
+
 4. **Default values** - Built-in defaults
    - Example: `provider: copilot`, `max_turns: 100`
 
@@ -829,12 +829,12 @@ pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
     // 3. Prompt user (interactive mode only)
     if is_interactive() {
         let token = prompt_for_token(provider)?;
-        
+
         // Try to save for next time
         if let Ok(entry) = keyring::Entry::new("xzatoma", provider) {
             let _ = entry.set_password(&token); // Ignore errors
         }
-        
+
         return Ok(Credentials::new(token));
     }
 
@@ -847,7 +847,7 @@ pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
 
 ### Critical (Must Have Before Phase 1)
 1. ✅ Add iteration limits to Agent example
-2. ✅ Add comprehensive terminal security section  
+2. ✅ Add comprehensive terminal security section
 3. ✅ Add conversation management section
 
 ### Important (Should Have Before Phase 2)

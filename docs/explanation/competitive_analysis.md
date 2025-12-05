@@ -75,7 +75,7 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 #### Provider Support
 
-**XZatoma**: 
+**XZatoma**:
 - GitHub Copilot (gpt-4o, gpt-4o-mini)
 - Ollama (any model: qwen3, llama3, etc.)
 - Simple provider trait
@@ -162,7 +162,7 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 ### 3. Use Case Positioning
 
-**XZatoma**: 
+**XZatoma**:
 - **Best For**: Automated scripts, batch processing, CI/CD integration, server environments
 - **Target User**: DevOps engineers, automation enthusiasts, CLI power users
 - **Example**: "Run this task overnight and email me the results"
@@ -475,6 +475,6 @@ All three have their place. XZatoma isn't trying to be the "best" - it's trying 
 
 ---
 
-**Document Version**: 1.0  
-**Date**: 2025-01-15  
+**Document Version**: 1.0
+**Date**: 2025-01-15
 **Next Review**: After XZatoma MVP implementation
