@@ -9,8 +9,8 @@ provider:
 
   # GitHub Copilot configuration
   copilot:
-    # Model to use (e.g., gpt-4o, gpt-4-turbo)
-    model: gpt-4o
+    # Model to use (e.g., gpt-5-mini, gpt-4-turbo)
+    model: gpt-5-mini
 
   # Ollama configuration
   ollama:

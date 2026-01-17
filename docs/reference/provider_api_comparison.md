@@ -6,19 +6,19 @@ This document provides a detailed comparison of API specifications for OpenAI, A
 
 ## Quick Comparison Matrix
 
-| Feature | OpenAI | Anthropic | GitHub Copilot | Ollama |
-|---------|--------|-----------|----------------|--------|
-| **Authentication** | Bearer Token | API Key Header | OAuth Device Flow | None |
-| **Base URL** | api.openai.com | api.anthropic.com | api.githubcopilot.com | localhost:11434 |
-| **API Path** | /v1/chat/completions | /v1/messages | /chat/completions | /api/chat |
-| **System Prompt** | First message | Separate field | First message | First message |
-| **Tool Call Location** | Separate field | Content array | Separate field | Separate field |
-| **Tool Result Format** | Tool role message | User message with tool_result | Tool role message | Tool role message |
-| **Streaming Format** | SSE | SSE | SSE | JSON Lines |
-| **Streaming Done Marker** | `[DONE]` | `event: message_stop` | `[DONE]` | `"done": true` |
-| **Usage Tokens** | All three | Input + Output only | All three | Token count only |
-| **Max Context** | 128K-200K | 200K | 128K | Model-dependent |
-| **Image Support** | Yes (base64/URL) | Yes (base64) | Yes | Limited |
+| Feature                   | OpenAI               | Anthropic                     | GitHub Copilot        | Ollama            |
+| ------------------------- | -------------------- | ----------------------------- | --------------------- | ----------------- |
+| **Authentication**        | Bearer Token         | API Key Header                | OAuth Device Flow     | None              |
+| **Base URL**              | api.openai.com       | api.anthropic.com             | api.githubcopilot.com | localhost:11434   |
+| **API Path**              | /v1/chat/completions | /v1/messages                  | /chat/completions     | /api/chat         |
+| **System Prompt**         | First message        | Separate field                | First message         | First message     |
+| **Tool Call Location**    | Separate field       | Content array                 | Separate field        | Separate field    |
+| **Tool Result Format**    | Tool role message    | User message with tool_result | Tool role message     | Tool role message |
+| **Streaming Format**      | SSE                  | SSE                           | SSE                   | JSON Lines        |
+| **Streaming Done Marker** | `[DONE]`             | `event: message_stop`         | `[DONE]`              | `"done": true`    |
+| **Usage Tokens**          | All three            | Input + Output only           | All three             | Token count only  |
+| **Max Context**           | 128K-200K            | 200K                          | 128K                  | Model-dependent   |
+| **Image Support**         | Yes (base64/URL)     | Yes (base64)                  | Yes                   | Limited           |
 
 ## Authentication
 
@@ -27,6 +27,7 @@ This document provides a detailed comparison of API specifications for OpenAI, A
 **Method**: Bearer token in Authorization header
 
 **Request Headers**:
+
 ```http
 Authorization: Bearer sk-proj-...
 Content-Type: application/json
@@ -35,6 +36,7 @@ Content-Type: application/json
 **Environment Variable**: `OPENAI_API_KEY`
 
 **Optional Headers**:
+
 - `OpenAI-Organization`: Organization ID
 - `OpenAI-Project`: Project ID
 
@@ -43,6 +45,7 @@ Content-Type: application/json
 **Method**: API key in custom header
 
 **Request Headers**:
+
 ```http
 x-api-key: sk-ant-api03-...
 anthropic-version: 2023-06-01
@@ -58,12 +61,14 @@ Content-Type: application/json
 **Method**: OAuth 2.0 Device Flow
 
 **OAuth Flow**:
+
 1. POST to `https://github.com/login/device/code` with client_id
 2. User visits verification_uri and enters user_code
 3. Poll `https://github.com/login/oauth/access_token` until authorized
 4. Use access token as Bearer token
 
 **Request Headers**:
+
 ```http
 Authorization: Bearer ghu_...
 Content-Type: application/json
@@ -76,6 +81,7 @@ Content-Type: application/json
 **Method**: No authentication
 
 **Request Headers**:
+
 ```http
 Content-Type: application/json
 ```
@@ -133,6 +139,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - System prompt is a message with `role: "system"`
 - Tools use `function` type wrapper
 - Tool results use `role: "tool"` with `tool_call_id`
@@ -179,6 +186,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - System prompt is separate `system` field (NOT a message)
 - Messages array must start with `user` role
 - Tools use `input_schema` instead of `parameters`
@@ -188,7 +196,7 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "gpt-4o",
+  "model": "gpt-5-mini",
   "messages": [
     {
       "role": "system",
@@ -208,7 +216,7 @@ Content-Type: application/json
         "parameters": {
           "type": "object",
           "properties": {
-            "location": {"type": "string"}
+            "location": { "type": "string" }
           },
           "required": ["location"]
         }
@@ -222,6 +230,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - Identical to OpenAI format
 - Can reuse OpenAI request formatter
 
@@ -249,7 +258,7 @@ Content-Type: application/json
         "parameters": {
           "type": "object",
           "properties": {
-            "location": {"type": "string"}
+            "location": { "type": "string" }
           },
           "required": ["location"]
         }
@@ -261,6 +270,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - Similar to OpenAI format
 - Model must be pulled locally first (`ollama pull qwen3`)
 - Tool support depends on model version
@@ -296,6 +306,7 @@ Content-Type: application/json
 ```
 
 **With Tool Calls**:
+
 ```json
 {
   "choices": [
@@ -326,6 +337,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - Tool calls are in `message.tool_calls` array
 - `finish_reason` is `"tool_calls"` when tools are used
 - `arguments` is JSON string, must parse
@@ -353,6 +365,7 @@ Content-Type: application/json
 ```
 
 **With Tool Calls**:
+
 ```json
 {
   "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
@@ -381,6 +394,7 @@ Content-Type: application/json
 ```
 
 **Key Points**:
+
 - Content is always an array of blocks
 - Tool calls are `tool_use` blocks in content array
 - `input` is JSON object, not string
@@ -412,6 +426,7 @@ Identical to OpenAI response format.
 ```
 
 **Key Points**:
+
 - Message structure similar to OpenAI
 - Token counts use `prompt_eval_count` and `eval_count`
 - No `total_tokens` field
@@ -422,6 +437,7 @@ Identical to OpenAI response format.
 ### OpenAI Tool Result
 
 **As next message in conversation**:
+
 ```json
 {
   "role": "tool",
@@ -433,6 +449,7 @@ Identical to OpenAI response format.
 ### Anthropic Tool Result
 
 **As user message with tool_result content**:
+
 ```json
 {
   "role": "user",
@@ -447,6 +464,7 @@ Identical to OpenAI response format.
 ```
 
 **With error**:
+
 ```json
 {
   "role": "user",
@@ -490,6 +508,7 @@ data: [DONE]
 ```
 
 **Tool Call Streaming** (JSON may be split across chunks):
+
 ```
 data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}
 
@@ -532,6 +551,7 @@ data: {"type":"message_stop"}
 ```
 
 **Key Points**:
+
 - Events have types: `message_start`, `content_block_start`, `content_block_delta`, etc.
 - Must track content blocks by index
 - Final usage in `message_delta` event
@@ -553,6 +573,7 @@ Same as OpenAI streaming (SSE with `data:` prefix, `[DONE]` marker).
 ```
 
 **Key Points**:
+
 - Each line is complete JSON object
 - No `data:` prefix (unlike SSE)
 - `done: true` in final chunk
@@ -574,6 +595,7 @@ Same as OpenAI streaming (SSE with `data:` prefix, `[DONE]` marker).
 ```
 
 **Status Codes**:
+
 - 401: Invalid API key
 - 429: Rate limit exceeded
 - 400: Invalid request (context too long, etc.)
@@ -592,6 +614,7 @@ Same as OpenAI streaming (SSE with `data:` prefix, `[DONE]` marker).
 ```
 
 **Status Codes**:
+
 - 401: Authentication error
 - 429: Rate limit exceeded
 - 400: Invalid request
@@ -610,6 +633,7 @@ Similar to OpenAI error format.
 ```
 
 **Common Errors**:
+
 - Model not found (need to `ollama pull`)
 - Connection refused (Ollama not running)
 - Invalid JSON format
@@ -619,6 +643,7 @@ Similar to OpenAI error format.
 ### OpenAI Images
 
 **In message content** (array format):
+
 ```json
 {
   "role": "user",
@@ -638,6 +663,7 @@ Similar to OpenAI error format.
 ```
 
 **Or base64**:
+
 ```json
 {
   "type": "image_url",
@@ -650,6 +676,7 @@ Similar to OpenAI error format.
 ### Anthropic Images
 
 **In message content**:
+
 ```json
 {
   "role": "user",
@@ -671,6 +698,7 @@ Similar to OpenAI error format.
 ```
 
 **Key Differences**:
+
 - Anthropic uses `type: "image"` (not `image_url`)
 - Base64 only (no URL support)
 - Must specify `media_type`
@@ -685,12 +713,12 @@ Limited support, depends on model (e.g., llava models).
 
 ## Rate Limits
 
-| Provider | Rate Limit | Header |
-|----------|------------|--------|
-| OpenAI | Varies by tier | `x-ratelimit-remaining-requests` |
-| Anthropic | Varies by tier | `anthropic-ratelimit-requests-remaining` |
-| Copilot | Included in subscription | N/A |
-| Ollama | No limits (local) | N/A |
+| Provider  | Rate Limit               | Header                                   |
+| --------- | ------------------------ | ---------------------------------------- |
+| OpenAI    | Varies by tier           | `x-ratelimit-remaining-requests`         |
+| Anthropic | Varies by tier           | `anthropic-ratelimit-requests-remaining` |
+| Copilot   | Included in subscription | N/A                                      |
+| Ollama    | No limits (local)        | N/A                                      |
 
 **Retry-After**: Both OpenAI and Anthropic return `retry-after` header on 429 errors.
 

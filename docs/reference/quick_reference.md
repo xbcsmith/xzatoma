@@ -135,9 +135,9 @@ pub trait ToolExecutor: Send + Sync {
 # ~/.config/xzatoma/config.yaml
 
 provider:
-  type: copilot  # or 'ollama'
+  type: copilot # or 'ollama'
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
   ollama:
     host: localhost:11434
     model: qwen3
@@ -168,7 +168,7 @@ documentation:
 ```bash
 # Provider settings
 export XZATOMA_PROVIDER=copilot
-export COPILOT_MODEL=gpt-4o
+export COPILOT_MODEL=gpt-5-mini
 export OLLAMA_HOST=localhost:11434
 export OLLAMA_MODEL=qwen3
 
@@ -280,9 +280,7 @@ deliverables:
       "dependencies": ["scan"]
     }
   ],
-  "deliverables": [
-    "docs/reference/api.md"
-  ]
+  "deliverables": ["docs/reference/api.md"]
 }
 ```
 
@@ -360,24 +358,28 @@ async fn test_workflow_execution() {
 ## Documentation Categories (Diataxis)
 
 ### Tutorial
+
 - **Purpose**: Learning-oriented
 - **Location**: `docs/tutorials/`
 - **Example**: `quickstart.md`
 - **Content**: Step-by-step lessons
 
 ### How-To Guide
+
 - **Purpose**: Task-oriented
 - **Location**: `docs/how_to/`
 - **Example**: `configure_providers.md`
 - **Content**: Problem-solving guides
 
 ### Explanation
+
 - **Purpose**: Understanding-oriented
 - **Location**: `docs/explanation/`
 - **Example**: `implementation_plan.md`
 - **Content**: Conceptual discussion
 
 ### Reference
+
 - **Purpose**: Information-oriented
 - **Location**: `docs/reference/`
 - **Example**: `architecture.md`

@@ -55,7 +55,11 @@ pub enum Commands {
     /// Authenticate with a provider
     Auth {
         /// Provider to authenticate with (copilot, ollama)
-        provider: String,
+        ///
+        /// Use `--provider <name>` to override; if omitted the configured/default
+        /// provider will be used.
+        #[arg(short, long)]
+        provider: Option<String>,
     },
 }
 
@@ -76,7 +80,7 @@ impl Default for Cli {
             config: Some("config/config.yaml".to_string()),
             verbose: false,
             command: Commands::Auth {
-                provider: "copilot".to_string(),
+                provider: Some("copilot".to_string()),
             },
         }
     }
@@ -91,6 +95,13 @@ mod tests {
         let cli = Cli::default();
         assert_eq!(cli.config, Some("config/config.yaml".to_string()));
         assert!(!cli.verbose);
+
+        // default command should be `auth` with provider defaulting to "copilot"
+        if let Commands::Auth { provider } = cli.command {
+            assert_eq!(provider, Some("copilot".to_string()));
+        } else {
+            panic!("Expected default command to be Auth");
+        }
     }
 
     #[test]
@@ -172,11 +183,24 @@ mod tests {
 
     #[test]
     fn test_cli_parse_auth() {
-        let cli = Cli::try_parse_from(["xzatoma", "auth", "copilot"]);
+        let cli = Cli::try_parse_from(["xzatoma", "auth", "--provider", "copilot"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Auth { provider } = cli.command {
-            assert_eq!(provider, "copilot");
+            assert_eq!(provider, Some("copilot".to_string()));
+        } else {
+            panic!("Expected Auth command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_auth_without_provider() {
+        // `auth` subcommand without `--provider` should parse (provider left as None)
+        let cli = Cli::try_parse_from(["xzatoma", "auth"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Auth { provider } = cli.command {
+            assert_eq!(provider, None);
         } else {
             panic!("Expected Auth command");
         }
@@ -184,7 +208,14 @@ mod tests {
 
     #[test]
     fn test_cli_parse_with_config() {
-        let cli = Cli::try_parse_from(["xzatoma", "--config", "custom.yaml", "auth", "copilot"]);
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "--config",
+            "custom.yaml",
+            "auth",
+            "--provider",
+            "copilot",
+        ]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         assert_eq!(cli.config, Some("custom.yaml".to_string()));
@@ -192,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_with_verbose() {
-        let cli = Cli::try_parse_from(["xzatoma", "-v", "auth", "copilot"]);
+        let cli = Cli::try_parse_from(["xzatoma", "-v", "auth", "--provider", "copilot"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         assert!(cli.verbose);

@@ -28,17 +28,20 @@ The XZatoma architecture has been thoroughly validated and all critical issues h
 ### Issue 1: Infinite Loop Risk ✅ RESOLVED
 
 **Original Problem**:
+
 - Agent execution loop had no iteration limit enforcement
 - Config showed `max_turns: 100` but code didn't use it
 - Could run forever if AI continuously called tools
 
 **Resolution Applied**:
+
 - Added `max_iterations` field to Agent struct
 - Added iteration counter in execute loop
 - Returns `XzatomaError::MaxIterationsExceeded` when limit reached
 - Added explanatory documentation
 
 **Evidence**:
+
 ```rust
 let mut iterations = 0;
 
@@ -59,12 +62,14 @@ loop {
 ### Issue 2: Terminal Security Gaps ✅ RESOLVED
 
 **Original Problem**:
+
 - Security model was vague
 - "Optional confirmation" unclear for autonomous mode
 - No denylist for dangerous commands
 - Path validation not detailed
 
 **Resolution Applied**:
+
 - Defined three execution modes: Interactive, Restricted Autonomous, Full Autonomous
 - Added comprehensive command denylist (rm -rf, dd, mkfs, fork bombs, etc.)
 - Added path validation requirements (working directory only)
@@ -73,6 +78,7 @@ loop {
 - Added 180+ lines of security documentation
 
 **Evidence**:
+
 ```rust
 pub struct CommandValidator {
     mode: ExecutionMode,
@@ -83,9 +89,10 @@ pub struct CommandValidator {
 ```
 
 **Denylist Includes**:
+
 - System wipe commands (rm -rf /)
 - Disk overwrite (dd if=/dev/zero)
-- Filesystem formatting (mkfs.*)
+- Filesystem formatting (mkfs.\*)
 - Fork bombs
 - Pipe to shell (curl | sh)
 - Privilege escalation (sudo, su)
@@ -95,12 +102,14 @@ pub struct CommandValidator {
 ### Issue 3: Token Management Missing ✅ RESOLVED
 
 **Original Problem**:
+
 - No conversation limit handling
 - History grew unbounded
 - Would fail with long conversations
 - No pruning strategy
 
 **Resolution Applied**:
+
 - Added new section "2.5. Conversation Management"
 - Documented token limits for each provider/model
 - Defined pruning strategy (retain system message, original instruction, last 5 turns)
@@ -108,6 +117,7 @@ pub struct CommandValidator {
 - Added automatic pruning when approaching limit
 
 **Evidence**:
+
 ```rust
 pub struct Conversation {
     messages: Vec<Message>,
@@ -118,7 +128,8 @@ pub struct Conversation {
 ```
 
 **Token Limits Defined**:
-- GPT-4o: 128k context, 102k safe limit
+
+- GPT-5-mini: 128k context, 102k safe limit
 - Qwen3: 32k context, 26k safe limit
 - Llama3: 8k context, 6.5k safe limit
 
@@ -154,30 +165,30 @@ Expanded file operations and credential storage sections with comprehensive secu
 
 ### AGENTS.md Compliance
 
-| Requirement                    | Status      | Evidence                          |
-| ------------------------------ | ----------- | --------------------------------- |
-| Simple modular design          | ✅ PASS     | Clear layer separation            |
-| Separation of concerns         | ✅ PASS     | CLI, agent, providers, tools      |
-| Avoid unnecessary abstraction  | ✅ PASS     | Generic tools philosophy          |
-| Clear module structure         | ✅ PASS     | Well-organized src/ layout        |
-| Proper error handling          | ✅ PASS     | Uses thiserror, Result types      |
-| Component boundaries           | ✅ PASS     | Module responsibilities clarified |
-| No unwrap without reason       | ✅ PASS     | Addressed in validation docs      |
-| Testing strategy               | ✅ PASS     | Unit, integration, mock provider  |
+| Requirement                   | Status  | Evidence                          |
+| ----------------------------- | ------- | --------------------------------- |
+| Simple modular design         | ✅ PASS | Clear layer separation            |
+| Separation of concerns        | ✅ PASS | CLI, agent, providers, tools      |
+| Avoid unnecessary abstraction | ✅ PASS | Generic tools philosophy          |
+| Clear module structure        | ✅ PASS | Well-organized src/ layout        |
+| Proper error handling         | ✅ PASS | Uses thiserror, Result types      |
+| Component boundaries          | ✅ PASS | Module responsibilities clarified |
+| No unwrap without reason      | ✅ PASS | Addressed in validation docs      |
+| Testing strategy              | ✅ PASS | Unit, integration, mock provider  |
 
 **Result**: 8/8 requirements met
 
 ### PLAN.md Compliance
 
-| Requirement                   | Status      | Notes                         |
-| ----------------------------- | ----------- | ----------------------------- |
-| Test coverage >80%            | ✅ PASS     | Explicitly stated             |
-| Configuration: env/file/CLI   | ✅ PASS     | All three supported           |
-| Unit tests required           | ✅ PASS     | Testing strategy defined      |
-| Diataxis documentation        | ✅ PASS     | Already following structure   |
-| RFC-3339 timestamps           | ✅ PASS     | Audit trail uses RFC 3339     |
-| API versioning                | N/A         | Not applicable for CLI tool   |
-| OpenAPI docs                  | N/A         | Not applicable for CLI tool   |
+| Requirement                 | Status  | Notes                       |
+| --------------------------- | ------- | --------------------------- |
+| Test coverage >80%          | ✅ PASS | Explicitly stated           |
+| Configuration: env/file/CLI | ✅ PASS | All three supported         |
+| Unit tests required         | ✅ PASS | Testing strategy defined    |
+| Diataxis documentation      | ✅ PASS | Already following structure |
+| RFC-3339 timestamps         | ✅ PASS | Audit trail uses RFC 3339   |
+| API versioning              | N/A     | Not applicable for CLI tool |
+| OpenAPI docs                | N/A     | Not applicable for CLI tool |
 
 **Result**: 5/5 applicable requirements met
 
@@ -228,11 +239,13 @@ Expanded file operations and credential storage sections with comprehensive secu
 ## File Size Analysis
 
 **docs/reference/architecture.md**:
+
 - Original: 614 lines
 - After fixes: 1,114 lines
 - Growth: +500 lines (+81%)
 
 **Content Distribution**:
+
 - Core Components: 35%
 - Security Considerations: 25%
 - Configuration: 15%
@@ -244,16 +257,19 @@ Expanded file operations and credential storage sections with comprehensive secu
 ### Documents Created
 
 1. **architecture_validation.md** (685 lines)
+
    - Comprehensive validation analysis
    - Issue identification and recommendations
    - Alignment verification
 
 2. **required_architecture_updates.md** (866 lines)
+
    - Exact code changes needed
    - Implementation patterns
    - Configuration examples
 
 3. **architecture_fixes_applied.md** (347 lines)
+
    - Summary of all fixes applied
    - Before/after comparison
    - Implementation readiness assessment

@@ -120,7 +120,7 @@ pub fn test_config_yaml() -> String {
 provider:
   type: ollama
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
   ollama:
     host: http://localhost:11434
     model: qwen2.5-coder

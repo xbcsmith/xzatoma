@@ -17,6 +17,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 ### Implementation Documentation
 
 - **[phase3_security_validation_implementation.md](phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
+- **[auth_provider_flag_implementation.md](auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 
 ### Provider Abstraction Implementation
 

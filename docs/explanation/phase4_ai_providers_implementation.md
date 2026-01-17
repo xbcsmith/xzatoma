@@ -51,6 +51,7 @@ pub struct Message {
 ```
 
 Helper methods for message creation:
+
 - `Message::user(content)` - Create user message
 - `Message::assistant(content)` - Create assistant message
 - `Message::system(content)` - Create system message
@@ -80,16 +81,19 @@ The Ollama provider connects to local or remote Ollama servers via HTTP.
 #### Key Features
 
 1. **HTTP Client Configuration**
+
    - 120 second timeout
    - Custom user agent
    - JSON request/response handling
 
 2. **Message Format Conversion**
+
    - Converts XZatoma messages to Ollama format
    - Filters messages without content
    - Preserves tool call information
 
 3. **Tool Schema Conversion**
+
    - Extracts name, description, and parameters from JSON schemas
    - Wraps in Ollama function format
 
@@ -130,12 +134,14 @@ The Copilot provider implements OAuth device flow for authentication and exchang
 #### Key Features
 
 1. **OAuth Device Flow Authentication**
+
    - Requests device code from GitHub
    - Displays user verification URL and code
    - Polls for authorization completion
    - Maximum 60 attempts with 5 second intervals
 
 2. **Token Management**
+
    - Caches tokens in system keyring
    - Checks expiration before each request
    - Auto-refreshes expired tokens
@@ -192,6 +198,7 @@ struct CachedToken {
 ```
 
 The provider checks the cache before each request:
+
 - If token exists and expires_at > now + 300 seconds, use cached token
 - Otherwise, perform full OAuth flow and refresh token
 - Cache failures log warnings but don't block execution
@@ -237,12 +244,14 @@ pub fn create_provider(
 ### Unit Tests Implemented
 
 #### Base Types (base.rs)
+
 - Message creation helpers (user, assistant, system, tool_result)
 - Message with tool calls
 - Serialization/deserialization
 - Tool call structures
 
 #### Ollama Provider (ollama.rs)
+
 - Provider creation with configuration
 - Host and model accessors
 - Message conversion (basic messages, tool calls, empty filtering)
@@ -250,6 +259,7 @@ pub fn create_provider(
 - Response message conversion (text, with tools)
 
 #### Copilot Provider (copilot.rs)
+
 - Provider creation with configuration
 - Model accessor
 - Message conversion (basic messages, tool calls)
@@ -260,6 +270,7 @@ pub fn create_provider(
 ### Test Coverage
 
 All unit tests pass:
+
 - Base types: 11 tests
 - Ollama provider: 10 tests
 - Copilot provider: 8 tests
@@ -269,6 +280,7 @@ All unit tests pass:
 ### Integration Test Considerations
 
 Integration tests with actual Ollama or Copilot servers are optional:
+
 - Ollama tests require running Ollama server locally
 - Copilot tests require valid GitHub authentication
 - Current implementation focuses on unit tests with mocked responses
@@ -279,16 +291,19 @@ Integration tests with actual Ollama or Copilot servers are optional:
 All providers use proper error handling patterns:
 
 1. **HTTP Client Errors**
+
    - Network failures converted to `XzatomaError::Provider`
    - Status codes checked and reported
    - Response parsing errors caught
 
 2. **Keyring Errors**
+
    - Keyring access failures use `XzatomaError::Keyring` (auto-converted)
    - Missing tokens trigger re-authentication
    - Cache failures logged as warnings
 
 3. **Serialization Errors**
+
    - JSON parsing errors use `XzatomaError::Serialization` (auto-converted)
    - Malformed responses reported with context
 
@@ -335,7 +350,7 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 
 async fn example() -> Result<()> {
     let config = CopilotConfig {
-        model: "gpt-4o".to_string(),
+        model: "gpt-5-mini".to_string(),
     };
 
     let provider = CopilotProvider::new(config)?;
@@ -385,6 +400,7 @@ provider:
 ```
 
 Environment variables:
+
 - `XZATOMA_PROVIDER_TYPE=ollama`
 - `XZATOMA_OLLAMA_HOST=http://localhost:11434`
 - `XZATOMA_OLLAMA_MODEL=qwen2.5-coder`
@@ -395,12 +411,13 @@ Environment variables:
 provider:
   type: copilot
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
 ```
 
 Environment variables:
+
 - `XZATOMA_PROVIDER_TYPE=copilot`
-- `XZATOMA_COPILOT_MODEL=gpt-4o`
+- `XZATOMA_COPILOT_MODEL=gpt-5-mini`
 
 ## Validation Results
 
@@ -426,6 +443,7 @@ cargo test --lib --all-features
 ### Coverage Analysis
 
 Provider-related test coverage:
+
 - Base types: 100% (all public methods tested)
 - Ollama provider: ~85% (core logic covered, network calls mocked in tests)
 - Copilot provider: ~85% (core logic covered, OAuth flow unit tested)
@@ -435,6 +453,7 @@ Overall project test coverage: >80% target met
 ### Documentation Completeness
 
 All public items have doc comments with:
+
 - Description of functionality
 - Arguments with types and descriptions
 - Return value descriptions
@@ -482,16 +501,19 @@ All dependencies are already specified in `Cargo.toml` from Phase 1.
 ## Known Limitations
 
 1. **Ollama Tool Calling**
+
    - Not all Ollama models support tool calling
    - Tool call format may vary by model
    - Current implementation uses standard OpenAI-compatible format
 
 2. **Copilot Authentication**
+
    - Requires manual user interaction for initial auth
    - Token refresh requires re-authentication
    - No support for PAT (Personal Access Token) authentication
 
 3. **Streaming**
+
    - Neither provider currently supports streaming responses
    - `stream: false` hardcoded in requests
    - Future enhancement opportunity
@@ -506,21 +528,25 @@ All dependencies are already specified in `Cargo.toml` from Phase 1.
 Potential improvements for Phase 4:
 
 1. **Additional Providers**
+
    - OpenAI API support
    - Anthropic Claude support
    - Azure OpenAI support
 
 2. **Streaming Support**
+
    - Implement streaming for Ollama
    - Implement streaming for Copilot
    - Add progress callbacks
 
 3. **Advanced Error Handling**
+
    - Exponential backoff for retries
    - Rate limit detection and handling
    - Circuit breaker pattern
 
 4. **Token Management**
+
    - Automatic token refresh for Copilot
    - Multiple provider authentication
    - Token rotation

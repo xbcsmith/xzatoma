@@ -351,13 +351,13 @@ pub struct ProviderConfig {
 /// GitHub Copilot configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotConfig {
-    /// Model name (default: "gpt-4o")
+    /// Model name (default: "gpt-5-mini")
     #[serde(default = "default_copilot_model")]
     pub model: String,
 }
 
 fn default_copilot_model() -> String {
-    "gpt-4o".to_string()
+    "gpt-5-mini".to_string()
 }
 
 /// Ollama configuration
@@ -728,7 +728,7 @@ provider:
 
   # GitHub Copilot settings (if using copilot)
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
 
   # Ollama settings (if using ollama)
   ollama:

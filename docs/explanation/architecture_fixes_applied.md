@@ -123,8 +123,8 @@ impl Agent {
 **Token Limits Documented**:
 
 | Provider | Model       | Context Window | Safe Limit (80%) |
-|----------|-------------|----------------|------------------|
-| Copilot  | gpt-4o      | 128,000        | 102,400          |
+| -------- | ----------- | -------------- | ---------------- |
+| Copilot  | gpt-5-mini  | 128,000        | 102,400          |
 | Copilot  | gpt-4o-mini | 128,000        | 102,400          |
 | Ollama   | qwen3       | 32,768         | 26,214           |
 | Ollama   | llama3      | 8,192          | 6,553            |
@@ -306,18 +306,21 @@ agent:
 ### Remaining for Implementation
 
 **Phase 1 Focus**:
+
 - Error types and basic structures
 - Configuration loading with precedence
 - Basic tool implementations
 - Simple provider trait (extended trait in later phases)
 
 **Phase 2 Focus**:
+
 - Agent execution loop with limits
 - Conversation management with pruning
 - Tool executor with validation
 - Command validator implementation
 
 **Phase 3 Focus**:
+
 - Provider implementations (Copilot, Ollama)
 - Streaming support (extended trait)
 - Advanced error recovery

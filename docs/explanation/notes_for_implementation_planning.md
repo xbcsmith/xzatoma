@@ -13,6 +13,7 @@ This document provides critical context for the AI agent who will create the pha
 **Status**: APPROVED FOR IMPLEMENTATION
 
 **Key Sections**:
+
 - High-level architecture (CLI → Agent → Providers → Tools)
 - Core components detailed (CLI, Agent, Conversation Management, Providers, Tools)
 - Module structure with responsibilities
@@ -23,6 +24,7 @@ This document provides critical context for the AI agent who will create the pha
 - Testing strategy
 
 **Critical Fixes Applied**:
+
 1. ✅ Iteration limits enforced in Agent execution loop
 2. ✅ Comprehensive terminal security model (execution modes, denylist, validation)
 3. ✅ Complete conversation token management with pruning strategy
@@ -30,6 +32,7 @@ This document provides critical context for the AI agent who will create the pha
 ### 2. Architecture Validation ✅
 
 **Files Created**:
+
 - `docs/explanation/architecture_validation.md` (685 lines) - Full validation analysis
 - `docs/explanation/required_architecture_updates.md` (866 lines) - Update specifications
 - `docs/explanation/architecture_fixes_applied.md` (347 lines) - Summary of fixes
@@ -38,6 +41,7 @@ This document provides critical context for the AI agent who will create the pha
 **Validation Score**: 9/10 (improved from 6/10)
 
 **All Critical Issues Resolved**:
+
 - Infinite loop risk → Fixed with max_iterations enforcement
 - Terminal security gaps → Comprehensive validation model
 - Token management missing → Complete pruning strategy
@@ -47,6 +51,7 @@ This document provides critical context for the AI agent who will create the pha
 **File**: `docs/explanation/competitive_analysis.md` (480 lines)
 
 **Key Findings**:
+
 - Goose: Feature-rich, MCP extensions, ~9k lines, production
 - Zed Agent: Editor-integrated, ~9.6k lines, production
 - XZatoma: Intentionally simpler, CLI-focused, planned ~3-5k lines
@@ -58,10 +63,12 @@ This document provides critical context for the AI agent who will create the pha
 ### 4. Project Guidelines ✅
 
 **Updated Files**:
+
 - `AGENTS.md` - Updated with XZatoma architecture (was XZepr-MCP)
 - `PLAN.md` - Already correct, contains planning methodology
 
 **Key Rules to Follow**:
+
 - File extensions: `.yaml` (NOT `.yml`), `.md` for markdown
 - Markdown naming: `lowercase_with_underscores.md` (except README.md)
 - No emojis in documentation (except AGENTS.md itself)
@@ -104,6 +111,7 @@ src/
 ### Key Architectural Patterns
 
 **Agent Execution Loop**:
+
 ```rust
 pub struct Agent {
     provider: Arc<dyn Provider>,
@@ -127,6 +135,7 @@ impl Agent {
 ```
 
 **Tool Result Format**:
+
 ```rust
 pub struct ToolResult {
     pub success: bool,
@@ -138,6 +147,7 @@ pub struct ToolResult {
 ```
 
 **Conversation Management**:
+
 ```rust
 pub struct Conversation {
     messages: Vec<Message>,
@@ -151,11 +161,13 @@ pub struct Conversation {
 ### Security Model (CRITICAL)
 
 **Terminal Execution Modes**:
+
 1. Interactive: User confirms each command
 2. Restricted Autonomous: Only allowlist commands (ls, cat, grep, find, etc.)
 3. Full Autonomous: All commands allowed (requires `--allow-dangerous` flag)
 
 **Command Denylist** (MUST reject):
+
 - `rm -rf /`, `rm -rf /*`
 - `dd if=/dev/zero`
 - `mkfs.*`
@@ -165,6 +177,7 @@ pub struct Conversation {
 - Commands with `eval` or `exec`
 
 **Path Validation** (MUST enforce):
+
 - All paths within working directory only
 - Reject absolute paths starting with `/`
 - Reject `..` traversal beyond root
@@ -174,9 +187,9 @@ pub struct Conversation {
 
 ```yaml
 provider:
-  type: copilot  # or 'ollama'
+  type: copilot # or 'ollama'
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
   ollama:
     host: localhost:11434
     model: qwen3
@@ -205,6 +218,7 @@ agent:
 ### Phase Breakdown Recommendation
 
 **Phase 1: Foundation** (Weeks 1-2)
+
 - Error types (`error.rs`)
 - Configuration loading with precedence (`config.rs`)
 - Basic module structure (empty impls)
@@ -213,6 +227,7 @@ agent:
 - Cargo.toml with dependencies
 
 **Phase 2: Core Agent** (Weeks 3-4)
+
 - Agent struct and execution loop with iteration limits
 - Conversation management with token tracking
 - Tool executor framework and registry
@@ -220,6 +235,7 @@ agent:
 - Integration tests with mock provider
 
 **Phase 3: Providers** (Weeks 5-6)
+
 - Provider trait implementation
 - GitHub Copilot client
 - Ollama client
@@ -227,6 +243,7 @@ agent:
 - Provider-specific tests
 
 **Phase 4: Tools** (Weeks 7-8)
+
 - File operations (list, read, write, create_directory, delete, diff)
 - Terminal execution with validation
 - Plan parser (YAML, JSON, Markdown)
@@ -234,6 +251,7 @@ agent:
 - Tool-specific tests
 
 **Phase 5: Integration** (Weeks 9-10)
+
 - CLI command implementation
 - End-to-end testing
 - Documentation completion
@@ -241,6 +259,7 @@ agent:
 - Performance optimization
 
 **Phase 6: Polish** (Weeks 11-12)
+
 - Security audit
 - Error message improvements
 - Logging and observability
@@ -250,6 +269,7 @@ agent:
 ### Target Metrics
 
 **Code Size**: 3,000-5,000 lines total
+
 - `error.rs`: ~100 lines
 - `config.rs`: ~200 lines
 - `cli.rs`: ~150 lines
@@ -262,12 +282,14 @@ agent:
 **Test Coverage**: >80% (MANDATORY)
 
 **Performance**:
+
 - Agent loop iteration: <100ms overhead
 - Tool execution: Depends on tool, but framework adds <10ms
 - Conversation pruning: <50ms
 - Configuration loading: <100ms
 
 **Dependencies** (Estimated):
+
 ```toml
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -311,9 +333,11 @@ similar = "2"
 All documentation is in Diataxis structure:
 
 **Reference** (specifications):
+
 - `docs/reference/architecture.md` - Complete architecture (USE THIS)
 
 **Explanation** (understanding):
+
 - `docs/explanation/architecture_validation.md` - Validation analysis
 - `docs/explanation/required_architecture_updates.md` - Update details
 - `docs/explanation/architecture_fixes_applied.md` - What was fixed
@@ -324,6 +348,7 @@ All documentation is in Diataxis structure:
 - `docs/explanation/overview.md` - Project overview (may exist)
 
 **Project Rules**:
+
 - `AGENTS.md` - Development guidelines (FOLLOW STRICTLY)
 - `PLAN.md` - Planning methodology (USE FOR STRUCTURE)
 
@@ -332,6 +357,7 @@ All documentation is in Diataxis structure:
 When creating the phased implementation plan, it MUST include:
 
 ### For Each Phase:
+
 1. **Overview** - What this phase accomplishes
 2. **Tasks** - Specific implementable tasks (not vague)
 3. **Files to Create/Modify** - Exact file paths
@@ -342,19 +368,24 @@ When creating the phased implementation plan, it MUST include:
 8. **Estimated Lines of Code** - Keep running total
 
 ### Format (from PLAN.md):
+
 ```markdown
 # XZatoma Implementation Plan
 
 ## Overview
+
 Overview of all phases
 
 ## Current State Analysis
+
 Current state (architecture designed, no code)
 
 ### Existing Infrastructure
+
 What exists now (docs, architecture)
 
 ### Identified Issues
+
 None yet, but note security as critical
 
 ## Implementation Phases
@@ -362,12 +393,14 @@ None yet, but note security as critical
 ### Phase 1: Foundation
 
 #### Task 1.1: Error Types and Result Patterns
+
 - Create src/error.rs
 - Define XzatomaError enum with all variants
 - Implement Display and Error traits
 - Lines: ~100
 
 #### Task 1.2: Configuration System
+
 - Create src/config.rs
 - Implement Settings struct
 - Load from file, env vars, CLI args
@@ -377,6 +410,7 @@ None yet, but note security as critical
 [... continue for each task ...]
 
 #### Task 1.6: Success Criteria
+
 - [ ] All error types compile
 - [ ] Configuration loads correctly
 - [ ] Tests pass with >80% coverage
@@ -384,6 +418,7 @@ None yet, but note security as critical
 - [ ] Documentation complete
 
 ### Phase 2: Core Agent
+
 [... similar structure ...]
 ```
 
@@ -400,6 +435,7 @@ None yet, but note security as critical
 ## Success Metrics for Implementation Plan
 
 The implementation plan is successful if:
+
 - ✅ Every phase has clear, actionable tasks
 - ✅ Dependencies between phases are explicit
 - ✅ Testing is defined at every step
@@ -420,6 +456,7 @@ The implementation plan is successful if:
 **Timeline**: Realistic estimate is 10-12 weeks for full implementation to v1.0.
 
 **Next Steps**:
+
 1. Review this document thoroughly
 2. Review `docs/reference/architecture.md` completely
 3. Review `AGENTS.md` and `PLAN.md` for requirements

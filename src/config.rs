@@ -46,7 +46,7 @@ pub struct CopilotConfig {
 }
 
 fn default_copilot_model() -> String {
-    "gpt-4o".to_string()
+    "gpt-5-mini".to_string()
 }
 
 impl Default for CopilotConfig {
@@ -570,7 +570,7 @@ agent:
             config: None,
             verbose: false,
             command: crate::cli::Commands::Auth {
-                provider: "copilot".to_string(),
+                provider: Some("copilot".to_string()),
             },
         };
 

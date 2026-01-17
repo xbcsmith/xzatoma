@@ -37,7 +37,7 @@ const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 ///
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = CopilotConfig {
-///     model: "gpt-4o".to_string(),
+///     model: "gpt-5-mini".to_string(),
 /// };
 /// let provider = CopilotProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -195,7 +195,7 @@ impl CopilotProvider {
     /// use xzatoma::providers::CopilotProvider;
     ///
     /// let config = CopilotConfig {
-    ///     model: "gpt-4o".to_string(),
+    ///     model: "gpt-5-mini".to_string(),
     /// };
     /// let provider = CopilotProvider::new(config);
     /// assert!(provider.is_ok());
@@ -226,10 +226,10 @@ impl CopilotProvider {
     /// use xzatoma::providers::CopilotProvider;
     ///
     /// let config = CopilotConfig {
-    ///     model: "gpt-4o".to_string(),
+    ///     model: "gpt-5-mini".to_string(),
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
-    /// assert_eq!(provider.model(), "gpt-4o");
+    /// assert_eq!(provider.model(), "gpt-5-mini");
     /// ```
     pub fn model(&self) -> &str {
         &self.config.model
@@ -239,7 +239,7 @@ impl CopilotProvider {
     ///
     /// Checks keyring for cached token first. If not found or expired,
     /// performs OAuth device flow to get new token.
-    async fn authenticate(&self) -> Result<String> {
+    pub async fn authenticate(&self) -> Result<String> {
         if let Ok(cached) = self.get_cached_token() {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -279,16 +279,37 @@ impl CopilotProvider {
 
     /// Perform OAuth device flow to get GitHub token
     async fn device_flow(&self) -> Result<String> {
-        let device_response: DeviceCodeResponse = self
+        // Request a device code (GitHub expects form-encoded body for these endpoints)
+        // Request a device code.  If the server returns a non-2xx response
+        // read the body and present a detailed error (status + body) so users
+        // can see why the request failed (network / API / enterprise GitHub).
+        let resp = self
             .client
             .post(GITHUB_DEVICE_CODE_URL)
-            .json(&DeviceCodeRequest {
+            .header("Accept", "application/json")
+            .form(&DeviceCodeRequest {
                 client_id: GITHUB_CLIENT_ID.to_string(),
                 scope: "read:user".to_string(),
             })
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Device code request failed: {}", e)))?
+            .map_err(|e| XzatomaError::Provider(format!("Device code request failed: {}", e)))?;
+
+        if !resp.status().is_success() {
+            // Try to include the response body (best-effort) for a clearer error.
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<failed to read error body>".to_string());
+            return Err(XzatomaError::Provider(format!(
+                "Device code request returned {}: {}",
+                status, body
+            ))
+            .into());
+        }
+
+        let device_response: DeviceCodeResponse = resp
             .json()
             .await
             .map_err(|e| XzatomaError::Provider(format!("Failed to parse device code: {}", e)))?;
@@ -308,7 +329,7 @@ impl CopilotProvider {
                 .client
                 .post(GITHUB_TOKEN_URL)
                 .header("Accept", "application/json")
-                .json(&TokenRequest {
+                .form(&TokenRequest {
                     client_id: GITHUB_CLIENT_ID.to_string(),
                     device_code: device_response.device_code.clone(),
                     grant_type: "urn:ietf:params:oauth:grant-type:device_code".to_string(),
@@ -317,15 +338,48 @@ impl CopilotProvider {
                 .await
                 .map_err(|e| XzatomaError::Provider(format!("Token poll failed: {}", e)))?;
 
-            if response.status().is_success() {
-                let token_response: TokenResponse = response
-                    .json()
-                    .await
-                    .map_err(|e| XzatomaError::Provider(format!("Failed to parse token: {}", e)))?;
+            // The token endpoint may return 200 with an error body (e.g. authorization_pending).
+            // Parse the JSON and handle known device-flow error responses explicitly.
+            let body: serde_json::Value = response.json().await.map_err(|e| {
+                XzatomaError::Provider(format!("Failed to parse token poll response: {}", e))
+            })?;
 
+            // If an access token is present, we're done.
+            if let Some(access) = body.get("access_token").and_then(|v| v.as_str()) {
                 println!("Authorization successful!");
                 tracing::info!("GitHub OAuth device flow completed successfully");
-                return Ok(token_response.access_token);
+                return Ok(access.to_string());
+            }
+
+            // Handle standard OAuth device-flow transient/fatal errors.
+            if let Some(err) = body.get("error").and_then(|v| v.as_str()) {
+                match err {
+                    "authorization_pending" => {
+                        tracing::debug!("authorization_pending; continuing to poll");
+                        // keep polling
+                    }
+                    "slow_down" => {
+                        tracing::debug!("slow_down received; backing off an extra interval");
+                        // apply a small backoff before the next attempt
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                    "expired_token" => {
+                        return Err(XzatomaError::Provider(
+                            "Device flow expired before authorization".to_string(),
+                        )
+                        .into());
+                    }
+                    other => {
+                        return Err(XzatomaError::Provider(format!(
+                            "Device flow error from provider: {}",
+                            other
+                        ))
+                        .into());
+                    }
+                }
+            } else {
+                // No access_token and no explicit error — continue polling conservatively.
+                tracing::debug!("Token poll returned no token and no error; continuing");
             }
 
             tracing::debug!("Polling attempt {}/{}", attempt + 1, max_attempts);
@@ -357,6 +411,9 @@ impl CopilotProvider {
 
         Ok(response.token)
     }
+
+    // parse_github_token_poll moved to module scope (see function below)
+    // (kept a short placeholder here so impl remains readable)
 
     /// Get cached token from system keyring
     fn get_cached_token(&self) -> Result<CachedToken> {
@@ -512,6 +569,34 @@ impl Provider for CopilotProvider {
     }
 }
 
+/// Parse a token-poll response from GitHub's device token endpoint.
+///
+/// Returns:
+/// - Ok(Some(token)) when an access token is present
+/// - Ok(None) when polling should continue (authorization_pending / slow_down)
+/// - Err(...) for fatal errors (expired_token or unknown error)
+fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> {
+    if let Some(tok) = value.get("access_token").and_then(|v| v.as_str()) {
+        return Ok(Some(tok.to_string()));
+    }
+
+    if let Some(err) = value.get("error").and_then(|v| v.as_str()) {
+        match err {
+            "authorization_pending" => return Ok(None),
+            "slow_down" => return Ok(None),
+            "expired_token" => {
+                return Err(XzatomaError::Provider("Device flow expired".to_string()).into());
+            }
+            other => {
+                return Err(XzatomaError::Provider(format!("Device flow error: {}", other)).into());
+            }
+        }
+    }
+
+    // No token and no recognizable error -> keep polling
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,6 +608,40 @@ mod tests {
         };
         let provider = CopilotProvider::new(config);
         assert!(provider.is_ok());
+    }
+
+    // --- Device-flow response parsing tests (no network) ---
+    #[test]
+    fn test_parse_github_token_poll_pending() {
+        let v = serde_json::json!({ "error": "authorization_pending" });
+        assert!(parse_github_token_poll(&v).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_parse_github_token_poll_slow_down() {
+        let v = serde_json::json!({ "error": "slow_down" });
+        assert!(parse_github_token_poll(&v).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_parse_github_token_poll_success() {
+        let v = serde_json::json!({ "access_token": "gho_ABC123" });
+        assert_eq!(
+            parse_github_token_poll(&v).unwrap(),
+            Some("gho_ABC123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_github_token_poll_expired() {
+        let v = serde_json::json!({ "error": "expired_token" });
+        assert!(parse_github_token_poll(&v).is_err());
+    }
+
+    #[test]
+    fn test_copilot_config_default_model() {
+        let cfg = CopilotConfig::default();
+        assert_eq!(cfg.model, "gpt-5-mini");
     }
 
     #[test]

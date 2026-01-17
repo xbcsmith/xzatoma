@@ -45,6 +45,7 @@ Define the base types and interfaces that all providers must implement.
 Create the core provider trait/interface with minimal required methods:
 
 **Interface Definition** (language-agnostic pseudo-code):
+
 ```
 interface Provider {
     // Required methods
@@ -60,12 +61,14 @@ interface Provider {
 ```
 
 **Key Structures**:
+
 - `Message`: role (system/user/assistant/tool), content (text/image), metadata
 - `Tool`: name, description, parameters (JSON schema)
 - `Response`: message content, tool calls, usage statistics
 - `ModelConfig`: model name, context limit, temperature, max tokens
 
 **Files to Create**:
+
 - `providers/base` - Core provider interface
 - `providers/types` - Shared types (Message, Tool, Response, ModelConfig)
 
@@ -74,6 +77,7 @@ interface Provider {
 Create provider-specific error types that map to common categories:
 
 **Error Categories**:
+
 - `AuthenticationError` - Invalid credentials, expired tokens
 - `RateLimitError` - Rate limit exceeded, includes retry-after duration
 - `ContextLengthError` - Input too long for model
@@ -83,6 +87,7 @@ Create provider-specific error types that map to common categories:
 - `NotImplementedError` - Feature not supported by provider
 
 **Files to Create**:
+
 - `providers/errors` - Error types and conversion utilities
 
 #### Task 1.3: Define Configuration Structure
@@ -90,6 +95,7 @@ Create provider-specific error types that map to common categories:
 Create configuration structure for provider settings:
 
 **Configuration Fields**:
+
 ```
 struct ProviderConfig {
     provider_type: string  // "openai", "anthropic", "copilot", "ollama"
@@ -104,6 +110,7 @@ struct ProviderConfig {
 ```
 
 **Files to Create**:
+
 - `providers/config` - Configuration types and loading
 
 #### Task 1.4: Testing Requirements
@@ -139,6 +146,7 @@ Create a reusable HTTP client for provider API calls.
 Build HTTP client with authentication and header management:
 
 **API Client Structure**:
+
 ```
 struct ApiClient {
     base_url: string
@@ -164,12 +172,14 @@ impl ApiClient {
 ```
 
 **Features**:
+
 - Connection pooling
 - Timeout configuration
 - Custom headers
 - Request/response logging (debug mode)
 
 **Files to Create**:
+
 - `providers/api_client` - HTTP client implementation
 
 #### Task 2.2: Implement Retry Logic
@@ -177,6 +187,7 @@ impl ApiClient {
 Add retry mechanism with exponential backoff:
 
 **Retry Configuration**:
+
 ```
 struct RetryConfig {
     max_retries: int (default: 3)
@@ -192,6 +203,7 @@ interface Retryable {
 ```
 
 **Files to Create**:
+
 - `providers/retry` - Retry logic with exponential backoff
 
 #### Task 2.3: Implement Request Formatting
@@ -199,12 +211,14 @@ interface Retryable {
 Create utilities for formatting provider requests:
 
 **Format Utilities**:
+
 - Message list to provider-specific JSON
 - Tool definitions to provider schema format
 - Image content encoding (base64, URLs)
 - System prompt handling (varies by provider)
 
 **Files to Create**:
+
 - `providers/formats/openai` - OpenAI request/response format
 - `providers/formats/anthropic` - Anthropic request/response format
 
@@ -239,6 +253,7 @@ Implement each provider using the abstractions.
 #### Task 3.1: Implement OpenAI Provider
 
 **OpenAI Specifics**:
+
 - Base URL: `https://api.openai.com/v1/chat/completions`
 - Authentication: Bearer token (`Authorization: Bearer <key>`)
 - Default model: `gpt-4o`
@@ -248,6 +263,7 @@ Implement each provider using the abstractions.
 - Tool calls: Native function calling support
 
 **Environment Variables**:
+
 - `OPENAI_API_KEY` (required)
 - `OPENAI_HOST` (optional, default: `https://api.openai.com`)
 - `OPENAI_BASE_PATH` (optional, default: `v1/chat/completions`)
@@ -256,12 +272,13 @@ Implement each provider using the abstractions.
 - `OPENAI_TIMEOUT` (optional, default: 600)
 
 **Request Format**:
+
 ```json
 {
   "model": "gpt-4o",
   "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
+    { "role": "system", "content": "..." },
+    { "role": "user", "content": "..." }
   ],
   "tools": [
     {
@@ -269,7 +286,9 @@ Implement each provider using the abstractions.
       "function": {
         "name": "tool_name",
         "description": "...",
-        "parameters": { /* JSON schema */ }
+        "parameters": {
+          /* JSON schema */
+        }
       }
     }
   ],
@@ -280,6 +299,7 @@ Implement each provider using the abstractions.
 ```
 
 **Response Format**:
+
 ```json
 {
   "id": "chatcmpl-...",
@@ -290,7 +310,9 @@ Implement each provider using the abstractions.
       "message": {
         "role": "assistant",
         "content": "...",
-        "tool_calls": [ /* if tools used */ ]
+        "tool_calls": [
+          /* if tools used */
+        ]
       },
       "finish_reason": "stop"
     }
@@ -304,11 +326,13 @@ Implement each provider using the abstractions.
 ```
 
 **Files to Create**:
+
 - `providers/openai` - OpenAI provider implementation
 
 #### Task 3.2: Implement Anthropic Provider
 
 **Anthropic Specifics**:
+
 - Base URL: `https://api.anthropic.com/v1/messages`
 - Authentication: API key header (`x-api-key: <key>`)
 - API Version header: `anthropic-version: 2023-06-01`
@@ -319,24 +343,28 @@ Implement each provider using the abstractions.
 - Tool calls: Tool use blocks in response
 
 **Environment Variables**:
+
 - `ANTHROPIC_API_KEY` (required)
 - `ANTHROPIC_HOST` (optional, default: `https://api.anthropic.com`)
 - `ANTHROPIC_TIMEOUT` (optional, default: 600)
 
 **Request Format** (note: system prompt is separate):
+
 ```json
 {
   "model": "claude-sonnet-4-0",
   "system": "System prompt here",
   "messages": [
-    {"role": "user", "content": "..."},
-    {"role": "assistant", "content": "..."}
+    { "role": "user", "content": "..." },
+    { "role": "assistant", "content": "..." }
   ],
   "tools": [
     {
       "name": "tool_name",
       "description": "...",
-      "input_schema": { /* JSON schema */ }
+      "input_schema": {
+        /* JSON schema */
+      }
     }
   ],
   "temperature": 0.7,
@@ -345,6 +373,7 @@ Implement each provider using the abstractions.
 ```
 
 **Response Format**:
+
 ```json
 {
   "id": "msg_...",
@@ -359,7 +388,9 @@ Implement each provider using the abstractions.
       "type": "tool_use",
       "id": "toolu_...",
       "name": "tool_name",
-      "input": { /* tool arguments */ }
+      "input": {
+        /* tool arguments */
+      }
     }
   ],
   "model": "claude-sonnet-4-0",
@@ -371,30 +402,35 @@ Implement each provider using the abstractions.
 ```
 
 **Key Differences from OpenAI**:
+
 - System prompt is separate field, not a message
 - Tool calls are in content array, not separate field
 - Tool results sent as user messages with `tool_result` type
 - No `total_tokens` in usage (calculate as sum)
 
 **Files to Create**:
+
 - `providers/anthropic` - Anthropic provider implementation
 
 #### Task 3.3: Implement GitHub Copilot Provider
 
 **Copilot Specifics**:
+
 - Base URL: `https://api.githubcopilot.com/chat/completions`
 - Authentication: OAuth device flow (complex)
 - Uses OpenAI-compatible format
-- Default model: `gpt-4o`
+- Default model: `gpt-5-mini`
 - Context limits: 128K tokens
 - Streaming: SSE format
 - Tool calls: OpenAI-compatible
 
 **Environment Variables**:
+
 - `GITHUB_TOKEN` (optional, for OAuth)
 - `COPILOT_API_KEY` (alternative auth method)
 
 **OAuth Device Flow** (required for Copilot):
+
 1. Request device code from GitHub
 2. User visits URL and enters code
 3. Poll for access token
@@ -403,12 +439,14 @@ Implement each provider using the abstractions.
 **Note**: OpenAI-compatible format, can reuse OpenAI formatters.
 
 **Files to Create**:
+
 - `providers/copilot` - Copilot provider with OAuth
 - `providers/oauth` - OAuth device flow utilities
 
 #### Task 3.4: Implement Ollama Provider
 
 **Ollama Specifics**:
+
 - Base URL: `http://localhost:11434/api/chat` (default)
 - Authentication: None (local deployment)
 - Uses OpenAI-compatible format (with variations)
@@ -418,29 +456,35 @@ Implement each provider using the abstractions.
 - Tool calls: Supported in recent versions
 
 **Environment Variables**:
+
 - `OLLAMA_HOST` (optional, default: `http://localhost:11434`)
 - `OLLAMA_MODEL` (required, no default)
 
 **Request Format** (OpenAI-compatible):
+
 ```json
 {
   "model": "qwen3",
   "messages": [
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
+    { "role": "system", "content": "..." },
+    { "role": "user", "content": "..." }
   ],
-  "tools": [ /* OpenAI format */ ],
+  "tools": [
+    /* OpenAI format */
+  ],
   "stream": false
 }
 ```
 
 **Key Differences**:
+
 - No authentication required
 - Model must exist locally (pulled via `ollama pull`)
 - May have limited tool calling support (model-dependent)
 - Errors are simpler (connection refused if not running)
 
 **Files to Create**:
+
 - `providers/ollama` - Ollama provider implementation
 
 #### Task 3.5: Testing Requirements
@@ -481,6 +525,7 @@ Add streaming response support for real-time output.
 #### Task 4.1: Define Streaming Interface
 
 **Streaming Types**:
+
 ```
 struct ResponseChunk {
     delta: string (incremental content)
@@ -502,6 +547,7 @@ interface StreamingProvider extends Provider {
 ```
 
 **Files to Create**:
+
 - `providers/streaming` - Streaming types and utilities
 
 #### Task 4.2: Implement SSE Parsing
@@ -509,6 +555,7 @@ interface StreamingProvider extends Provider {
 Server-Sent Events (SSE) parser for OpenAI/Anthropic/Copilot:
 
 **SSE Format**:
+
 ```
 data: {"id":"1","choices":[{"delta":{"content":"Hello"}}]}
 
@@ -518,12 +565,14 @@ data: [DONE]
 ```
 
 **Parser Features**:
+
 - Line-by-line parsing
 - JSON deserialization per chunk
 - Handle `[DONE]` marker
 - Error recovery (skip malformed chunks)
 
 **Files to Create**:
+
 - `providers/sse_parser` - SSE stream parsing
 
 #### Task 4.3: Implement Streaming for Each Provider
@@ -531,24 +580,29 @@ data: [DONE]
 Add streaming methods to each provider:
 
 **OpenAI Streaming**:
+
 - Set `"stream": true` in request
 - Parse SSE response
 - Accumulate deltas for tool calls (JSON may be split)
 
 **Anthropic Streaming**:
+
 - Set `"stream": true` in request
 - Parse SSE response (different event types)
 - Handle `content_block_start`, `content_block_delta`, `content_block_stop`
 
 **Copilot Streaming**:
+
 - Same as OpenAI (compatible format)
 
 **Ollama Streaming**:
+
 - Set `"stream": true` in request
 - Parse newline-delimited JSON (not SSE)
 - Each line is a complete JSON object
 
 **Files to Update**:
+
 - `providers/openai` - Add stream method
 - `providers/anthropic` - Add stream method
 - `providers/copilot` - Add stream method
@@ -586,6 +640,7 @@ Create factory pattern for provider instantiation.
 #### Task 5.1: Implement Provider Factory
 
 **Factory Pattern**:
+
 ```
 struct ProviderFactory {
     registered_providers: map<string, ProviderConstructor>
@@ -615,6 +670,7 @@ struct ConfigKey {
 ```
 
 **Files to Create**:
+
 - `providers/factory` - Provider factory implementation
 - `providers/registry` - Provider registration
 
@@ -623,12 +679,14 @@ struct ConfigKey {
 Add metadata to each provider for discovery:
 
 **Metadata Examples**:
+
 - OpenAI: Known models (gpt-4o, gpt-4o-mini, etc.), context limits
 - Anthropic: Claude models, 200K context
 - Copilot: OpenAI models via GitHub
 - Ollama: User-configured, local models
 
 **Files to Update**:
+
 - Each provider implementation - Add metadata method
 
 #### Task 5.3: Testing Requirements
@@ -662,6 +720,7 @@ Additional features for production use.
 #### Task 6.1: Usage Tracking and Cost Estimation
 
 **Usage Tracking**:
+
 ```
 struct ProviderUsage {
     model: string
@@ -678,23 +737,27 @@ interface CostEstimator {
 ```
 
 **Cost Data** (approximate, update regularly):
+
 - OpenAI gpt-4o: $2.50/1M input, $10/1M output
 - Anthropic Claude Sonnet: $3/1M input, $15/1M output
 - Copilot: Included in subscription
 - Ollama: Free (local)
 
 **Files to Create**:
+
 - `providers/usage_tracking` - Usage types and tracking
 - `providers/pricing` - Cost estimation utilities
 
 #### Task 6.2: Caching Support
 
 **Cache Types**:
+
 - Prompt caching (Anthropic, OpenAI beta)
 - Response caching (for identical requests)
 - Tool definition caching
 
 **Files to Create**:
+
 - `providers/cache` - Caching utilities (optional)
 
 #### Task 6.3: Testing Requirements
@@ -721,17 +784,17 @@ Total: ~650 lines
 
 ## Open Questions
 
-1. **Authentication Storage**: Should API keys be stored in environment variables only, or support config files / system keychains? *Recommendation: Environment variables + optional keychain (platform-specific).*
+1. **Authentication Storage**: Should API keys be stored in environment variables only, or support config files / system keychains? _Recommendation: Environment variables + optional keychain (platform-specific)._
 
-2. **Fast Model Fallback**: Should providers automatically fall back to regular model if fast model fails? *Recommendation: Yes, with warning log.*
+2. **Fast Model Fallback**: Should providers automatically fall back to regular model if fast model fails? _Recommendation: Yes, with warning log._
 
-3. **Tool Call Limits**: Should we limit the number of tool calls per response to prevent loops? *Recommendation: Yes, configurable limit (default: 10).*
+3. **Tool Call Limits**: Should we limit the number of tool calls per response to prevent loops? _Recommendation: Yes, configurable limit (default: 10)._
 
-4. **Streaming Buffer Size**: What buffer size for streaming responses? *Recommendation: 8KB chunks, configurable.*
+4. **Streaming Buffer Size**: What buffer size for streaming responses? _Recommendation: 8KB chunks, configurable._
 
-5. **Retry on Streaming Errors**: Should streaming requests be retried if they fail mid-stream? *Recommendation: No, return error to caller.*
+5. **Retry on Streaming Errors**: Should streaming requests be retried if they fail mid-stream? _Recommendation: No, return error to caller._
 
-6. **Model Validation**: Should we validate that the configured model exists before making requests? *Recommendation: No, let provider return error (models change frequently).*
+6. **Model Validation**: Should we validate that the configured model exists before making requests? _Recommendation: No, let provider return error (models change frequently)._
 
 ## Implementation Estimates
 
@@ -852,4 +915,4 @@ Total: ~650 lines
 
 ---
 
-*This plan is designed to be language-agnostic. Adapt types, syntax, and patterns to your chosen language while maintaining the overall architecture and phasing strategy.*
+_This plan is designed to be language-agnostic. Adapt types, syntax, and patterns to your chosen language while maintaining the overall architecture and phasing strategy._

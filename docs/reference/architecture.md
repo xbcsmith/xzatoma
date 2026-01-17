@@ -168,7 +168,7 @@ The agent enforces a maximum iteration limit (configured via `agent.max_turns`, 
 
 | Provider | Model       | Context Window | Safe Limit (80%) |
 | -------- | ----------- | -------------- | ---------------- |
-| Copilot  | gpt-4o      | 128,000 tokens | 102,400 tokens   |
+| Copilot  | gpt-5-mini  | 128,000 tokens | 102,400 tokens   |
 | Copilot  | gpt-4o-mini | 128,000 tokens | 102,400 tokens   |
 | Ollama   | qwen3       | 32,768 tokens  | 26,214 tokens    |
 | Ollama   | llama3      | 8,192 tokens   | 6,553 tokens     |
@@ -579,7 +579,7 @@ provider:
   type: copilot # or 'ollama'
 
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
 
   ollama:
     host: localhost:11434
@@ -635,7 +635,7 @@ xzatoma --provider copilot  # Uses copilot (CLI wins)
 
 ```bash
 XZATOMA_PROVIDER=copilot
-COPILOT_MODEL=gpt-4o
+COPILOT_MODEL=gpt-5-mini
 OLLAMA_HOST=localhost:11434
 OLLAMA_MODEL=qwen3
 ```

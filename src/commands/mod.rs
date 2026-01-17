@@ -344,16 +344,24 @@ pub mod auth {
 
         match provider.as_str() {
             "copilot" => {
-                // Validate configuration by creating provider instance. The copilot
-                // provider contains a `authenticate` implementation but it is private.
-                // We ensure config is valid and print instructions for the user.
-                // Validate provider configuration using the helper
-                let _ = CopilotProvider::new(config.provider.copilot.clone())?;
-                println!("Copilot: follow the device flow instructions shown by the provider.");
-                println!(
-                    "If credentials are already cached (keyring), you may be authenticated already"
-                );
-                Ok(())
+                // Create the provider and run its authentication flow. The provider
+                // will print the device-code verification URI + user code and will
+                // poll until the user authorizes the device (or an error/timeout occurs).
+                let provider = CopilotProvider::new(config.provider.copilot.clone())?;
+
+                println!("Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)...");
+                // Run the provider's authenticate flow and surface any errors to the user.
+                match provider.authenticate().await {
+                    Ok(_) => {
+                        println!("Copilot: authentication successful — token cached in the system keyring.");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // Provide a clear, immediate message and propagate the error.
+                        eprintln!("Copilot: authentication failed: {}", e);
+                        Err(e)
+                    }
+                }
             }
             "ollama" => {
                 println!("Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set.");

@@ -64,6 +64,7 @@ Phase 1 delivers:
 Created Cargo.toml with all required dependencies:
 
 **Core Dependencies:**
+
 - `clap` - CLI argument parsing with derive API
 - `serde` / `serde_json` / `serde_yaml` - Configuration and serialization
 - `tokio` - Async runtime with full features
@@ -77,6 +78,7 @@ Created Cargo.toml with all required dependencies:
 - `regex` - Pattern matching
 
 **Dev Dependencies:**
+
 - `mockall` - Mocking framework
 - `tempfile` - Temporary file/directory management
 - `tokio-test` - Async test utilities
@@ -107,6 +109,7 @@ pub enum XzatomaError {
 ```
 
 **Key Features:**
+
 - Descriptive error messages for all failure modes
 - Automatic conversion from standard library errors
 - Result type alias using anyhow for rich error context
@@ -117,12 +120,14 @@ pub enum XzatomaError {
 Implemented hierarchical configuration system:
 
 **Configuration Hierarchy:**
+
 1. Default values (hardcoded fallbacks)
 2. Configuration file (YAML)
-3. Environment variables (XZATOMA_* prefix)
+3. Environment variables (XZATOMA\_\* prefix)
 4. CLI arguments (highest priority)
 
 **Configuration Structure:**
+
 - `ProviderConfig` - AI provider selection and settings
 - `AgentConfig` - Agent behavior and limits
 - `ConversationConfig` - Token management and pruning
@@ -131,6 +136,7 @@ Implemented hierarchical configuration system:
 - `ExecutionMode` - Security mode enum (Interactive, RestrictedAutonomous, FullAutonomous)
 
 **Key Features:**
+
 - Comprehensive validation with descriptive error messages
 - Serde serialization/deserialization
 - Environment variable overrides
@@ -142,20 +148,23 @@ Implemented hierarchical configuration system:
 Implemented command-line interface using clap derive API:
 
 **Commands:**
+
 - `chat` - Interactive chat mode with optional provider override
 - `run` - Execute a plan file or direct prompt
 - `auth` - Authenticate with a provider
 
 **Global Options:**
+
 - `--config` - Path to configuration file (default: config/config.yaml)
 - `--verbose` - Enable verbose logging
 
 **Example Usage:**
+
 ```bash
 xzatoma chat --provider ollama
 xzatoma run --plan plan.yaml
 xzatoma run --prompt "List files in current directory"
-xzatoma auth copilot
+xzatoma auth --provider copilot
 ```
 
 ### 5. Module Architecture
@@ -187,6 +196,7 @@ src/
 ```
 
 **Architectural Principles:**
+
 - Clear separation of concerns
 - Provider abstraction for multiple AI backends
 - Tool registry pattern for extensibility
@@ -198,6 +208,7 @@ src/
 Created comprehensive test utilities:
 
 **Test Utilities:**
+
 - `temp_dir()` - Create temporary test directories
 - `create_test_file()` - Create files with content
 - `assert_error_contains()` - Assert error messages
@@ -205,6 +216,7 @@ Created comprehensive test utilities:
 - `test_config_yaml()` - Generate test YAML
 
 **Test Coverage:**
+
 - 101 unit tests implemented
 - All tests passing
 - Coverage includes:
@@ -233,6 +245,7 @@ pub trait Provider: Send + Sync {
 ```
 
 **Message Types:**
+
 - `Message` - Conversation message with role, content, optional tool calls
 - `MessageRole` - User, Assistant, System, Tool
 - `ToolCall` - Tool invocation with id, name, arguments
@@ -243,11 +256,13 @@ pub trait Provider: Send + Sync {
 Implemented tool definition and registry:
 
 **Tool Structure:**
+
 - `Tool` - Name, description, JSON schema parameters
 - `ToolResult` - Success/error, output, truncation, metadata
 - `ToolRegistry` - HashMap-based tool storage
 
 **Key Features:**
+
 - OpenAI-compatible tool definitions
 - Automatic output truncation to prevent context overflow
 - Metadata support for execution details
@@ -273,6 +288,7 @@ test result: ok. 101 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 **Coverage Areas:**
+
 - Error handling (18 tests)
 - Configuration (18 tests)
 - CLI parsing (11 tests)
@@ -287,6 +303,7 @@ test result: ok. 101 passed; 0 failed; 0 ignored; 0 measured
 Estimated coverage: ~85%
 
 **Well-Covered:**
+
 - Configuration validation
 - Error type conversions
 - CLI argument parsing
@@ -294,6 +311,7 @@ Estimated coverage: ~85%
 - Message serialization
 
 **Future Coverage (Phase 2+):**
+
 - Agent execution loop
 - Conversation token tracking
 - Provider API calls
@@ -399,6 +417,7 @@ Phase 1 provides foundation only. The following are placeholder implementations:
 5. **Security Validation**: Command validation returns Ok for all inputs
 
 These will be implemented in subsequent phases:
+
 - Phase 2: Agent Core with Token Management
 - Phase 3: Security and Terminal Validation
 - Phase 4: Provider Implementations
@@ -418,6 +437,7 @@ None identified. Code follows best practices and quality standards.
 ### System Dependencies
 
 None required for Phase 1. Future phases will require:
+
 - GitHub Copilot authentication (Phase 4)
 - Ollama server (Phase 4, optional)
 
@@ -432,6 +452,7 @@ None required for Phase 1. Future phases will require:
 ### Phase 2 Preview
 
 Phase 2 will implement:
+
 1. Conversation token tracking and pruning
 2. Agent execution loop with iteration limits
 3. Tool execution with ToolExecutor trait

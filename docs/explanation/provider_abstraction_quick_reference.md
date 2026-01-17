@@ -6,12 +6,12 @@ This is a quick reference for implementing a provider abstraction layer that sup
 
 ## Provider Comparison
 
-| Provider | Auth Method | Base URL | Default Model | Context Limit | Streaming | Tool Calls |
-|----------|-------------|----------|---------------|---------------|-----------|------------|
-| OpenAI | Bearer Token | api.openai.com | gpt-4o | 128K | SSE | Native |
-| Anthropic | API Key Header | api.anthropic.com | claude-sonnet-4-0 | 200K | SSE | Tool Use Blocks |
-| Copilot | OAuth Device | api.githubcopilot.com | gpt-4o | 128K | SSE | OpenAI-compatible |
-| Ollama | None | localhost:11434 | User-configured | Model-dependent | JSON Lines | Limited |
+| Provider  | Auth Method    | Base URL              | Default Model     | Context Limit   | Streaming  | Tool Calls        |
+| --------- | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
+| OpenAI    | Bearer Token   | api.openai.com        | gpt-4o            | 128K            | SSE        | Native            |
+| Anthropic | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Tool Use Blocks   |
+| Copilot   | OAuth Device   | api.githubcopilot.com | gpt-5-mini        | 128K            | SSE        | OpenAI-compatible |
+| Ollama    | None           | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
 
 ## Core Interface (Pseudo-code)
 
@@ -45,6 +45,7 @@ struct Tool {
 ## Environment Variables
 
 ### OpenAI
+
 ```bash
 OPENAI_API_KEY=sk-...          # Required
 OPENAI_HOST=...                # Optional, default: https://api.openai.com
@@ -52,18 +53,21 @@ OPENAI_TIMEOUT=600             # Optional, seconds
 ```
 
 ### Anthropic
+
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...   # Required
 ANTHROPIC_HOST=...             # Optional, default: https://api.anthropic.com
 ```
 
 ### GitHub Copilot
+
 ```bash
 GITHUB_TOKEN=ghp_...           # Optional, for OAuth
 COPILOT_API_KEY=...            # Alternative auth
 ```
 
 ### Ollama
+
 ```bash
 OLLAMA_HOST=http://localhost:11434  # Optional
 OLLAMA_MODEL=qwen3                  # Required
@@ -74,11 +78,13 @@ OLLAMA_MODEL=qwen3                  # Required
 ### System Prompt Handling
 
 **OpenAI/Copilot/Ollama**: System prompt as first message
+
 ```json
-{"role": "system", "content": "You are a helpful assistant"}
+{ "role": "system", "content": "You are a helpful assistant" }
 ```
 
 **Anthropic**: System prompt as separate field
+
 ```json
 {
   "system": "You are a helpful assistant",
@@ -89,6 +95,7 @@ OLLAMA_MODEL=qwen3                  # Required
 ### Tool Call Format
 
 **OpenAI/Copilot**: Tool calls in separate field
+
 ```json
 {
   "message": {
@@ -107,6 +114,7 @@ OLLAMA_MODEL=qwen3                  # Required
 ```
 
 **Anthropic**: Tool calls in content array
+
 ```json
 {
   "content": [
@@ -124,11 +132,13 @@ OLLAMA_MODEL=qwen3                  # Required
 ### Tool Results
 
 **OpenAI/Copilot**: Tool role message
+
 ```json
-{"role": "tool", "tool_call_id": "call_123", "content": "result"}
+{ "role": "tool", "tool_call_id": "call_123", "content": "result" }
 ```
 
 **Anthropic**: User message with tool_result
+
 ```json
 {
   "role": "user",
@@ -157,6 +167,7 @@ NotImplementedError     -> Feature not supported
 ## Streaming
 
 ### SSE Format (OpenAI/Anthropic/Copilot)
+
 ```
 data: {"choices":[{"delta":{"content":"Hello"}}]}
 
@@ -166,6 +177,7 @@ data: [DONE]
 ```
 
 ### JSON Lines Format (Ollama)
+
 ```
 {"message":{"content":"Hello"}}
 {"message":{"content":" world"}}

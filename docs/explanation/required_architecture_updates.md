@@ -11,6 +11,7 @@ This document specifies the exact changes needed to docs/reference/architecture.
 **Location**: Core Components → Agent Core → Architecture Pattern
 
 **Current Code**:
+
 ```rust
 impl Agent {
     pub async fn execute(&mut self, instruction: String) -> Result<String> {
@@ -105,6 +106,7 @@ pub enum XzatomaError {
 **Location**: After Security Considerations → Terminal Execution
 
 **Current Content**:
+
 ```markdown
 ### Terminal Execution
 
@@ -115,7 +117,7 @@ pub enum XzatomaError {
 
 **Required Change**: Replace with comprehensive section:
 
-```markdown
+````markdown
 ### Terminal Execution
 
 #### Security Model
@@ -123,11 +125,13 @@ pub enum XzatomaError {
 **Execution Modes**:
 
 1. **Interactive Mode** (default for `xzatoma chat`)
+
    - Requires user confirmation before executing each command
    - Shows full command to user
    - User can approve, modify, or reject
 
 2. **Restricted Autonomous Mode** (default for `xzatoma run`)
+
    - Only safe read-only commands allowed without confirmation
    - Allowlist: `ls`, `cat`, `head`, `tail`, `grep`, `find`, `echo`, `pwd`, `which`, `type`
    - Other commands require confirmation
@@ -140,6 +144,7 @@ pub enum XzatomaError {
 #### Command Validation
 
 **Denylist** (rejected in all modes):
+
 - `rm -rf /` or `rm -rf /*`
 - `dd if=/dev/zero`
 - `mkfs.*`
@@ -148,12 +153,14 @@ pub enum XzatomaError {
 - Commands containing `eval` or `exec` with untrusted input
 
 **Path Validation**:
+
 - All file paths must be within current working directory or subdirectories
 - Reject absolute paths starting with `/` unless explicitly allowed
 - Reject `..` path traversal beyond working directory root
 - Symlinks are followed but final target must be within allowed directory
 
 **Command Parsing**:
+
 ```rust
 pub struct CommandValidator {
     mode: ExecutionMode,
@@ -201,25 +208,30 @@ impl CommandValidator {
     }
 }
 ```
+````
 
 #### Safety Mechanisms
 
 **Timeouts**:
+
 - Default timeout: 30 seconds
 - Configurable via `agent.command_timeout_seconds` in config
 - Kill process tree on timeout
 
 **Output Limits**:
+
 - Maximum stdout: 10 MB (configurable)
 - Maximum stderr: 1 MB (configurable)
 - Truncate with warning if exceeded
 
 **Audit Trail**:
+
 - All commands logged to `~/.xzatoma/audit.log`
 - Format: ISO 8601 timestamp, working directory, command, exit code, duration
 - Example: `2025-01-15T10:30:45Z | /home/user/project | ls -la | exit:0 | 0.023s`
 
 **Process Isolation**:
+
 - Commands run in separate process group
 - No shell expansion (exec directly, not via `/bin/sh -c`)
 - Environment variables sanitized (only safe vars passed)
@@ -229,10 +241,10 @@ impl CommandValidator {
 ```yaml
 agent:
   terminal:
-    default_mode: restricted_autonomous  # interactive | restricted_autonomous | full_autonomous
+    default_mode: restricted_autonomous # interactive | restricted_autonomous | full_autonomous
     timeout_seconds: 30
-    max_stdout_bytes: 10485760  # 10 MB
-    max_stderr_bytes: 1048576   # 1 MB
+    max_stdout_bytes: 10485760 # 10 MB
+    max_stderr_bytes: 1048576 # 1 MB
     allowlist:
       - ls
       - cat
@@ -242,7 +254,8 @@ agent:
       - "rm -rf"
       - "sudo"
 ```
-```
+
+````
 
 ### Update 3: Add Conversation Management Section
 
@@ -270,7 +283,7 @@ agent:
 
 | Provider | Model | Context Window | Safe Limit (80%) |
 |----------|-------|----------------|------------------|
-| Copilot  | gpt-4o | 128,000 tokens | 102,400 tokens |
+| Copilot  | gpt-5-mini | 128,000 tokens | 102,400 tokens |
 | Copilot  | gpt-4o-mini | 128,000 tokens | 102,400 tokens |
 | Ollama   | qwen3 | 32,768 tokens | 26,214 tokens |
 | Ollama   | llama3 | 8,192 tokens | 6,553 tokens |
@@ -290,110 +303,113 @@ When conversation approaches token limit:
    - Summarize pruned content in special message
 
 3. **Pruning Example**:
-   ```
-   [PRUNED: 15 tool calls between turn 3-18. Summary: Listed files, read configuration, searched for TODO comments]
-   ```
+````
+
+[PRUNED: 15 tool calls between turn 3-18. Summary: Listed files, read configuration, searched for TODO comments]
+
+````
 
 **Implementation Pattern**:
 
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    token_count: usize,
-    max_tokens: usize,
-    min_retain_turns: usize,
+ messages: Vec<Message>,
+ token_count: usize,
+ max_tokens: usize,
+ min_retain_turns: usize,
 }
 
 impl Conversation {
-    pub fn add_user_message(&mut self, content: String) {
-        let message = Message::user(content);
-        self.messages.push(message);
-        self.update_token_count();
-        self.prune_if_needed();
-    }
+ pub fn add_user_message(&mut self, content: String) {
+     let message = Message::user(content);
+     self.messages.push(message);
+     self.update_token_count();
+     self.prune_if_needed();
+ }
 
-    pub fn add_assistant_message(&mut self, content: String, tool_calls: Option<Vec<ToolCall>>) {
-        let message = Message::assistant(content, tool_calls);
-        self.messages.push(message);
-        self.update_token_count();
-        self.prune_if_needed();
-    }
+ pub fn add_assistant_message(&mut self, content: String, tool_calls: Option<Vec<ToolCall>>) {
+     let message = Message::assistant(content, tool_calls);
+     self.messages.push(message);
+     self.update_token_count();
+     self.prune_if_needed();
+ }
 
-    pub fn add_tool_result(&mut self, tool_call_id: String, result: String) {
-        let message = Message::tool_result(tool_call_id, result);
-        self.messages.push(message);
-        self.update_token_count();
-        self.prune_if_needed();
-    }
+ pub fn add_tool_result(&mut self, tool_call_id: String, result: String) {
+     let message = Message::tool_result(tool_call_id, result);
+     self.messages.push(message);
+     self.update_token_count();
+     self.prune_if_needed();
+ }
 
-    fn update_token_count(&mut self) {
-        // Approximate: 1 token ≈ 4 characters
-        self.token_count = self.messages.iter()
-            .map(|m| m.content.len() / 4)
-            .sum();
-    }
+ fn update_token_count(&mut self) {
+     // Approximate: 1 token ≈ 4 characters
+     self.token_count = self.messages.iter()
+         .map(|m| m.content.len() / 4)
+         .sum();
+ }
 
-    fn prune_if_needed(&mut self) {
-        if self.token_count <= self.max_tokens {
-            return;
-        }
+ fn prune_if_needed(&mut self) {
+     if self.token_count <= self.max_tokens {
+         return;
+     }
 
-        // Find pruneable range (between system message and last N turns)
-        let system_end = 1; // First message is system
-        let recent_start = self.messages.len().saturating_sub(self.min_retain_turns * 2);
+     // Find pruneable range (between system message and last N turns)
+     let system_end = 1; // First message is system
+     let recent_start = self.messages.len().saturating_sub(self.min_retain_turns * 2);
 
-        if recent_start <= system_end {
-            // Can't prune enough - return error to user
-            return;
-        }
+     if recent_start <= system_end {
+         // Can't prune enough - return error to user
+         return;
+     }
 
-        // Create summary of pruned section
-        let pruned = &self.messages[system_end..recent_start];
-        let summary = self.create_summary(pruned);
+     // Create summary of pruned section
+     let pruned = &self.messages[system_end..recent_start];
+     let summary = self.create_summary(pruned);
 
-        // Remove pruned messages and add summary
-        self.messages.drain(system_end..recent_start);
-        self.messages.insert(system_end, Message::system(format!(
-            "[CONTEXT PRUNED: {}]", summary
-        )));
+     // Remove pruned messages and add summary
+     self.messages.drain(system_end..recent_start);
+     self.messages.insert(system_end, Message::system(format!(
+         "[CONTEXT PRUNED: {}]", summary
+     )));
 
-        self.update_token_count();
-    }
+     self.update_token_count();
+ }
 
-    fn create_summary(&self, messages: &[Message]) -> String {
-        let tool_calls: Vec<_> = messages.iter()
-            .filter_map(|m| m.tool_call.as_ref())
-            .map(|tc| tc.function.name.as_str())
-            .collect();
+ fn create_summary(&self, messages: &[Message]) -> String {
+     let tool_calls: Vec<_> = messages.iter()
+         .filter_map(|m| m.tool_call.as_ref())
+         .map(|tc| tc.function.name.as_str())
+         .collect();
 
-        format!(
-            "{} turns with {} tool calls: {}",
-            messages.len(),
-            tool_calls.len(),
-            tool_calls.join(", ")
-        )
-    }
+     format!(
+         "{} turns with {} tool calls: {}",
+         messages.len(),
+         tool_calls.len(),
+         tool_calls.join(", ")
+     )
+ }
 
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
-    }
+ pub fn messages(&self) -> &[Message] {
+     &self.messages
+ }
 
-    pub fn token_count(&self) -> usize {
-        self.token_count
-    }
+ pub fn token_count(&self) -> usize {
+     self.token_count
+ }
 }
-```
+````
 
 **Configuration**:
 
 ```yaml
 agent:
   conversation:
-    max_tokens: 100000  # Provider-specific limit
-    min_retain_turns: 5  # Always keep last N turns
-    prune_threshold: 0.8  # Prune when 80% of max_tokens
+    max_tokens: 100000 # Provider-specific limit
+    min_retain_turns: 5 # Always keep last N turns
+    prune_threshold: 0.8 # Prune when 80% of max_tokens
 ```
-```
+
+````
 
 ## Medium Priority Updates (Before Phase 2)
 
@@ -447,10 +463,11 @@ pub struct ResponseChunk {
     pub tool_call_delta: Option<ToolCallDelta>,
     pub finish_reason: Option<String>,
 }
-```
+````
 
 **Note**: Phase 1 implementation can use simplified trait. Streaming support added in Phase 3.
-```
+
+````
 
 ### Update 5: Define Structured Tool Results
 
@@ -528,17 +545,18 @@ impl ToolResult {
         }
     }
 }
-```
+````
 
 **Tool Execution Size Limits**:
 
 ```yaml
 agent:
   tools:
-    max_output_size: 1048576  # 1 MB per tool result
-    max_file_read_size: 10485760  # 10 MB for read_file
+    max_output_size: 1048576 # 1 MB per tool result
+    max_file_read_size: 10485760 # 10 MB for read_file
 ```
-```
+
+````
 
 ### Update 6: Add Plan Execution Strategy
 
@@ -553,13 +571,15 @@ Plans provide structured guidance to the agent but don't strictly constrain its 
 
 ### Plan Processing Flow
 
-```
+````
+
 1. Parse plan file (JSON/YAML/Markdown)
 2. Extract: goal, context, instructions
 3. Format as initial system prompt
 4. Begin agent execution loop
 5. AI uses instructions as guidance
-```
+
+````
 
 ### Plan to Prompt Translation
 
@@ -572,9 +592,10 @@ instructions:
   - List all API endpoint files
   - Extract function signatures
   - Create OpenAPI spec
-```
+````
 
 **Translated to Agent Prompt**:
+
 ```
 You are assisting with the following task:
 
@@ -593,12 +614,12 @@ Use the available tools to accomplish this goal. You may adapt your approach as 
 
 ### Plan vs Interactive Mode
 
-| Aspect | Plan Mode | Interactive Mode |
-|--------|-----------|------------------|
-| Input | Structured file | Natural language prompt |
-| Guidance | Explicit instructions | Open-ended |
-| Tracking | Can track instruction progress | Free-form conversation |
-| Use Case | Repeatable tasks | Exploratory tasks |
+| Aspect   | Plan Mode                      | Interactive Mode        |
+| -------- | ------------------------------ | ----------------------- |
+| Input    | Structured file                | Natural language prompt |
+| Guidance | Explicit instructions          | Open-ended              |
+| Tracking | Can track instruction progress | Free-form conversation  |
+| Use Case | Repeatable tasks               | Exploratory tasks       |
 
 ### Plan Instruction Tracking
 
@@ -626,6 +647,7 @@ impl PlanExecution {
 ```
 
 This allows the agent to report progress like:
+
 ```
 Completed 2/4 instructions:
 ✓ List all API endpoint files
@@ -633,7 +655,8 @@ Completed 2/4 instructions:
 ⧗ Create OpenAPI spec (in progress)
 ○ Generate documentation website
 ```
-```
+
+````
 
 ## Low Priority Updates (Can Address During Implementation)
 
@@ -666,7 +689,7 @@ Configuration is merged from multiple sources with the following precedence (hig
 # config.yaml
 provider:
   type: copilot
-```
+````
 
 ```bash
 # Environment variable overrides config.yaml
@@ -675,7 +698,8 @@ export XZATOMA_PROVIDER=ollama
 # Command-line overrides both
 xzatoma --provider copilot  # Uses copilot (CLI wins)
 ```
-```
+
+````
 
 ### Update 8: Clarify Agent Module Responsibilities
 
@@ -715,7 +739,7 @@ The `agent/` directory contains three focused modules:
 - `executor.rs`: Handles tool-specific concerns
 
 This keeps each module under 300 lines and focused on a single responsibility.
-```
+````
 
 ### Update 9: Add File Operations Details
 
@@ -727,29 +751,34 @@ This keeps each module under 300 lines and focused on a single responsibility.
 **File Operations** (detailed):
 
 - `list_files` - List files in directory
+
   - Parameters: `path` (string), `pattern` (optional glob), `recursive` (bool)
   - Pattern syntax: Standard glob (`*.rs`, `**/*.md`, `src/**/*.{rs,toml}`)
   - Returns: JSON array of file paths
   - Example: `["src/main.rs", "src/lib.rs"]`
 
 - `read_file` - Read file content
+
   - Parameters: `path` (string)
   - Returns: File contents as string
   - Limit: 10 MB (configurable)
   - Large files truncated with warning
 
 - `write_file` - Create or overwrite file
+
   - Parameters: `path` (string), `content` (string)
   - Creates parent directories if needed
   - Returns: Success message with file size
   - Safety: Requires confirmation in interactive mode
 
 - `create_directory` - Create directory
+
   - Parameters: `path` (string)
   - Creates parent directories (like `mkdir -p`)
   - Returns: Success message
 
 - `delete_path` - Delete file or directory
+
   - Parameters: `path` (string), `recursive` (bool)
   - Safety: Always requires confirmation in interactive mode
   - Safety: Rejected if path outside working directory
@@ -767,16 +796,16 @@ This keeps each module under 300 lines and focused on a single responsibility.
 
 **Expand Section**:
 
-```markdown
+````markdown
 ### Credentials
 
 **Storage Backends by Platform**:
 
-| Platform | Backend | Keyring Implementation |
-|----------|---------|------------------------|
-| macOS | Keychain | System Keychain |
-| Linux | Secret Service | gnome-keyring, kwallet, keepassxc |
-| Windows | Credential Manager | Windows Credential Manager |
+| Platform | Backend            | Keyring Implementation            |
+| -------- | ------------------ | --------------------------------- |
+| macOS    | Keychain           | System Keychain                   |
+| Linux    | Secret Service     | gnome-keyring, kwallet, keepassxc |
+| Windows  | Credential Manager | Windows Credential Manager        |
 
 **Storage Strategy**:
 
@@ -796,6 +825,7 @@ export GITHUB_TOKEN="ghp_..."
 # Ollama (if authentication enabled)
 export OLLAMA_API_KEY="..."
 ```
+````
 
 **Security Best Practices**:
 
@@ -841,6 +871,7 @@ pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
     Err(XzatomaError::MissingCredentials(provider.to_string()))
 }
 ```
+
 ```
 
 ## Summary of Required Changes
@@ -864,3 +895,4 @@ pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
 ## Implementation Note
 
 These updates should be incorporated into docs/reference/architecture.md before creating the phased implementation plan. The critical updates (1-3) are required for a safe and functional implementation.
+```

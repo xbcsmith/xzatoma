@@ -66,8 +66,10 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Auth { provider } => {
+            // Use CLI `--provider` override when supplied; otherwise fall back to the
+            // configured/default provider from `config`.
+            let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
             tracing::info!("Starting authentication for provider: {}", provider);
-            // `provider` is a String – pass it directly
             commands::auth::authenticate(config, provider).await?;
             Ok(())
         }
