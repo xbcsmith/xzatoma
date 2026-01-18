@@ -26,6 +26,9 @@ use crate::tools::{FileOpsTool, ToolExecutor, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
+// Chat mode types and utilities
+pub mod chat_mode;
+
 // Chat command handler
 pub mod chat {
     //! Interactive chat mode handler.
@@ -45,6 +48,8 @@ pub mod chat {
     ///
     /// * `config` - Global configuration (consumed)
     /// * `provider_name` - Optional override for the configured provider
+    /// * `mode` - Optional override for the chat mode ("planning" or "write")
+    /// * `safe` - If true, enable safety mode (always confirm dangerous operations)
     ///
     /// # Examples
     ///
@@ -53,9 +58,14 @@ pub mod chat {
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None).await?;
+    /// // chat::run_chat(Config::default(), None, None, false).await?;
     /// ```
-    pub async fn run_chat(config: Config, provider_name: Option<String>) -> Result<()> {
+    pub async fn run_chat(
+        config: Config,
+        provider_name: Option<String>,
+        _mode: Option<String>,
+        _safe: bool,
+    ) -> Result<()> {
         tracing::info!("Starting interactive chat mode");
 
         let provider_type = provider_name
@@ -158,7 +168,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None).await;
+            let res = run_chat(cfg, None, None, false).await;
             assert!(res.is_err());
         }
     }

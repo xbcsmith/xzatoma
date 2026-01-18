@@ -35,6 +35,14 @@ pub enum Commands {
         /// Override the provider from config (copilot, ollama)
         #[arg(short, long)]
         provider: Option<String>,
+
+        /// Chat mode: planning (read-only) or write (read/write)
+        #[arg(short, long, default_value = "planning")]
+        mode: Option<String>,
+
+        /// Enable safety mode (always confirm dangerous operations)
+        #[arg(short = 's', long)]
+        safe: bool,
     },
 
     /// Execute a plan or prompt
@@ -117,7 +125,12 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "chat", "--provider", "ollama"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Chat { provider } = cli.command {
+        if let Commands::Chat {
+            provider,
+            mode: _,
+            safe: _,
+        } = cli.command
+        {
             assert_eq!(provider, Some("ollama".to_string()));
         } else {
             panic!("Expected Chat command");
@@ -203,6 +216,112 @@ mod tests {
             assert_eq!(provider, None);
         } else {
             panic!("Expected Auth command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_mode_planning() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--mode", "planning"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat {
+            provider,
+            mode,
+            safe,
+        } = cli.command
+        {
+            assert_eq!(provider, None);
+            assert_eq!(mode, Some("planning".to_string()));
+            assert!(!safe);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_mode_write() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--mode", "write"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat {
+            provider: _,
+            mode,
+            safe: _,
+        } = cli.command
+        {
+            assert_eq!(mode, Some("write".to_string()));
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_safe_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--safe"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat {
+            provider: _,
+            mode,
+            safe,
+        } = cli.command
+        {
+            assert!(safe);
+            assert_eq!(mode, Some("planning".to_string())); // default mode
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_safe_short_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "-s"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat { safe, .. } = cli.command {
+            assert!(safe);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_mode_default() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat { mode, safe, .. } = cli.command {
+            assert_eq!(mode, Some("planning".to_string())); // default is planning
+            assert!(!safe); // default is no safety flag
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_all_flags() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "chat",
+            "--provider",
+            "ollama",
+            "--mode",
+            "write",
+            "--safe",
+        ]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat {
+            provider,
+            mode,
+            safe,
+        } = cli.command
+        {
+            assert_eq!(provider, Some("ollama".to_string()));
+            assert_eq!(mode, Some("write".to_string()));
+            assert!(safe);
+        } else {
+            panic!("Expected Chat command");
         }
     }
 

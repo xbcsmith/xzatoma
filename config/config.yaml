@@ -52,3 +52,12 @@ agent:
     max_stdout_bytes: 1048576
     # Maximum stderr size (bytes)
     max_stderr_bytes: 262144
+
+  # Chat mode settings
+  chat:
+    # Default chat mode: planning (read-only) or write (read/write)
+    default_mode: planning
+    # Default safety mode: confirm (always confirm) or yolo (never confirm)
+    default_safety: confirm
+    # Allow switching between modes during a session
+    allow_mode_switching: true

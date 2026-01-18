@@ -33,15 +33,25 @@ async fn main() -> Result<()> {
 
     // Execute command
     match cli.command {
-        Commands::Chat { provider } => {
+        Commands::Chat {
+            provider,
+            mode,
+            safe,
+        } => {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
                 tracing::debug!("Using provider override: {}", p);
             }
+            if let Some(m) = &mode {
+                tracing::debug!("Using mode override: {}", m);
+            }
+            if safe {
+                tracing::debug!("Safety mode enabled");
+            }
 
             // Delegate to the chat command handler
             // Moves `config` into the handler (match arms are exclusive)
-            commands::chat::run_chat(config, provider).await?;
+            commands::chat::run_chat(config, provider, mode, safe).await?;
             Ok(())
         }
         Commands::Run {

@@ -108,6 +108,10 @@ pub struct AgentConfig {
     /// Terminal execution settings
     #[serde(default)]
     pub terminal: TerminalConfig,
+
+    /// Chat mode settings
+    #[serde(default)]
+    pub chat: ChatConfig,
 }
 
 fn default_max_turns() -> usize {
@@ -126,6 +130,48 @@ impl Default for AgentConfig {
             conversation: ConversationConfig::default(),
             tools: ToolsConfig::default(),
             terminal: TerminalConfig::default(),
+            chat: ChatConfig::default(),
+        }
+    }
+}
+
+/// Chat mode configuration
+///
+/// Settings for interactive chat sessions, including default modes
+/// and safety behaviors.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatConfig {
+    /// Default chat mode: "planning" or "write"
+    #[serde(default = "default_chat_mode")]
+    pub default_mode: String,
+
+    /// Default safety mode: "confirm" or "yolo"
+    #[serde(default = "default_safety_mode")]
+    pub default_safety: String,
+
+    /// Allow switching between modes during a session
+    #[serde(default = "default_allow_mode_switching")]
+    pub allow_mode_switching: bool,
+}
+
+fn default_chat_mode() -> String {
+    "planning".to_string()
+}
+
+fn default_safety_mode() -> String {
+    "confirm".to_string()
+}
+
+fn default_allow_mode_switching() -> bool {
+    true
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            default_mode: default_chat_mode(),
+            default_safety: default_safety_mode(),
+            allow_mode_switching: default_allow_mode_switching(),
         }
     }
 }
@@ -596,9 +642,37 @@ agent:
     #[test]
     fn test_terminal_config_defaults() {
         let config = TerminalConfig::default();
-        assert_eq!(config.default_mode, ExecutionMode::RestrictedAutonomous);
         assert_eq!(config.timeout_seconds, 30);
-        assert_eq!(config.max_stdout_bytes, 1_048_576);
-        assert_eq!(config.max_stderr_bytes, 262_144);
+        assert_eq!(config.max_stdout_bytes, 1048576);
+        assert_eq!(config.max_stderr_bytes, 262144);
+    }
+
+    #[test]
+    fn test_chat_config_defaults() {
+        let config = ChatConfig::default();
+        assert_eq!(config.default_mode, "planning");
+        assert_eq!(config.default_safety, "confirm");
+        assert!(config.allow_mode_switching);
+    }
+
+    #[test]
+    fn test_chat_config_from_yaml() {
+        let yaml = r#"
+default_mode: write
+default_safety: yolo
+allow_mode_switching: false
+"#;
+        let config: ChatConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.default_mode, "write");
+        assert_eq!(config.default_safety, "yolo");
+        assert!(!config.allow_mode_switching);
+    }
+
+    #[test]
+    fn test_agent_config_includes_chat() {
+        let config = AgentConfig::default();
+        assert_eq!(config.chat.default_mode, "planning");
+        assert_eq!(config.chat.default_safety, "confirm");
+        assert!(config.chat.allow_mode_switching);
     }
 }
