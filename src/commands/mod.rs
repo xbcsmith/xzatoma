@@ -17,10 +17,13 @@ providers, tools, and the agent.
 #![allow(unused_imports)]
 
 use crate::agent::Agent;
+use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
+use crate::commands::special_commands::{parse_special_command, print_help, SpecialCommand};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
-use crate::providers::{CopilotProvider, OllamaProvider};
+use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::tools::plan::PlanParser;
+use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::{FileOpsTool, ToolExecutor, ToolRegistry};
 use std::path::Path;
@@ -28,6 +31,9 @@ use std::sync::Arc;
 
 // Chat mode types and utilities
 pub mod chat_mode;
+
+// Special commands parser for mode switching
+pub mod special_commands;
 
 // Chat command handler
 pub mod chat {
@@ -63,8 +69,8 @@ pub mod chat {
     pub async fn run_chat(
         config: Config,
         provider_name: Option<String>,
-        _mode: Option<String>,
-        _safe: bool,
+        mode: Option<String>,
+        safe: bool,
     ) -> Result<()> {
         tracing::info!("Starting interactive chat mode");
 
@@ -72,61 +78,76 @@ pub mod chat {
             .as_deref()
             .unwrap_or(&config.provider.provider_type);
 
-        // Tool registry and tools
-        let mut tools = ToolRegistry::new();
         let working_dir = std::env::current_dir()?;
 
-        // Register FileOps tool (safe defaults)
-        let file_tool = FileOpsTool::new(working_dir.clone(), config.agent.tools.clone());
-        let file_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(file_tool);
-        tools.register("file_ops", file_tool_executor);
+        // Initialize mode state from command-line arguments
+        let initial_mode = mode
+            .as_deref()
+            .and_then(|m| ChatMode::parse_str(m).ok())
+            .unwrap_or(ChatMode::Planning);
 
-        // Register Terminal tool (validated)
-        let terminal_validator =
-            CommandValidator::new(config.agent.terminal.default_mode, working_dir.clone());
-        let terminal_tool = TerminalTool::new(terminal_validator, config.agent.terminal.clone());
-        let terminal_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(terminal_tool);
-        tools.register("terminal", terminal_tool_executor);
-
-        // Build the Agent using a concrete provider implementation
-        let agent = match provider_type {
-            "ollama" => {
-                let p = OllamaProvider::new(config.provider.ollama.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            "copilot" => {
-                let p = CopilotProvider::new(config.provider.copilot.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            other => {
-                return Err(XzatomaError::Config(format!("Unknown provider: {}", other)).into());
-            }
+        let initial_safety = if safe {
+            SafetyMode::AlwaysConfirm
+        } else {
+            SafetyMode::NeverConfirm
         };
 
-        // Currently we don't register a TerminalTool (*) here because the terminal tool
-        // implementation lives in `tools/terminal.rs` and is not registered by default.
-        //
-        // (*) If a TerminalTool becomes available, register it here as well.
+        let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
 
-        // Create readline instance for interactive CLI
+        // Build initial tool registry based on mode
+        let tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
+
+        // Create provider
+        let provider = create_provider(provider_type, &config.provider)?;
+        let mut agent = Agent::new_boxed(provider, tools, config.agent.clone())?;
+
+        // Create readline instance
         let mut rl = DefaultEditor::new()?;
-        println!("XZatoma Interactive Mode");
-        println!("Type 'exit' or 'quit' to exit\n");
+        println!("XZatoma Interactive Chat Mode");
+        println!("Type '/help' for available commands, 'exit' to quit\n");
 
         loop {
-            match rl.readline(">> ") {
+            let prompt = mode_state.format_prompt();
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
                     }
 
-                    if trimmed == "exit" || trimmed == "quit" {
-                        println!("Goodbye!");
-                        break;
+                    // Check for special commands first
+                    match parse_special_command(trimmed) {
+                        SpecialCommand::SwitchMode(new_mode) => {
+                            handle_mode_switch(
+                                &mut agent,
+                                &mut mode_state,
+                                new_mode,
+                                &config,
+                                &working_dir,
+                                provider_type,
+                            )?;
+                            continue;
+                        }
+                        SpecialCommand::SwitchSafety(new_safety) => {
+                            let old_safety = mode_state.switch_safety(new_safety);
+                            println!("Switched from {} to {} mode\n", old_safety, new_safety);
+                            continue;
+                        }
+                        SpecialCommand::ShowStatus => {
+                            println!("\n{}\n", mode_state.status());
+                            continue;
+                        }
+                        SpecialCommand::Help => {
+                            print_help();
+                            continue;
+                        }
+                        SpecialCommand::Exit => break,
+                        SpecialCommand::None => {
+                            // Regular agent prompt
+                        }
                     }
 
-                    // History for convenience
+                    // Add to history
                     rl.add_history_entry(trimmed)?;
 
                     // Execute the prompt via the agent
@@ -154,6 +175,89 @@ pub mod chat {
             }
         }
 
+        println!("Goodbye!");
+        Ok(())
+    }
+
+    /// Build a tool registry for the current chat mode
+    ///
+    /// # Arguments
+    ///
+    /// * `mode_state` - The current mode state
+    /// * `config` - Global configuration
+    /// * `working_dir` - Working directory for tool operations
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured ToolRegistry or an error
+    fn build_tools_for_mode(
+        mode_state: &ChatModeState,
+        config: &Config,
+        working_dir: &std::path::Path,
+    ) -> Result<ToolRegistry> {
+        let builder = ToolRegistryBuilder::new(
+            mode_state.chat_mode,
+            mode_state.safety_mode,
+            working_dir.to_path_buf(),
+        )
+        .with_tools_config(config.agent.tools.clone())
+        .with_terminal_config(config.agent.terminal.clone());
+
+        builder.build()
+    }
+
+    /// Handle switching to a new chat mode while preserving conversation
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent (will be replaced)
+    /// * `mode_state` - The mode state to update
+    /// * `new_mode` - The new chat mode to switch to
+    /// * `config` - Global configuration
+    /// * `working_dir` - Working directory for tool operations
+    /// * `provider_type` - Type of provider ("copilot" or "ollama")
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok if the switch succeeded, or an error if it failed
+    fn handle_mode_switch(
+        agent: &mut Agent,
+        mode_state: &mut ChatModeState,
+        new_mode: ChatMode,
+        config: &Config,
+        working_dir: &std::path::Path,
+        provider_type: &str,
+    ) -> Result<()> {
+        // Show warning when switching to Write mode
+        if matches!(new_mode, ChatMode::Write) {
+            println!("\nWarning: Switching to WRITE mode - agent can now modify files and execute commands!");
+            println!("Type '/safe' to enable confirmations, or '/yolo' to disable.\n");
+        }
+
+        // Update mode state
+        let old_mode = mode_state.chat_mode;
+        mode_state.chat_mode = new_mode;
+
+        // Rebuild tools for new mode
+        let new_tools = build_tools_for_mode(mode_state, config, working_dir)?;
+
+        // Preserve conversation history
+        let conversation = agent.conversation().clone();
+
+        // Create new provider
+        let new_provider = create_provider(provider_type, &config.provider)?;
+
+        // Create new agent with same conversation but new tools
+        let new_agent =
+            Agent::with_conversation(new_provider, new_tools, config.agent.clone(), conversation)?;
+
+        // Replace agent
+        *agent = new_agent;
+
+        println!(
+            "Switched from {} to {} mode\n",
+            old_mode, mode_state.chat_mode
+        );
         Ok(())
     }
 
@@ -170,6 +274,129 @@ pub mod chat {
 
             let res = run_chat(cfg, None, None, false).await;
             assert!(res.is_err());
+        }
+
+        #[test]
+        fn test_build_tools_for_planning_mode() {
+            let mode_state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+            let config = Config::default();
+            let working_dir = std::path::PathBuf::from(".");
+
+            let result = build_tools_for_mode(&mode_state, &config, &working_dir);
+            assert!(result.is_ok());
+
+            let registry = result.unwrap();
+            assert!(registry.get("file_ops").is_some());
+            assert!(registry.get("terminal").is_none());
+        }
+
+        #[test]
+        fn test_build_tools_for_write_mode() {
+            let mode_state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
+            let config = Config::default();
+            let working_dir = std::path::PathBuf::from(".");
+
+            let result = build_tools_for_mode(&mode_state, &config, &working_dir);
+            assert!(result.is_ok());
+
+            let registry = result.unwrap();
+            assert!(registry.get("file_ops").is_some());
+            assert!(registry.get("terminal").is_some());
+        }
+
+        #[test]
+        fn test_build_tools_respects_safety_mode() {
+            let mode_state_safe = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
+            let mode_state_yolo = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
+            let config = Config::default();
+            let working_dir = std::path::PathBuf::from(".");
+
+            let result_safe = build_tools_for_mode(&mode_state_safe, &config, &working_dir);
+            let result_yolo = build_tools_for_mode(&mode_state_yolo, &config, &working_dir);
+
+            assert!(result_safe.is_ok());
+            assert!(result_yolo.is_ok());
+
+            let registry_safe = result_safe.unwrap();
+            let registry_yolo = result_yolo.unwrap();
+
+            assert!(registry_safe.get("terminal").is_some());
+            assert!(registry_yolo.get("terminal").is_some());
+        }
+
+        #[test]
+        fn test_handle_mode_switch_planning_to_write() {
+            use crate::providers::Message;
+            use async_trait::async_trait;
+
+            // Create a simple mock provider
+            #[derive(Clone)]
+            struct TestProvider;
+
+            #[async_trait]
+            impl crate::providers::Provider for TestProvider {
+                async fn complete(
+                    &self,
+                    _messages: &[Message],
+                    _tools: &[serde_json::Value],
+                ) -> Result<Message> {
+                    Ok(Message::assistant("test"))
+                }
+            }
+
+            let config = Config::default();
+            let working_dir = std::path::PathBuf::from(".");
+            let provider = TestProvider;
+            let tools = build_tools_for_mode(
+                &ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm),
+                &config,
+                &working_dir,
+            )
+            .unwrap();
+
+            let mut agent = Agent::new(provider, tools, config.agent.clone()).unwrap();
+            let mut mode_state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+
+            let result = handle_mode_switch(
+                &mut agent,
+                &mut mode_state,
+                ChatMode::Write,
+                &config,
+                &working_dir,
+                "ollama",
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(mode_state.chat_mode, ChatMode::Write);
+        }
+
+        #[test]
+        fn test_chat_mode_state_initialization_from_args() {
+            let planning_mode = ChatMode::parse_str("planning").unwrap();
+            let write_mode = ChatMode::parse_str("write").unwrap();
+
+            assert_eq!(planning_mode, ChatMode::Planning);
+            assert_eq!(write_mode, ChatMode::Write);
+        }
+
+        #[test]
+        fn test_safety_mode_initialization_from_flag() {
+            let safe = true;
+            let safety_mode = if safe {
+                SafetyMode::AlwaysConfirm
+            } else {
+                SafetyMode::NeverConfirm
+            };
+
+            assert_eq!(safety_mode, SafetyMode::AlwaysConfirm);
+
+            let unsafe_mode = if !safe {
+                SafetyMode::AlwaysConfirm
+            } else {
+                SafetyMode::NeverConfirm
+            };
+
+            assert_eq!(unsafe_mode, SafetyMode::NeverConfirm);
         }
     }
 }

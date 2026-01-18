@@ -32,6 +32,7 @@
 pub mod agent;
 pub mod chat_mode;
 pub mod cli;
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod providers;

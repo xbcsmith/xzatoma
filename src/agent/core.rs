@@ -91,6 +91,112 @@ impl Agent {
         })
     }
 
+    /// Creates a new agent instance with a boxed provider
+    ///
+    /// Useful when the provider type is not known at compile time,
+    /// or when working with dynamically created providers.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - A boxed provider instance
+    /// * `tools` - The tool registry with available tools
+    /// * `config` - Agent configuration (limits, timeouts, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Agent instance or an error if configuration is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if configuration validation fails
+    pub fn new_boxed(
+        provider: Box<dyn Provider>,
+        tools: ToolRegistry,
+        config: AgentConfig,
+    ) -> Result<Self> {
+        // Validate configuration
+        if config.max_turns == 0 {
+            return Err(
+                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
+            );
+        }
+
+        let conversation = Conversation::new(
+            config.conversation.max_tokens,
+            config.conversation.min_retain_turns,
+            config.conversation.prune_threshold.into(),
+        );
+
+        Ok(Self {
+            provider: Arc::from(provider),
+            conversation,
+            tools,
+            config,
+        })
+    }
+
+    /// Creates a new agent instance with an existing conversation
+    ///
+    /// Useful for preserving conversation history when switching modes or
+    /// rebuilding the tool registry while maintaining the discussion context.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - The AI provider to use for completions
+    /// * `tools` - The tool registry with available tools
+    /// * `config` - Agent configuration (limits, timeouts, etc.)
+    /// * `conversation` - An existing conversation to use
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Agent instance or an error if configuration is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if configuration validation fails
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::{Agent, Conversation};
+    /// use xzatoma::config::AgentConfig;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let provider = unimplemented!();
+    /// # let old_agent = unimplemented!();
+    /// // Get existing conversation from old agent
+    /// # let old_agent: Agent = unimplemented!();
+    /// let conversation = old_agent.conversation().clone();
+    ///
+    /// // Create new agent with same conversation but different tools
+    /// let new_tools = ToolRegistry::new();
+    /// let config = AgentConfig::default();
+    /// let new_agent = Agent::with_conversation(provider, new_tools, config, conversation)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_conversation(
+        provider: Box<dyn Provider>,
+        tools: ToolRegistry,
+        config: AgentConfig,
+        conversation: Conversation,
+    ) -> Result<Self> {
+        // Validate configuration
+        if config.max_turns == 0 {
+            return Err(
+                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
+            );
+        }
+
+        Ok(Self {
+            provider: Arc::from(provider),
+            conversation,
+            tools,
+            config,
+        })
+    }
+
     /// Executes the agent with the given user prompt
     ///
     /// This is the main execution loop that:
