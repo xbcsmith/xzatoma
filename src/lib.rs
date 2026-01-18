@@ -30,6 +30,7 @@
 //! ```
 
 pub mod agent;
+pub mod chat_mode;
 pub mod cli;
 pub mod config;
 pub mod error;
@@ -38,6 +39,7 @@ pub mod tools;
 
 // Re-export commonly used types
 pub use agent::Agent;
+pub use chat_mode::{ChatMode, SafetyMode};
 pub use config::Config;
 pub use error::{Result, XzatomaError};
 

@@ -7,6 +7,7 @@ use anyhow::Result;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod agent;
+mod chat_mode;
 mod cli;
 mod commands;
 mod config;

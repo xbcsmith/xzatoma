@@ -145,13 +145,13 @@ pub struct ToolRegistryBuilder {
 
 impl ToolRegistryBuilder {
     pub fn new(mode: ChatMode, safety_mode: SafetyMode) -> Self { ... }
-    
+
     pub fn build_for_planning(&self) -> ToolRegistry {
         // Register only read-only tools
         // - file_ops: read_file, list_files, search_files
         // - NO write_file, NO terminal execution
     }
-    
+
     pub fn build_for_write(&self) -> ToolRegistry {
         // Register all tools
         // - file_ops: all operations
@@ -192,13 +192,13 @@ pub async fn run_chat(
     initial_safety: SafetyMode,
 ) -> Result<()> {
     let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
-    
+
     // Build tools based on current mode
     let tools = build_tools_for_mode(&mode_state, &config);
-    
+
     // Create agent with initial tools
     let mut agent = create_agent(provider_name, tools, &config)?;
-    
+
     // Interactive loop with mode switching support
     ...
 }
@@ -211,7 +211,7 @@ fn build_tools_for_mode(
         mode_state.chat_mode.clone(),
         mode_state.safety_mode.clone(),
     );
-    
+
     match mode_state.chat_mode {
         ChatMode::Planning => builder.build_for_planning(),
         ChatMode::Write => builder.build_for_write(),
@@ -284,11 +284,11 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
 loop {
     // Build dynamic prompt based on current mode
     let prompt = format_prompt(&mode_state);  // e.g., "[PLANNING][SAFE] >> "
-    
+
     match rl.readline(&prompt) {
         Ok(line) => {
             let trimmed = line.trim();
-            
+
             // Check for special commands first
             match parse_special_command(trimmed) {
                 SpecialCommand::SwitchMode(new_mode) => {
@@ -334,27 +334,27 @@ fn handle_mode_switch(
         println!("⚠️  Switching to WRITE mode - agent can now modify files and execute commands!");
         println!("   Type '/safe' to enable confirmations, or '/yolo' to disable.");
     }
-    
+
     // Update mode state
     let old_mode = mode_state.chat_mode.clone();
     mode_state.chat_mode = new_mode;
-    
+
     // Rebuild tools for new mode
     let new_tools = build_tools_for_mode(mode_state, config);
-    
+
     // Preserve conversation history
     let conversation = agent.conversation().clone();
-    
+
     // Create new agent with new tools but same conversation
     let provider = create_provider(&config)?;
     let mut new_agent = Agent::new(provider, new_tools, config.agent.clone())?;
-    
+
     // Restore conversation history
     new_agent.restore_conversation(conversation)?;
-    
+
     // Replace agent
     *agent = new_agent;
-    
+
     println!("✓ Switched from {:?} to {:?} mode", old_mode, mode_state.chat_mode);
     Ok(())
 }
@@ -452,11 +452,11 @@ impl Agent {
         safety: SafetyMode,
     ) -> Result<Self> {
         let mut agent = Self::new(provider, tools, config)?;
-        
+
         // Add mode-specific system prompt
         let system_prompt = build_system_prompt(mode, safety);
         agent.conversation.add_system_message(system_prompt);
-        
+
         Ok(agent)
     }
 }

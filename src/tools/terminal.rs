@@ -12,6 +12,9 @@
 //! - `Interactive` always returns `CommandRequiresConfirmation` to require user approval
 //! - `FullAutonomous` allows all non-dangerous commands
 //! - Path validation is symlink-aware (canonicalizes existing paths) to prevent escapes
+//! - SafetyMode affects confirmation requirements:
+//!   - `AlwaysConfirm`: Requires explicit confirmation for terminal operations
+//!   - `NeverConfirm`: Allows operations without confirmation (YOLO mode)
 //!
 //! # Examples
 //!
@@ -38,6 +41,7 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 use tokio::time;
 
+use crate::chat_mode::SafetyMode;
 use crate::config::{ExecutionMode, TerminalConfig};
 use crate::error::{Result, XzatomaError};
 use crate::tools::{ToolExecutor, ToolResult};
@@ -321,12 +325,40 @@ impl CommandValidator {
 pub struct TerminalTool {
     pub validator: CommandValidator,
     pub config: TerminalConfig,
+    pub safety_mode: SafetyMode,
 }
 
 impl TerminalTool {
-    /// Create a new TerminalTool
+    /// Create a new TerminalTool with default SafetyMode::AlwaysConfirm
     pub fn new(validator: CommandValidator, config: TerminalConfig) -> Self {
-        Self { validator, config }
+        Self {
+            validator,
+            config,
+            safety_mode: SafetyMode::AlwaysConfirm,
+        }
+    }
+
+    /// Set the safety mode for this tool
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - The safety mode to use
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_safety_mode(mut self, mode: SafetyMode) -> Self {
+        self.safety_mode = mode;
+        self
+    }
+
+    /// Set the safety mode for this tool (mutating)
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - The safety mode to use
+    pub fn set_safety_mode(&mut self, mode: SafetyMode) {
+        self.safety_mode = mode;
     }
 }
 
@@ -374,12 +406,22 @@ impl ToolExecutor for TerminalTool {
         // Validate permission and paths
         match self.validator.validate(&command) {
             Ok(()) => {}
-            Err(XzatomaError::CommandRequiresConfirmation(_)) if confirm => { /* continue */ }
             Err(XzatomaError::CommandRequiresConfirmation(_)) => {
-                return Ok(ToolResult::error(format!(
-                    "Command requires confirmation: {}",
-                    command
-                )));
+                // Check SafetyMode
+                match self.safety_mode {
+                    SafetyMode::AlwaysConfirm => {
+                        // Require explicit confirmation
+                        if !confirm {
+                            return Ok(ToolResult::error(format!(
+                                "Command requires confirmation in SAFE mode: {}",
+                                command
+                            )));
+                        }
+                    }
+                    SafetyMode::NeverConfirm => {
+                        // Proceed without confirmation (YOLO mode)
+                    }
+                }
             }
             Err(err) => {
                 // For dangerous/path errors, return a ToolResult error

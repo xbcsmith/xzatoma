@@ -372,6 +372,302 @@ impl ToolExecutor for FileOpsTool {
     }
 }
 
+/// Read-only file operations tool for Planning mode
+///
+/// This tool provides only safe read operations:
+/// - `read_file(path: string) -> string` - Read file contents
+/// - `list_files(directory: string, recursive: boolean) -> array` - List files
+/// - `search_files(pattern: string, directory: string) -> array` - Search files
+///
+/// No write, delete, or modification operations are available.
+/// This tool is automatically used in Planning mode to prevent accidental
+/// modifications while still allowing the agent to explore the codebase.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::tools::file_ops::FileOpsReadOnlyTool;
+/// use xzatoma::config::ToolsConfig;
+/// use std::path::PathBuf;
+///
+/// let tool = FileOpsReadOnlyTool::new(
+///     PathBuf::from("."),
+///     ToolsConfig::default(),
+/// );
+///
+/// // Only read-only operations are available
+/// ```
+#[derive(Debug, Clone)]
+pub struct FileOpsReadOnlyTool {
+    working_dir: PathBuf,
+    config: ToolsConfig,
+}
+
+impl FileOpsReadOnlyTool {
+    /// Create a new read-only file operations tool
+    ///
+    /// # Arguments
+    ///
+    /// * `working_dir` - Working directory where operations are confined
+    /// * `config` - Tools configuration (max file read size etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `FileOpsReadOnlyTool` instance
+    pub fn new(working_dir: PathBuf, config: ToolsConfig) -> Self {
+        Self {
+            working_dir,
+            config,
+        }
+    }
+
+    /// Validate a path is within the configured working directory
+    ///
+    /// Prevents absolute paths, home directory (`~`) and directory traversal patterns (`..`).
+    /// If a target exists, it canonicalizes and verifies it is under the working dir.
+    fn validate_path(&self, path: &Path) -> Result<PathBuf> {
+        // Absolute paths not allowed for tool-level operations
+        if path.is_absolute() {
+            return Err(anyhow::Error::from(
+                XzatomaError::PathOutsideWorkingDirectory("Absolute paths not allowed".to_string()),
+            ));
+        }
+
+        // Normalize path token check - no home (~) or parent traversal
+        let path_str = path.to_string_lossy();
+        if path_str.starts_with('~') {
+            return Err(anyhow::Error::from(
+                XzatomaError::PathOutsideWorkingDirectory(
+                    "Home directory paths are not allowed".to_string(),
+                ),
+            ));
+        }
+
+        if path.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err(anyhow::Error::from(
+                XzatomaError::PathOutsideWorkingDirectory(
+                    "Directory traversal is not allowed".to_string(),
+                ),
+            ));
+        }
+
+        // Compose candidate full path (relative to working_dir)
+        let full_path = self.working_dir.join(path);
+
+        // If the file/directory exists, canonicalize to follow symlinks and ensure confinement
+        let canonical_working = self
+            .working_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.working_dir.clone());
+
+        if full_path.exists() {
+            let canonical_target = full_path.canonicalize().map_err(|e| {
+                anyhow::Error::from(XzatomaError::Tool(format!(
+                    "Failed to canonicalize path: {}",
+                    e
+                )))
+            })?;
+            if !canonical_target.starts_with(&canonical_working) {
+                return Err(anyhow::Error::from(
+                    XzatomaError::PathOutsideWorkingDirectory(format!(
+                        "Path escapes working directory: {:?}",
+                        path
+                    )),
+                ));
+            }
+            return Ok(canonical_target);
+        }
+
+        // For non-existent target (creating new file), ensure parent is within working_dir
+        if let Some(parent) = full_path.parent() {
+            let parent_canonical = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            if !parent_canonical.starts_with(&canonical_working) {
+                return Err(anyhow::Error::from(
+                    XzatomaError::PathOutsideWorkingDirectory(format!(
+                        "Target parent escapes working directory: {:?}",
+                        parent
+                    )),
+                ));
+            }
+        } else {
+            return Err(anyhow::Error::from(XzatomaError::Tool(
+                "Invalid path".to_string(),
+            )));
+        }
+
+        Ok(full_path)
+    }
+
+    /// Read file contents
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - File path relative to working directory
+    ///
+    /// # Returns
+    ///
+    /// Returns a ToolResult with file contents or error
+    async fn read_file(&self, path: &str) -> Result<ToolResult> {
+        let validated = self.validate_path(Path::new(path))?;
+        let content = fs::read_to_string(&validated).await.map_err(|e| {
+            anyhow::Error::from(XzatomaError::Tool(format!(
+                "Failed to read file '{}': {}",
+                path, e
+            )))
+        })?;
+
+        let max_size = self.config.max_file_read_size;
+        let result = ToolResult::success(content).truncate_if_needed(max_size);
+        Ok(result)
+    }
+
+    /// List files in a directory
+    ///
+    /// - If pattern is provided, it is treated as a regex and matches against the relative path.
+    /// - If `recursive` is false, only files directly under the directory are returned.
+    async fn list_files(&self, pattern: Option<String>, recursive: bool) -> Result<ToolResult> {
+        let mut results = Vec::new();
+
+        let depth = if recursive { usize::MAX } else { 1 };
+        for entry in WalkDir::new(&self.working_dir)
+            .max_depth(depth)
+            .follow_links(false)
+        {
+            let entry =
+                entry.map_err(|e| anyhow::Error::from(XzatomaError::Tool(e.to_string())))?;
+            if entry.file_type().is_file() {
+                let rel = entry
+                    .path()
+                    .strip_prefix(&self.working_dir)
+                    .unwrap_or(entry.path());
+                let rel_str = rel.to_string_lossy().to_string();
+
+                if let Some(ref pat) = pattern {
+                    // Try regex first, if invalid, fall back to substring
+                    let matches = match Regex::new(pat) {
+                        Ok(re) => re.is_match(&rel_str),
+                        Err(_) => rel_str.contains(pat),
+                    };
+                    if !matches {
+                        continue;
+                    }
+                }
+
+                results.push(rel_str);
+            }
+        }
+
+        results.sort();
+        let output = results.join("\n");
+        Ok(ToolResult::success(output))
+    }
+
+    /// Search for files matching a pattern
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - Regex pattern or substring to match against file paths
+    /// * `recursive` - Whether to search recursively
+    async fn search_files(&self, pattern: String, _recursive: bool) -> Result<ToolResult> {
+        let mut results = Vec::new();
+
+        let depth = usize::MAX;
+        for entry in WalkDir::new(&self.working_dir)
+            .max_depth(depth)
+            .follow_links(false)
+        {
+            let entry =
+                entry.map_err(|e| anyhow::Error::from(XzatomaError::Tool(e.to_string())))?;
+            if entry.file_type().is_file() {
+                let rel = entry
+                    .path()
+                    .strip_prefix(&self.working_dir)
+                    .unwrap_or(entry.path());
+                let rel_str = rel.to_string_lossy().to_string();
+
+                // Try regex first, if invalid, fall back to substring
+                let matches = match Regex::new(&pattern) {
+                    Ok(re) => re.is_match(&rel_str),
+                    Err(_) => rel_str.contains(&pattern),
+                };
+
+                if matches {
+                    results.push(rel_str);
+                }
+            }
+        }
+
+        results.sort();
+        let output = results.join("\n");
+        Ok(ToolResult::success(output))
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for FileOpsReadOnlyTool {
+    fn tool_definition(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": "file_ops",
+            "description": "Read-only file operations: list, read, search (Planning mode - no modifications)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["list","read","search"]
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to working dir"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Pattern filter (regex)"
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Recursive for list/search"
+                    }
+                },
+                "required": ["operation"]
+            }
+        })
+    }
+
+    async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
+        let operation = params["operation"].as_str().ok_or_else(|| {
+            anyhow::Error::from(XzatomaError::Tool("Missing 'operation' param".to_string()))
+        })?;
+
+        match operation {
+            "read" => {
+                let path = params["path"].as_str().ok_or_else(|| {
+                    anyhow::Error::from(XzatomaError::Tool("Missing 'path' param".to_string()))
+                })?;
+                self.read_file(path).await
+            }
+            "list" => {
+                let pattern = params["pattern"].as_str().map(String::from);
+                let recursive = params["recursive"].as_bool().unwrap_or(false);
+                self.list_files(pattern, recursive).await
+            }
+            "search" => {
+                let pattern = params["pattern"].as_str().ok_or_else(|| {
+                    anyhow::Error::from(XzatomaError::Tool("Missing 'pattern' param".to_string()))
+                })?;
+                let recursive = params["recursive"].as_bool().unwrap_or(true);
+                self.search_files(pattern.to_string(), recursive).await
+            }
+            _ => Ok(ToolResult::error(format!(
+                "Operation '{}' not available in read-only mode. Available operations: list, read, search",
+                operation
+            ))),
+        }
+    }
+}
+
 /// Convenience: read a file by path (works with absolute or relative path)
 ///
 /// Returns content or an error on failure.

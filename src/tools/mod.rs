@@ -9,16 +9,22 @@
 
 pub mod file_ops;
 pub mod plan;
+pub mod registry_builder;
 pub mod terminal;
 
 // Re-export terminal functions for convenience
 pub use terminal::{
     execute_command, is_dangerous_command, parse_command, validate_command, CommandValidator,
+    TerminalTool,
 };
 
 // Re-export commonly used file operations and plan parser symbols for convenience
-pub use file_ops::{generate_diff, list_files, read_file, search_files, write_file, FileOpsTool};
+pub use file_ops::{
+    generate_diff, list_files, read_file, search_files, write_file, FileOpsReadOnlyTool,
+    FileOpsTool,
+};
 pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
+pub use registry_builder::ToolRegistryBuilder;
 
 use crate::error::Result;
 use async_trait::async_trait;
