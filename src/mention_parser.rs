@@ -742,6 +742,134 @@ struct SearchResultsCache {
     timestamp: std::time::SystemTime,
 }
 
+/// Kind of error encountered while loading a mention (file or URL)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadErrorKind {
+    FileNotFound,
+    NotAFile,
+    FileTooLarge,
+    FileBinary,
+    PathOutsideWorkingDirectory,
+    PermissionDenied,
+    UrlSsrf,
+    UrlRateLimited,
+    UrlTimeout,
+    UrlHttpError,
+    UrlOther,
+    ParseError,
+    Unknown,
+}
+
+/// Structured error returned when loading mention content fails.
+///
+/// - `kind` is machine-friendly and useful for testing/handling
+/// - `source` is the original path or URL that was being loaded
+/// - `message` is a human-readable explanation
+/// - `suggestion` is an optional remediation hint for the user
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadError {
+    pub kind: LoadErrorKind,
+    pub source: String,
+    pub message: String,
+    pub suggestion: Option<String>,
+}
+
+impl LoadError {
+    /// Create a new `LoadError`
+    pub fn new(
+        kind: LoadErrorKind,
+        source: impl Into<String>,
+        message: impl Into<String>,
+        suggestion: Option<String>,
+    ) -> Self {
+        Self {
+            kind,
+            source: source.into(),
+            message: message.into(),
+            suggestion,
+        }
+    }
+}
+
+impl std::fmt::Display for LoadErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            LoadErrorKind::FileNotFound => "File not found",
+            LoadErrorKind::NotAFile => "Not a file",
+            LoadErrorKind::FileTooLarge => "File too large",
+            LoadErrorKind::FileBinary => "Binary file",
+            LoadErrorKind::PathOutsideWorkingDirectory => "Path outside working directory",
+            LoadErrorKind::PermissionDenied => "Permission denied",
+            LoadErrorKind::UrlSsrf => "URL blocked by SSRF protections",
+            LoadErrorKind::UrlRateLimited => "Rate limited",
+            LoadErrorKind::UrlTimeout => "Timed out",
+            LoadErrorKind::UrlHttpError => "HTTP error",
+            LoadErrorKind::UrlOther => "URL fetch error",
+            LoadErrorKind::ParseError => "Parse error",
+            LoadErrorKind::Unknown => "Unknown error",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(suggestion) = &self.suggestion {
+            write!(
+                f,
+                "{}: {} ({}) — suggestion: {}",
+                self.source, self.message, self.kind, suggestion
+            )
+        } else {
+            write!(f, "{}: {} ({})", self.source, self.message, self.kind)
+        }
+    }
+}
+
+/// Heuristic classification for file loading errors
+fn classify_file_error(e: &anyhow::Error) -> LoadErrorKind {
+    let s = e.to_string().to_lowercase();
+    if s.contains("file not found") || s.contains("no such file") {
+        LoadErrorKind::FileNotFound
+    } else if s.contains("not a file") {
+        LoadErrorKind::NotAFile
+    } else if s.contains("too large") || s.contains("exceeds limit") || s.contains("file too large")
+    {
+        LoadErrorKind::FileTooLarge
+    } else if s.contains("binary") || s.contains("null byte") || s.contains("binary file") {
+        LoadErrorKind::FileBinary
+    } else if s.contains("directory traversal")
+        || s.contains("path escapes")
+        || s.contains("absolute paths")
+    {
+        LoadErrorKind::PathOutsideWorkingDirectory
+    } else if s.contains("permission denied") {
+        LoadErrorKind::PermissionDenied
+    } else {
+        LoadErrorKind::Unknown
+    }
+}
+
+/// Heuristic classification for URL loading errors
+fn classify_url_error(e: &anyhow::Error) -> LoadErrorKind {
+    let s = e.to_string().to_lowercase();
+    if s.contains("not allowed")
+        && (s.contains("private") || s.contains("localhost") || s.contains("loopback"))
+    {
+        LoadErrorKind::UrlSsrf
+    } else if s.contains("rate limit") || s.contains("rate limit exceeded") {
+        LoadErrorKind::UrlRateLimited
+    } else if s.contains("http") && s.contains("for") {
+        LoadErrorKind::UrlHttpError
+    } else if s.contains("timeout") || s.contains("timed out") {
+        LoadErrorKind::UrlTimeout
+    } else if s.contains("failed to fetch") || s.contains("failed to read") {
+        LoadErrorKind::UrlOther
+    } else {
+        LoadErrorKind::Unknown
+    }
+}
+
 /// Load content from a URL mention
 ///
 /// Fetches web content from the specified URL, converts HTML to plain text,
@@ -820,7 +948,9 @@ pub async fn load_url_content(
 ///
 /// Loads file contents for all file mentions and search results for all search mentions,
 /// prepending them to the user prompt in a structured format. Uses cache to avoid
-/// repeated searches and file reads.
+/// repeated searches and file reads. When individual loads fail we record structured
+/// `LoadError` values and insert a clear placeholder into the prompt so the user
+/// and agent are both aware of missing content (graceful degradation).
 ///
 /// # Arguments
 ///
@@ -829,31 +959,45 @@ pub async fn load_url_content(
 /// * `working_dir` - The working directory for path resolution
 /// * `max_size_bytes` - Maximum file size to load
 /// * `cache` - Mention cache for storing/retrieving loaded contents
-/// * `grep_tool` - Optional grep tool for executing search mentions
 ///
 /// # Returns
 ///
 /// A tuple of (augmented_prompt, load_errors)
 /// - augmented_prompt: The original prompt with file contents and search results prepended
-/// - load_errors: Any non-fatal errors that occurred during loading
+/// - load_errors: Structured, non-fatal errors that occurred during loading (see `LoadError`)
 pub async fn augment_prompt_with_mentions(
     mentions: &[Mention],
     original_prompt: &str,
     working_dir: &Path,
     max_size_bytes: u64,
     cache: &mut MentionCache,
-) -> (String, Vec<String>) {
-    let mut file_contents = Vec::new();
-    let mut errors = Vec::new();
+) -> (String, Vec<LoadError>) {
+    let mut file_contents: Vec<String> = Vec::new();
+    let mut errors: Vec<LoadError> = Vec::new();
     let url_cache = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
     // Process file mentions in order
     for mention in mentions {
         if let Mention::File(file_mention) = mention {
+            // Resolve the file path
             let file_path = match resolve_mention_path(&file_mention.path, working_dir) {
                 Ok(p) => p,
                 Err(e) => {
-                    errors.push(format!("Failed to resolve {}: {}", file_mention.path, e));
+                    let load_err = LoadError::new(
+                        LoadErrorKind::PathOutsideWorkingDirectory,
+                        file_mention.path.clone(),
+                        e.to_string(),
+                        Some(
+                            "Ensure the path is relative and inside the working directory"
+                                .to_string(),
+                        ),
+                    );
+                    errors.push(load_err.clone());
+                    // Insert a placeholder into the prompt so the agent knows content was omitted
+                    file_contents.push(format!(
+                        "Failed to include file {}:\n\n```text\n{}\n```",
+                        file_mention.path, load_err.message
+                    ));
                     continue;
                 }
             };
@@ -870,7 +1014,23 @@ pub async fn augment_prompt_with_mentions(
                         content
                     }
                     Err(e) => {
-                        errors.push(format!("Failed to load {}: {}", file_mention.path, e));
+                        let kind = classify_file_error(&e);
+                        let suggestion = match kind {
+                            LoadErrorKind::FileTooLarge => Some("Consider increasing 'max_file_read_size' or requesting a smaller range".to_string()),
+                            LoadErrorKind::FileBinary => Some("Binary files cannot be displayed; open locally or use a different tool".to_string()),
+                            _ => None,
+                        };
+                        let load_err = LoadError::new(
+                            kind,
+                            file_mention.path.clone(),
+                            e.to_string(),
+                            suggestion,
+                        );
+                        errors.push(load_err.clone());
+                        file_contents.push(format!(
+                            "Failed to include file {}:\n\n```text\n{}\n```",
+                            file_mention.path, load_err.message
+                        ));
                         continue;
                     }
                 }
@@ -883,9 +1043,16 @@ pub async fn augment_prompt_with_mentions(
                         .format_with_header(Some(start), Some(end))
                         .replace(&content.contents, &extracted),
                     Err(e) => {
-                        errors.push(format!(
-                            "Failed to extract lines {}-{} from {}: {}",
-                            start, end, file_mention.path, e
+                        let load_err = LoadError::new(
+                            LoadErrorKind::ParseError,
+                            file_mention.path.clone(),
+                            e.to_string(),
+                            Some("Check the requested line range".to_string()),
+                        );
+                        errors.push(load_err.clone());
+                        file_contents.push(format!(
+                            "Failed to include file {} lines {}-{}:\n\n```text\n{}\n```",
+                            file_mention.path, start, end, load_err.message
                         ));
                         continue;
                     }
@@ -895,9 +1062,16 @@ pub async fn augment_prompt_with_mentions(
                         .format_with_header(Some(line), None)
                         .replace(&content.contents, &extracted),
                     Err(e) => {
-                        errors.push(format!(
-                            "Failed to extract line {} from {}: {}",
-                            line, file_mention.path, e
+                        let load_err = LoadError::new(
+                            LoadErrorKind::ParseError,
+                            file_mention.path.clone(),
+                            e.to_string(),
+                            Some("Check the requested line".to_string()),
+                        );
+                        errors.push(load_err.clone());
+                        file_contents.push(format!(
+                            "Failed to include file {} line {}:\n\n```text\n{}\n```",
+                            file_mention.path, line, load_err.message
                         ));
                         continue;
                     }
@@ -917,7 +1091,20 @@ pub async fn augment_prompt_with_mentions(
                     file_contents.push(content);
                 }
                 Err(e) => {
-                    errors.push(format!("Failed to fetch {}: {}", url_mention.url, e));
+                    let kind = classify_url_error(&e);
+                    let suggestion = match kind {
+                        LoadErrorKind::UrlSsrf => Some("URL blocked due to SSRF protections. Try a public URL or update fetch_allowed_domains in configuration.".to_string()),
+                        LoadErrorKind::UrlRateLimited => Some("Rate limit exceeded. Try again later or increase the limit in configuration.".to_string()),
+                        LoadErrorKind::UrlTimeout => Some("Request timed out. Consider increasing the fetch timeout in configuration.".to_string()),
+                        _ => None,
+                    };
+                    let load_err =
+                        LoadError::new(kind, url_mention.url.clone(), e.to_string(), suggestion);
+                    errors.push(load_err.clone());
+                    file_contents.push(format!(
+                        "Failed to include URL {}:\n\n```text\n{}\n```",
+                        url_mention.url, load_err.message
+                    ));
                 }
             }
         }
@@ -1655,9 +1842,69 @@ mod tests {
         )
         .await;
 
+        // We should receive a structured LoadError and the prompt should contain a clear placeholder
         assert!(!errors.is_empty());
-        assert!(augmented.contains("Please review"));
+        assert_eq!(errors[0].kind, LoadErrorKind::FileNotFound);
+        assert!(augmented.contains("Failed to include file missing.rs"));
         assert_eq!(cache.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_url_ssrf_error() {
+        let mentions = vec![Mention::Url(UrlMention {
+            url: "http://127.0.0.1".to_string(),
+        })];
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Check this URL",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].kind, LoadErrorKind::UrlSsrf);
+        assert!(augmented.contains("Failed to include URL http://127.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_large_file_suggestion() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("large.txt");
+        tokio::fs::write(&file_path, "x".repeat(2000))
+            .await
+            .unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "large.txt".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Please check this file",
+            temp_dir.path(),
+            1000, // max_size_bytes smaller than file size
+            &mut cache,
+        )
+        .await;
+
+        // We should receive a structured LoadError and the prompt should contain a clear placeholder
+        assert!(!errors.is_empty());
+        assert_eq!(errors[0].kind, LoadErrorKind::FileTooLarge);
+        assert!(errors[0].suggestion.is_some());
+        assert!(errors[0]
+            .suggestion
+            .as_ref()
+            .unwrap()
+            .contains("max_file_read_size"));
+        assert!(augmented.contains("Failed to include file large.txt"));
     }
 
     #[tokio::test]

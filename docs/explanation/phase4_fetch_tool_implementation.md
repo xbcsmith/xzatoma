@@ -236,7 +236,7 @@ println!("{}", result.format_with_header(None));
 ### Mention-Based Usage
 
 ```
-User: "Based on the documentation at @url:https://docs.rs/tokio and the code in @file:src/main.rs, 
+User: "Based on the documentation at @url:https://docs.rs/tokio and the code in @file:src/main.rs,
 how should I implement async error handling?"
 ```
 

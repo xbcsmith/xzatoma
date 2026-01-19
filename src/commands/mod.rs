@@ -174,6 +174,60 @@ pub mod chat {
                     // Add to history
                     rl.add_history_entry(trimmed)?;
 
+                    // Show per-mention loading status (and indicate cached files)
+                    if !mentions.is_empty() {
+                        use colored::Colorize;
+
+                        for mention in &mentions {
+                            match mention {
+                                crate::mention_parser::Mention::File(fm) => {
+                                    // Try to resolve the path so we can check the mention cache.
+                                    match crate::mention_parser::resolve_mention_path(
+                                        &fm.path,
+                                        &working_dir,
+                                    ) {
+                                        Ok(path) => {
+                                            if mention_cache.get(&path).is_some() {
+                                                println!(
+                                                    "{}",
+                                                    format!("Using cached @{}", fm.path).green()
+                                                );
+                                            } else {
+                                                println!(
+                                                    "{}",
+                                                    format!("Loading @{}", fm.path).cyan()
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            // If the path cannot be resolved, still surface a helpful message.
+                                            println!(
+                                                "{}",
+                                                format!("Loading @{} (path error: {})", fm.path, e)
+                                                    .yellow()
+                                            );
+                                        }
+                                    }
+                                }
+                                crate::mention_parser::Mention::Url(um) => {
+                                    println!("{}", format!("Fetching @url:{}", um.url).cyan());
+                                }
+                                crate::mention_parser::Mention::Search(sm) => {
+                                    println!(
+                                        "{}",
+                                        format!("Searching @search:\"{}\"", sm.pattern).cyan()
+                                    );
+                                }
+                                crate::mention_parser::Mention::Grep(gm) => {
+                                    println!(
+                                        "{}",
+                                        format!("Searching @grep:\"{}\"", gm.pattern).cyan()
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     // Augment prompt with file contents from mentions (Phase 2)
                     let (augmented_prompt, load_errors) =
                         crate::mention_parser::augment_prompt_with_mentions(
@@ -185,10 +239,87 @@ pub mod chat {
                         )
                         .await;
 
-                    // Display any file loading errors to user
-                    if !load_errors.is_empty() {
-                        for error in &load_errors {
-                            eprintln!("Warning: {}", error);
+                    // Summarize mention load results and display colored output
+                    use colored::Colorize;
+
+                    let total_mentions = mentions.len();
+                    if total_mentions > 0 {
+                        let total_files = mentions
+                            .iter()
+                            .filter(|m| matches!(m, crate::mention_parser::Mention::File(_)))
+                            .count();
+                        let total_urls = mentions
+                            .iter()
+                            .filter(|m| matches!(m, crate::mention_parser::Mention::Url(_)))
+                            .count();
+                        let total_searches = mentions
+                            .iter()
+                            .filter(|m| {
+                                matches!(
+                                    m,
+                                    crate::mention_parser::Mention::Search(_)
+                                        | crate::mention_parser::Mention::Grep(_)
+                                )
+                            })
+                            .count();
+
+                        let failed = load_errors.len();
+                        let succeeded = total_mentions.saturating_sub(failed);
+
+                        if failed == 0 {
+                            println!(
+                                "{}",
+                                format!(
+                                    "Loaded {} mentions ({} files, {} urls, {} searches) — all succeeded",
+                                    total_mentions, total_files, total_urls, total_searches
+                                )
+                                .green()
+                            );
+                        } else {
+                            println!(
+                                "{}",
+                                format!(
+                                    "Loaded {} mentions: {} succeeded, {} failed",
+                                    total_mentions, succeeded, failed
+                                )
+                                .yellow()
+                            );
+
+                            // Display per-type summary (cyan)
+                            let failed_file_count = load_errors
+                                .iter()
+                                .filter(|e| !e.source.starts_with("http"))
+                                .count();
+                            let failed_url_count = load_errors
+                                .iter()
+                                .filter(|e| e.source.starts_with("http"))
+                                .count();
+
+                            println!(
+                                "{}",
+                                format!(
+                                    "Files: {} total, {} loaded, {} failed",
+                                    total_files,
+                                    total_files.saturating_sub(failed_file_count),
+                                    failed_file_count
+                                )
+                                .cyan()
+                            );
+                            println!(
+                                "{}",
+                                format!(
+                                    "URLs: {} total, {} loaded, {} failed",
+                                    total_urls,
+                                    total_urls.saturating_sub(failed_url_count),
+                                    failed_url_count
+                                )
+                                .cyan()
+                            );
+
+                            // Show detailed errors (red) with suggestion text included when present
+                            for error in &load_errors {
+                                eprintln!("{}", format!("Error: {}", error).red());
+                            }
                         }
                     }
 
