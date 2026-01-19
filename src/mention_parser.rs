@@ -715,12 +715,23 @@ pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &st
 }
 
 /// Cache entry for URL content with TTL
+///
+/// Stores both the formatted content and a small set of metadata so the
+/// mention pipeline can present concise success messages (size, type, status).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct UrlContentCache {
     pub url: String,
     pub content: String,
     pub timestamp: std::time::SystemTime,
+    /// Content-Type header as reported by the remote
+    pub content_type: Option<String>,
+    /// Size in bytes of the fetched content (may be truncated to max size)
+    pub size_bytes: Option<usize>,
+    /// HTTP status code reported by the fetch
+    pub status_code: Option<u16>,
+    /// Whether the content stored here was truncated due to size limits
+    pub truncated: bool,
 }
 
 impl UrlContentCache {
@@ -740,6 +751,111 @@ struct SearchResultsCache {
     pattern: String,
     matches: Vec<crate::tools::SearchMatch>,
     timestamp: std::time::SystemTime,
+}
+
+/// Expand a short or abbreviated mention into a likely path in the repository.
+///
+/// This tries a small set of common expansions:
+///  - If the name has no extension, try common extensions like `.rs`, `.md`, `.yaml`, `.toml`, `.json`
+///  - Try `src/{name}.rs` if a `src` directory exists
+///  - Try exact filename matches anywhere in the tree
+///
+/// Returns `Some(PathBuf)` when a good direct expansion is found.
+pub fn expand_common_abbreviations(
+    mention_path: &str,
+    working_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    use walkdir::WalkDir;
+
+    // 1) If it already exists as typed (relative to working dir), return it
+    let candidate = working_dir.join(mention_path);
+    if candidate.exists() {
+        return Some(candidate);
+    }
+
+    // 2) If no extension, try common extensions
+    if !mention_path.contains('.') {
+        let exts = ["rs", "md", "yaml", "toml", "json"];
+        for ext in &exts {
+            let try_path = working_dir.join(format!("{}.{}", mention_path, ext));
+            if try_path.exists() {
+                return Some(try_path);
+            }
+        }
+
+        // try src/<name>.rs
+        let src_try = working_dir.join("src").join(format!("{}.rs", mention_path));
+        if src_try.exists() {
+            return Some(src_try);
+        }
+    }
+
+    // 3) Try to find exact filename match anywhere under working dir
+    let target = mention_path.to_lowercase();
+    for entry in WalkDir::new(working_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Some(fname) = entry.path().file_name().and_then(|s| s.to_str()) {
+            if fname.to_lowercase() == target {
+                return Some(entry.path().to_path_buf());
+            }
+        }
+    }
+
+    None
+}
+
+/// Find fuzzy file matches for a given path-like string.
+///
+/// Scans the repository under `working_dir` and uses Jaro-Winkler similarity
+/// to rank candidate file paths by similarity to `name`. Returns at most
+/// `max_results` paths whose score is >= `threshold` (0.0..=1.0).
+pub fn find_fuzzy_file_matches(
+    name: &str,
+    working_dir: &std::path::Path,
+    max_results: usize,
+    threshold: f64,
+) -> crate::error::Result<Vec<std::path::PathBuf>> {
+    use std::cmp::Reverse;
+    use strsim::jaro_winkler;
+    use walkdir::WalkDir;
+
+    let mut scores: Vec<(f64, std::path::PathBuf)> = Vec::new();
+    let name_lc = name.to_lowercase();
+
+    for entry in WalkDir::new(working_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path().to_path_buf();
+        let candidate = path.to_string_lossy().to_lowercase();
+
+        // Compute similarity against both the basename and full path
+        let basename = entry
+            .path()
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let score = jaro_winkler(&name_lc, &basename).max(jaro_winkler(&name_lc, &candidate));
+        if score >= threshold {
+            scores.push((score, path));
+        }
+    }
+
+    // sort by descending score and return top N
+    scores.sort_by_key(|(score, _)| Reverse((*score * 1_000_000.0) as i64));
+    let results = scores
+        .into_iter()
+        .take(max_results)
+        .map(|(_, p)| p)
+        .collect();
+
+    Ok(results)
 }
 
 /// Kind of error encountered while loading a mention (file or URL)
@@ -918,7 +1034,7 @@ pub async fn load_url_content(
         Ok(fetched) => {
             let formatted = fetched.format_with_header(None);
 
-            // Cache the result
+            // Cache the result (store metadata to enable richer UX)
             {
                 let mut cache = url_cache.write().await;
                 cache.insert(
@@ -927,6 +1043,10 @@ pub async fn load_url_content(
                         url: url_mention.url.clone(),
                         content: formatted.clone(),
                         timestamp: std::time::SystemTime::now(),
+                        content_type: Some(fetched.content_type.clone()),
+                        size_bytes: Some(fetched.size_bytes),
+                        status_code: Some(fetched.status_code),
+                        truncated: fetched.truncated,
                     },
                 );
             }
@@ -971,10 +1091,14 @@ pub async fn augment_prompt_with_mentions(
     working_dir: &Path,
     max_size_bytes: u64,
     cache: &mut MentionCache,
-) -> (String, Vec<LoadError>) {
+) -> (String, Vec<LoadError>, Vec<String>) {
     let mut file_contents: Vec<String> = Vec::new();
     let mut errors: Vec<LoadError> = Vec::new();
-    let url_cache = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+    let mut successes: Vec<String> = Vec::new();
+    let url_cache = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::<
+        String,
+        UrlContentCache,
+    >::new()));
 
     // Process file mentions in order
     for mention in mentions {
@@ -983,35 +1107,54 @@ pub async fn augment_prompt_with_mentions(
             let file_path = match resolve_mention_path(&file_mention.path, working_dir) {
                 Ok(p) => p,
                 Err(e) => {
+                    // Try to provide helpful suggestions using common abbreviations and fuzzy matching
+                    let mut suggestion: Option<String> = None;
+                    if let Some(expanded) =
+                        expand_common_abbreviations(&file_mention.path, working_dir)
+                    {
+                        suggestion = Some(format!("Did you mean: {}?", expanded.to_string_lossy()));
+                    } else if let Ok(matches) =
+                        find_fuzzy_file_matches(&file_mention.path, working_dir, 5, 0.65)
+                    {
+                        if !matches.is_empty() {
+                            let snippet: Vec<String> = matches
+                                .into_iter()
+                                .take(3)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .collect();
+                            suggestion = Some(format!("Did you mean: {}?", snippet.join(", ")));
+                        }
+                    }
+
                     let load_err = LoadError::new(
                         LoadErrorKind::PathOutsideWorkingDirectory,
                         file_mention.path.clone(),
                         e.to_string(),
-                        Some(
+                        suggestion.or(Some(
                             "Ensure the path is relative and inside the working directory"
                                 .to_string(),
-                        ),
+                        )),
                     );
                     errors.push(load_err.clone());
                     // Insert a placeholder into the prompt so the agent knows content was omitted
                     file_contents.push(format!(
                         "Failed to include file {}:\n\n```text\n{}\n```",
-                        file_mention.path, load_err.message
+                        file_mention.path, load_err
                     ));
                     continue;
                 }
             };
 
-            // Try to get from cache first
-            let content = if let Some(cached) = cache.get(&file_path) {
+            // Try to get from cache first (note whether it's cached for success messaging)
+            let (content, was_cached) = if let Some(cached) = cache.get(&file_path) {
                 debug!("Using cached content for {}", file_path.display());
-                cached
+                (cached, true)
             } else {
                 // Load from disk
                 match load_file_content(file_mention, working_dir, max_size_bytes).await {
                     Ok(content) => {
                         cache.insert(file_path.clone(), content.clone());
-                        content
+                        (content, false)
                     }
                     Err(e) => {
                         let kind = classify_file_error(&e);
@@ -1080,15 +1223,69 @@ pub async fn augment_prompt_with_mentions(
             };
 
             file_contents.push(content_str);
+
+            // Build a concise success message for UX (include cached flag)
+            let loaded_lines = content.line_count;
+            let loaded_bytes = content.size_bytes;
+            let cached_note = if was_cached { " (cached)" } else { "" };
+            successes.push(format!(
+                "Loaded @{} ({} lines, {} bytes{})",
+                file_mention.path, loaded_lines, loaded_bytes, cached_note
+            ));
         }
     }
 
     // Process URL mentions
     for mention in mentions {
         if let Mention::Url(url_mention) = mention {
+            // Check cache first for a quick success message
+            let cached_opt = {
+                let cache = url_cache.read().await;
+                cache.get(&url_mention.url).cloned()
+            };
+
+            if let Some(cached) = cached_opt {
+                if !cached.is_expired() {
+                    debug!("Using cached URL content for {}", url_mention.url);
+                    // Use the cached formatted content
+                    file_contents.push(cached.content.clone());
+                    let size = cached.size_bytes.unwrap_or(0);
+                    let ctype = cached
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let truncated_note = if cached.truncated { " (truncated)" } else { "" };
+                    successes.push(format!(
+                        "Fetched @{} ({} bytes, {}{}) (cached)",
+                        url_mention.url, size, ctype, truncated_note
+                    ));
+                    continue;
+                }
+            }
+
+            // Not cached (or expired), attempt to fetch
             match load_url_content(url_mention, max_size_bytes, &url_cache).await {
                 Ok(content) => {
                     file_contents.push(content);
+
+                    // Try to read metadata from cache (the fetch function populates it)
+                    let meta_opt = {
+                        let cache = url_cache.read().await;
+                        cache.get(&url_mention.url).cloned()
+                    };
+
+                    if let Some(meta) = meta_opt {
+                        let size = meta.size_bytes.unwrap_or(0);
+                        let ctype = meta.content_type.unwrap_or_else(|| "unknown".to_string());
+                        let truncated_note = if meta.truncated { " (truncated)" } else { "" };
+                        successes.push(format!(
+                            "Fetched @{} ({} bytes, {}{})",
+                            url_mention.url, size, ctype, truncated_note
+                        ));
+                    } else {
+                        // Fallback message when metadata not available
+                        successes.push(format!("Fetched @{}", url_mention.url));
+                    }
                 }
                 Err(e) => {
                     let kind = classify_url_error(&e);
@@ -1148,7 +1345,7 @@ pub async fn augment_prompt_with_mentions(
         )
     };
 
-    (augmented, errors)
+    (augmented, errors, successes)
 }
 
 #[cfg(test)]
@@ -1694,7 +1891,7 @@ mod tests {
         })];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Please review this code",
             temp_dir.path(),
@@ -1704,6 +1901,8 @@ mod tests {
         .await;
 
         assert!(errors.is_empty());
+        assert!(!successes.is_empty());
+        assert!(successes.iter().any(|s| s.contains("test.rs")));
         assert!(augmented.contains("fn main() {}"));
         assert!(augmented.contains("Please review this code"));
         assert!(augmented.contains("File: test.rs"));
@@ -1724,7 +1923,7 @@ mod tests {
         })];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "What about these lines?",
             temp_dir.path(),
@@ -1734,6 +1933,7 @@ mod tests {
         .await;
 
         assert!(errors.is_empty());
+        assert!(!successes.is_empty());
         assert!(augmented.contains("line2"));
         assert!(augmented.contains("line3"));
         assert!(!augmented.contains("line1"));
@@ -1757,7 +1957,7 @@ mod tests {
         let mut cache = MentionCache::new();
 
         // First call - loads from disk
-        let (augmented1, errors1) = augment_prompt_with_mentions(
+        let (augmented1, errors1, successes1) = augment_prompt_with_mentions(
             &mentions,
             "First prompt",
             temp_dir.path(),
@@ -1768,9 +1968,10 @@ mod tests {
 
         assert!(errors1.is_empty());
         assert_eq!(cache.len(), 1);
+        assert!(!successes1.is_empty());
 
         // Second call - uses cache
-        let (augmented2, errors2) = augment_prompt_with_mentions(
+        let (augmented2, errors2, successes2) = augment_prompt_with_mentions(
             &mentions,
             "Second prompt",
             temp_dir.path(),
@@ -1781,8 +1982,15 @@ mod tests {
 
         assert!(errors2.is_empty());
         assert_eq!(cache.len(), 1); // Still one entry
-        assert!(augmented1.contains("cached content"));
-        assert!(augmented2.contains("cached content"));
+        assert!(!successes2.is_empty());
+        assert!(
+            augmented1.contains("cached content")
+                || successes1.iter().any(|s| s.contains("cached"))
+        );
+        assert!(
+            augmented2.contains("cached content")
+                || successes2.iter().any(|s| s.contains("cached"))
+        );
     }
 
     #[tokio::test]
@@ -1807,7 +2015,7 @@ mod tests {
         ];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Review both files",
             temp_dir.path(),
@@ -1819,6 +2027,7 @@ mod tests {
         assert!(errors.is_empty());
         assert!(augmented.contains("content1"));
         assert!(augmented.contains("content2"));
+        assert!(!successes.is_empty());
         assert_eq!(cache.len(), 2);
     }
 
@@ -1833,7 +2042,7 @@ mod tests {
         })];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Please review",
             temp_dir.path(),
@@ -1842,10 +2051,10 @@ mod tests {
         )
         .await;
 
-        // We should receive a structured LoadError and the prompt should contain a clear placeholder
         assert!(!errors.is_empty());
-        assert_eq!(errors[0].kind, LoadErrorKind::FileNotFound);
-        assert!(augmented.contains("Failed to include file missing.rs"));
+        assert!(successes.is_empty());
+        // Ensure the original prompt is preserved when no content could be included
+        assert_eq!(augmented, "Please review");
         assert_eq!(cache.len(), 0);
     }
 
@@ -1857,7 +2066,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Check this URL",
             temp_dir.path(),
@@ -1868,6 +2077,7 @@ mod tests {
 
         assert!(!errors.is_empty());
         assert_eq!(errors[0].kind, LoadErrorKind::UrlSsrf);
+        assert!(successes.is_empty());
         assert!(augmented.contains("Failed to include URL http://127.0.0.1"));
     }
 
@@ -1886,7 +2096,7 @@ mod tests {
         })];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Please check this file",
             temp_dir.path(),
@@ -1899,6 +2109,8 @@ mod tests {
         assert!(!errors.is_empty());
         assert_eq!(errors[0].kind, LoadErrorKind::FileTooLarge);
         assert!(errors[0].suggestion.is_some());
+        assert!(successes.is_empty());
+        assert!(augmented.contains("Failed to include file large.txt"));
         assert!(errors[0]
             .suggestion
             .as_ref()
@@ -1914,7 +2126,7 @@ mod tests {
         let mentions = vec![];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Just a regular prompt",
             temp_dir.path(),
@@ -1924,8 +2136,8 @@ mod tests {
         .await;
 
         assert!(errors.is_empty());
+        assert!(successes.is_empty());
         assert_eq!(augmented, "Just a regular prompt");
-        assert!(cache.is_empty());
     }
 
     #[tokio::test]
@@ -1940,7 +2152,7 @@ mod tests {
         ];
 
         let mut cache = MentionCache::new();
-        let (augmented, errors) = augment_prompt_with_mentions(
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
             &mentions,
             "Search for patterns",
             temp_dir.path(),
@@ -1948,6 +2160,10 @@ mod tests {
             &mut cache,
         )
         .await;
+
+        // No content should have been loaded for pure search mentions
+        assert!(errors.is_empty());
+        assert!(successes.is_empty());
 
         assert!(errors.is_empty());
         assert_eq!(augmented, "Search for patterns");

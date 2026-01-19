@@ -229,7 +229,7 @@ pub mod chat {
                     }
 
                     // Augment prompt with file contents from mentions (Phase 2)
-                    let (augmented_prompt, load_errors) =
+                    let (augmented_prompt, load_errors, successes) =
                         crate::mention_parser::augment_prompt_with_mentions(
                             &mentions,
                             trimmed,
@@ -262,6 +262,13 @@ pub mod chat {
                                 )
                             })
                             .count();
+
+                        // First, present any per-item success messages (green)
+                        if !successes.is_empty() {
+                            for msg in &successes {
+                                println!("{}", msg.green());
+                            }
+                        }
 
                         let failed = load_errors.len();
                         let succeeded = total_mentions.saturating_sub(failed);
