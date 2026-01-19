@@ -49,6 +49,7 @@ pub use mention_parser::{
     augment_prompt_with_mentions, load_file_content, parse_mentions, FileMention, Mention,
     MentionCache, MentionContent, SearchMention, UrlMention,
 };
+pub use tools::{GrepTool, SearchMatch};
 
 #[cfg(test)]
 pub mod test_utils;

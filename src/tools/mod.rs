@@ -8,6 +8,7 @@
 #![allow(unused_imports)]
 
 pub mod file_ops;
+pub mod grep;
 pub mod plan;
 pub mod plan_format;
 pub mod registry_builder;
@@ -18,6 +19,9 @@ pub use terminal::{
     execute_command, is_dangerous_command, parse_command, validate_command, CommandValidator,
     TerminalTool,
 };
+
+// Re-export grep tool and search types
+pub use grep::{GrepTool, SearchMatch};
 
 // Re-export commonly used file operations and plan parser symbols for convenience
 pub use file_ops::{

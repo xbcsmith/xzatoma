@@ -336,7 +336,7 @@ The cache uses modification time (mtime) to detect stale entries:
 ```rust
 pub fn get(&self, path: &Path) -> Option<MentionContent> {
     let cached = self.cache.get(path)?;
-    
+
     // Check if file was modified since we cached it
     if let Ok(metadata) = std::fs::metadata(path) {
         if let Ok(current_mtime) = metadata.modified() {
@@ -348,7 +348,7 @@ pub fn get(&self, path: &Path) -> Option<MentionContent> {
             }
         }
     }
-    
+
     // Cache is stale
     None
 }

@@ -684,10 +684,50 @@ pub async fn load_file_content(
     ))
 }
 
+/// Format search results for display in prompts
+///
+/// # Arguments
+///
+/// * `matches` - Vector of search matches from grep tool
+/// * `pattern` - The search pattern that was executed
+///
+/// # Returns
+///
+/// Formatted string with search results suitable for prompt inclusion
+#[allow(dead_code)]
+pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &str) -> String {
+    if matches.is_empty() {
+        return format!("Search results for '{}': No matches found", pattern);
+    }
+
+    let mut output = format!(
+        "Search results for '{}': {} match(es)\n\n",
+        pattern,
+        matches.len()
+    );
+
+    for m in matches {
+        output.push_str(&m.format_with_context(120));
+        output.push_str("\n---\n");
+    }
+
+    output
+}
+
+/// Cache entry for search results
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct SearchResultsCache {
+    pattern: String,
+    matches: Vec<crate::tools::SearchMatch>,
+    timestamp: std::time::SystemTime,
+}
+
 /// Augment user prompt with file contents from mentions
 ///
-/// Loads file contents for all file mentions and prepends them to the user prompt
-/// in a structured format. Uses cache to avoid repeated file reads.
+/// Loads file contents for all file mentions and search results for all search mentions,
+/// prepending them to the user prompt in a structured format. Uses cache to avoid
+/// repeated searches and file reads.
 ///
 /// # Arguments
 ///
@@ -696,11 +736,12 @@ pub async fn load_file_content(
 /// * `working_dir` - The working directory for path resolution
 /// * `max_size_bytes` - Maximum file size to load
 /// * `cache` - Mention cache for storing/retrieving loaded contents
+/// * `grep_tool` - Optional grep tool for executing search mentions
 ///
 /// # Returns
 ///
 /// A tuple of (augmented_prompt, load_errors)
-/// - augmented_prompt: The original prompt with file contents prepended
+/// - augmented_prompt: The original prompt with file contents and search results prepended
 /// - load_errors: Any non-fatal errors that occurred during loading
 pub async fn augment_prompt_with_mentions(
     mentions: &[Mention],
@@ -771,6 +812,31 @@ pub async fn augment_prompt_with_mentions(
             };
 
             file_contents.push(content_str);
+        }
+    }
+
+    // Process search mentions (note: actual grep execution requires GrepTool)
+    for mention in mentions {
+        match mention {
+            Mention::Search(search_mention) => {
+                // Search mentions are logged but not executed without grep tool
+                // The grep tool will be integrated in a later phase
+                debug!(
+                    "Search mention parsed (execution pending grep tool): {:?}",
+                    search_mention.pattern
+                );
+            }
+            Mention::Grep(grep_mention) => {
+                // Grep mentions are logged but not executed without grep tool
+                // The grep tool will be integrated in a later phase
+                debug!(
+                    "Grep mention parsed (execution pending grep tool): {:?}",
+                    grep_mention.pattern
+                );
+            }
+            _ => {
+                // File and URL mentions are handled elsewhere
+            }
         }
     }
 

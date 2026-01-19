@@ -224,6 +224,22 @@ pub struct ToolsConfig {
     /// Maximum size of file to read (bytes)
     #[serde(default = "default_max_file_read")]
     pub max_file_read_size: usize,
+
+    /// Maximum results per page for grep tool
+    #[serde(default = "default_grep_max_results_per_page")]
+    pub grep_max_results_per_page: usize,
+
+    /// Number of context lines to show around grep matches
+    #[serde(default = "default_grep_context_lines")]
+    pub grep_context_lines: usize,
+
+    /// Maximum file size for grep searches (bytes)
+    #[serde(default = "default_grep_max_file_size")]
+    pub grep_max_file_size: u64,
+
+    /// File patterns to exclude from grep searches
+    #[serde(default = "default_grep_excluded_patterns")]
+    pub grep_excluded_patterns: Vec<String>,
 }
 
 fn default_max_output() -> usize {
@@ -234,11 +250,36 @@ fn default_max_file_read() -> usize {
     10_485_760 // 10 MB
 }
 
+fn default_grep_max_results_per_page() -> usize {
+    20
+}
+
+fn default_grep_context_lines() -> usize {
+    2
+}
+
+fn default_grep_max_file_size() -> u64 {
+    1_048_576 // 1 MB
+}
+
+fn default_grep_excluded_patterns() -> Vec<String> {
+    vec![
+        "*.lock".to_string(),
+        "target/**".to_string(),
+        "node_modules/**".to_string(),
+        ".git/**".to_string(),
+    ]
+}
+
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             max_output_size: default_max_output(),
             max_file_read_size: default_max_file_read(),
+            grep_max_results_per_page: default_grep_max_results_per_page(),
+            grep_context_lines: default_grep_context_lines(),
+            grep_max_file_size: default_grep_max_file_size(),
+            grep_excluded_patterns: default_grep_excluded_patterns(),
         }
     }
 }
