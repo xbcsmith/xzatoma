@@ -9,6 +9,7 @@
 
 pub mod file_ops;
 pub mod plan;
+pub mod plan_format;
 pub mod registry_builder;
 pub mod terminal;
 
@@ -24,6 +25,7 @@ pub use file_ops::{
     FileOpsTool,
 };
 pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
+pub use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
 pub use registry_builder::ToolRegistryBuilder;
 
 use crate::error::Result;

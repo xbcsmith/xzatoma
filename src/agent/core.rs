@@ -6,8 +6,10 @@
 //! - Enforces iteration limits and timeouts
 //! - Handles errors and stops conditions gracefully
 
+use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
+use crate::prompts;
 use crate::providers::{Message, Provider, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::Arc;
@@ -188,6 +190,84 @@ impl Agent {
                 XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
             );
         }
+
+        Ok(Self {
+            provider: Arc::from(provider),
+            conversation,
+            tools,
+            config,
+        })
+    }
+
+    /// Creates a new agent instance with mode-specific system prompt
+    ///
+    /// This constructor creates an agent with a system prompt tailored to the
+    /// specified chat mode (Planning or Write) and safety mode (AlwaysConfirm or NeverConfirm).
+    /// The system prompt is automatically added to the conversation.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - A boxed provider instance
+    /// * `tools` - The tool registry with available tools
+    /// * `config` - Agent configuration (limits, timeouts, etc.)
+    /// * `mode` - The ChatMode (Planning or Write)
+    /// * `safety` - The SafetyMode (AlwaysConfirm or NeverConfirm)
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Agent instance with the system prompt added or an error if configuration is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if configuration validation fails
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+    /// use xzatoma::config::AgentConfig;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let provider = unimplemented!();
+    /// let tools = ToolRegistry::new();
+    /// let config = AgentConfig::default();
+    /// let agent = Agent::new_with_mode(
+    ///     provider,
+    ///     tools,
+    ///     config,
+    ///     ChatMode::Planning,
+    ///     SafetyMode::AlwaysConfirm,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new_with_mode(
+        provider: Box<dyn Provider>,
+        tools: ToolRegistry,
+        config: AgentConfig,
+        mode: ChatMode,
+        safety: SafetyMode,
+    ) -> Result<Self> {
+        // Validate configuration
+        if config.max_turns == 0 {
+            return Err(
+                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
+            );
+        }
+
+        let mut conversation = Conversation::new(
+            config.conversation.max_tokens,
+            config.conversation.min_retain_turns,
+            config.conversation.prune_threshold.into(),
+        );
+
+        // Build and add mode-specific system prompt
+        let system_prompt = prompts::build_system_prompt(mode, safety);
+        conversation.add_system_message(system_prompt);
+
+        debug!("Created agent with mode={:?} safety={:?}", mode, safety);
 
         Ok(Self {
             provider: Arc::from(provider),

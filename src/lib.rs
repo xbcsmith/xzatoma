@@ -35,6 +35,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod prompts;
 pub mod providers;
 pub mod tools;
 
