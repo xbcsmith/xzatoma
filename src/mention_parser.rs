@@ -21,7 +21,11 @@
 //! assert_eq!(mentions.len(), 2);
 //! ```
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+use tokio::fs;
+use tracing::debug;
 
 /// A mention extracted from user input
 ///
@@ -69,6 +73,202 @@ pub struct SearchMention {
 pub struct UrlMention {
     /// The full URL
     pub url: String,
+}
+
+/// Loaded content from a file mention with metadata
+///
+/// Contains the file contents and metadata like size, line count, and modification time.
+#[derive(Debug, Clone)]
+pub struct MentionContent {
+    /// The resolved file path (used in cache operations)
+    #[allow(dead_code)]
+    pub path: PathBuf,
+    /// The original mention path for display purposes
+    pub original_path: String,
+    /// File contents
+    pub contents: String,
+    /// File size in bytes
+    #[allow(dead_code)]
+    pub size_bytes: u64,
+    /// Total number of lines in file
+    pub line_count: usize,
+    /// Last modification time
+    pub mtime: Option<SystemTime>,
+}
+
+impl MentionContent {
+    /// Create a new MentionContent instance
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path
+    /// * `original_path` - The original mention path for display
+    /// * `contents` - The file contents
+    /// * `mtime` - Optional modification time
+    pub fn new(
+        path: PathBuf,
+        original_path: String,
+        contents: String,
+        mtime: Option<SystemTime>,
+    ) -> Self {
+        let size_bytes = contents.len() as u64;
+        let line_count = contents.lines().count();
+        Self {
+            path,
+            original_path,
+            contents,
+            size_bytes,
+            line_count,
+            mtime,
+        }
+    }
+
+    /// Extract a line range from the content
+    ///
+    /// # Arguments
+    ///
+    /// * `start_line` - Starting line (1-based, inclusive)
+    /// * `end_line` - Ending line (1-based, inclusive)
+    ///
+    /// # Returns
+    ///
+    /// The extracted lines as a string, or error if range is invalid
+    pub fn extract_line_range(
+        &self,
+        start_line: usize,
+        end_line: usize,
+    ) -> crate::error::Result<String> {
+        if start_line == 0 || end_line == 0 || start_line > end_line {
+            return Err(anyhow::anyhow!(
+                "Invalid line range: {}-{} (must be 1-based and start <= end)",
+                start_line,
+                end_line
+            ));
+        }
+
+        if start_line > self.line_count {
+            return Err(anyhow::anyhow!(
+                "Start line {} exceeds file line count {}",
+                start_line,
+                self.line_count
+            ));
+        }
+
+        let end = std::cmp::min(end_line, self.line_count);
+        let extracted: String = self
+            .contents
+            .lines()
+            .enumerate()
+            .filter(|(idx, _)| {
+                let line_num = idx + 1;
+                line_num >= start_line && line_num <= end
+            })
+            .map(|(_, line)| line)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(extracted)
+    }
+
+    /// Format content with file header and metadata
+    ///
+    /// # Returns
+    ///
+    /// Formatted string suitable for inclusion in prompts
+    pub fn format_with_header(&self, start_line: Option<usize>, end_line: Option<usize>) -> String {
+        let path_str = &self.original_path;
+        let line_info = match (start_line, end_line) {
+            (Some(s), Some(e)) => format!(" (Lines {}-{})", s, e),
+            (Some(s), None) => format!(" (Line {})", s),
+            _ => format!(" ({} lines)", self.line_count),
+        };
+
+        format!(
+            "File: {}{}\n\n```\n{}\n```",
+            path_str, line_info, self.contents
+        )
+    }
+}
+
+/// Cache for loaded file contents with mtime-based invalidation
+///
+/// Stores loaded file contents indexed by path and invalidates entries
+/// when files are modified.
+#[derive(Debug, Clone)]
+pub struct MentionCache {
+    cache: HashMap<PathBuf, MentionContent>,
+}
+
+impl MentionCache {
+    /// Create a new empty cache
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Get cached content if valid (not modified since cached)
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path to look up
+    ///
+    /// # Returns
+    ///
+    /// The cached content if valid, None if not in cache or stale
+    pub fn get(&self, path: &Path) -> Option<MentionContent> {
+        let cached = self.cache.get(path)?;
+
+        // Check if file was modified since we cached it
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Ok(current_mtime) = metadata.modified() {
+                if let Some(cached_mtime) = cached.mtime {
+                    if current_mtime <= cached_mtime {
+                        debug!("Cache hit for {}", path.display());
+                        return Some(cached.clone());
+                    }
+                }
+            }
+        }
+
+        // Cache is stale
+        None
+    }
+
+    /// Store content in cache
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path
+    /// * `content` - The content to cache
+    pub fn insert(&mut self, path: PathBuf, content: MentionContent) {
+        debug!("Cached content for {}", path.display());
+        self.cache.insert(path, content);
+    }
+
+    /// Clear the entire cache
+    #[allow(dead_code)]
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    /// Get number of entries in cache
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Check if cache is empty
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+}
+
+impl Default for MentionCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Parse mentions from user input
@@ -412,9 +612,310 @@ pub fn resolve_mention_path(
     Ok(canonical)
 }
 
+/// Load file content for a file mention
+///
+/// # Arguments
+///
+/// * `mention` - The file mention to load
+/// * `working_dir` - The working directory for path resolution
+/// * `max_size_bytes` - Maximum file size to load (from ToolsConfig)
+///
+/// # Returns
+///
+/// The loaded MentionContent or an error
+///
+/// # Errors
+///
+/// Returns error if:
+/// - File cannot be resolved or is outside working directory
+/// - File doesn't exist or is not readable
+/// - File exceeds size limit
+/// - File is binary
+pub async fn load_file_content(
+    mention: &FileMention,
+    working_dir: &Path,
+    max_size_bytes: u64,
+) -> crate::error::Result<MentionContent> {
+    // Resolve the file path
+    let file_path = resolve_mention_path(&mention.path, working_dir)?;
+
+    // Check file exists
+    if !file_path.exists() {
+        return Err(anyhow::anyhow!("File not found: {}", mention.path));
+    }
+
+    // Get file metadata
+    let metadata = fs::metadata(&file_path).await?;
+
+    if !metadata.is_file() {
+        return Err(anyhow::anyhow!("Not a file: {}", mention.path));
+    }
+
+    let file_size = metadata.len();
+
+    // Check size limit
+    if file_size > max_size_bytes {
+        return Err(anyhow::anyhow!(
+            "File too large: {} bytes exceeds limit of {} bytes",
+            file_size,
+            max_size_bytes
+        ));
+    }
+
+    // Read file contents
+    let contents = fs::read_to_string(&file_path).await?;
+
+    // Check for binary file (simple heuristic: contains null bytes)
+    if contents.contains('\0') {
+        return Err(anyhow::anyhow!(
+            "Binary file cannot be loaded: {}",
+            mention.path
+        ));
+    }
+
+    // Get modification time
+    let mtime = metadata.modified().ok();
+
+    Ok(MentionContent::new(
+        file_path,
+        mention.path.clone(),
+        contents,
+        mtime,
+    ))
+}
+
+/// Augment user prompt with file contents from mentions
+///
+/// Loads file contents for all file mentions and prepends them to the user prompt
+/// in a structured format. Uses cache to avoid repeated file reads.
+///
+/// # Arguments
+///
+/// * `mentions` - The parsed mentions from user input
+/// * `original_prompt` - The original user input
+/// * `working_dir` - The working directory for path resolution
+/// * `max_size_bytes` - Maximum file size to load
+/// * `cache` - Mention cache for storing/retrieving loaded contents
+///
+/// # Returns
+///
+/// A tuple of (augmented_prompt, load_errors)
+/// - augmented_prompt: The original prompt with file contents prepended
+/// - load_errors: Any non-fatal errors that occurred during loading
+pub async fn augment_prompt_with_mentions(
+    mentions: &[Mention],
+    original_prompt: &str,
+    working_dir: &Path,
+    max_size_bytes: u64,
+    cache: &mut MentionCache,
+) -> (String, Vec<String>) {
+    let mut file_contents = Vec::new();
+    let mut errors = Vec::new();
+
+    // Process file mentions in order
+    for mention in mentions {
+        if let Mention::File(file_mention) = mention {
+            let file_path = match resolve_mention_path(&file_mention.path, working_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    errors.push(format!("Failed to resolve {}: {}", file_mention.path, e));
+                    continue;
+                }
+            };
+
+            // Try to get from cache first
+            let content = if let Some(cached) = cache.get(&file_path) {
+                debug!("Using cached content for {}", file_path.display());
+                cached
+            } else {
+                // Load from disk
+                match load_file_content(file_mention, working_dir, max_size_bytes).await {
+                    Ok(content) => {
+                        cache.insert(file_path.clone(), content.clone());
+                        content
+                    }
+                    Err(e) => {
+                        errors.push(format!("Failed to load {}: {}", file_mention.path, e));
+                        continue;
+                    }
+                }
+            };
+
+            // Extract line range if specified
+            let content_str = match (file_mention.start_line, file_mention.end_line) {
+                (Some(start), Some(end)) => match content.extract_line_range(start, end) {
+                    Ok(extracted) => content
+                        .format_with_header(Some(start), Some(end))
+                        .replace(&content.contents, &extracted),
+                    Err(e) => {
+                        errors.push(format!(
+                            "Failed to extract lines {}-{} from {}: {}",
+                            start, end, file_mention.path, e
+                        ));
+                        continue;
+                    }
+                },
+                (Some(line), None) => match content.extract_line_range(line, line) {
+                    Ok(extracted) => content
+                        .format_with_header(Some(line), None)
+                        .replace(&content.contents, &extracted),
+                    Err(e) => {
+                        errors.push(format!(
+                            "Failed to extract line {} from {}: {}",
+                            line, file_mention.path, e
+                        ));
+                        continue;
+                    }
+                },
+                _ => content.format_with_header(None, None),
+            };
+
+            file_contents.push(content_str);
+        }
+    }
+
+    // Construct augmented prompt
+    let augmented = if file_contents.is_empty() {
+        original_prompt.to_string()
+    } else {
+        let separator = "\n---\n\n";
+        format!(
+            "{}{}{}",
+            file_contents.join(separator),
+            separator,
+            original_prompt
+        )
+    };
+
+    (augmented, errors)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_mention_content_new() {
+        let path = PathBuf::from("test.rs");
+        let contents = "line1\nline2\nline3".to_string();
+        let content = MentionContent::new(path.clone(), "test.rs".to_string(), contents, None);
+
+        assert_eq!(content.path, path);
+        assert_eq!(content.original_path, "test.rs");
+        assert_eq!(content.line_count, 3);
+        assert_eq!(content.size_bytes, 17);
+    }
+
+    #[test]
+    fn test_mention_content_extract_line_range() {
+        let path = PathBuf::from("test.rs");
+        let contents = "line1\nline2\nline3\nline4".to_string();
+        let content = MentionContent::new(path, "test.rs".to_string(), contents, None);
+
+        let extracted = content.extract_line_range(1, 2).unwrap();
+        assert_eq!(extracted, "line1\nline2");
+
+        let extracted = content.extract_line_range(2, 3).unwrap();
+        assert_eq!(extracted, "line2\nline3");
+
+        let extracted = content.extract_line_range(1, 1).unwrap();
+        assert_eq!(extracted, "line1");
+    }
+
+    #[test]
+    fn test_mention_content_extract_line_range_invalid() {
+        let path = PathBuf::from("test.rs");
+        let contents = "line1\nline2\nline3".to_string();
+        let content = MentionContent::new(path, "test.rs".to_string(), contents, None);
+
+        // Invalid: start > end
+        assert!(content.extract_line_range(2, 1).is_err());
+
+        // Invalid: zero line numbers
+        assert!(content.extract_line_range(0, 1).is_err());
+
+        // Invalid: start exceeds line count
+        assert!(content.extract_line_range(5, 10).is_err());
+    }
+
+    #[test]
+    fn test_mention_content_extract_line_range_beyond_end() {
+        let path = PathBuf::from("test.rs");
+        let contents = "line1\nline2\nline3".to_string();
+        let content = MentionContent::new(path, "test.rs".to_string(), contents, None);
+
+        // Should clamp to end
+        let extracted = content.extract_line_range(2, 10).unwrap();
+        assert_eq!(extracted, "line2\nline3");
+    }
+
+    #[test]
+    fn test_mention_content_format_with_header() {
+        let path = PathBuf::from("src/main.rs");
+        let contents = "fn main() {}".to_string();
+        let content = MentionContent::new(path, "src/main.rs".to_string(), contents, None);
+
+        let formatted = content.format_with_header(None, None);
+        assert!(formatted.contains("File: src/main.rs"));
+        assert!(formatted.contains("1 lines"));
+        assert!(formatted.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn test_mention_content_format_with_line_range() {
+        let path = PathBuf::from("src/main.rs");
+        let contents = "line1\nline2\nline3\nline4".to_string();
+        let content = MentionContent::new(path, "src/main.rs".to_string(), contents, None);
+
+        let formatted = content.format_with_header(Some(1), Some(2));
+        assert!(formatted.contains("File: src/main.rs"));
+        assert!(formatted.contains("(Lines 1-2)"));
+    }
+
+    #[test]
+    fn test_mention_cache_new() {
+        let cache = MentionCache::new();
+        assert!(cache.is_empty());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn test_mention_cache_insert_and_get() {
+        let mut cache = MentionCache::new();
+        let path = PathBuf::from("test.rs");
+        let content = MentionContent::new(
+            path.clone(),
+            "test.rs".to_string(),
+            "test".to_string(),
+            None,
+        );
+
+        cache.insert(path.clone(), content.clone());
+        assert_eq!(cache.len(), 1);
+
+        // Note: get may return None if file doesn't actually exist
+        // But we can check that it was stored
+        assert!(cache.cache.contains_key(&path));
+    }
+
+    #[test]
+    fn test_mention_cache_clear() {
+        let mut cache = MentionCache::new();
+        let path = PathBuf::from("test.rs");
+        let content = MentionContent::new(path, "test.rs".to_string(), "test".to_string(), None);
+
+        cache.insert(PathBuf::from("test.rs"), content);
+        assert!(!cache.is_empty());
+
+        cache.clear();
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn test_mention_cache_default() {
+        let cache = MentionCache::default();
+        assert!(cache.is_empty());
+    }
 
     #[test]
     fn test_parse_single_file_mention() {
@@ -743,5 +1244,294 @@ mod tests {
             }
             _ => panic!("Expected file mention"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_load_file_content_success() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        tokio::fs::write(&file_path, "line1\nline2\nline3")
+            .await
+            .unwrap();
+
+        let mention = FileMention {
+            path: "test.txt".to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let content = load_file_content(&mention, temp_dir.path(), 1024).await;
+        assert!(content.is_ok());
+
+        let content = content.unwrap();
+        assert_eq!(content.line_count, 3);
+        assert_eq!(content.size_bytes, 17);
+        assert!(content.contents.contains("line1"));
+    }
+
+    #[tokio::test]
+    async fn test_load_file_content_not_found() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mention = FileMention {
+            path: "nonexistent.txt".to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let result = load_file_content(&mention, temp_dir.path(), 1024).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_file_content_exceeds_size_limit() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("large.txt");
+        tokio::fs::write(&file_path, "x".repeat(1000))
+            .await
+            .unwrap();
+
+        let mention = FileMention {
+            path: "large.txt".to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let result = load_file_content(&mention, temp_dir.path(), 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_file_content_binary_detection() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("binary.bin");
+        tokio::fs::write(&file_path, b"test\x00binary")
+            .await
+            .unwrap();
+
+        let mention = FileMention {
+            path: "binary.bin".to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let result = load_file_content(&mention, temp_dir.path(), 1024).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Binary file"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_single_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        tokio::fs::write(&file_path, "fn main() {}").await.unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "test.rs".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Please review this code",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert!(augmented.contains("fn main() {}"));
+        assert!(augmented.contains("Please review this code"));
+        assert!(augmented.contains("File: test.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_line_range() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        tokio::fs::write(&file_path, "line1\nline2\nline3\nline4")
+            .await
+            .unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "test.rs".to_string(),
+            start_line: Some(2),
+            end_line: Some(3),
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "What about these lines?",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert!(augmented.contains("line2"));
+        assert!(augmented.contains("line3"));
+        assert!(!augmented.contains("line1"));
+        assert!(!augmented.contains("line4"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_cache_hit() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test.rs");
+        tokio::fs::write(&file_path, "cached content")
+            .await
+            .unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "test.rs".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        let mut cache = MentionCache::new();
+
+        // First call - loads from disk
+        let (augmented1, errors1) = augment_prompt_with_mentions(
+            &mentions,
+            "First prompt",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors1.is_empty());
+        assert_eq!(cache.len(), 1);
+
+        // Second call - uses cache
+        let (augmented2, errors2) = augment_prompt_with_mentions(
+            &mentions,
+            "Second prompt",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors2.is_empty());
+        assert_eq!(cache.len(), 1); // Still one entry
+        assert!(augmented1.contains("cached content"));
+        assert!(augmented2.contains("cached content"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_multiple_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file1 = temp_dir.path().join("file1.rs");
+        let file2 = temp_dir.path().join("file2.rs");
+        tokio::fs::write(&file1, "content1").await.unwrap();
+        tokio::fs::write(&file2, "content2").await.unwrap();
+
+        let mentions = vec![
+            Mention::File(FileMention {
+                path: "file1.rs".to_string(),
+                start_line: None,
+                end_line: None,
+            }),
+            Mention::File(FileMention {
+                path: "file2.rs".to_string(),
+                start_line: None,
+                end_line: None,
+            }),
+        ];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Review both files",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert!(augmented.contains("content1"));
+        assert!(augmented.contains("content2"));
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_missing_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "missing.rs".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Please review",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(!errors.is_empty());
+        assert!(augmented.contains("Please review"));
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_no_mentions() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mentions = vec![];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Just a regular prompt",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert_eq!(augmented, "Just a regular prompt");
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_non_file_mentions_ignored() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mentions = vec![
+            Mention::Search(SearchMention {
+                pattern: "test".to_string(),
+            }),
+            Mention::Url(UrlMention {
+                url: "https://example.com".to_string(),
+            }),
+        ];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors) = augment_prompt_with_mentions(
+            &mentions,
+            "Search for patterns",
+            temp_dir.path(),
+            1024,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert_eq!(augmented, "Search for patterns");
+        assert!(cache.is_empty());
     }
 }

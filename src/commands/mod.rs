@@ -104,6 +104,10 @@ pub mod chat {
         // Create readline instance
         let mut rl = DefaultEditor::new()?;
 
+        // Initialize mention cache for file content injection
+        let mut mention_cache = crate::mention_parser::MentionCache::new();
+        let max_file_size = config.agent.tools.max_file_read_size as u64;
+
         // Display welcome banner with current mode and safety
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
@@ -151,7 +155,7 @@ pub mod chat {
                     }
 
                     // Parse mentions from input
-                    let (_mentions, _cleaned_text) = match mention_parser::parse_mentions(trimmed) {
+                    let (mentions, _cleaned_text) = match mention_parser::parse_mentions(trimmed) {
                         Ok((m, c)) => {
                             if !m.is_empty() {
                                 tracing::info!("Detected {} mentions in input", m.len());
@@ -170,8 +174,26 @@ pub mod chat {
                     // Add to history
                     rl.add_history_entry(trimmed)?;
 
+                    // Augment prompt with file contents from mentions (Phase 2)
+                    let (augmented_prompt, load_errors) =
+                        crate::mention_parser::augment_prompt_with_mentions(
+                            &mentions,
+                            trimmed,
+                            &working_dir,
+                            max_file_size,
+                            &mut mention_cache,
+                        )
+                        .await;
+
+                    // Display any file loading errors to user
+                    if !load_errors.is_empty() {
+                        for error in &load_errors {
+                            eprintln!("Warning: {}", error);
+                        }
+                    }
+
                     // Execute the prompt via the agent
-                    match agent.execute(trimmed.to_string()).await {
+                    match agent.execute(augmented_prompt).await {
                         Ok(response) => {
                             println!("\n{}\n", response);
                         }
