@@ -126,7 +126,7 @@ Extended `ToolsConfig` with grep-specific settings:
 ```rust
 pub struct ToolsConfig {
     // ... existing fields ...
-    
+
     /// Maximum results per page for grep tool (default: 20)
     pub grep_max_results_per_page: usize,
 

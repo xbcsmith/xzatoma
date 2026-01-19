@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod fetch;
 pub mod file_ops;
 pub mod grep;
 pub mod plan;
@@ -22,6 +23,9 @@ pub use terminal::{
 
 // Re-export grep tool and search types
 pub use grep::{GrepTool, SearchMatch};
+
+// Re-export fetch tool and types
+pub use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
 
 // Re-export commonly used file operations and plan parser symbols for convenience
 pub use file_ops::{

@@ -714,6 +714,25 @@ pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &st
     output
 }
 
+/// Cache entry for URL content with TTL
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct UrlContentCache {
+    pub url: String,
+    pub content: String,
+    pub timestamp: std::time::SystemTime,
+}
+
+impl UrlContentCache {
+    /// Check if cache entry has expired (5 minute TTL)
+    fn is_expired(&self) -> bool {
+        self.timestamp
+            .elapsed()
+            .map(|elapsed| elapsed > std::time::Duration::from_secs(5 * 60))
+            .unwrap_or(true)
+    }
+}
+
 /// Cache entry for search results
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -721,6 +740,80 @@ struct SearchResultsCache {
     pattern: String,
     matches: Vec<crate::tools::SearchMatch>,
     timestamp: std::time::SystemTime,
+}
+
+/// Load content from a URL mention
+///
+/// Fetches web content from the specified URL, converts HTML to plain text,
+/// and applies size limits. Content is cached with a 5-minute TTL.
+///
+/// # Arguments
+///
+/// * `url_mention` - The URL mention to load
+/// * `max_size_bytes` - Maximum size to fetch in bytes
+/// * `url_cache` - Optional cache for URL contents (URL -> content)
+///
+/// # Returns
+///
+/// Returns the fetched content as a formatted string
+///
+/// # Errors
+///
+/// Returns error if URL is invalid or fetch fails
+pub async fn load_url_content(
+    url_mention: &UrlMention,
+    max_size_bytes: u64,
+    url_cache: &std::sync::Arc<
+        tokio::sync::RwLock<std::collections::HashMap<String, UrlContentCache>>,
+    >,
+) -> crate::error::Result<String> {
+    // Check cache first
+    {
+        let cache = url_cache.read().await;
+        if let Some(cached) = cache.get(&url_mention.url) {
+            if !cached.is_expired() {
+                debug!("Using cached URL content for {}", url_mention.url);
+                return Ok(format!(
+                    "Web content from {} (cached):\n\n{}",
+                    url_mention.url, cached.content
+                ));
+            }
+        }
+    }
+
+    // Create fetch tool
+    let fetch_tool =
+        crate::tools::FetchTool::new(std::time::Duration::from_secs(30), max_size_bytes as usize);
+
+    // Fetch the URL
+    match fetch_tool.fetch(&url_mention.url).await {
+        Ok(fetched) => {
+            let formatted = fetched.format_with_header(None);
+
+            // Cache the result
+            {
+                let mut cache = url_cache.write().await;
+                cache.insert(
+                    url_mention.url.clone(),
+                    UrlContentCache {
+                        url: url_mention.url.clone(),
+                        content: formatted.clone(),
+                        timestamp: std::time::SystemTime::now(),
+                    },
+                );
+            }
+
+            Ok(formatted)
+        }
+        Err(e) => {
+            debug!("Failed to fetch URL {}: {}", url_mention.url, e);
+            Err(anyhow::anyhow!(
+                "Failed to fetch URL {}: {}",
+                url_mention.url,
+                e
+            ))
+        }
+    }
 }
 
 /// Augment user prompt with file contents from mentions
@@ -752,6 +845,7 @@ pub async fn augment_prompt_with_mentions(
 ) -> (String, Vec<String>) {
     let mut file_contents = Vec::new();
     let mut errors = Vec::new();
+    let url_cache = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
     // Process file mentions in order
     for mention in mentions {
@@ -812,6 +906,20 @@ pub async fn augment_prompt_with_mentions(
             };
 
             file_contents.push(content_str);
+        }
+    }
+
+    // Process URL mentions
+    for mention in mentions {
+        if let Mention::Url(url_mention) = mention {
+            match load_url_content(url_mention, max_size_bytes, &url_cache).await {
+                Ok(content) => {
+                    file_contents.push(content);
+                }
+                Err(e) => {
+                    errors.push(format!("Failed to fetch {}: {}", url_mention.url, e));
+                }
+            }
         }
     }
 
@@ -1581,9 +1689,7 @@ mod tests {
             Mention::Search(SearchMention {
                 pattern: "test".to_string(),
             }),
-            Mention::Url(UrlMention {
-                url: "https://example.com".to_string(),
-            }),
+            // URL mentions are now processed, so test search mentions only
         ];
 
         let mut cache = MentionCache::new();
