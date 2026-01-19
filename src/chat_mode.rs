@@ -6,6 +6,7 @@
 //!
 //! It also defines safety modes that control command confirmation behavior.
 
+use colored::Colorize;
 use std::fmt;
 
 /// Chat mode for interactive sessions
@@ -76,6 +77,28 @@ impl ChatMode {
             Self::Write => "Read/write mode for executing tasks",
         }
     }
+
+    /// Get a colored tag representation of this mode
+    ///
+    /// # Returns
+    ///
+    /// A colored string suitable for display in terminal output
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::chat_mode::ChatMode;
+    ///
+    /// let tag = ChatMode::Planning.colored_tag();
+    /// println!("{}", tag);  // Displays "[PLANNING]" in purple
+    /// ```
+    #[allow(dead_code)]
+    pub fn colored_tag(&self) -> String {
+        match self {
+            Self::Planning => format!("[{}]", "PLANNING".purple()),
+            Self::Write => format!("[{}]", "WRITE".green()),
+        }
+    }
 }
 
 /// Safety mode for command execution
@@ -144,6 +167,28 @@ impl SafetyMode {
         match self {
             Self::AlwaysConfirm => "Confirm dangerous operations",
             Self::NeverConfirm => "Never confirm operations (YOLO)",
+        }
+    }
+
+    /// Get a colored tag representation of this safety mode
+    ///
+    /// # Returns
+    ///
+    /// A colored string suitable for display in terminal output
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::chat_mode::SafetyMode;
+    ///
+    /// let tag = SafetyMode::AlwaysConfirm.colored_tag();
+    /// println!("{}", tag);  // Displays "[SAFE]" in cyan
+    /// ```
+    #[allow(dead_code)]
+    pub fn colored_tag(&self) -> String {
+        match self {
+            Self::AlwaysConfirm => format!("[{}]", "SAFE".cyan()),
+            Self::NeverConfirm => format!("[{}]", "YOLO".yellow()),
         }
     }
 }
@@ -234,6 +279,31 @@ impl ChatModeState {
     /// ```
     pub fn format_prompt(&self) -> String {
         format!("[{}][{}] >> ", self.chat_mode, self.safety_mode)
+    }
+
+    /// Format a prompt string with colored mode indicators
+    ///
+    /// # Returns
+    ///
+    /// A formatted prompt string with colored tags
+    /// - Planning: Purple, Write: Green
+    /// - Safe: Cyan, YOLO: Orange/Yellow
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
+    ///
+    /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
+    /// println!("{}", state.format_colored_prompt());
+    /// // Displays: [WRITE in green][SAFE in cyan] >>
+    /// ```
+    pub fn format_colored_prompt(&self) -> String {
+        format!(
+            "{}{} >> ",
+            self.chat_mode.colored_tag(),
+            self.safety_mode.colored_tag()
+        )
     }
 
     /// Get the current status as a formatted string
@@ -419,5 +489,75 @@ mod tests {
         let state2 = state1.clone();
         assert_eq!(state1.chat_mode, state2.chat_mode);
         assert_eq!(state1.safety_mode, state2.safety_mode);
+    }
+
+    #[test]
+    fn test_chat_mode_colored_tag_planning() {
+        let tag = ChatMode::Planning.colored_tag();
+        // The tag should contain the word PLANNING
+        assert!(tag.contains("PLANNING"));
+    }
+
+    #[test]
+    fn test_chat_mode_colored_tag_write() {
+        let tag = ChatMode::Write.colored_tag();
+        // The tag should contain the word WRITE
+        assert!(tag.contains("WRITE"));
+    }
+
+    #[test]
+    fn test_safety_mode_colored_tag_safe() {
+        let tag = SafetyMode::AlwaysConfirm.colored_tag();
+        // The tag should contain the word SAFE
+        assert!(tag.contains("SAFE"));
+    }
+
+    #[test]
+    fn test_safety_mode_colored_tag_yolo() {
+        let tag = SafetyMode::NeverConfirm.colored_tag();
+        // The tag should contain the word YOLO
+        assert!(tag.contains("YOLO"));
+    }
+
+    #[test]
+    fn test_chat_mode_state_format_colored_prompt() {
+        let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        let prompt = state.format_colored_prompt();
+        // Should contain mode and safety tags and end with " >> "
+        assert!(prompt.contains("PLANNING"));
+        assert!(prompt.contains("SAFE"));
+        assert!(prompt.ends_with(" >> "));
+    }
+
+    #[test]
+    fn test_chat_mode_state_format_colored_prompt_write_yolo() {
+        let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
+        let prompt = state.format_colored_prompt();
+        // Should contain mode and safety tags and end with " >> "
+        assert!(prompt.contains("WRITE"));
+        assert!(prompt.contains("YOLO"));
+        assert!(prompt.ends_with(" >> "));
+    }
+
+    #[test]
+    fn test_chat_mode_state_format_colored_prompt_all_combinations() {
+        // Test all four combinations
+        let combinations = vec![
+            (ChatMode::Planning, SafetyMode::AlwaysConfirm),
+            (ChatMode::Planning, SafetyMode::NeverConfirm),
+            (ChatMode::Write, SafetyMode::AlwaysConfirm),
+            (ChatMode::Write, SafetyMode::NeverConfirm),
+        ];
+
+        for (mode, safety) in combinations {
+            let state = ChatModeState::new(mode, safety);
+            let prompt = state.format_colored_prompt();
+            // All should end with " >> "
+            assert!(prompt.ends_with(" >> "));
+            // All should contain the mode name
+            assert!(prompt.contains(mode.to_string().as_str()));
+            // All should contain the safety name
+            assert!(prompt.contains(safety.to_string().as_str()));
+        }
     }
 }

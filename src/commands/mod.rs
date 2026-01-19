@@ -70,7 +70,7 @@ pub mod chat {
         config: Config,
         provider_name: Option<String>,
         mode: Option<String>,
-        safe: bool,
+        _safe: bool,
     ) -> Result<()> {
         tracing::info!("Starting interactive chat mode");
 
@@ -81,16 +81,15 @@ pub mod chat {
         let working_dir = std::env::current_dir()?;
 
         // Initialize mode state from command-line arguments
+        // Defaults: Planning mode, AlwaysConfirm (safe) safety mode
         let initial_mode = mode
             .as_deref()
             .and_then(|m| ChatMode::parse_str(m).ok())
             .unwrap_or(ChatMode::Planning);
 
-        let initial_safety = if safe {
-            SafetyMode::AlwaysConfirm
-        } else {
-            SafetyMode::NeverConfirm
-        };
+        // Default to safe mode (AlwaysConfirm)
+        // The `safe` parameter is currently unused as we always default to safe
+        let initial_safety = SafetyMode::AlwaysConfirm;
 
         let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
 
@@ -108,7 +107,7 @@ pub mod chat {
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
         loop {
-            let prompt = mode_state.format_prompt();
+            let prompt = mode_state.format_colored_prompt();
             match rl.readline(&prompt) {
                 Ok(line) => {
                     let trimmed = line.trim();
@@ -211,11 +210,17 @@ pub mod chat {
     /// print_welcome_banner(&ChatMode::Planning, &SafetyMode::AlwaysConfirm);
     /// ```
     fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
+        use colored::Colorize;
+
         println!("\n╔══════════════════════════════════════════════════════════════╗");
         println!("║         XZatoma Interactive Chat Mode - Welcome!             ║");
         println!("╚══════════════════════════════════════════════════════════════╝\n");
-        println!("Mode:   {} ({})", mode, mode.description());
-        println!("Safety: {} ({})\n", safety, safety.description());
+        println!("Mode:   {} ({})", mode.colored_tag(), mode.description());
+        println!(
+            "Safety: {} ({})\n",
+            safety.colored_tag(),
+            safety.description()
+        );
         println!("Type '/help' for available commands, 'exit' to quit\n");
     }
 
@@ -243,22 +248,24 @@ pub mod chat {
         tool_count: usize,
         conversation_len: usize,
     ) {
+        use colored::Colorize;
+
         println!("\n╔══════════════════════════════════════════════════════════════╗");
         println!("║                     XZatoma Session Status                   ║");
         println!("╚══════════════════════════════════════════════════════════════╝\n");
         println!(
             "Chat Mode:         {} ({})",
-            mode_state.chat_mode,
+            mode_state.chat_mode.colored_tag(),
             mode_state.chat_mode.description()
         );
         println!(
             "Safety Mode:       {} ({})",
-            mode_state.safety_mode,
+            mode_state.safety_mode.colored_tag(),
             mode_state.safety_mode.description()
         );
         println!("Available Tools:   {}", tool_count);
         println!("Conversation Size: {} messages", conversation_len);
-        println!("Prompt Format:     {}", mode_state.format_prompt());
+        println!("Prompt Format:     {}", mode_state.format_colored_prompt());
         println!();
     }
 

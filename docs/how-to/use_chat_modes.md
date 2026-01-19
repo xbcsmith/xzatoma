@@ -80,7 +80,7 @@ Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
 
-[PLANNING][SAFE] >> 
+[PLANNING][SAFE] >>
 ```
 
 The prompt shows your current mode and safety setting:
@@ -100,7 +100,7 @@ Type '/safe' to enable confirmations, or '/yolo' to disable.
 
 Switched from PLANNING to WRITE mode
 
-[WRITE][SAFE] >> 
+[WRITE][SAFE] >>
 ```
 
 Or use the shorthand:
@@ -119,7 +119,7 @@ Toggle confirmations on and off:
 [WRITE][SAFE] >> /yolo
 Switched from SAFE to YOLO mode
 
-[WRITE][YOLO] >> 
+[WRITE][YOLO] >>
 ```
 
 Or use alternatives:
@@ -184,7 +184,7 @@ Chat Mode:         WRITE (Read/write mode for executing tasks)
 Safety Mode:       SAFE (Confirm dangerous operations)
 Available Tools:   5
 Conversation Size: 12 messages
-Prompt Format:     [WRITE][SAFE] >> 
+Prompt Format:     [WRITE][SAFE] >>
 
 ```
 

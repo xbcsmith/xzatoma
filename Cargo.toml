@@ -43,6 +43,9 @@ similar = "2.3"
 # Interactive CLI
 rustyline = "13.0"
 
+# Terminal colors
+colored = "2.1"
+
 # Regex for validation
 regex = "1.10"
 
