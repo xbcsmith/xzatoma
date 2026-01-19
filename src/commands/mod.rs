@@ -103,8 +103,9 @@ pub mod chat {
 
         // Create readline instance
         let mut rl = DefaultEditor::new()?;
-        println!("XZatoma Interactive Chat Mode");
-        println!("Type '/help' for available commands, 'exit' to quit\n");
+
+        // Display welcome banner with current mode and safety
+        print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
         loop {
             let prompt = mode_state.format_prompt();
@@ -134,7 +135,9 @@ pub mod chat {
                             continue;
                         }
                         SpecialCommand::ShowStatus => {
-                            println!("\n{}\n", mode_state.status());
+                            let tool_count = agent.num_tools();
+                            let conversation_len = agent.conversation().len();
+                            print_status_display(&mode_state, tool_count, conversation_len);
                             continue;
                         }
                         SpecialCommand::Help => {
@@ -190,6 +193,75 @@ pub mod chat {
     /// # Returns
     ///
     /// Returns a configured ToolRegistry or an error
+    /// Display welcome banner at the start of interactive chat mode
+    ///
+    /// Shows a formatted banner with the application name, current mode,
+    /// safety mode, and basic instructions.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - The initial chat mode
+    /// * `safety` - The initial safety mode
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+    ///
+    /// print_welcome_banner(&ChatMode::Planning, &SafetyMode::AlwaysConfirm);
+    /// ```
+    fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
+        println!("\n╔══════════════════════════════════════════════════════════════╗");
+        println!("║         XZatoma Interactive Chat Mode - Welcome!             ║");
+        println!("╚══════════════════════════════════════════════════════════════╝\n");
+        println!("Mode:   {} ({})", mode, mode.description());
+        println!("Safety: {} ({})\n", safety, safety.description());
+        println!("Type '/help' for available commands, 'exit' to quit\n");
+    }
+
+    /// Display detailed status information about the current session
+    ///
+    /// Shows the current chat mode, safety mode, available tools, and conversation state.
+    /// This is called when the user types '/status' command.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode_state` - Current chat mode state
+    /// * `tool_count` - Number of available tools in current mode
+    /// * `conversation_len` - Number of messages in the conversation
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
+    ///
+    /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
+    /// print_status_display(&state, 5, 10);
+    /// ```
+    fn print_status_display(
+        mode_state: &ChatModeState,
+        tool_count: usize,
+        conversation_len: usize,
+    ) {
+        println!("\n╔══════════════════════════════════════════════════════════════╗");
+        println!("║                     XZatoma Session Status                   ║");
+        println!("╚══════════════════════════════════════════════════════════════╝\n");
+        println!(
+            "Chat Mode:         {} ({})",
+            mode_state.chat_mode,
+            mode_state.chat_mode.description()
+        );
+        println!(
+            "Safety Mode:       {} ({})",
+            mode_state.safety_mode,
+            mode_state.safety_mode.description()
+        );
+        println!("Available Tools:   {}", tool_count);
+        println!("Conversation Size: {} messages", conversation_len);
+        println!("Prompt Format:     {}", mode_state.format_prompt());
+        println!();
+    }
+
     fn build_tools_for_mode(
         mode_state: &ChatModeState,
         config: &Config,
@@ -397,6 +469,122 @@ pub mod chat {
             };
 
             assert_eq!(unsafe_mode, SafetyMode::NeverConfirm);
+        }
+
+        #[test]
+        fn test_print_welcome_banner_planning_safe() {
+            // Test that welcome banner displays correctly for Planning + Safe
+            let mode = ChatMode::Planning;
+            let safety = SafetyMode::AlwaysConfirm;
+
+            // Note: In actual tests, we'd capture stdout, but this is a smoke test
+            print_welcome_banner(&mode, &safety);
+            // If this doesn't panic, the function works
+        }
+
+        #[test]
+        fn test_print_welcome_banner_write_yolo() {
+            // Test that welcome banner displays correctly for Write + YOLO
+            let mode = ChatMode::Write;
+            let safety = SafetyMode::NeverConfirm;
+
+            print_welcome_banner(&mode, &safety);
+            // Smoke test - verifies function executes without panic
+        }
+
+        #[test]
+        fn test_print_status_display_planning_mode() {
+            // Test status display for Planning mode
+            let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+            let tool_count = 3;
+            let conversation_len = 5;
+
+            print_status_display(&state, tool_count, conversation_len);
+            // Smoke test - verifies function executes without panic
+        }
+
+        #[test]
+        fn test_print_status_display_write_mode() {
+            // Test status display for Write mode with YOLO
+            let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
+            let tool_count = 6;
+            let conversation_len = 12;
+
+            print_status_display(&state, tool_count, conversation_len);
+            // Smoke test - verifies function executes without panic
+        }
+
+        #[test]
+        fn test_chat_mode_state_format_prompt_all_combinations() {
+            // Test all four mode combinations format correctly
+            let combinations = vec![
+                (
+                    ChatMode::Planning,
+                    SafetyMode::AlwaysConfirm,
+                    "[PLANNING][SAFE] >> ",
+                ),
+                (
+                    ChatMode::Planning,
+                    SafetyMode::NeverConfirm,
+                    "[PLANNING][YOLO] >> ",
+                ),
+                (
+                    ChatMode::Write,
+                    SafetyMode::AlwaysConfirm,
+                    "[WRITE][SAFE] >> ",
+                ),
+                (
+                    ChatMode::Write,
+                    SafetyMode::NeverConfirm,
+                    "[WRITE][YOLO] >> ",
+                ),
+            ];
+
+            for (mode, safety, expected) in combinations {
+                let state = ChatModeState::new(mode, safety);
+                assert_eq!(state.format_prompt(), expected);
+            }
+        }
+
+        #[test]
+        fn test_chat_mode_state_status_includes_all_info() {
+            // Verify status string includes mode, safety, and descriptions
+            let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
+            let status = state.status();
+
+            assert!(status.contains("WRITE"));
+            assert!(status.contains("SAFE"));
+            assert!(status.contains("Read/write mode"));
+            assert!(status.contains("Confirm dangerous"));
+        }
+
+        #[test]
+        fn test_chat_mode_descriptions() {
+            // Test that mode descriptions are informative
+            assert!(!ChatMode::Planning.description().is_empty());
+            assert!(!ChatMode::Write.description().is_empty());
+            assert!(!SafetyMode::AlwaysConfirm.description().is_empty());
+            assert!(!SafetyMode::NeverConfirm.description().is_empty());
+
+            // Verify descriptions contain key information (case-insensitive)
+            let planning_desc = ChatMode::Planning.description().to_lowercase();
+            assert!(planning_desc.contains("read"));
+            let write_desc = ChatMode::Write.description().to_lowercase();
+            assert!(write_desc.contains("read") && write_desc.contains("write"));
+            assert!(SafetyMode::AlwaysConfirm.description().contains("Confirm"));
+            assert!(
+                SafetyMode::NeverConfirm.description().contains("Never")
+                    || SafetyMode::NeverConfirm.description().contains("YOLO")
+            );
+        }
+
+        #[test]
+        fn test_mode_display_formatting() {
+            // Test that mode displays correctly as uppercase strings
+            assert_eq!(ChatMode::Planning.to_string(), "PLANNING");
+            assert_eq!(ChatMode::Write.to_string(), "WRITE");
+            assert_eq!(SafetyMode::AlwaysConfirm.to_string(), "SAFE");
+            assert_eq!(SafetyMode::NeverConfirm.to_string(), "YOLO");
         }
     }
 }

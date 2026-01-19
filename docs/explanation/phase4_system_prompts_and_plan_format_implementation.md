@@ -42,7 +42,7 @@ The planning mode prompt guides the agent to:
 Example instructions:
 
 ```text
-You are in PLANNING mode. Your role is to analyze requests and create 
+You are in PLANNING mode. Your role is to analyze requests and create
 detailed, actionable plans.
 
 CONSTRAINTS - You CANNOT:
@@ -66,7 +66,7 @@ For safety-enabled mode, it emphasizes confirmation requirements:
 
 ```text
 SAFETY MODE: ENABLED (CONFIRMATION REQUIRED)
-Your safety mode requires explicit confirmation before executing 
+Your safety mode requires explicit confirmation before executing
 potentially dangerous operations:
 - File deletions
 - Command executions
@@ -93,15 +93,15 @@ Comprehensive plan format support with three detection mechanisms:
 ```rust
 pub fn detect_plan_format(content: &str) -> PlanFormat {
     let trimmed = content.trim_start();
-    
+
     if trimmed.starts_with("---") {
         return PlanFormat::MarkdownWithFrontmatter;
     }
-    
+
     if trimmed.starts_with("# ") || trimmed.starts_with("## ") {
         return PlanFormat::Markdown;
     }
-    
+
     PlanFormat::Yaml
 }
 ```
@@ -221,7 +221,7 @@ async fn example() -> Result<()> {
     let provider = create_provider("copilot")?;
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    
+
     // Create agent with planning mode system prompt
     let agent = Agent::new_with_mode(
         provider,
@@ -230,12 +230,12 @@ async fn example() -> Result<()> {
         ChatMode::Planning,
         SafetyMode::AlwaysConfirm,
     )?;
-    
+
     // Agent now has planning mode instructions
     let result = agent.execute(
         "Create a plan for implementing a new feature"
     ).await?;
-    
+
     Ok(())
 }
 ```
@@ -247,7 +247,7 @@ use xzatoma::tools::plan_format::{validate_plan, PlanFormat};
 
 fn validate_agent_output(output: &str) -> Result<()> {
     let validated = validate_plan(output)?;
-    
+
     if !validated.is_valid_plan() {
         println!("Plan validation errors:");
         for error in validated.errors {
@@ -255,7 +255,7 @@ fn validate_agent_output(output: &str) -> Result<()> {
         }
         return Err("Invalid plan format".into());
     }
-    
+
     println!("Valid {} plan: {}", validated.format, validated.title);
     Ok(())
 }
@@ -273,11 +273,11 @@ fn switch_mode_and_update_agent(
 ) -> Result<Agent> {
     // Get existing conversation
     let mut conversation = old_agent.conversation().clone();
-    
+
     // Update system prompt for new mode
     let new_system_prompt = build_system_prompt(new_mode, safety);
     conversation.add_system_message(new_system_prompt);
-    
+
     // Create new agent with same conversation but new tools/prompt
     let new_tools = build_tools_for_mode(new_mode, safety);
     Agent::with_conversation(provider, new_tools, config, conversation)

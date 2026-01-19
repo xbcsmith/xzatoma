@@ -36,11 +36,14 @@ cargo install --git https://github.com/xbcsmith/xzatoma
 # Authenticate with provider
 xzatoma auth --provider copilot
 
+# Interactive chat mode (default: Planning mode)
+xzatoma chat
+
+# Interactive chat in Write mode with safety enabled
+xzatoma chat --mode write --safe
+
 # Run a plan file
 xzatoma run --plan task.yaml
-
-# Interactive chat mode
-xzatoma chat
 
 # One-shot prompt
 xzatoma run --prompt "Find all TODO comments and create tasks.md"
@@ -63,14 +66,54 @@ instructions:
 
 ### Example Interactive Session
 
+#### Planning Mode (Read-Only Analysis)
+
 ```bash
 $ xzatoma chat
-> Refactor all snake_case function names to camelCase in Python files
+╔══════════════════════════════════════════════════════════════╗
+║         XZatoma Interactive Chat Mode - Welcome!             ║
+╚══════════════════════════════════════════════════════════════╝
 
-Agent: I'll search for Python files and refactor the function names.
+Mode:   PLANNING (Read-only mode for creating plans)
+Safety: SAFE (Confirm dangerous operations)
+
+Type '/help' for available commands, 'exit' to quit
+
+[PLANNING][SAFE] >> Analyze the project structure and create a refactoring plan
+
+Agent: I'll analyze your project structure.
 [Using tool: list_files]
-[Using tool: read_file for each .py file]
-[Using tool: write_file with updated content]
+[Using tool: read_file for key files]
+
+Here's the project structure:
+- src/main.rs: CLI entry point
+- src/agent/: Core agent logic
+- src/tools/: Available tools
+
+I recommend the following refactoring...
+
+[PLANNING][SAFE] >> /write
+
+Switched from PLANNING to WRITE mode
+
+[WRITE][SAFE] >> Now implement the refactoring plan
+```
+
+#### Write Mode (File Modifications)
+
+```bash
+$ xzatoma chat --mode write --safe
+
+[WRITE][SAFE] >> Refactor all snake_case function names to camelCase
+
+Agent: I'll refactor the function names for you.
+[Using tool: read_file]
+[Using tool: write_file]
+
+Please confirm: Overwriting src/lib.rs with 245 lines
+yes
+[Using tool: terminal]
+Running cargo fmt...
 
 Done! Refactored 12 functions across 5 files.
 ```
@@ -87,16 +130,45 @@ XZatoma is intentionally simple:
 
 The agent has no specialized features - it accomplishes complex tasks by using basic file and terminal tools creatively.
 
+### Chat Modes for Fine-Grained Control
+
+XZatoma provides two complementary chat modes to control what the agent can do:
+
+**Planning Mode** (Read-Only)
+
+- Explore and analyze code
+- Create and review plans
+- Safe - agent cannot modify files or run commands
+- Start here to understand what needs to be done
+
+**Write Mode** (Read/Write)
+
+- Implement changes
+- Execute commands and scripts
+- Modify and create files
+- Use after reviewing a plan in Planning mode
+
+Both modes support **Safety Mode** for additional protection:
+
+- **Safe** - Agent must confirm before dangerous operations
+- **YOLO** - Execute without confirmations (faster, riskier)
+
+Switch between modes at any time during your chat session - conversation history is preserved!
+
+For detailed usage guide, see [Using Chat Modes](docs/how-to/use_chat_modes.md).
+
 ## Project Documentation
 
 ### For Users
 
+- [How to Use Chat Modes](docs/how-to/use_chat_modes.md) - Interactive chat mode guide
 - [Quick Start Tutorial](docs/tutorials/quickstart.md) _(coming soon)_
-- [Configuration Guide](docs/how_to/configure_providers.md) _(coming soon)_
+- [Configuration Guide](docs/how-to/configure_providers.md) _(coming soon)_
 - [CLI Reference](docs/reference/cli.md) _(coming soon)_
 
 ### For Developers
 
+- [Chat Modes Architecture](docs/explanation/chat_modes_architecture.md) - Design and implementation
 - [Architecture Overview](docs/reference/architecture.md)
 - [Implementation Plan](docs/explanation/implementation_plan.md)
 - [Project Overview](docs/explanation/overview.md)
