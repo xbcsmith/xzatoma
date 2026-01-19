@@ -40,6 +40,11 @@ pub enum SpecialCommand {
     /// Shows all available special commands and their usage.
     Help,
 
+    /// Display mention syntax help
+    ///
+    /// Shows how to use context mentions (@file, @search, @grep, @url).
+    Mentions,
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -111,6 +116,7 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
         // Status and help
         "/status" => SpecialCommand::ShowStatus,
         "/help" | "/?" => SpecialCommand::Help,
+        "/mentions" => SpecialCommand::Mentions,
 
         // Exit commands
         "exit" | "quit" | "/exit" | "/quit" => SpecialCommand::Exit,
@@ -150,10 +156,18 @@ SAFETY MODE SWITCHING:
   /yolo           - Disable safety mode (YOLO mode)
   /safety off     - Same as /yolo
 
+CONTEXT MENTIONS (Quick Reference):
+  @file.rs              - Include file contents
+  @file.rs#L10-20       - Include specific lines
+  @search:"pattern"     - Search for literal text
+  @grep:"regex"         - Search with regex patterns
+  @url:https://...      - Include web content
+
 SESSION INFORMATION:
   /status         - Show current mode and safety status
   /help           - Show this help message
   /?              - Same as /help
+  /mentions       - Show detailed context mention help
 
 SESSION CONTROL:
   exit            - Exit interactive mode
@@ -162,8 +176,175 @@ SESSION CONTROL:
 NOTES:
   - Commands are case-insensitive
   - Regular text (not starting with /) is sent to the agent
+  - Mentions (@file, @search, etc.) inject context into prompts
   - Switching to Write mode enables powerful file and terminal tools
   - Use /safe in Write mode to require confirmation for dangerous operations
+  - See /mentions for complete mention syntax and examples
+"#
+    );
+}
+
+/// Display detailed help for context mentions
+///
+/// Shows mention syntax, examples, and best practices for all mention types.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::commands::special_commands::print_mention_help;
+///
+/// print_mention_help();
+/// ```
+pub fn print_mention_help() {
+    println!(
+        r#"
+Context Mentions for XZatoma
+=============================
+
+Context mentions let you include file contents, search results, and web content
+in your prompts. Use @mention syntax to reference relevant information.
+
+FILE MENTIONS
+=============
+Include file contents from your project.
+
+Syntax:
+  @filename                 - Simple file reference
+  @path/to/file.rs        - Full path
+  @file.rs#L10-20          - Specific line range
+  @file.rs#L10-           - From line 10 to end
+  @file.rs#L-20           - Start to line 20
+
+Examples:
+  Review @config.yaml
+  Check the error handler: @src/error.rs#L50-100
+  Show @README.md
+  Include @src/lib.rs
+
+Smart Features:
+  - Abbreviations: @lib → src/lib.rs, @main → src/main.rs
+  - Fuzzy matching: suggests similar filenames if exact not found
+  - Line range caching: fast repeated access to same file
+
+SEARCH MENTIONS
+===============
+Find literal text patterns across your codebase.
+
+Syntax:
+  @search:"pattern"         - Find exact text (case-sensitive)
+  @search:"multi word"      - Patterns with spaces need quotes
+
+Examples:
+  @search:"TODO"
+  @search:"error handling"
+  @search:"pub fn"
+  Find all async functions: @search:"async fn"
+
+Features:
+  - Case-sensitive matching
+  - Shows file name and line number
+  - Results limited to 100 matches
+  - Good for specific identifiers
+
+GREP MENTIONS
+==============
+Find patterns using regular expressions.
+
+Syntax:
+  @grep:"regex_pattern"     - Regex with Rust syntax
+  @grep:"(?i)case"          - Case-insensitive (with (?i))
+
+Examples:
+  @grep:"^pub fn"           - All public function definitions
+  @grep:"impl.*Error"       - All Error trait implementations
+  @grep:"Result"            - Find Result types
+  @grep:"(?i)error"         - Case-insensitive error matching
+  @grep:"TODO|FIXME"        - Find common markers
+
+Regex Features:
+  - ^ = start of line
+  - $ = end of line
+  - . = any character
+  - * = zero or more
+  - + = one or more
+  - [abc] = character class
+  - | = alternation (or)
+  - () = grouping
+  - w = word character (use with backslash in actual regex)
+  - d = digit (use with backslash in actual regex)
+  - s = whitespace (use with backslash in actual regex)
+
+URL MENTIONS
+============
+Include content from web URLs.
+
+Syntax:
+  @url:https://example.com  - Fetch and include web content
+
+Examples:
+  @url:https://docs.rs/tokio/latest/tokio/
+  @url:https://raw.githubusercontent.com/user/repo/file
+  @url:https://api.github.com/repos/user/repo
+  Learn from: @url:https://example.com/documentation
+
+Features:
+  - Fetches HTTP/HTTPS content
+  - Converts HTML to readable text
+  - Formats JSON for readability
+  - Caches results (24 hours)
+  - Prevents SSRF attacks (blocks localhost, private IPs)
+
+Security:
+  - Blocks access to localhost and 127.0.0.1
+  - Blocks private IP addresses (10.x, 192.168.x, etc.)
+  - Only allows HTTP/HTTPS
+  - Enforces 60-second timeout
+  - Limits content to 1 MB
+  - Rate-limited per domain
+
+COMBINING MENTIONS
+==================
+Use multiple mentions in one prompt:
+
+  Review @config.yaml and implement based on:
+  @url:https://example.com/specification
+
+  Include these patterns: @grep:"pub async fn "
+
+  But avoid: @search:"TODO" and @search:"FIXME"
+
+TIPS AND BEST PRACTICES
+=======================
+- Mentions are fast: use them instead of asking agent to read files
+- Be specific: @src/module/file.rs is better than @file.rs
+- Use line ranges: @large_file.rs#L100-200 instead of whole file
+- Combine strategically: don't overwhelm with too many mentions
+- Check errors: agent reports which mentions failed to load
+- Leverage caching: second mention of same file is instant
+
+TROUBLESHOOTING
+===============
+File not found:
+  - Use full path: @src/path/to/file.rs
+  - Check spelling and capitalization
+  - Agent suggests similar filenames with fuzzy matching
+
+Search returns nothing:
+  - Verify spelling exactly
+  - Try different search terms
+  - Try @grep with relaxed regex: @grep:"[Tt]odo "
+
+SSRF blocked (for URLs):
+  - Cannot access localhost or private IPs
+  - Use public URLs instead
+  - Works with public documentation sites
+
+URL fetch timeout:
+  - Large pages may be slow
+  - Try specific pages instead of homepage
+  - URL results are cached after first fetch
+
+For more details, see the user guide: docs/how-to/use_context_mentions.md
 "#
     );
 }
@@ -322,5 +503,11 @@ mod tests {
     fn test_parse_random_command_returns_none() {
         let cmd = parse_special_command("/random");
         assert_eq!(cmd, SpecialCommand::None);
+    }
+
+    #[test]
+    fn test_parse_mentions() {
+        let cmd = parse_special_command("/mentions");
+        assert_eq!(cmd, SpecialCommand::Mentions);
     }
 }

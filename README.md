@@ -16,6 +16,7 @@ XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks 
 
 - **Multi-Provider AI Integration**: GitHub Copilot and Ollama support
 - **Autonomous Agent**: Conversation-based execution with multi-turn tool calling
+- **Context Mentions**: Include files, search results, and web content with `@mention` syntax
 - **Basic Tools**: File operations (list, read, write, delete, diff) and terminal execution
 - **Flexible Input**: Interactive chat mode, structured plan files, or one-shot prompts
 - **Generic Design**: No specialized features - agent uses basic tools creatively
@@ -159,11 +160,28 @@ Switch between modes at any time during your chat session - conversation history
 
 For detailed usage guide, see [Using Chat Modes](docs/how-to/use_chat_modes.md).
 
+## Context Mentions
+
+XZatoma supports context mentions - a powerful way to inject relevant content directly into your prompts:
+
+```
+Include a file:        @config.yaml
+Specific lines:        @src/main.rs#L10-25
+Search your code:      @search:"error handling"
+Regex patterns:        @grep:"^pub fn.*Result"
+Web content:           @url:https://docs.example.com
+```
+
+Instead of having the agent discover content through tool calls, mentions pre-load context, making interactions faster and more efficient. The agent sees full context without needing to explore.
+
+For complete guide, see [Using Context Mentions](docs/how-to/use_context_mentions.md).
+
 ## Project Documentation
 
 ### For Users
 
 - [How to Use Chat Modes](docs/how-to/use_chat_modes.md) - Interactive chat mode guide
+- [Using Context Mentions](docs/how-to/use_context_mentions.md) - Include files, searches, and URLs in prompts
 - [Quick Start Tutorial](docs/tutorials/quickstart.md) _(coming soon)_
 - [Configuration Guide](docs/how-to/configure_providers.md) _(coming soon)_
 - [CLI Reference](docs/reference/cli.md) _(coming soon)_
@@ -171,6 +189,8 @@ For detailed usage guide, see [Using Chat Modes](docs/how-to/use_chat_modes.md).
 ### For Developers
 
 - [Chat Modes Architecture](docs/explanation/chat_modes_architecture.md) - Design and implementation
+- [Context Mention Architecture](docs/explanation/context_mention_architecture.md) - Multi-source context injection
+- [Context Mention Implementation](docs/explanation/context_mention_implementation_summary.md) - Complete implementation details
 - [Architecture Overview](docs/reference/architecture.md)
 - [Implementation Plan](docs/explanation/implementation_plan.md)
 - [Project Overview](docs/explanation/overview.md)

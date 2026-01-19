@@ -2053,8 +2053,9 @@ mod tests {
 
         assert!(!errors.is_empty());
         assert!(successes.is_empty());
-        // Ensure the original prompt is preserved when no content could be included
-        assert_eq!(augmented, "Please review");
+        // Ensure the error placeholder is included in the augmented prompt
+        assert!(augmented.contains("Failed to include file"));
+        assert!(augmented.contains("missing.rs"));
         assert_eq!(cache.len(), 0);
     }
 
