@@ -12,6 +12,7 @@ mod cli;
 mod commands;
 mod config;
 mod error;
+mod mention_parser;
 mod prompts;
 mod providers;
 mod tools;

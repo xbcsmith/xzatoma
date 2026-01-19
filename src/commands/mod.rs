@@ -21,6 +21,7 @@ use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{parse_special_command, print_help, SpecialCommand};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
+use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
@@ -148,6 +149,23 @@ pub mod chat {
                             // Regular agent prompt
                         }
                     }
+
+                    // Parse mentions from input
+                    let (_mentions, _cleaned_text) = match mention_parser::parse_mentions(trimmed) {
+                        Ok((m, c)) => {
+                            if !m.is_empty() {
+                                tracing::info!("Detected {} mentions in input", m.len());
+                                for mention in &m {
+                                    tracing::debug!("Mention: {:?}", mention);
+                                }
+                            }
+                            (m, c)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to parse mentions: {}", e);
+                            (Vec::new(), trimmed.to_string())
+                        }
+                    };
 
                     // Add to history
                     rl.add_history_entry(trimmed)?;
