@@ -13,7 +13,7 @@ The color scheme uses intuitive, terminal-friendly colors that clearly indicate 
 - **Planning Mode**: Purple
   - Represents analysis and read-only operations
   - Calm, contemplative color for exploration phase
-  
+
 - **Write Mode**: Green
   - Represents safe, approved execution
   - Traditional "go" color for action phase
@@ -23,7 +23,7 @@ The color scheme uses intuitive, terminal-friendly colors that clearly indicate 
 - **Safe Mode (AlwaysConfirm)**: Cyan
   - Represents careful, protected operations
   - Cool, cautious color for confirmation-required state
-  
+
 - **YOLO Mode (NeverConfirm)**: Orange/Yellow (Bold Yellow)
   - Represents unrestricted, fast execution
   - Warm, energetic color for no-confirmation state
@@ -102,7 +102,7 @@ Chat Mode:         [WRITE] (Read/write mode for executing tasks)
 Safety Mode:       [YOLO] (Never confirm operations)
 Available Tools:   6
 Conversation Size: 10 messages
-Prompt Format:     [WRITE][YOLO] >> 
+Prompt Format:     [WRITE][YOLO] >>
 ```
 
 (With green [WRITE] and orange [YOLO])
@@ -168,7 +168,7 @@ Added 7 comprehensive tests:
 
 ### Why Default to Planning + Safe?
 
-**Security**: 
+**Security**:
 - Planning mode prevents accidental file modifications
 - AlwaysConfirm prevents accidental dangerous operations
 - Users must explicitly enable less-safe modes
@@ -252,7 +252,7 @@ All color combinations provide good contrast:
 While colors help, the text labels (PLANNING, WRITE, SAFE, YOLO) are always visible for those with color vision deficiency:
 
 ```
-[PLANNING][SAFE] >> 
+[PLANNING][SAFE] >>
  ^^^^^^^^  ^^^^
  Text labels always visible
 ```
@@ -335,7 +335,7 @@ Available Tools:   6
 Conversation Size: 15 messages
 Prompt Format:     [WRITE][SAFE] >>
 
-[WRITE][SAFE] >> 
+[WRITE][SAFE] >>
 ```
 
 ### Disabling Confirmations (YOLO Mode)

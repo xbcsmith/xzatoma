@@ -1,10 +1,12 @@
 # XZatoma
 
-**Autonomous AI Agent for Repository Documentation Generation**
+**Experimental Autonomous AI Agent**
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 [![Status](https://img.shields.io/badge/status-planning-yellow.svg)](docs/explanation/implementation_plan.md)
+
+**Use at your own risk. This is a learning project.**
 
 ## Overview
 
