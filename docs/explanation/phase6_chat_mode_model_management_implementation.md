@@ -321,14 +321,14 @@ test result: ok. 62 passed; 0 failed; 13 ignored
   - Displays formatted table with model details
   - Highlights current model in green
   - Handles empty model lists gracefully
-  
+
 - ✅ `/model <name>` successfully switches models
   - Validates model exists
   - Updates provider with new model
   - Preserves conversation history
   - Updates context window
   - Displays confirmation message
-  
+
 - ✅ `/context` displays accurate context window information
   - Shows current model name
   - Displays context window size
@@ -336,12 +336,12 @@ test result: ok. 62 passed; 0 failed; 13 ignored
   - Shows remaining tokens
   - Calculates usage percentage
   - Color-codes based on usage level
-  
+
 - ✅ Chat prompt remains consistent
   - Format: `[MODE][SAFETY] >> `
   - No breaking changes to existing behavior
   - `/context` command provides detailed info when needed
-  
+
 - ✅ Switching models doesn't lose conversation history
   - Conversation is cloned and preserved
   - Token counts are updated for new context
@@ -437,13 +437,13 @@ conversation.set_max_tokens(new_context);
 ### Current Limitations
 1. **No Interactive Confirmation**: Model switch warning shown but no Y/N prompt
    - Solution: Add async readline-based confirmation in Phase 7
-   
+
 2. **No Token Estimation**: Context warning based on actual tokens, not estimated
    - Enhancement: Could add estimation before switch
-   
+
 3. **No Model Caching**: Models listed fresh each time
    - Enhancement: Could cache model list with refresh option
-   
+
 4. **Limited Filtering**: Cannot filter model list by capability
    - Enhancement: Add `--capability` flag to `/models list`
 
@@ -451,19 +451,19 @@ conversation.set_max_tokens(new_context);
 1. **Context Indicator in Prompt**
    - Add configurable context display to prompt format
    - Color-coded based on usage percentage
-   
+
 2. **Interactive Model Confirmation**
    - Prompt user when model switch would truncate conversation
    - Allow user to cancel or proceed with warning
-   
+
 3. **Model Comparison Tool**
    - New `/model compare <name1> <name2>` command
    - Show differences in context window, capabilities, etc.
-   
+
 4. **Model History and Tracking**
    - Track which models were used in conversation
    - Log model switches with timestamps
-   
+
 5. **Cost Estimation**
    - Calculate estimated cost based on token usage and model pricing
    - Show cost impact of model switching
