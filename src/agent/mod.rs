@@ -11,5 +11,5 @@ pub mod conversation;
 pub mod core;
 pub mod executor;
 
-pub use conversation::Conversation;
+pub use conversation::{ContextInfo, Conversation};
 pub use core::Agent;

@@ -4,9 +4,60 @@
 //! token counting and intelligent pruning to stay within context limits.
 
 use crate::error::Result;
-use crate::providers::Message;
+use crate::providers::{Message, TokenUsage};
 
-/// Manages conversation history with token tracking and automatic pruning
+/// Information about the current context window status
+///
+/// Provides context window metrics including maximum tokens, tokens used,
+/// remaining tokens, and percentage of context utilized.
+#[derive(Debug, Clone, Copy)]
+pub struct ContextInfo {
+    /// Maximum tokens available for this context
+    pub max_tokens: usize,
+    /// Tokens used so far in the conversation
+    pub used_tokens: usize,
+    /// Tokens remaining in the context window
+    pub remaining_tokens: usize,
+    /// Percentage of context window used (0.0-100.0)
+    pub percentage_used: f64,
+}
+
+impl ContextInfo {
+    /// Create a new ContextInfo instance
+    ///
+    /// # Arguments
+    ///
+    /// * `max_tokens` - Maximum tokens available
+    /// * `used_tokens` - Tokens currently used
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::conversation::ContextInfo;
+    ///
+    /// let context = ContextInfo::new(8192, 1000);
+    /// assert_eq!(context.remaining_tokens, 7192);
+    /// assert!(context.percentage_used > 12.0 && context.percentage_used < 13.0);
+    /// ```
+    pub fn new(max_tokens: usize, used_tokens: usize) -> Self {
+        let used_tokens = used_tokens.min(max_tokens);
+        let remaining_tokens = max_tokens - used_tokens;
+        let percentage_used = if max_tokens == 0 {
+            0.0
+        } else {
+            (used_tokens as f64 / max_tokens as f64) * 100.0
+        };
+
+        Self {
+            max_tokens,
+            used_tokens,
+            remaining_tokens,
+            percentage_used,
+        }
+    }
+}
+
+/// Manages conversation history with token tracking and pruning
 ///
 /// The conversation maintains a list of messages and tracks the total token count.
 /// When the token count approaches the maximum, older messages are pruned while
@@ -16,6 +67,7 @@ use crate::providers::Message;
 ///
 /// Uses a simple heuristic: characters / 4 (approximates GPT tokenization).
 /// For production use, replace with an actual tokenizer library.
+/// Provider-reported token counts are preferred when available.
 ///
 /// # Pruning Strategy
 ///
@@ -31,6 +83,7 @@ pub struct Conversation {
     max_tokens: usize,
     min_retain_turns: usize,
     prune_threshold: f64,
+    provider_token_usage: Option<TokenUsage>,
 }
 
 impl Conversation {
@@ -57,6 +110,7 @@ impl Conversation {
             max_tokens,
             min_retain_turns,
             prune_threshold: prune_threshold.clamp(0.0, 1.0),
+            provider_token_usage: None,
         }
     }
 
@@ -342,6 +396,88 @@ impl Conversation {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.token_count = 0;
+        self.provider_token_usage = None;
+    }
+
+    /// Updates token count from provider-reported usage
+    ///
+    /// When the provider reports token usage, prefer those counts over the heuristic.
+    /// This method accumulates token counts from multiple completions.
+    ///
+    /// # Arguments
+    ///
+    /// * `usage` - Token usage information from the provider
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    /// use xzatoma::providers::TokenUsage;
+    ///
+    /// let mut conversation = Conversation::new(8000, 10, 0.8);
+    /// conversation.add_user_message("Hello");
+    ///
+    /// let usage = TokenUsage::new(50, 25);
+    /// conversation.update_from_provider_usage(&usage);
+    /// // Provider usage is now tracked
+    /// ```
+    pub fn update_from_provider_usage(&mut self, usage: &TokenUsage) {
+        if let Some(existing) = self.provider_token_usage {
+            // Accumulate with existing usage
+            self.provider_token_usage = Some(TokenUsage::new(
+                existing.prompt_tokens + usage.prompt_tokens,
+                existing.completion_tokens + usage.completion_tokens,
+            ));
+        } else {
+            // First provider usage
+            self.provider_token_usage = Some(*usage);
+        }
+    }
+
+    /// Get context window information
+    ///
+    /// Returns information about how the conversation fits within the context window.
+    /// Uses provider-reported token counts if available, otherwise uses heuristic counts.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_context_window` - The context window size of the current model
+    ///
+    /// # Returns
+    ///
+    /// ContextInfo with current usage and remaining tokens
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    ///
+    /// let mut conversation = Conversation::new(8000, 10, 0.8);
+    /// conversation.add_user_message("Hello");
+    ///
+    /// let context = conversation.get_context_info(8192);
+    /// assert_eq!(context.max_tokens, 8192);
+    /// assert!(context.used_tokens > 0);
+    /// ```
+    pub fn get_context_info(&self, model_context_window: usize) -> ContextInfo {
+        // Prefer provider-reported usage if available
+        let used_tokens = if let Some(usage) = self.provider_token_usage {
+            usage.total_tokens
+        } else {
+            // Fall back to heuristic counting
+            self.token_count
+        };
+
+        ContextInfo::new(model_context_window, used_tokens)
+    }
+
+    /// Get accumulated provider token usage
+    ///
+    /// # Returns
+    ///
+    /// Returns provider-reported token usage if available, otherwise None
+    pub fn get_provider_token_usage(&self) -> Option<TokenUsage> {
+        self.provider_token_usage
     }
 }
 

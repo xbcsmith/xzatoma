@@ -308,7 +308,7 @@ Models automatically assigned capabilities based on family:
 ```rust
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
     model.add_capability(ModelCapability::FunctionCalling);
-    
+
     match family.to_lowercase().as_str() {
         "mistral" | "neural-chat" => {
             model.add_capability(ModelCapability::LongContext);

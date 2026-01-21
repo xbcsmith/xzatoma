@@ -46,15 +46,15 @@ async fn list_models(&self) -> Result<Vec<ModelInfo>> {
             }
         }
     }
-    
+
     // Fetch from API if cache miss or expired
     let models = self.fetch_models_from_api().await?;
-    
+
     // Update cache with timestamp
     if let Ok(mut cache) = self.model_cache.write() {
         *cache = Some((models.clone(), Instant::now()));
     }
-    
+
     Ok(models)
 }
 ```
@@ -88,7 +88,7 @@ async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> {
             }
         }
     }
-    
+
     // Fetch detailed info from /api/show
     self.fetch_model_details(model_name).await
 }
@@ -98,15 +98,15 @@ async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
         .json(&json!({"name": model_name}))
         .send()
         .await?;
-    
+
     let show_response: OllamaShowResponse = response.json().await?;
-    
+
     // Build ModelInfo with details
     let mut model_info = ModelInfo::new(...);
-    
+
     // Extract capabilities and metadata
     add_model_capabilities(&mut model_info, family);
-    
+
     Ok(model_info)
 }
 ```
@@ -138,7 +138,7 @@ struct OllamaResponse {
 }
 
 // In complete() method:
-let response = if ollama_response.prompt_eval_count > 0 
+let response = if ollama_response.prompt_eval_count > 0
     || ollama_response.eval_count > 0 {
     let usage = TokenUsage::new(
         ollama_response.prompt_eval_count,
@@ -170,15 +170,15 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
             format!("Model not found: {}", model_name)
         ).into());
     }
-    
+
     // Update config with write lock
     let mut config = self.config.write()?;
     config.model = model_name.clone();
     drop(config);
-    
+
     // Invalidate cache since model changed
     self.invalidate_cache();
-    
+
     tracing::info!("Switched Ollama model to: {}", model_name);
     Ok(())
 }
@@ -307,7 +307,7 @@ Assigns capabilities based on model family:
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
     // All models support function calling
     model.add_capability(ModelCapability::FunctionCalling);
-    
+
     // Add family-specific capabilities
     match family.to_lowercase().as_str() {
         "mistral" | "neural-chat" => {
@@ -356,7 +356,7 @@ Both now return `String` instead of `&str` due to the lock acquisition. These ar
 1. **GET `/api/tags`** - List installed models
    - Response: `{ models: [{name, digest, size, modified_at}] }`
    - Used by: `list_models()`
-   
+
 2. **POST `/api/show`** - Get model details
    - Request: `{ name: "model-name" }`
    - Response: `{ modelfile, parameters, template, details: {...} }`
