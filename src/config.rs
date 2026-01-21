@@ -295,10 +295,15 @@ pub enum ExecutionMode {
     /// Require explicit user confirmation for each command
     Interactive,
     /// Allow safe commands automatically, require confirmation for dangerous ones
-    #[default]
     RestrictedAutonomous,
     /// Allow all commands without confirmation (use with caution)
     FullAutonomous,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        Self::RestrictedAutonomous
+    }
 }
 
 impl Config {

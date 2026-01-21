@@ -1,10 +1,6 @@
 # XZatoma
 
-<<<<<<< Updated upstream
 **Experimental Autonomous AI Agent**
-=======
-**Autonomous AI Agent**
->>>>>>> Stashed changes
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
