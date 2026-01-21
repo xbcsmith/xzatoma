@@ -16,7 +16,7 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 ///
 /// These commands modify the session state or provide information,
 /// rather than being sent to the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecialCommand {
     /// Switch to a different chat mode
     ///
@@ -44,6 +44,22 @@ pub enum SpecialCommand {
     ///
     /// Shows how to use context mentions (@file, @search, @grep, @url).
     Mentions,
+
+    /// List available models
+    ///
+    /// Shows all available models from the current provider.
+    ListModels,
+
+    /// Switch to a different model
+    ///
+    /// Changes the active model for the provider.
+    /// May require confirmation if the context window is smaller than current conversation.
+    SwitchModel(String),
+
+    /// Display context window information
+    ///
+    /// Shows current token usage, context window size, remaining tokens, and usage percentage.
+    ShowContextInfo,
 
     /// Exit the interactive session
     ///
@@ -118,6 +134,24 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
         "/help" | "/?" => SpecialCommand::Help,
         "/mentions" => SpecialCommand::Mentions,
 
+        // Model management commands
+        "/models list" => SpecialCommand::ListModels,
+        "/context" => SpecialCommand::ShowContextInfo,
+
+        // Model switching with arguments
+        input if input.starts_with("/model ") => {
+            let rest = input[7..].trim();
+            if rest == "info" {
+                // For now, treat /model info as unsupported
+                // (would need additional argument for specific model)
+                SpecialCommand::None
+            } else if !rest.is_empty() {
+                SpecialCommand::SwitchModel(rest.to_string())
+            } else {
+                SpecialCommand::None
+            }
+        }
+
         // Exit commands
         "exit" | "quit" | "/exit" | "/quit" => SpecialCommand::Exit,
 
@@ -162,6 +196,11 @@ CONTEXT MENTIONS (Quick Reference):
   @search:"pattern"     - Search for literal text
   @grep:"regex"         - Search with regex patterns
   @url:https://...      - Include web content
+
+MODEL MANAGEMENT:
+  /models list    - Show available models from current provider
+  /model <name>   - Switch to a different model
+  /context        - Show context window and token usage information
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -509,5 +548,53 @@ mod tests {
     fn test_parse_mentions() {
         let cmd = parse_special_command("/mentions");
         assert_eq!(cmd, SpecialCommand::Mentions);
+    }
+
+    #[test]
+    fn test_parse_list_models() {
+        let cmd = parse_special_command("/models list");
+        assert_eq!(cmd, SpecialCommand::ListModels);
+    }
+
+    #[test]
+    fn test_parse_switch_model() {
+        let cmd = parse_special_command("/model gpt-4");
+        assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_parse_switch_model_with_hyphen() {
+        let cmd = parse_special_command("/model gemini-2.0");
+        assert_eq!(cmd, SpecialCommand::SwitchModel("gemini-2.0".to_string()));
+    }
+
+    #[test]
+    fn test_parse_switch_model_case_insensitive() {
+        let cmd = parse_special_command("/MODEL GPT-4");
+        assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_parse_show_context_info() {
+        let cmd = parse_special_command("/context");
+        assert_eq!(cmd, SpecialCommand::ShowContextInfo);
+    }
+
+    #[test]
+    fn test_parse_model_command_no_args_returns_none() {
+        let cmd = parse_special_command("/model");
+        assert_eq!(cmd, SpecialCommand::None);
+    }
+
+    #[test]
+    fn test_parse_model_command_with_spaces() {
+        let cmd = parse_special_command("/model  gpt-4  ");
+        assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_parse_model_info_not_supported() {
+        let cmd = parse_special_command("/model info");
+        assert_eq!(cmd, SpecialCommand::None);
     }
 }

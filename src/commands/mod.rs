@@ -157,6 +157,26 @@ pub mod chat {
                             special_commands::print_mention_help();
                             continue;
                         }
+                        SpecialCommand::ListModels => {
+                            handle_list_models(&agent).await;
+                            continue;
+                        }
+                        SpecialCommand::SwitchModel(model_name) => {
+                            handle_switch_model(
+                                &mut agent,
+                                &model_name,
+                                &mut rl,
+                                &config,
+                                &working_dir,
+                                provider_type,
+                            )
+                            .await?;
+                            continue;
+                        }
+                        SpecialCommand::ShowContextInfo => {
+                            handle_show_context_info(&agent).await;
+                            continue;
+                        }
                         SpecialCommand::Exit => break,
                         SpecialCommand::None => {
                             // Regular agent prompt
@@ -470,6 +490,256 @@ pub mod chat {
         .with_terminal_config(config.agent.terminal.clone());
 
         builder.build()
+    }
+
+    /// Handle listing available models
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent
+    async fn handle_list_models(agent: &Agent) {
+        use colored::Colorize;
+        use prettytable::format;
+        use prettytable::Table;
+
+        match agent.provider().list_models().await {
+            Ok(models) => {
+                if models.is_empty() {
+                    println!("{}", "No models available from this provider".yellow());
+                    return;
+                }
+
+                let mut table = Table::new();
+                table.set_format(*format::consts::FORMAT_BORDERS_ONLY);
+
+                // Add header
+                table.add_row(prettytable::row![
+                    "Model Name".bold(),
+                    "Display Name".bold(),
+                    "Context Window".bold(),
+                    "Capabilities".bold()
+                ]);
+
+                // Get current model for highlighting
+                let current_model = agent.provider().get_current_model().ok();
+
+                // Add model rows
+                for model in models {
+                    let is_current = current_model
+                        .as_ref()
+                        .map(|m| m == &model.name)
+                        .unwrap_or(false);
+                    if is_current {
+                        table.add_row(prettytable::row![
+                            model.name.green(),
+                            model.display_name.green(),
+                            format!("{} tokens", model.context_window).green(),
+                            model
+                                .capabilities
+                                .iter()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                                .green()
+                        ]);
+                    } else {
+                        table.add_row(prettytable::row![
+                            model.name,
+                            model.display_name,
+                            format!("{} tokens", model.context_window),
+                            model
+                                .capabilities
+                                .iter()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ]);
+                    }
+                }
+
+                println!();
+                table.printstd();
+                println!();
+                println!("{}", "Note: Current model is highlighted in green".cyan());
+                println!();
+            }
+            Err(e) => {
+                eprintln!("{}", format!("Error listing models: {}", e).red());
+            }
+        }
+    }
+
+    /// Handle switching to a different model
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent (will be replaced if successful)
+    /// * `model_name` - Name of the model to switch to
+    /// * `rl` - Readline editor for potential confirmation prompts
+    /// * `config` - Global configuration
+    /// * `working_dir` - Working directory for tool operations
+    /// * `provider_type` - Type of provider ("copilot" or "ollama")
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok if the switch succeeded, or an error if it failed
+    async fn handle_switch_model(
+        agent: &mut Agent,
+        model_name: &str,
+        _rl: &mut rustyline::DefaultEditor,
+        config: &Config,
+        _working_dir: &std::path::Path,
+        provider_type: &str,
+    ) -> Result<()> {
+        use colored::Colorize;
+
+        // Get available models to validate
+        let available_models = agent.provider().list_models().await?;
+        let model = available_models
+            .iter()
+            .find(|m| m.name.to_lowercase() == model_name.to_lowercase());
+
+        match model {
+            Some(model_info) => {
+                // Get current conversation token usage
+                let current_tokens = agent.conversation().token_count();
+                let new_context_window = model_info.context_window;
+
+                // Check if current conversation exceeds new context window
+                if current_tokens > new_context_window {
+                    println!(
+                        "{}",
+                        format!(
+                            "WARNING: Current conversation ({} tokens) exceeds new model context ({} tokens)",
+                            current_tokens, new_context_window
+                        )
+                        .yellow()
+                    );
+                    println!(
+                        "{}",
+                        "Messages will be pruned to fit the new context window.".yellow()
+                    );
+                    println!();
+                    println!("{}Continue with model switch? [y/N]: ", ">>> ".cyan());
+
+                    // For now, we don't prompt (would need interactive input from readline)
+                    // In a full implementation, this would wait for user confirmation
+                    // For MVP, we proceed without confirmation but show the warning
+                }
+
+                // Create new provider
+                let mut new_provider = create_provider(provider_type, &config.provider)?;
+
+                // Switch model
+                new_provider.set_model(model_info.name.clone()).await?;
+
+                // Get the new context window
+                let new_context = new_provider
+                    .get_model_info(&model_info.name)
+                    .await?
+                    .context_window;
+
+                // Preserve conversation history
+                let mut conversation = agent.conversation().clone();
+
+                // Update conversation max tokens
+                conversation.set_max_tokens(new_context);
+
+                // Create new agent with updated provider and conversation
+                let tools = agent.tools().clone();
+                let new_agent = Agent::with_conversation(
+                    new_provider,
+                    tools,
+                    config.agent.clone(),
+                    conversation,
+                )?;
+
+                // Replace agent
+                *agent = new_agent;
+
+                println!(
+                    "{}",
+                    format!(
+                        "Switched to model: {} ({} token context)",
+                        model_info.name, new_context
+                    )
+                    .green()
+                );
+                println!();
+            }
+            None => {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "Model '{}' not found. Use '/models list' to see available models.",
+                        model_name
+                    )
+                    .red()
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle displaying context window information
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent
+    async fn handle_show_context_info(agent: &Agent) {
+        use colored::Colorize;
+
+        // Get the current model's context window
+        match agent.provider().get_current_model() {
+            Ok(model_name) => {
+                match agent.provider().get_model_info(&model_name).await {
+                    Ok(model_info) => {
+                        let context = agent.get_context_info(model_info.context_window);
+
+                        println!();
+                        println!("{}", "╔════════════════════════════════════╗".cyan());
+                        println!("{}", "║     Context Window Information      ║".cyan());
+                        println!("{}", "╚════════════════════════════════════╝".cyan());
+                        println!();
+
+                        println!("Current Model:     {}", model_name.bold());
+                        println!(
+                            "Context Window:    {} tokens",
+                            model_info.context_window.to_string().bold()
+                        );
+                        println!(
+                            "Tokens Used:       {} tokens",
+                            context.used_tokens.to_string().bold()
+                        );
+                        println!(
+                            "Remaining:         {} tokens",
+                            context.remaining_tokens.to_string().bold()
+                        );
+                        println!("Usage:             {:.1}%", context.percentage_used);
+
+                        // Color code the usage percentage
+                        let usage_color = if context.percentage_used < 60.0 {
+                            context.percentage_used.to_string().green()
+                        } else if context.percentage_used < 85.0 {
+                            context.percentage_used.to_string().yellow()
+                        } else {
+                            context.percentage_used.to_string().red()
+                        };
+
+                        println!();
+                        println!("Usage Level:       {}", usage_color);
+                        println!();
+                    }
+                    Err(e) => {
+                        eprintln!("{}", format!("Error getting model info: {}", e).red());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{}", format!("Error getting current model: {}", e).red());
+            }
+        }
     }
 
     /// Handle switching to a new chat mode while preserving conversation

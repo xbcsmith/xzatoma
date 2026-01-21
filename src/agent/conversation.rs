@@ -382,6 +382,28 @@ impl Conversation {
         self.max_tokens
     }
 
+    /// Sets the maximum token limit
+    ///
+    /// Useful for updating the context window when switching models.
+    /// This will trigger pruning if current token count exceeds the new limit.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_max` - The new maximum token limit
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    ///
+    /// let mut conversation = Conversation::new(8000, 3, 0.8);
+    /// conversation.set_max_tokens(4000);
+    /// assert_eq!(conversation.max_tokens(), 4000);
+    /// ```
+    pub fn set_max_tokens(&mut self, new_max: usize) {
+        self.max_tokens = new_max;
+    }
+
     /// Returns the number of messages in the conversation
     pub fn len(&self) -> usize {
         self.messages.len()

@@ -518,6 +518,20 @@ impl Agent {
         &self.conversation
     }
 
+    /// Returns a reference to the provider
+    ///
+    /// Useful for accessing provider-specific methods like model listing and switching
+    pub fn provider(&self) -> &dyn Provider {
+        &*self.provider
+    }
+
+    /// Returns a reference to the tool registry
+    ///
+    /// Useful for accessing and managing available tools
+    pub fn tools(&self) -> &ToolRegistry {
+        &self.tools
+    }
+
     /// Returns the number of registered tools
     ///
     /// Useful for testing and debugging

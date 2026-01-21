@@ -339,6 +339,18 @@ impl ToolRegistry {
     }
 }
 
+impl Clone for ToolRegistry {
+    /// Clones the tool registry with all registered tools
+    ///
+    /// Since tools are stored as Arc<dyn ToolExecutor>, cloning is cheap
+    /// and shares the underlying tool implementations.
+    fn clone(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+        }
+    }
+}
+
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
