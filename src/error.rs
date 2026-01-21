@@ -27,6 +27,31 @@ pub enum XzatomaError {
     #[error("Tool execution error: {0}")]
     Tool(String),
 
+    /// Fetch-related errors (HTTP fetch, SSRF, timeouts, rate limits)
+    #[error("Fetch error: {0}")]
+    Fetch(String),
+
+    /// Mention parsing errors (invalid mention syntax)
+    #[error("Mention parsing error: {0}")]
+    MentionParse(String),
+
+    /// File loading errors (read errors, size, binary)
+    #[error("File load error: {0}")]
+    FileLoad(String),
+
+    /// Search/Grep related errors
+    #[error("Search error: {0}")]
+    Search(String),
+
+    /// Rate limit exceeded for an operation
+    #[error("Rate limit exceeded: limit={limit}, {message}")]
+    RateLimitExceeded {
+        /// The configured limit that was exceeded
+        limit: u32,
+        /// Additional message explaining the failure
+        message: String,
+    },
+
     /// Agent exceeded maximum iteration limit
     #[error("Agent exceeded maximum iterations: limit={limit}, {message}")]
     MaxIterationsExceeded {
@@ -175,6 +200,41 @@ mod tests {
         let yaml_error = serde_yaml::from_str::<serde_yaml::Value>(yaml_str).unwrap_err();
         let error: XzatomaError = yaml_error.into();
         assert!(matches!(error, XzatomaError::Yaml(_)));
+    }
+
+    #[test]
+    fn test_fetch_error_display() {
+        let error = XzatomaError::Fetch("timeout".to_string());
+        assert_eq!(error.to_string(), "Fetch error: timeout");
+    }
+
+    #[test]
+    fn test_mention_parse_error_display() {
+        let error = XzatomaError::MentionParse("invalid syntax".to_string());
+        assert_eq!(error.to_string(), "Mention parsing error: invalid syntax");
+    }
+
+    #[test]
+    fn test_file_load_error_display() {
+        let error = XzatomaError::FileLoad("not found".to_string());
+        assert_eq!(error.to_string(), "File load error: not found");
+    }
+
+    #[test]
+    fn test_search_error_display() {
+        let error = XzatomaError::Search("grep failed".to_string());
+        assert_eq!(error.to_string(), "Search error: grep failed");
+    }
+
+    #[test]
+    fn test_rate_limit_exceeded_display() {
+        let error = XzatomaError::RateLimitExceeded {
+            limit: 10,
+            message: "Too many requests".to_string(),
+        };
+        let s = error.to_string();
+        assert!(s.contains("limit=10"));
+        assert!(s.contains("Too many requests"));
     }
 
     #[test]

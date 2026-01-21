@@ -224,6 +224,42 @@ pub struct ToolsConfig {
     /// Maximum size of file to read (bytes)
     #[serde(default = "default_max_file_read")]
     pub max_file_read_size: usize,
+
+    /// Maximum results per page for grep tool
+    #[serde(default = "default_grep_max_results_per_page")]
+    pub grep_max_results_per_page: usize,
+
+    /// Number of context lines to show around grep matches
+    #[serde(default = "default_grep_context_lines")]
+    pub grep_context_lines: usize,
+
+    /// Maximum file size for grep searches (bytes)
+    #[serde(default = "default_grep_max_file_size")]
+    pub grep_max_file_size: u64,
+
+    /// File patterns to exclude from grep searches
+    #[serde(default = "default_grep_excluded_patterns")]
+    pub grep_excluded_patterns: Vec<String>,
+
+    /// Fetch tool timeout in seconds (default: 30)
+    #[serde(default = "default_fetch_timeout_seconds")]
+    pub fetch_timeout_seconds: u64,
+
+    /// Maximum size of fetched content (bytes, default: 5 MB)
+    #[serde(default = "default_max_fetch_size_bytes")]
+    pub max_fetch_size_bytes: usize,
+
+    /// Maximum number of fetch requests per minute (default: 10)
+    #[serde(default = "default_max_fetches_per_minute")]
+    pub max_fetches_per_minute: u32,
+
+    /// Optional allowlist of domains for fetch tool
+    #[serde(default)]
+    pub fetch_allowed_domains: Option<Vec<String>>,
+
+    /// Optional blocklist of domains for fetch tool
+    #[serde(default)]
+    pub fetch_blocked_domains: Option<Vec<String>>,
 }
 
 fn default_max_output() -> usize {
@@ -234,11 +270,53 @@ fn default_max_file_read() -> usize {
     10_485_760 // 10 MB
 }
 
+fn default_grep_max_results_per_page() -> usize {
+    20
+}
+
+fn default_grep_context_lines() -> usize {
+    2
+}
+
+fn default_grep_max_file_size() -> u64 {
+    1_048_576 // 1 MB
+}
+
+fn default_grep_excluded_patterns() -> Vec<String> {
+    vec![
+        "*.lock".to_string(),
+        "target/**".to_string(),
+        "node_modules/**".to_string(),
+        ".git/**".to_string(),
+    ]
+}
+
+fn default_fetch_timeout_seconds() -> u64 {
+    30
+}
+
+fn default_max_fetch_size_bytes() -> usize {
+    5 * 1024 * 1024 // 5 MB
+}
+
+fn default_max_fetches_per_minute() -> u32 {
+    10
+}
+
 impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             max_output_size: default_max_output(),
             max_file_read_size: default_max_file_read(),
+            grep_max_results_per_page: default_grep_max_results_per_page(),
+            grep_context_lines: default_grep_context_lines(),
+            grep_max_file_size: default_grep_max_file_size(),
+            grep_excluded_patterns: default_grep_excluded_patterns(),
+            fetch_timeout_seconds: default_fetch_timeout_seconds(),
+            max_fetch_size_bytes: default_max_fetch_size_bytes(),
+            max_fetches_per_minute: default_max_fetches_per_minute(),
+            fetch_allowed_domains: None,
+            fetch_blocked_domains: None,
         }
     }
 }

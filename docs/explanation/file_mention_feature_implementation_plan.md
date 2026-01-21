@@ -2,7 +2,13 @@
 
 ## Overview
 
-Add support for @ file mentions in interactive chat mode, allowing users to reference files in their prompts using `@filename` syntax. The agent will automatically read mentioned files and include their contents in the conversation context, enabling more efficient file-based discussions without manual read commands.
+Add comprehensive context injection capabilities to interactive chat mode through @ mention syntax. This includes:
+
+- **File mentions**: `@filename` or `@path/to/file.rs#L10-20` to include file contents
+- **Code search mentions**: `@search:"pattern"` or `@grep:"regex"` to find and include matching code
+- **Web content mentions**: `@url:https://example.com` to fetch and include external content
+
+The agent will automatically resolve mentions, fetch content, and include it in the conversation context, enabling efficient multi-source discussions without manual tool invocations.
 
 ## Current State Analysis
 
@@ -17,6 +23,12 @@ The interactive chat mode (`src/commands/mod.rs`) currently provides:
 - Conversation history management in the agent
 - Two chat modes: Planning (read-only) and Write (read-write)
 
+XZatoma currently lacks:
+
+- Advanced code search capabilities (regex-based grep)
+- Web content retrieval (URL fetching)
+- Unified context injection from multiple sources
+
 ### Identified Issues
 
 The current workflow requires users to:
@@ -25,8 +37,11 @@ The current workflow requires users to:
 - Wait for the agent to decide to use the read tool
 - Potentially make multiple round trips for multi-file discussions
 - Manually specify file paths in natural language
+- Cannot search codebase for patterns or symbols
+- Cannot include external documentation or web content
+- No unified way to inject context from multiple sources
 
-This creates friction when users want to discuss specific files or provide context from multiple files in a single prompt.
+This creates friction when users want to discuss specific files, find code patterns, or reference external resources in a single prompt.
 
 ## Implementation Phases
 
@@ -36,9 +51,15 @@ This creates friction when users want to discuss specific files or provide conte
 
 Create `src/mention_parser.rs` with core parsing logic:
 
+- Define `Mention` enum with variants: File, Search, Grep, Url
 - Define `FileMention` struct containing file path and optional line range
-- Implement `parse_mentions()` function to extract @ mentions from input strings
-- Support syntax patterns: `@filename`, `@path/to/file.rs`, `@file.rs#L10-20`
+- Define `SearchMention` struct for search queries
+- Define `UrlMention` struct for web URLs
+- Implement `parse_mentions()` function to extract all mention types from input strings
+- Support syntax patterns:
+  - Files: `@filename`, `@path/to/file.rs`, `@file.rs#L10-20`
+  - Search: `@search:"pattern"`, `@grep:"regex pattern"`
+  - URLs: `@url:https://example.com`
 - Handle edge cases: escaped @, @ in middle of words, invalid characters
 - Return both parsed mentions and cleaned input text
 
@@ -165,75 +186,328 @@ Integration tests for content injection:
 - Tests pass with 80%+ coverage
 - Zero clippy warnings
 
-### Phase 3: Error Handling and User Feedback
+### Phase 3: Advanced Code Search Integration (Grep Tool)
 
-#### Task 3.1: Comprehensive Error Types
+#### Task 3.1: Implement Grep Tool
+
+Create `src/tools/grep.rs` with regex-based code search:
+
+- Define `GrepTool` struct with working directory and config
+- Implement async `search()` method with parameters:
+  - `regex` pattern (string)
+  - `include_pattern` optional glob filter
+  - `case_sensitive` boolean flag
+  - `offset` for pagination (u32)
+- Use `regex` crate for pattern matching
+- Use `walkdir` crate for file traversal (already in dependencies)
+- Return paginated results (20 matches per page)
+- Include context lines around matches (configurable, default 2)
+- Respect `.gitignore` and common exclusions
+
+#### Task 3.2: Register Grep Tool in Tool Registry
+
+Modify `src/tools/mod.rs` and tool registry:
+
+- Add `grep` module export
+- Register `GrepTool` in `ToolRegistryBuilder`
+- Available in both Planning and Write modes
+- Add grep-specific configuration to `ToolsConfig`:
+  - `max_results_per_page` (default: 20)
+  - `context_lines` (default: 2)
+  - `max_file_size_for_grep` (default: 1 MB)
+  - `excluded_patterns` (default: `["*.lock", "target/**", "node_modules/**"]`)
+
+#### Task 3.3: Integrate Search Mentions into Parser
+
+Extend `src/mention_parser.rs` with search support:
+
+- Parse `@search:"pattern"` and `@grep:"regex"` syntax
+- Differentiate between simple search (literal) and grep (regex)
+- Validate regex patterns, return clear errors for invalid syntax
+- Store search queries in `SearchMention` struct with metadata
+- Handle escaped quotes in search patterns
+
+#### Task 3.4: Implement Search Content Loader
+
+Add search loading to mention parser:
+
+- Implement async `load_search_content()` using GrepTool
+- Execute grep search for mentioned patterns
+- Format results with file paths, line numbers, and context
+- Limit total content size (apply same limits as file mentions)
+- Handle case: no results found (clear message, don't error)
+- Handle case: too many results (show count, include first N)
+- Cache search results by query string + working directory
+
+#### Task 3.5: Augment Prompts with Search Results
+
+Extend context augmentation for search mentions:
+
+- Format search results with clear structure:
+
+  ```
+  Search results for "pattern" (15 matches in 5 files):
+
+  File: src/main.rs (Line 42)
+  40: fn main() {
+  41:     let config = load_config();
+  42:     let pattern = "example"; // Match here
+  43:     process_pattern(&pattern);
+  44: }
+  ```
+
+- Show summary: total matches, number of files
+- Include snippet context around each match
+- Highlight match location in context
+- Order results by relevance (file then line number)
+
+#### Task 3.6: Testing Requirements
+
+Grep tool and integration tests:
+
+- Test regex pattern matching with valid patterns
+- Test literal search vs regex search
+- Test file filtering with glob patterns
+- Test pagination with offset parameter
+- Test case-sensitive and case-insensitive modes
+- Test excluded patterns respected
+- Test large codebase performance
+- Test search mention parsing: `@search:"TODO"`, `@grep:"fn\\s+\\w+"`
+- Test search result formatting and display
+- Test search cache hit/miss scenarios
+- Test "no results found" handling
+- Achieve 80%+ coverage
+
+#### Task 3.7: Deliverables
+
+- `src/tools/grep.rs` (300-400 lines)
+- Grep tool registration and config (50-75 lines)
+- Search mention parsing (100-150 lines)
+- Search content loader with caching (150-200 lines)
+- Search result formatting (75-100 lines)
+- Comprehensive tests (300-400 lines)
+
+#### Task 3.8: Success Criteria
+
+- Grep tool correctly searches codebase with regex patterns
+- Pagination works for large result sets
+- File filtering excludes irrelevant files
+- Search mentions parsed and resolved correctly
+- Results formatted clearly with context
+- Performance acceptable for large codebases (under 2 seconds for typical search)
+- Cache improves repeated search performance
+- Tests pass with 80%+ coverage
+- All quality checks pass
+
+### Phase 4: Web Content Retrieval Integration (Fetch Tool)
+
+#### Task 4.1: Implement Fetch Tool
+
+Create `src/tools/fetch.rs` with web content retrieval:
+
+- Define `FetchTool` struct with HTTP client configuration
+- Implement async `fetch()` method with URL parameter
+- Use `reqwest` crate for HTTP requests (already in dependencies)
+- Convert HTML to Markdown using `html2md` crate (new dependency)
+- Support content types: HTML, Markdown, plain text, JSON
+- Implement timeout (default: 30 seconds)
+- Implement size limits (default: 5 MB)
+- Return content as Markdown string
+
+#### Task 4.2: Add Security Validation
+
+Implement SSRF prevention and security checks:
+
+- Validate URL scheme (allow: https, http; deny: file, ftp, etc.)
+- Block private IP ranges (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+- Block localhost and link-local addresses
+- Implement URL allowlist/denylist in config
+- Validate content-type headers
+- Sanitize content before returning
+- Add rate limiting (max requests per minute)
+
+#### Task 4.3: Register Fetch Tool
+
+Modify tool registry for fetch tool:
+
+- Add `fetch` module export in `src/tools/mod.rs`
+- Register `FetchTool` in both Planning and Write modes
+- Add fetch-specific configuration to `ToolsConfig`:
+  - `fetch_timeout_seconds` (default: 30)
+  - `max_fetch_size_bytes` (default: 5 MB)
+  - `allowed_domains` (optional allowlist)
+  - `blocked_domains` (optional denylist)
+  - `max_fetches_per_minute` (default: 10)
+
+#### Task 4.4: Integrate URL Mentions into Parser
+
+Extend `src/mention_parser.rs` with URL support:
+
+- Parse `@url:https://example.com` syntax
+- Validate URL format during parsing
+- Store URLs in `UrlMention` struct with metadata
+- Handle various URL formats (with/without protocol, query params, fragments)
+- Support URL shorthand: `@url:docs.rs/tokio` expands to `https://docs.rs/tokio`
+
+#### Task 4.5: Implement URL Content Loader
+
+Add URL loading to mention parser:
+
+- Implement async `load_url_content()` using FetchTool
+- Fetch and convert content to Markdown
+- Apply size limits, timeout on slow requests
+- Format content with clear URL source header
+- Handle HTTP errors gracefully (404, 500, timeout, etc.)
+- Cache fetched content by URL for session duration
+- Implement cache TTL (default: 5 minutes for web content)
+
+#### Task 4.6: Augment Prompts with Web Content
+
+Extend context augmentation for URL mentions:
+
+- Format fetched content with clear structure:
+
+  ```
+  Web content from https://docs.rs/tokio (fetched 2024-01-15 10:30:00):
+
+  # Tokio Documentation
+
+  [Converted Markdown content here...]
+
+  [Content truncated at 5 MB limit]
+  ```
+
+- Show source URL and fetch timestamp
+- Include content-type and size metadata
+- Indicate if content was truncated
+- Mark cached vs freshly fetched
+
+#### Task 4.7: Testing Requirements
+
+Fetch tool and integration tests:
+
+- Test successful URL fetching with various content types
+- Test HTML to Markdown conversion
+- Test timeout handling for slow servers
+- Test size limit enforcement
+- Test SSRF prevention (private IPs, localhost, file:// protocol)
+- Test URL allowlist/denylist functionality
+- Test rate limiting
+- Test URL mention parsing with various formats
+- Test URL content caching and TTL
+- Test HTTP error handling (404, 500, timeout)
+- Mock HTTP requests for deterministic testing
+- Achieve 80%+ coverage
+
+#### Task 4.8: Deliverables
+
+- `src/tools/fetch.rs` with security validation (250-350 lines)
+- Fetch tool registration and config (50-75 lines)
+- URL mention parsing (75-100 lines)
+- URL content loader with caching and TTL (150-200 lines)
+- Web content formatting (75-100 lines)
+- Security tests and integration tests (300-400 lines)
+
+#### Task 4.9: Success Criteria
+
+- Fetch tool retrieves web content securely
+- SSRF prevention blocks dangerous requests
+- HTML correctly converted to readable Markdown
+- Size and timeout limits enforced
+- URL mentions parsed and resolved correctly
+- Rate limiting prevents abuse
+- Cache with TTL reduces redundant requests
+- All security tests pass
+- Tests pass with 80%+ coverage
+- All quality checks pass
+
+### Phase 5: Error Handling and User Feedback
+
+#### Task 5.1: Comprehensive Error Types
 
 Extend error handling in `src/error.rs`:
 
-- Add `MentionError` variants: FileNotFound, PermissionDenied, FileTooLarge, InvalidPath, BinaryFile
-- Implement user-friendly error messages with file size and limit information
-- Add suggestions for common mistakes (typos, wrong paths)
-- Include context in errors (which file, what went wrong, actual vs expected)
-- Format file size errors: "Error: @large_file.txt is too large (5.2 MB). Maximum file size is 1 MB."
+- Add `MentionError` variants:
+  - File errors: FileNotFound, PermissionDenied, FileTooLarge, InvalidPath, BinaryFile
+  - Search errors: InvalidRegex, SearchTimeout, TooManyResults
+  - URL errors: InvalidUrl, FetchFailed, SsrfBlocked, ContentTooLarge, RateLimited
+- Implement user-friendly error messages with context
+- Add suggestions for common mistakes (typos, wrong paths, regex syntax)
+- Include specific details in errors (file, URL, pattern, actual vs expected)
+- Format errors appropriately:
+  - "Error: @large_file.txt is too large (5.2 MB). Maximum file size is 1 MB."
+  - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
+  - "Error: @url:http://192.168.1.1 - Blocked: private IP address (SSRF prevention)"
 
-#### Task 3.2: Graceful Degradation
+#### Task 5.2: Graceful Degradation
 
-Implement partial success handling:
+Implement partial success handling for all mention types:
 
 - When some mentions fail, load successful ones and print errors to chat
 - Allow user to continue with partial context, prompt still executes
-- Display clear summary: "Loaded 2 of 3 files (1 cached). Failed: @missing.txt"
+- Display clear summary: "Loaded 2 files, 1 search (15 results), 0 URLs. Failed: @missing.txt, @url:timeout.com"
 - Print detailed error messages for each failed mention
 - Log failures for debugging without blocking execution
+- Categorize errors by type (file, search, URL) in summary
 
-#### Task 3.3: User Feedback Display
+#### Task 5.3: User Feedback Display
 
-Add visual feedback in chat loop:
+Add visual feedback in chat loop for all mention types:
 
-- Show colored status for mention processing: "Loading @file.rs..." (cyan)
-- Indicate cached files: "Using cached @config.yaml" (green)
-- Display file metadata: size, line count, cache status
+- Show colored status for mention processing:
+  - Files: "Loading @file.rs..." (cyan)
+  - Search: "Searching @grep:\"pattern\"..." (cyan)
+  - URLs: "Fetching @url:https://example.com..." (cyan)
+- Indicate cached content: "Using cached @config.yaml" (green)
+- Display metadata:
+  - Files: size, line count, cache status
+  - Search: match count, file count
+  - URLs: content size, fetch time, cache status
 - Use existing colored tag infrastructure from chat modes
-- Show success: "Loaded @config.yaml (42 lines, 1.2 KB)" (green)
-- Show cached: "Cached @main.rs (150 lines)" (green)
-- Show errors: "Error: @missing.txt - File not found. Did you mean @main.txt?" (red)
-- Show size errors: "Error: @large_file.txt is too large (5.2 MB). Maximum file size is 1 MB." (red)
+- Show success examples:
+  - "Loaded @config.yaml (42 lines, 1.2 KB)" (green)
+  - "Search @grep:\"TODO\" found 23 matches in 8 files" (green)
+  - "Fetched @url:https://docs.rs/tokio (45 KB, cached)" (green)
+- Show errors with appropriate context (red):
+  - "Error: @missing.txt - File not found. Did you mean @main.txt?"
+  - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
+  - "Error: @url:http://localhost - Blocked: SSRF prevention"
 
-#### Task 3.4: Testing Requirements
+#### Task 5.4: Testing Requirements
 
-Error handling tests:
+Error handling tests for all mention types:
 
-- Test file not found with helpful message and suggestions
-- Test permission denied scenarios with clear error
-- Test file too large rejection with size details in error message
-- Test partial success (some files load, some fail, prompt still executes)
-- Test path validation errors (absolute paths, traversal attempts)
+- File errors: not found, permission denied, too large, binary files, cache errors
+- Search errors: invalid regex, search timeout, too many results
+- URL errors: invalid URL, fetch failed, SSRF blocked, content too large, rate limited
+- Test helpful suggestions for file not found
+- Test partial success with mixed mention types (some succeed, some fail)
 - Test graceful degradation flow with multiple error types
-- Test binary file detection and error handling
-- Test cache-related errors (permission changes, file deletion)
-- Achieve 80%+ coverage on error paths
+- Test error message clarity and actionable information
+- Test colored output for different error types
+- Achieve 80%+ coverage on all error paths
 
-#### Task 3.5: Deliverables
+#### Task 5.5: Deliverables
 
-- Error types in `src/error.rs` with detailed messages (75-100 lines)
-- Error handling logic in mention parser with graceful degradation (125-150 lines)
-- User feedback display functions with colored output (100-125 lines)
-- Error handling tests covering all scenarios (200-250 lines)
+- Error types in `src/error.rs` with detailed messages (125-175 lines)
+- Error handling logic in mention parser with graceful degradation (175-225 lines)
+- User feedback display functions with colored output (150-200 lines)
+- Error handling tests covering all scenarios (350-450 lines)
 
-#### Task 3.6: Success Criteria
+#### Task 5.6: Success Criteria
 
 - All error cases have clear, actionable messages with specific details
-- File size errors include actual size and limit
+- Error messages include context (file size limits, regex syntax help, SSRF explanation)
 - Partial failures print errors to chat but do not block prompt execution
 - User feedback is informative and colored appropriately (green=success/cached, red=error, cyan=loading)
-- Cache status is clearly communicated to user
+- Cache status clearly communicated for all mention types
+- Search and URL errors provide helpful guidance
 - Tests cover all error paths with 80%+ coverage
 - All quality checks pass
 
-### Phase 4: User Experience Enhancements
+### Phase 6: User Experience Enhancements
 
-#### Task 4.1: Fuzzy Path Matching
+#### Task 6.1: Fuzzy Path Matching
 
 Implement smart path resolution:
 
@@ -243,99 +517,143 @@ Implement smart path resolution:
 - Limit to top 3 suggestions
 - Allow configurable similarity threshold
 
-#### Task 4.2: Common Abbreviations
+#### Task 6.2: Common Abbreviations and Smart Patterns
 
-Support convenient shortcuts:
+Support convenient shortcuts and smart patterns:
 
-- `@README` resolves to `README.md`
-- `@Cargo` resolves to `Cargo.toml`
-- `@main` searches for `main.rs`, `main.go`, etc.
+- File abbreviations:
+  - `@README` resolves to `README.md`
+  - `@Cargo` resolves to `Cargo.toml`
+  - `@main` searches for `main.rs`, `main.go`, etc.
+- Search shortcuts:
+  - `@todo` expands to `@search:"TODO"`
+  - `@fixme` expands to `@search:"FIXME"`
+  - `@impl:StructName` expands to `@grep:"impl.*StructName"`
+- URL shortcuts:
+  - `@docs:tokio` expands to `@url:https://docs.rs/tokio`
+  - `@gh:user/repo` expands to `@url:https://github.com/user/repo`
 - Configurable abbreviation map in ToolsConfig
-- Clear indication when abbreviation is used
+- Clear indication when abbreviation is expanded
 
-#### Task 4.3: Visual Feedback Improvements
+#### Task 6.3: Visual Feedback Improvements
 
-Enhance display formatting:
+Enhance display formatting for all mention types:
 
 - Syntax highlighting for file type in mention summary
-- Color-coded file status (green=loaded, red=failed, yellow=warning)
-- Progress indicator for multiple files
-- File size warnings before loading large files
+- Color-coded status (green=loaded, red=failed, yellow=warning, cyan=loading)
+- Progress indicator for multiple mentions:
+  - "Processing mentions: 2/5 complete (files: 2, searches: 1, URLs: 2)"
+- Smart warnings:
+  - File size warnings before loading large files
+  - Search result count warnings (e.g., "500+ results, showing first 20")
+  - URL fetch time warnings for slow responses
 - Consistent formatting with existing colored tags
+- Summary table for complex mention groups
 
-#### Task 4.4: Testing Requirements
+#### Task 6.4: Context-Aware Suggestions
+
+Implement intelligent suggestion system:
+
+- When file not found, use grep to search for similar content
+- Suggest files based on recently mentioned files in conversation
+- When search returns no results, suggest related patterns
+- When URL fetch fails, suggest cached alternatives
+- Use conversation history to improve suggestions
+- Machine learning optional: rank suggestions by relevance
+
+#### Task 6.5: Testing Requirements
 
 UX feature tests:
 
-- Test fuzzy matching with typos
-- Test abbreviation expansion
-- Test suggestion display
-- Test colored output formatting
-- Test multi-file progress display
+- Test fuzzy matching with typos for files
+- Test abbreviation expansion for all mention types
+- Test suggestion display and ranking
+- Test colored output formatting for mixed mentions
+- Test progress indicators for multi-mention prompts
+- Test context-aware suggestions using grep
+- Test smart warnings for large results
 - Achieve 80%+ coverage on new features
 
-#### Task 4.5: Deliverables
+#### Task 6.6: Deliverables
 
 - Fuzzy matching logic (100-150 lines)
-- Abbreviation resolver (75-100 lines)
-- Enhanced display functions (100-125 lines)
-- Configuration additions (25-50 lines)
-- UX tests (150-200 lines)
+- Abbreviation resolver for all mention types (125-175 lines)
+- Enhanced display functions with progress tracking (150-200 lines)
+- Context-aware suggestion system (100-150 lines)
+- Configuration additions (50-75 lines)
+- UX tests (250-350 lines)
 
-#### Task 4.6: Success Criteria
+#### Task 6.7: Success Criteria
 
-- Fuzzy matching correctly suggests alternatives
-- Abbreviations work for common files
-- Visual feedback is clear and helpful
-- No performance degradation with large file sets
+- Fuzzy matching correctly suggests alternatives for all mention types
+- Abbreviations work for common files, searches, and URLs
+- Visual feedback is clear and helpful for complex mention groups
+- Context-aware suggestions improve user experience
+- Progress indicators work smoothly for multiple mentions
+- No performance degradation with large result sets
 - Tests pass with 80%+ coverage
 - All quality checks pass
 
-### Phase 5: Documentation and Polish
+### Phase 7: Documentation and Polish
 
-#### Task 5.1: User Documentation
+#### Task 7.1: User Documentation
 
-Create user-facing documentation in `docs/how-to/use_file_mentions.md`:
+Create user-facing documentation in `docs/how-to/use_context_mentions.md`:
 
-- Quick start examples
-- Syntax reference for @ mentions
+- Quick start examples for all mention types
+- Syntax reference:
+  - File mentions: `@file.rs`, `@path/to/file#L10-20`
+  - Search mentions: `@search:"pattern"`, `@grep:"regex"`
+  - URL mentions: `@url:https://example.com`
+  - Abbreviations and shortcuts
 - Line range syntax examples
+- Search pattern examples (literal vs regex)
 - Common patterns and best practices
+- Security considerations for URL mentions
+- Performance tips for large searches
 - Troubleshooting guide
 - FAQ section
 
-#### Task 5.2: Architecture Documentation
+#### Task 7.2: Architecture Documentation
 
-Create technical documentation in `docs/explanation/file_mention_architecture.md`:
+Create technical documentation in `docs/explanation/context_mention_architecture.md`:
 
 - Design decisions and rationale
+- Multi-source context injection architecture
 - Component interaction diagram
-- Parser implementation details
+- Parser implementation details (all mention types)
+- Tool integration (FileOps, Grep, Fetch)
+- Caching strategy and TTL management
+- Security architecture (SSRF prevention, validation)
 - Error handling strategy
 - Performance considerations
 - Future enhancement ideas
 
-#### Task 5.3: Implementation Summary
+#### Task 7.3: Implementation Summary
 
-Create implementation summary in `docs/explanation/file_mention_feature_implementation.md`:
+Create implementation summary in `docs/explanation/context_mention_implementation.md`:
 
-- Overview of delivered features
+- Overview of delivered features (files, search, URLs)
 - Components created and modified
-- Implementation details with code examples
+- Implementation details with code examples for each mention type
+- Tool implementations (Grep, Fetch)
+- Security measures and validation
 - Testing results and coverage metrics
 - Validation checklist results
-- Usage examples
+- Usage examples for all mention types
 
-#### Task 5.4: Help Text Integration
+#### Task 7.4: Help Text Integration
 
 Update interactive help:
 
-- Add file mention syntax to `/help` output in `src/commands/special_commands.rs`
-- Include examples in help text
-- Update welcome banner if needed
-- Add mention syntax to error messages
+- Add all mention syntax to `/help` output in `src/commands/special_commands.rs`
+- Include examples for files, search, and URL mentions
+- Document abbreviations and shortcuts
+- Update welcome banner with mention capabilities
+- Add mention syntax hints to error messages
+- Create `/mentions` special command to show mention help
 
-#### Task 5.5: Testing Requirements
+#### Task 7.5: Testing Requirements
 
 Documentation validation:
 
@@ -345,15 +663,16 @@ Documentation validation:
 - Run markdown linter
 - Verify examples match actual behavior
 
-#### Task 5.6: Deliverables
+#### Task 7.6: Deliverables
 
-- `docs/how-to/use_file_mentions.md` (300-400 lines)
-- `docs/explanation/file_mention_architecture.md` (250-350 lines)
-- `docs/explanation/file_mention_feature_implementation.md` (400-500 lines)
-- Updated help text (50-75 lines modified)
-- README.md updates (25-50 lines)
+- `docs/how-to/use_context_mentions.md` (500-700 lines)
+- `docs/explanation/context_mention_architecture.md` (400-600 lines)
+- `docs/explanation/context_mention_implementation.md` (700-900 lines)
+- Updated help text with `/mentions` command (100-150 lines modified)
+- README.md updates with all features (75-100 lines)
+- Security documentation for URL fetching (100-150 lines)
 
-#### Task 5.7: Success Criteria
+#### Task 7.7: Success Criteria
 
 - All documentation follows Diataxis framework
 - Code examples are tested and accurate
@@ -381,20 +700,104 @@ Documentation validation:
 
 6. **History Preservation**: Preserve the original @ mentions in conversation history. This maintains the user's intent and allows the agent to understand the context structure. The file contents are injected only into the prompt sent to the provider, not stored permanently in history.
 
+7. **Search Tool Implementation**: Implement grep tool as part of this plan to enable `@search` and `@grep` mentions. This is integrated into Phase 3 rather than deferred to future work.
+
+8. **Web Fetch Implementation**: Implement fetch tool as part of this plan to enable `@url` mentions. This is integrated into Phase 4 with comprehensive security validation.
+
+9. **Unified Context Injection**: All mention types (files, search results, web content) use the same augmentation framework for consistency.
+
 ## Success Metrics
 
-- Feature adoption: percentage of interactive sessions using @ mentions
-- Error rate: percentage of mentions that fail to resolve
-- Performance: time to load and inject file contents (target: under 100ms for typical files)
-- User satisfaction: reduction in explicit file read requests
-- Test coverage: maintain 80%+ coverage across all phases
+- Feature adoption: percentage of interactive sessions using @ mentions (target: 60%+)
+- Mention type usage: distribution of file vs search vs URL mentions
+- Error rate: percentage of mentions that fail to resolve (target: under 5%)
+- Performance targets:
+  - File loading: under 100ms for typical files
+  - Search execution: under 2 seconds for typical codebase
+  - URL fetching: under 5 seconds for typical pages
+- User satisfaction: reduction in explicit tool invocations
+- Security: zero SSRF incidents, zero path traversal incidents
+- Test coverage: maintain 80%+ coverage across all phases and tools
 
 ## Dependencies
 
-- No new external dependencies required
-- Uses existing: tokio, rustyline, walkdir, similar, colored
-- Requires FileOpsTool infrastructure (already exists)
-- Builds on special command parser pattern (already exists)
+### New External Dependencies Required
+
+- `html2md = "0.2"` - HTML to Markdown conversion for web content
+- `regex = "1.10"` - Regex pattern matching for grep tool (may already exist)
+
+### Existing Dependencies Used
+
+- `tokio` - Async runtime for file I/O, HTTP requests, search
+- `rustyline` - Readline for interactive input
+- `walkdir` - File tree traversal for grep
+- `similar` - Fuzzy matching for suggestions
+- `colored` - Colored terminal output
+- `reqwest` - HTTP client for URL fetching (already in dependencies)
+- `anyhow` - Error handling
+- `thiserror` - Custom error types
+
+### Infrastructure Requirements
+
+- FileOpsTool infrastructure (already exists)
+- Special command parser pattern (already exists)
+- Tool registry system (already exists)
+- Provider abstraction (already exists)
+
+## Integration with Gap Analysis Roadmap
+
+This implementation plan addresses multiple critical gaps identified in the XZatoma vs Zed Agent comparison:
+
+### Gaps Addressed by This Plan
+
+1. **Advanced Code Search (Grep Tool)** - Phase 3
+
+   - Regex-based search with pagination
+   - File filtering with glob patterns
+   - Context lines around matches
+   - Integrated with `@search` and `@grep` mention syntax
+
+2. **Web Content Retrieval (Fetch Tool)** - Phase 4
+
+   - URL fetching with HTML-to-Markdown conversion
+   - SSRF prevention and security validation
+   - Integrated with `@url` mention syntax
+   - Rate limiting and size controls
+
+3. **Unified Context Injection** - Phases 1-2
+   - Single framework for files, search, and web content
+   - Consistent caching and error handling
+   - Conversation history preservation
+
+### Gaps NOT Addressed (Separate Implementation)
+
+1. **Web Search Tool** - Requires API integration (Exa, Google)
+
+   - Could add `@websearch:"query"` syntax in future extension
+   - Separate implementation plan recommended
+
+2. **Token Usage Tracking** - Provider-level feature
+
+   - Unrelated to context mentions
+   - Should be implemented in provider abstraction layer
+
+3. **Conversation Persistence** - Agent-level feature
+
+   - Separate from context injection
+   - Requires storage layer design
+
+4. **Subagent/Multi-Agent** - Advanced coordination
+   - Future enhancement after core features stabilize
+
+### Architecture Benefits
+
+By implementing grep and fetch tools as part of the mention system:
+
+- **Unified User Experience**: Single @ syntax for all context types
+- **Consistent Error Handling**: Same patterns across files, search, URLs
+- **Shared Infrastructure**: Caching, validation, display formatting
+- **Security Foundation**: SSRF prevention, path validation, rate limiting
+- **Performance Optimization**: Unified caching strategy with TTLs
 
 ## Risk Mitigation
 
