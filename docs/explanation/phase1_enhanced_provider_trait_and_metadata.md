@@ -108,7 +108,7 @@ The `Provider` trait now includes new methods with default implementations:
 ```rust
 pub trait Provider: Send + Sync {
     // Existing method
-    async fn complete(&self, messages: &[Message], 
+    async fn complete(&self, messages: &[Message],
                      tools: &[serde_json::Value]) -> Result<Message>;
 
     // New methods with defaults
@@ -218,7 +218,7 @@ use async_trait::async_trait;
 
 #[async_trait]
 impl Provider for MyProvider {
-    async fn complete(&self, messages: &[Message], 
+    async fn complete(&self, messages: &[Message],
                      tools: &[serde_json::Value]) -> Result<Message> {
         // Existing implementation
         Ok(Message::assistant("Response"))

@@ -602,8 +602,10 @@ pub mod chat {
                     &self,
                     _messages: &[Message],
                     _tools: &[serde_json::Value],
-                ) -> Result<Message> {
-                    Ok(Message::assistant("test"))
+                ) -> Result<crate::providers::CompletionResponse> {
+                    Ok(crate::providers::CompletionResponse::new(
+                        Message::assistant("test"),
+                    ))
                 }
             }
 

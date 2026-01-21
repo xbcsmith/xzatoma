@@ -5,7 +5,7 @@
 
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::{FunctionCall, Message, Provider, ToolCall};
+use crate::providers::{CompletionResponse, FunctionCall, Message, Provider, TokenUsage, ToolCall};
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -31,7 +31,8 @@ use std::time::Duration;
 /// };
 /// let provider = OllamaProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
-/// let response = provider.complete(&messages, &[]).await?;
+/// let completion = provider.complete(&messages, &[]).await?;
+/// let message = completion.message;
 /// # Ok(())
 /// # }
 /// ```
@@ -264,7 +265,11 @@ impl OllamaProvider {
 
 #[async_trait]
 impl Provider for OllamaProvider {
-    async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
         let url = format!("{}/api/chat", self.config.host);
 
         let ollama_request = OllamaRequest {
@@ -314,7 +319,20 @@ impl Provider for OllamaProvider {
             ollama_response.eval_count
         );
 
-        Ok(self.convert_response_message(ollama_response.message))
+        let message = self.convert_response_message(ollama_response.message);
+
+        // Extract token usage from response
+        let response = if ollama_response.prompt_eval_count > 0 || ollama_response.eval_count > 0 {
+            let usage = TokenUsage::new(
+                ollama_response.prompt_eval_count,
+                ollama_response.eval_count,
+            );
+            CompletionResponse::with_usage(message, usage)
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        Ok(response)
     }
 }
 

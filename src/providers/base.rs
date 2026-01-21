@@ -443,7 +443,7 @@ impl CompletionResponse {
 /// # Examples
 ///
 /// ```no_run
-/// use xzatoma::providers::{Provider, Message};
+/// use xzatoma::providers::{Provider, Message, CompletionResponse};
 /// use xzatoma::error::Result;
 /// use async_trait::async_trait;
 ///
@@ -455,9 +455,9 @@ impl CompletionResponse {
 ///         &self,
 ///         messages: &[Message],
 ///         tools: &[serde_json::Value],
-///     ) -> Result<Message> {
+///     ) -> Result<CompletionResponse> {
 ///         // Implementation here
-///         Ok(Message::assistant("Response"))
+///         Ok(CompletionResponse::new(Message::assistant("Response")))
 ///     }
 /// }
 /// ```
@@ -472,12 +472,16 @@ pub trait Provider: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Returns the assistant's response message
+    /// Returns the assistant's response message along with token usage information
     ///
     /// # Errors
     ///
     /// Returns error if the API call fails or response is invalid
-    async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message>;
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse>;
 
     /// List available models for this provider
     ///
@@ -837,8 +841,8 @@ mod tests {
                 &self,
                 _messages: &[Message],
                 _tools: &[serde_json::Value],
-            ) -> Result<Message> {
-                Ok(Message::assistant("test"))
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("test")))
             }
         }
 
@@ -862,8 +866,8 @@ mod tests {
                 &self,
                 _messages: &[Message],
                 _tools: &[serde_json::Value],
-            ) -> Result<Message> {
-                Ok(Message::assistant("test"))
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("test")))
             }
         }
 
@@ -887,8 +891,8 @@ mod tests {
                 &self,
                 _messages: &[Message],
                 _tools: &[serde_json::Value],
-            ) -> Result<Message> {
-                Ok(Message::assistant("test"))
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("test")))
             }
         }
 
@@ -909,8 +913,8 @@ mod tests {
                 &self,
                 _messages: &[Message],
                 _tools: &[serde_json::Value],
-            ) -> Result<Message> {
-                Ok(Message::assistant("test"))
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("test")))
             }
         }
 

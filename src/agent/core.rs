@@ -10,7 +10,7 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
 use crate::prompts;
-use crate::providers::{Message, Provider, ToolCall};
+use crate::providers::{CompletionResponse, Message, Provider, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -364,20 +364,21 @@ impl Agent {
 
             // Get completion from provider
             let tool_definitions = self.tools.all_definitions();
-            let response = self
+            let completion_response = self
                 .provider
                 .complete(conversation.messages(), &tool_definitions)
                 .await?;
 
-            debug!("Provider response: {:?}", response);
+            let message = completion_response.message;
+            debug!("Provider response: {:?}", message);
 
             // Add assistant message to conversation
-            if let Some(content) = &response.content {
+            if let Some(content) = &message.content {
                 conversation.add_assistant_message(content.clone());
             }
 
             // Handle tool calls if present
-            if let Some(tool_calls) = &response.tool_calls {
+            if let Some(tool_calls) = &message.tool_calls {
                 if tool_calls.is_empty() {
                     // Provider returned empty tool calls, treat as completion
                     debug!("Provider returned empty tool calls, stopping");
@@ -398,7 +399,7 @@ impl Agent {
             }
 
             // No tool calls, check if we have a final response
-            if response.content.is_some() {
+            if message.content.is_some() {
                 debug!("Provider returned final response, stopping");
                 break;
             }
@@ -505,7 +506,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{FunctionCall, Message};
+    use crate::providers::{CompletionResponse, FunctionCall, Message};
     use async_trait::async_trait;
 
     /// Mock provider for testing
@@ -534,16 +535,16 @@ mod tests {
             &self,
             _messages: &[Message],
             _tools: &[serde_json::Value],
-        ) -> Result<Message> {
+        ) -> Result<CompletionResponse> {
             let mut count = self.call_count.lock().unwrap();
             let index = *count;
             *count += 1;
 
             if index < self.responses.len() {
-                Ok(self.responses[index].clone())
+                Ok(CompletionResponse::new(self.responses[index].clone()))
             } else {
                 // Return final message if we run out of responses
-                Ok(Message::assistant("Done"))
+                Ok(CompletionResponse::new(Message::assistant("Done")))
             }
         }
     }

@@ -5,11 +5,16 @@
 
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::{FunctionCall, Message, Provider, ToolCall};
+use crate::providers::{
+    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
+    ProviderCapabilities, TokenUsage, ToolCall,
+};
 
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// GitHub OAuth device code endpoint
@@ -41,13 +46,14 @@ const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 /// };
 /// let provider = CopilotProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
-/// let response = provider.complete(&messages, &[]).await?;
+/// let completion = provider.complete(&messages, &[]).await?;
+/// let message = completion.message;
 /// # Ok(())
 /// # }
 /// ```
 pub struct CopilotProvider {
     client: Client,
-    config: CopilotConfig,
+    config: Arc<RwLock<CopilotConfig>>,
     keyring_service: String,
     keyring_user: String,
 }
@@ -211,7 +217,7 @@ impl CopilotProvider {
 
         Ok(Self {
             client,
-            config,
+            config: Arc::new(RwLock::new(config)),
             keyring_service: "xzatoma".to_string(),
             keyring_user: "github_copilot".to_string(),
         })
@@ -223,18 +229,15 @@ impl CopilotProvider {
     ///
     /// ```
     /// use xzatoma::config::CopilotConfig;
-    /// use xzatoma::providers::CopilotProvider;
+    /// use xzatoma::providers::{CopilotProvider, Provider};
     ///
     /// let config = CopilotConfig {
     ///     model: "gpt-5-mini".to_string(),
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
-    /// assert_eq!(provider.model(), "gpt-5-mini");
+    /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     /// ```
-    pub fn model(&self) -> &str {
-        &self.config.model
-    }
-
+    ///
     /// Authenticate and get Copilot token
     ///
     /// Checks keyring for cached token first. If not found or expired,
@@ -509,15 +512,64 @@ impl CopilotProvider {
             Message::assistant(copilot_msg.content)
         }
     }
+
+    /// Get the list of supported Copilot models with their metadata
+    fn get_copilot_models() -> Vec<ModelInfo> {
+        let mut models = vec![
+            ModelInfo::new("gpt-4", "GPT-4", 8192),
+            ModelInfo::new("gpt-4-turbo", "GPT-4 Turbo", 128000),
+            ModelInfo::new("gpt-3.5-turbo", "GPT-3.5 Turbo", 4096),
+            ModelInfo::new("claude-3.5-sonnet", "Claude 3.5 Sonnet", 200000),
+            ModelInfo::new("claude-sonnet-4.5", "Claude Sonnet 4.5", 200000),
+            ModelInfo::new("o1-preview", "OpenAI o1 Preview", 128000),
+            ModelInfo::new("o1-mini", "OpenAI o1 Mini", 128000),
+        ];
+
+        // Configure capabilities for each model
+        models[0].add_capability(ModelCapability::FunctionCalling);
+
+        models[1].add_capability(ModelCapability::FunctionCalling);
+        models[1].add_capability(ModelCapability::LongContext);
+
+        models[2].add_capability(ModelCapability::FunctionCalling);
+
+        models[3].add_capability(ModelCapability::FunctionCalling);
+        models[3].add_capability(ModelCapability::LongContext);
+        models[3].add_capability(ModelCapability::Vision);
+
+        models[4].add_capability(ModelCapability::FunctionCalling);
+        models[4].add_capability(ModelCapability::LongContext);
+        models[4].add_capability(ModelCapability::Vision);
+
+        models[5].add_capability(ModelCapability::FunctionCalling);
+        models[5].add_capability(ModelCapability::LongContext);
+
+        models[6].add_capability(ModelCapability::FunctionCalling);
+        models[6].add_capability(ModelCapability::LongContext);
+
+        models
+    }
 }
 
 #[async_trait]
 impl Provider for CopilotProvider {
-    async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
         let token = self.authenticate().await?;
 
+        let model = self
+            .config
+            .read()
+            .map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
+            })?
+            .model
+            .clone();
         let copilot_request = CopilotRequest {
-            model: self.config.model.clone(),
+            model,
             messages: self.convert_messages(messages),
             tools: self.convert_tools(tools),
             stream: false,
@@ -565,7 +617,68 @@ impl Provider for CopilotProvider {
 
         tracing::debug!("Copilot response received successfully");
 
-        Ok(self.convert_response_message(choice.message))
+        let message = self.convert_response_message(choice.message);
+
+        // Extract token usage if available
+        let usage = copilot_response
+            .usage
+            .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
+
+        let response = match usage {
+            Some(u) => CompletionResponse::with_usage(message, u),
+            None => CompletionResponse::new(message),
+        };
+        Ok(response)
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        tracing::debug!("Listing Copilot models");
+        Ok(Self::get_copilot_models())
+    }
+
+    async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> {
+        tracing::debug!("Getting info for model: {}", model_name);
+        Self::get_copilot_models()
+            .into_iter()
+            .find(|m| m.name == model_name)
+            .ok_or_else(|| {
+                XzatomaError::Provider(format!("Model not found: {}", model_name)).into()
+            })
+    }
+
+    fn get_current_model(&self) -> Result<String> {
+        self.config
+            .read()
+            .map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string()).into()
+            })
+            .map(|config| config.model.clone())
+    }
+
+    fn get_provider_capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            supports_model_listing: true,
+            supports_model_details: true,
+            supports_model_switching: true,
+            supports_token_counts: true,
+            supports_streaming: false,
+        }
+    }
+
+    async fn set_model(&mut self, model_name: String) -> Result<()> {
+        // Validate that the model exists
+        let models = Self::get_copilot_models();
+        if !models.iter().any(|m| m.name == model_name) {
+            return Err(XzatomaError::Provider(format!("Model not found: {}", model_name)).into());
+        }
+
+        // Update the model in the config
+        let mut config = self.config.write().map_err(|_| {
+            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
+        })?;
+        config.model = model_name.clone();
+        tracing::info!("Switched Copilot model to: {}", model_name);
+        Ok(())
     }
 }
 
@@ -647,10 +760,10 @@ mod tests {
     #[test]
     fn test_copilot_provider_model() {
         let config = CopilotConfig {
-            model: "gpt-4o".to_string(),
+            model: "gpt-5-mini".to_string(),
         };
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.model(), "gpt-4o");
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     }
 
     #[test]
@@ -774,5 +887,194 @@ mod tests {
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.keyring_service, "xzatoma");
         assert_eq!(provider.keyring_user, "github_copilot");
+    }
+
+    #[test]
+    fn test_list_copilot_models() {
+        let models = CopilotProvider::get_copilot_models();
+        assert!(!models.is_empty());
+
+        // Check that we have the expected models
+        let model_names: Vec<_> = models.iter().map(|m| m.name.as_str()).collect();
+        assert!(model_names.contains(&"gpt-4"));
+        assert!(model_names.contains(&"gpt-4-turbo"));
+        assert!(model_names.contains(&"gpt-3.5-turbo"));
+        assert!(model_names.contains(&"claude-3.5-sonnet"));
+        assert!(model_names.contains(&"claude-sonnet-4.5"));
+        assert!(model_names.contains(&"o1-preview"));
+        assert!(model_names.contains(&"o1-mini"));
+    }
+
+    #[test]
+    fn test_copilot_model_capabilities() {
+        let models = CopilotProvider::get_copilot_models();
+
+        // gpt-4 should support function calling
+        let gpt4 = models.iter().find(|m| m.name == "gpt-4").unwrap();
+        assert!(gpt4.supports_capability(ModelCapability::FunctionCalling));
+        assert!(!gpt4.supports_capability(ModelCapability::Vision));
+
+        // gpt-4-turbo should support long context and function calling
+        let gpt4_turbo = models.iter().find(|m| m.name == "gpt-4-turbo").unwrap();
+        assert!(gpt4_turbo.supports_capability(ModelCapability::FunctionCalling));
+        assert!(gpt4_turbo.supports_capability(ModelCapability::LongContext));
+        assert_eq!(gpt4_turbo.context_window, 128000);
+
+        // Claude should support vision
+        let claude = models
+            .iter()
+            .find(|m| m.name == "claude-3.5-sonnet")
+            .unwrap();
+        assert!(claude.supports_capability(ModelCapability::Vision));
+        assert!(claude.supports_capability(ModelCapability::LongContext));
+        assert_eq!(claude.context_window, 200000);
+    }
+
+    #[test]
+    fn test_copilot_model_context_windows() {
+        let models = CopilotProvider::get_copilot_models();
+
+        let gpt4 = models.iter().find(|m| m.name == "gpt-4").unwrap();
+        assert_eq!(gpt4.context_window, 8192);
+
+        let gpt35 = models.iter().find(|m| m.name == "gpt-3.5-turbo").unwrap();
+        assert_eq!(gpt35.context_window, 4096);
+
+        let o1_preview = models.iter().find(|m| m.name == "o1-preview").unwrap();
+        assert_eq!(o1_preview.context_window, 128000);
+    }
+
+    #[test]
+    fn test_get_current_model() {
+        let config = CopilotConfig {
+            model: "gpt-4-turbo".to_string(),
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-4-turbo");
+    }
+
+    #[test]
+    fn test_provider_capabilities() {
+        let config = CopilotConfig {
+            model: "gpt-4o".to_string(),
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+        let caps = provider.get_provider_capabilities();
+
+        assert!(caps.supports_model_listing);
+        assert!(caps.supports_model_details);
+        assert!(caps.supports_model_switching);
+        assert!(caps.supports_token_counts);
+        assert!(!caps.supports_streaming);
+    }
+
+    #[test]
+    fn test_set_model_with_valid_model() {
+        let config = CopilotConfig {
+            model: "gpt-4".to_string(),
+        };
+        let mut provider = CopilotProvider::new(config).unwrap();
+
+        // Should succeed with valid model
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { provider.set_model("gpt-4-turbo".to_string()).await });
+
+        assert!(result.is_ok());
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-4-turbo");
+    }
+
+    #[test]
+    fn test_set_model_with_invalid_model() {
+        let config = CopilotConfig {
+            model: "gpt-4".to_string(),
+        };
+        let mut provider = CopilotProvider::new(config).unwrap();
+
+        // Should fail with invalid model
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { provider.set_model("invalid-model-name".to_string()).await });
+
+        assert!(result.is_err());
+        // Original model should be unchanged
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-4");
+    }
+
+    #[test]
+    fn test_list_models_returns_all_supported_models() {
+        let config = CopilotConfig {
+            model: "gpt-4o".to_string(),
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { provider.list_models().await });
+
+        assert!(result.is_ok());
+        let models = result.unwrap();
+        assert_eq!(models.len(), 7); // Seven known models
+    }
+
+    #[test]
+    fn test_get_model_info_valid_model() {
+        let config = CopilotConfig {
+            model: "gpt-4o".to_string(),
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { provider.get_model_info("claude-3.5-sonnet").await });
+
+        assert!(result.is_ok());
+        let info = result.unwrap();
+        assert_eq!(info.name, "claude-3.5-sonnet");
+        assert_eq!(info.display_name, "Claude 3.5 Sonnet");
+        assert_eq!(info.context_window, 200000);
+    }
+
+    #[test]
+    fn test_get_model_info_invalid_model() {
+        let config = CopilotConfig {
+            model: "gpt-4o".to_string(),
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(async { provider.get_model_info("nonexistent-model").await });
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_usage_extraction() {
+        // Test that TokenUsage is correctly created
+        let usage = TokenUsage::new(100, 50);
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+    }
+
+    #[test]
+    fn test_completion_response_with_usage() {
+        let message = Message::assistant("Test response");
+        let usage = TokenUsage::new(100, 50);
+        let response = CompletionResponse::with_usage(message, usage);
+
+        assert_eq!(response.message.content, Some("Test response".to_string()));
+        assert!(response.usage.is_some());
+        assert_eq!(response.usage.unwrap().total_tokens, 150);
+    }
+
+    #[test]
+    fn test_completion_response_without_usage() {
+        let message = Message::assistant("Test response");
+        let response = CompletionResponse::new(message);
+
+        assert_eq!(response.message.content, Some("Test response".to_string()));
+        assert!(response.usage.is_none());
     }
 }
