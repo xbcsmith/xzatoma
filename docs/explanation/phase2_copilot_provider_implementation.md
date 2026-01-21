@@ -15,7 +15,7 @@ The implementation enables:
 - `src/providers/base.rs` (modifications)
   - Updated `Provider` trait `complete()` method signature to return `CompletionResponse` instead of `Message`
   - Comprehensive provider trait documentation with updated examples
-  
+
 - `src/providers/copilot.rs` (major updates)
   - Changed internal structure to use `Arc<RwLock<CopilotConfig>>` for interior mutability
   - Implemented `list_models()` with hardcoded list of 7 supported Copilot models
@@ -25,20 +25,20 @@ The implementation enables:
   - Implemented `get_provider_capabilities()` returning full capability flags
   - Modified `complete()` to extract token usage and return `CompletionResponse`
   - Added comprehensive test suite (15+ new tests for Phase 2 functionality)
-  
+
 - `src/providers/ollama.rs` (updates for consistency)
   - Updated to return `CompletionResponse` from `complete()`
   - Added token usage extraction from Ollama API responses
   - Updated example documentation
-  
+
 - `src/agent/core.rs` (integration updates)
   - Updated agent execution loop to handle `CompletionResponse` wrapper
   - Added import for `CompletionResponse` type
   - Updated mock provider in tests
-  
+
 - `src/commands/mod.rs` (test updates)
   - Updated test provider mock to return `CompletionResponse`
-  
+
 - `docs/explanation/phase2_copilot_provider_implementation.md` (this file)
   - Comprehensive documentation of Phase 2 implementation
 
@@ -139,7 +139,7 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
     let mut config = self.config.write()
         .map_err(|_| XzatomaError::Provider("Failed to acquire write lock".to_string()))?;
     config.model = model_name.clone();
-    
+
     tracing::info!("Switched Copilot model to: {}", model_name);
     Ok(())
 }
@@ -225,9 +225,9 @@ let provider = CopilotProvider::new(config)?;
 // Get list of available models
 let models = provider.list_models().await?;
 for model in models {
-    println!("{}: {} ({}k tokens)", 
-        model.name, 
-        model.display_name, 
+    println!("{}: {} ({}k tokens)",
+        model.name,
+        model.display_name,
         model.context_window / 1000
     );
 }
@@ -239,7 +239,7 @@ for model in models {
 let model_info = provider.get_model_info("claude-3.5-sonnet").await?;
 println!("Name: {}", model_info.display_name);
 println!("Context: {} tokens", model_info.context_window);
-println!("Supports vision: {}", 
+println!("Supports vision: {}",
     model_info.supports_capability(ModelCapability::Vision)
 );
 ```
