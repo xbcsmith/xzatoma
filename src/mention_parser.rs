@@ -601,8 +601,14 @@ pub fn resolve_mention_path(
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
 
-    // Check if the path is within the working directory
-    if !canonical.starts_with(&canonical_wd) {
+    // Check if the path is within the working directory.
+    // Accept both the canonical working directory (resolves symlinks) and the
+    // original working directory (may itself be a symlink). This is important
+    // because canonicalizing `path` can fail for non-existent files (e.g. a
+    // mention to a file not yet present). In that case `canonical` will be the
+    // joined path (`working_dir.join(mention_path)`) and will start with the
+    // possibly symlinked `working_dir` rather than its canonicalized target.
+    if !(canonical.starts_with(&canonical_wd) || canonical.starts_with(working_dir)) {
         return Err(anyhow::anyhow!(
             "Path escapes working directory: {}",
             mention_path

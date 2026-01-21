@@ -39,6 +39,7 @@ pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
 pub mod tools;
+pub mod xzepr;
 
 // Re-export commonly used types
 pub use agent::Agent;

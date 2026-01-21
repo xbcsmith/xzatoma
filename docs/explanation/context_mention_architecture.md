@@ -547,7 +547,7 @@ Chat loop captures user input, passes to augmentation:
 ```rust
 loop {
     let input = read_user_input();
-    
+
     if input.contains("@") {
         let (prompt, errors) = augment_prompt_with_mentions(&input, ...);
         display_mention_errors(&errors);

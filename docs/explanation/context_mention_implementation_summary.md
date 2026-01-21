@@ -282,7 +282,7 @@ let (mentions, cleaned) = parse_mentions(input)?;
 // With line range
 let input = "Check @src/main.rs#L10-20";
 let (mentions, cleaned) = parse_mentions(input)?;
-// mentions[0] = Mention::File(FileMention { 
+// mentions[0] = Mention::File(FileMention {
 //     path: "src/main.rs",
 //     start_line: Some(10),
 //     end_line: Some(20),
@@ -300,8 +300,8 @@ let (mentions, cleaned) = parse_mentions(input)?;
 // Literal pattern search
 let input = "Find @search:\"error handling\"";
 let (mentions, cleaned) = parse_mentions(input)?;
-// mentions[0] = Mention::Search(SearchMention { 
-//     pattern: "error handling" 
+// mentions[0] = Mention::Search(SearchMention {
+//     pattern: "error handling"
 // })
 
 // Results in augmented prompt:
@@ -387,7 +387,7 @@ Lines: 1-42
 server:
   host: localhost
   port: 8080
-  
+
 database:
   url: postgres://localhost/db
   pool_size: 10
@@ -446,7 +446,7 @@ async fn test_augment_with_multiple_mentions() {
         &test_root,
         &mut cache,
     ).await;
-    
+
     assert!(errors.is_empty());
     assert_eq!(successes.len(), 2);
     assert!(augmented.contains("File: config.yaml"));
@@ -461,7 +461,7 @@ async fn test_graceful_degradation_on_missing_file() {
         &test_root,
         &mut cache,
     ).await;
-    
+
     assert_eq!(errors.len(), 1);
     assert_eq!(successes.len(), 1);
     assert!(augmented.contains("file not found"));
@@ -634,20 +634,20 @@ use xzatoma::mention_parser::{
 async fn main() {
     let input = "Review @src/lib.rs#L1-50";
     let (mentions, cleaned) = parse_mentions(input).unwrap();
-    
+
     let (augmented, errors, successes) = augment_prompt_with_mentions(
         input,
         &PathBuf::from("."),
         &mut cache,
     ).await;
-    
+
     for error in errors {
         eprintln!("Error loading {}: {}", error.source, error.message);
         if let Some(suggestion) = error.suggestion {
             eprintln!("  Suggestion: {}", suggestion);
         }
     }
-    
+
     println!("Augmented prompt:\n{}", augmented);
 }
 ```
