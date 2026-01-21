@@ -17,7 +17,7 @@ mod prompts;
 mod providers;
 mod tools;
 
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, ModelCommand};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -85,6 +85,23 @@ async fn main() -> Result<()> {
             tracing::info!("Starting authentication for provider: {}", provider);
             commands::auth::authenticate(config, provider).await?;
             Ok(())
+        }
+        Commands::Models { command } => {
+            tracing::info!("Starting model management command");
+            match command {
+                ModelCommand::List { provider } => {
+                    commands::models::list_models(&config, provider.as_deref()).await?;
+                    Ok(())
+                }
+                ModelCommand::Info { model, provider } => {
+                    commands::models::show_model_info(&config, &model, provider.as_deref()).await?;
+                    Ok(())
+                }
+                ModelCommand::Current { provider } => {
+                    commands::models::show_current_model(&config, provider.as_deref()).await?;
+                    Ok(())
+                }
+            }
         }
     }
 }

@@ -69,6 +69,42 @@ pub enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
     },
+
+    /// Manage AI models
+    Models {
+        /// Model management subcommand
+        #[command(subcommand)]
+        command: ModelCommand,
+    },
+}
+
+/// Model management subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum ModelCommand {
+    /// List available models
+    List {
+        /// Filter by provider (copilot, ollama)
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
+
+    /// Show detailed information about a model
+    Info {
+        /// Model name/identifier
+        #[arg(short, long)]
+        model: String,
+
+        /// Filter by provider (copilot, ollama)
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
+
+    /// Show the currently active model
+    Current {
+        /// Filter by provider (copilot, ollama)
+        #[arg(short, long)]
+        provider: Option<String>,
+    },
 }
 
 impl Cli {
@@ -358,5 +394,103 @@ mod tests {
     fn test_cli_parse_invalid_command() {
         let cli = Cli::try_parse_from(["xzatoma", "invalid"]);
         assert!(cli.is_err());
+    }
+
+    #[test]
+    fn test_cli_parse_models_list() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            assert!(matches!(command, ModelCommand::List { .. }));
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_list_with_provider() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--provider", "ollama"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::List { provider } = command {
+                assert_eq!(provider, Some("ollama".to_string()));
+            } else {
+                panic!("Expected List command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info { model, provider } = command {
+                assert_eq!(model, "gpt-4");
+                assert_eq!(provider, None);
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info_with_provider() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "models",
+            "info",
+            "--model",
+            "qwen2.5-coder",
+            "--provider",
+            "ollama",
+        ]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info { model, provider } = command {
+                assert_eq!(model, "qwen2.5-coder");
+                assert_eq!(provider, Some("ollama".to_string()));
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_current() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "current"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            assert!(matches!(command, ModelCommand::Current { .. }));
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_current_with_provider() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "current", "--provider", "copilot"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Current { provider } = command {
+                assert_eq!(provider, Some("copilot".to_string()));
+            } else {
+                panic!("Expected Current command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
     }
 }

@@ -38,6 +38,9 @@ pub mod chat_mode;
 // Special commands parser for mode switching
 pub mod special_commands;
 
+// Model management commands
+pub mod models;
+
 // Chat command handler
 pub mod chat {
     //! Interactive chat mode handler.
