@@ -16,7 +16,7 @@
 //!         timeout_secs: 30,
 //!     };
 //!     let client = XzeprClient::new(config)?;
-//!     
+//!
 //!     // Discover or create an event receiver
 //!     let receiver_id = client.discover_or_create_event_receiver(
 //!         "my-receiver",
@@ -25,7 +25,7 @@
 //!         "My service receiver",
 //!         serde_json::json!({"type": "object"}),
 //!     ).await?;
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```

@@ -191,7 +191,7 @@ impl MessageHandler for DeploymentHandler {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt()
         .with_env_filter(
