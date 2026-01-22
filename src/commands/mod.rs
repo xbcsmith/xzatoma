@@ -161,6 +161,23 @@ pub mod chat {
                             handle_list_models(&agent).await;
                             continue;
                         }
+                        SpecialCommand::Auth(provider_opt) => {
+                            // Use provided provider override, otherwise use the session's provider
+                            let provider_to_auth =
+                                provider_opt.unwrap_or_else(|| provider_type.to_string());
+                            println!("Starting authentication for provider: {}", provider_to_auth);
+
+                            // Run the interactive auth flow but keep the chat session running
+                            match auth::authenticate(config.clone(), provider_to_auth).await {
+                                Ok(_) => {
+                                    println!("Authentication completed.");
+                                }
+                                Err(e) => {
+                                    eprintln!("Authentication failed: {}", e);
+                                }
+                            }
+                            continue;
+                        }
                         SpecialCommand::SwitchModel(model_name) => {
                             handle_switch_model(
                                 &mut agent,

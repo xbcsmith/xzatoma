@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = OllamaConfig {
 ///     host: "http://localhost:11434".to_string(),
-///     model: "qwen2.5-coder".to_string(),
+///     model: "llama3.2:latest".to_string(),
 /// };
 /// let provider = OllamaProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -105,6 +105,7 @@ struct OllamaRequest {
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaMessage {
     role: String,
+    #[serde(default)]
     content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OllamaToolCall>>,
@@ -128,7 +129,9 @@ struct OllamaFunction {
 /// Tool call in Ollama format
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaToolCall {
+    #[serde(default)]
     id: String,
+    #[serde(default = "default_tool_type")]
     r#type: String,
     function: OllamaFunctionCall,
 }
@@ -137,7 +140,13 @@ struct OllamaToolCall {
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaFunctionCall {
     name: String,
+    #[serde(default)]
     arguments: serde_json::Value,
+}
+
+/// Default type for tool calls (used when field is missing)
+fn default_tool_type() -> String {
+    "function".to_string()
 }
 
 /// Response structure from Ollama API
@@ -176,7 +185,7 @@ impl OllamaProvider {
     ///
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
-    ///     model: "qwen2.5-coder".to_string(),
+    ///     model: "llama3.2:latest".to_string(),
     /// };
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
@@ -211,7 +220,7 @@ impl OllamaProvider {
     ///
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
-    ///     model: "qwen2.5-coder".to_string(),
+    ///     model: "llama3.2:latest".to_string(),
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.host(), "http://localhost:11434");
@@ -233,10 +242,10 @@ impl OllamaProvider {
     ///
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
-    ///     model: "qwen2.5-coder".to_string(),
+    ///     model: "llama3.2:latest".to_string(),
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
-    /// assert_eq!(provider.model(), "qwen2.5-coder");
+    /// assert_eq!(provider.model(), "llama3.2:latest");
     /// ```
     pub fn model(&self) -> String {
         self.config
@@ -306,8 +315,20 @@ impl OllamaProvider {
         if let Some(tool_calls) = ollama_msg.tool_calls {
             let converted_calls: Vec<ToolCall> = tool_calls
                 .into_iter()
-                .map(|tc| ToolCall {
-                    id: tc.id,
+                .enumerate()
+                .map(|(idx, tc)| ToolCall {
+                    id: if tc.id.is_empty() {
+                        format!(
+                            "call_{}_{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis(),
+                            idx
+                        )
+                    } else {
+                        tc.id
+                    },
                     function: FunctionCall {
                         name: tc.function.name,
                         arguments: serde_json::to_string(&tc.function.arguments)
@@ -318,7 +339,12 @@ impl OllamaProvider {
 
             Message::assistant_with_tools(converted_calls)
         } else {
-            Message::assistant(ollama_msg.content)
+            // Handle empty content by using empty string
+            Message::assistant(if ollama_msg.content.is_empty() {
+                "".to_string()
+            } else {
+                ollama_msg.content
+            })
         }
     }
 
@@ -470,12 +496,23 @@ fn get_context_window_for_model(model_name: &str) -> usize {
 
 /// Add model capabilities based on model family
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
-    // Most Ollama models support function calling
-    model.add_capability(ModelCapability::FunctionCalling);
-
-    // Add capabilities based on model family
+    // Only specific Ollama models support function calling (tool use)
+    // Based on Ollama documentation and testing
     match family.to_lowercase().as_str() {
-        "mistral" | "neural-chat" => {
+        // Models that support tool calling
+        "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction" | "command-r"
+        | "command-r-plus" | "granite3" | "granite4" => {
+            model.add_capability(ModelCapability::FunctionCalling);
+        }
+        _ => {
+            // Most other models do NOT support tool calling
+            // Including: llama3, llama2, gemma, qwen, codellama, etc.
+        }
+    }
+
+    // Add other capabilities based on model family
+    match family.to_lowercase().as_str() {
+        "mistral" | "mistral-nemo" | "neural-chat" => {
             model.add_capability(ModelCapability::LongContext);
         }
         "llava" => {
@@ -640,8 +677,20 @@ impl Provider for OllamaProvider {
     async fn set_model(&mut self, model_name: String) -> Result<()> {
         // Validate that the model exists by fetching the list
         let models = self.list_models().await?;
-        if !models.iter().any(|m| m.name == model_name) {
+
+        let model_info = models.iter().find(|m| m.name == model_name);
+
+        if model_info.is_none() {
             return Err(XzatomaError::Provider(format!("Model not found: {}", model_name)).into());
+        }
+
+        // Check if the model supports tool calling (required for XZatoma)
+        let model = model_info.unwrap();
+        if !model.supports_capability(ModelCapability::FunctionCalling) {
+            return Err(XzatomaError::Provider(format!(
+                "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
+                model_name
+            )).into());
         }
 
         // Update the model in the config
@@ -667,7 +716,7 @@ mod tests {
     fn test_ollama_provider_creation() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -677,7 +726,7 @@ mod tests {
     fn test_ollama_provider_host() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://localhost:11434");
@@ -687,17 +736,17 @@ mod tests {
     fn test_ollama_provider_model() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
-        assert_eq!(provider.model(), "qwen2.5-coder");
+        assert_eq!(provider.model(), "llama3.2:latest");
     }
 
     #[test]
     fn test_convert_messages_basic() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -718,7 +767,7 @@ mod tests {
     fn test_convert_messages_with_tool_calls() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -741,7 +790,7 @@ mod tests {
     fn test_convert_tools() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -766,7 +815,7 @@ mod tests {
     fn test_convert_response_message_text() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -786,7 +835,7 @@ mod tests {
     fn test_convert_response_message_with_tools() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -814,7 +863,7 @@ mod tests {
     fn test_convert_messages_filters_empty() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "qwen2.5-coder".to_string(),
+            model: "llama3.2:latest".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -851,9 +900,15 @@ mod tests {
 
     #[test]
     fn test_add_model_capabilities_function_calling() {
-        let mut model = ModelInfo::new("test", "Test", 4096);
-        add_model_capabilities(&mut model, "generic");
+        // Test model that supports function calling
+        let mut model = ModelInfo::new("llama3.2", "Llama 3.2", 4096);
+        add_model_capabilities(&mut model, "llama3.2");
         assert!(model.supports_capability(ModelCapability::FunctionCalling));
+
+        // Test model that does NOT support function calling
+        let mut model_no_tools = ModelInfo::new("llama3", "Llama 3", 4096);
+        add_model_capabilities(&mut model_no_tools, "llama3");
+        assert!(!model_no_tools.supports_capability(ModelCapability::FunctionCalling));
     }
 
     #[test]
@@ -862,13 +917,20 @@ mod tests {
         add_model_capabilities(&mut model, "mistral");
         assert!(model.supports_capability(ModelCapability::FunctionCalling));
         assert!(model.supports_capability(ModelCapability::LongContext));
+
+        // Mistral-nemo also supports both
+        let mut model_nemo = ModelInfo::new("mistral-nemo", "Mistral Nemo", 8192);
+        add_model_capabilities(&mut model_nemo, "mistral-nemo");
+        assert!(model_nemo.supports_capability(ModelCapability::FunctionCalling));
+        assert!(model_nemo.supports_capability(ModelCapability::LongContext));
     }
 
     #[test]
     fn test_add_model_capabilities_vision() {
         let mut model = ModelInfo::new("llava", "LLaVA", 4096);
         add_model_capabilities(&mut model, "llava");
-        assert!(model.supports_capability(ModelCapability::FunctionCalling));
+        // LLaVA does NOT support function calling, only vision
+        assert!(!model.supports_capability(ModelCapability::FunctionCalling));
         assert!(model.supports_capability(ModelCapability::Vision));
     }
 

@@ -19,6 +19,10 @@ This directory contains detailed implementation documentation for XZatoma featur
 - **[phase3_security_validation_implementation.md](phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 - **[phase5_error_handling_and_user_feedback.md](phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
+- **[model_management_missing_deliverables_implementation.md](model_management_missing_deliverables_implementation.md)** - Documentation completion for model management features (API reference, how-to guides for managing and switching models)
+- **[ollama_default_model_fix.md](ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3:latest`, removed all Qwen model references
+- **[ollama_tool_support_validation.md](ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities
+- **[ollama_response_parsing_fix.md](ollama_response_parsing_fix.md)** - Bug fix: Made Ollama response parsing flexible to handle models with varying response formats (missing fields, empty IDs), added support for granite3 and granite4 models
 
 ### Provider Abstraction Implementation
 
@@ -55,6 +59,17 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Comprehensive test suite (17 tests, 100% coverage)
 - Documentation: `docs/explanation/phase3_security_validation_implementation.md`
 - ~291 lines of code with full validation
+
+✅ **Model Management Documentation** - Complete
+
+- API reference documentation for all model management features
+- How-to guide for discovering and inspecting models
+- How-to guide for switching models during chat sessions
+- Complete coverage of CLI commands and chat mode special commands
+- Provider comparison (Copilot vs Ollama)
+- Troubleshooting and best practices
+- Documentation: `docs/reference/model_management.md`, `docs/how-to/manage_models.md`, `docs/how-to/switch_models.md`
+- ~1,502 lines of comprehensive documentation
 
 ### Pending Implementation
 
@@ -230,6 +245,28 @@ All implementations must meet these requirements (per AGENTS.md):
 - **2025-01-XX** - Initial architecture design documented
 - **2025-01-XX** - Project initiated as XZatoma
 
+## Documentation Deliverables
+
+### Model Management Documentation (2025-01-22)
+
+**Completed:**
+
+- `docs/reference/model_management.md` (645 lines) - Complete API reference for model management
+- `docs/how-to/manage_models.md` (418 lines) - Practical guide for discovering and inspecting models
+- `docs/how-to/switch_models.md` (439 lines) - Practical guide for switching models in chat mode
+- `docs/explanation/model_management_missing_deliverables_implementation.md` (362 lines) - Implementation summary
+
+**Total:** ~1,502 lines of documentation
+
+**Coverage:**
+
+- All provider trait methods for model management
+- All CLI commands (models list, models info, models current)
+- All chat mode special commands (/models list, /model <name>, /context)
+- Provider-specific details for Copilot and Ollama
+- Troubleshooting procedures
+- Best practices and examples
+
 ---
 
-**Status**: Phase 3 complete, Phase 1-2 pending. Security validation implemented and tested.
+**Status**: Phase 3 complete, Model Management Documentation complete, Phase 1-2 pending. Security validation implemented and tested.

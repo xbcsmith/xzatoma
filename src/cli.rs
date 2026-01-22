@@ -448,7 +448,7 @@ mod tests {
             "models",
             "info",
             "--model",
-            "qwen2.5-coder",
+            "llama3.2:latest",
             "--provider",
             "ollama",
         ]);
@@ -456,7 +456,7 @@ mod tests {
         let cli = cli.unwrap();
         if let Commands::Models { command } = cli.command {
             if let ModelCommand::Info { model, provider } = command {
-                assert_eq!(model, "qwen2.5-coder");
+                assert_eq!(model, "llama3.2:latest");
                 assert_eq!(provider, Some("ollama".to_string()));
             } else {
                 panic!("Expected Info command");

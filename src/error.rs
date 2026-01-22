@@ -81,6 +81,10 @@ pub enum XzatomaError {
     #[error("Missing credentials for provider: {0}")]
     MissingCredentials(String),
 
+    /// Authentication errors (e.g., 401 Unauthorized)
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+
     /// IO errors
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -177,6 +181,12 @@ mod tests {
             error.to_string(),
             "Missing credentials for provider: github_copilot"
         );
+    }
+
+    #[test]
+    fn test_authentication_error_display() {
+        let error = XzatomaError::Authentication("token expired".to_string());
+        assert_eq!(error.to_string(), "Authentication error: token expired");
     }
 
     #[test]

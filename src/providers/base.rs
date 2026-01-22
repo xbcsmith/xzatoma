@@ -252,7 +252,7 @@ impl TokenUsage {
 /// context window, and supported capabilities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
-    /// Unique identifier for the model (e.g., "gpt-4", "qwen2.5-coder")
+    /// Unique identifier for the model (e.g., "gpt-4", "llama3.2:latest")
     pub name: String,
     /// Display name for user-friendly presentation (e.g., "GPT-4 Turbo")
     pub display_name: String,

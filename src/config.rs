@@ -74,7 +74,7 @@ fn default_ollama_host() -> String {
 }
 
 fn default_ollama_model() -> String {
-    "qwen2.5-coder".to_string()
+    "llama3.2:latest".to_string()
 }
 
 impl Default for OllamaConfig {
@@ -632,7 +632,7 @@ provider:
     model: gpt-4o
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder
+    model: llama3.2:latest
 
 agent:
   max_turns: 100

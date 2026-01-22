@@ -45,6 +45,12 @@ pub enum SpecialCommand {
     /// Shows how to use context mentions (@file, @search, @grep, @url).
     Mentions,
 
+    /// Trigger authentication flow for a provider
+    ///
+    /// Use `/auth` to start authentication for the configured provider,
+    /// or `/auth <provider>` to authenticate a specific provider (copilot, ollama).
+    Auth(Option<String>),
+
     /// List available models
     ///
     /// Shows all available models from the current provider.
@@ -134,9 +140,18 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
         "/help" | "/?" => SpecialCommand::Help,
         "/mentions" => SpecialCommand::Mentions,
 
-        // Model management commands
+        // Model management commands and provider auth
         "/models list" => SpecialCommand::ListModels,
         "/context" => SpecialCommand::ShowContextInfo,
+        "/auth" => SpecialCommand::Auth(None),
+        input if input.starts_with("/auth ") => {
+            let rest = input[6..].trim();
+            if !rest.is_empty() {
+                SpecialCommand::Auth(Some(rest.to_string()))
+            } else {
+                SpecialCommand::None
+            }
+        }
 
         // Model switching with arguments
         input if input.starts_with("/model ") => {
@@ -201,6 +216,7 @@ MODEL MANAGEMENT:
   /models list    - Show available models from current provider
   /model <name>   - Switch to a different model
   /context        - Show context window and token usage information
+  /auth [provider] - Start authentication for the provider; use `/auth` for the configured provider
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -414,6 +430,18 @@ mod tests {
     fn test_parse_switch_mode_write_shorthand() {
         let cmd = parse_special_command("/write");
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Write));
+    }
+
+    #[test]
+    fn test_parse_auth_without_provider() {
+        let cmd = parse_special_command("/auth");
+        assert_eq!(cmd, SpecialCommand::Auth(None));
+    }
+
+    #[test]
+    fn test_parse_auth_with_provider() {
+        let cmd = parse_special_command("/auth copilot");
+        assert_eq!(cmd, SpecialCommand::Auth(Some("copilot".to_string())));
     }
 
     #[test]

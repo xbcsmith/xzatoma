@@ -16,8 +16,8 @@ provider:
   ollama:
     # Ollama server host
     host: http://localhost:11434
-    # Model to use (e.g., qwen2.5-coder, llama3, codellama)
-    model: qwen2.5-coder
+    # Model to use (e.g., llama3.2:latest, llama3.2:latest, gemma3:latest)
+    model: llama3.2:latest
 
 agent:
   # Maximum number of agent turns before stopping
