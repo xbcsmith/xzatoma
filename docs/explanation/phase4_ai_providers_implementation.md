@@ -323,7 +323,7 @@ use xzatoma::providers::{OllamaProvider, Provider, Message};
 async fn example() -> Result<()> {
     let config = OllamaConfig {
         host: "http://localhost:11434".to_string(),
-        model: "qwen2.5-coder".to_string(),
+        model: "llama3.2:latest".to_string(),
     };
 
     let provider = OllamaProvider::new(config)?;
@@ -396,14 +396,14 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder
+    model: llama3.2:latest
 ```
 
 Environment variables:
 
 - `XZATOMA_PROVIDER_TYPE=ollama`
 - `XZATOMA_OLLAMA_HOST=http://localhost:11434`
-- `XZATOMA_OLLAMA_MODEL=qwen2.5-coder`
+- `XZATOMA_OLLAMA_MODEL=llama3.2:latest`
 
 ### Copilot Configuration
 

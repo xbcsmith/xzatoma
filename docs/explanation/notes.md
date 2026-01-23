@@ -1,12 +1,11 @@
 # Notes
 
-
 ## Ollama default model
 
 Trying to switch models in Ollama provider to a model exists and I got this error.
 
 ```bash
-/models llama3:latest
+/models llama3.2:latest
 2026-01-22T21:19:04.105040Z  INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:19:04.109755Z ERROR xzatoma::providers::ollama: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 Error: Provider error: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
@@ -14,7 +13,7 @@ Error: Provider error: Ollama returned error 404 Not Found: {"error":"model 'qwe
 
 First observation is the model did not change. Second observation is the error message says `qwen2.5-coder` not found, which is strange because I did not request that model.
 
-It seems we have hardcoded `qwen2.5-coder` as default model in Ollama provider. Change the default to `llama3:latest`. Remove all references to `qwen2.5-coder` or any model that has `qwen` in its name.
+It seems we have hardcoded `qwen2.5-coder` as default model in Ollama provider. Change the default to `llama3.2:latest`. Remove all references to `qwen2.5-coder` or any model that has `qwen` in its name.
 
 For Ollama documentation the only models that should be referenced are:
 
@@ -22,7 +21,7 @@ For Ollama documentation the only models that should be referenced are:
 - `granite4:latest`
 
 /models granite4:latest
-2026-01-22T21:46:51.843590Z  INFO xzatoma::agent::core: Starting agent execution
+2026-01-22T21:46:51.843590Z INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:46:51.914299Z ERROR xzatoma::providers::ollama: Ollama returned error 400 Bad Request: {"error":"registry.ollama.ai/library/llama3:latest does not support tools"}
 Error: Provider error: Ollama returned error 400 Bad Request: {"error":"registry.ollama.ai/library/llama3:latest does not support tools"}
 
@@ -31,14 +30,15 @@ Error: Provider error: Ollama returned error 400 Bad Request: {"error":"registry
 Where are you getting this list of copilot models? This is not the list of models available in Copilot.
 
 +----------------------------------------------------------------------------------------------+
-| Model Name       Display Name     Context Window  Capabilities                       |
-| gpt-4              GPT-4              8192 tokens       FunctionCalling                      |
-| gpt-4-turbo        GPT-4 Turbo        128000 tokens     FunctionCalling, LongContext         |
-| gpt-3.5-turbo      GPT-3.5 Turbo      4096 tokens       FunctionCalling                      |
-| claude-3.5-sonnet  Claude 3.5 Sonnet  200000 tokens     FunctionCalling, LongContext, Vision |
-| claude-sonnet-4.5  Claude Sonnet 4.5  200000 tokens     FunctionCalling, LongContext, Vision |
-| o1-preview         OpenAI o1 Preview  128000 tokens     FunctionCalling, LongContext         |
-| o1-mini            OpenAI o1 Mini     128000 tokens     FunctionCalling, LongContext         |
+| Model Name Display Name Context Window Capabilities |
++----------------------------------------------------------------------------------------------+
+| gpt-4 GPT-4 8192 tokens FunctionCalling |
+| gpt-4-turbo GPT-4 Turbo 128000 tokens FunctionCalling, LongContext |
+| gpt-3.5-turbo GPT-3.5 Turbo 4096 tokens FunctionCalling |
+| claude-3.5-sonnet Claude 3.5 Sonnet 200000 tokens FunctionCalling, LongContext, Vision |
+| claude-sonnet-4.5 Claude Sonnet 4.5 200000 tokens FunctionCalling, LongContext, Vision |
+| o1-preview OpenAI o1 Preview 128000 tokens FunctionCalling, LongContext |
+| o1-mini OpenAI o1 Mini 128000 tokens FunctionCalling, LongContext |
 +----------------------------------------------------------------------------------------------+
 
 Actual models response from Copilot:

@@ -25,7 +25,7 @@ This directory contains detailed implementation documentation for XZatoma featur
     - `cargo test -- --ignored` (runs all ignored tests)
     - or `cargo test --test copilot_integration -- --ignored` (runs the Copilot keyring tests only)
 - **[chat_mode_provider_display.md](chat_mode_provider_display.md)** - Chat mode provider & model display (provider: white, model: green)
-- **[ollama_default_model_fix.md](ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3:latest`, removed all Qwen model references
+- **[ollama_default_model_fix.md](ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3.2:latest`, removed all Qwen model references
 - **[ollama_tool_support_validation.md](ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities
 - **[ollama_response_parsing_fix.md](ollama_response_parsing_fix.md)** - Bug fix: Made Ollama response parsing flexible to handle models with varying response formats (missing fields, empty IDs), added support for granite3 and granite4 models
 

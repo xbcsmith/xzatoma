@@ -28,7 +28,7 @@ Available models from ollama:
 +-------------------+-------------------+----------------+-------------------+
 | Model Name        | Display Name      | Context Window | Capabilities      |
 +-------------------+-------------------+----------------+-------------------+
-| qwen2.5-coder:7b  | Qwen 2.5 Coder 7B | 32768 tokens   | FunctionCalling   |
+| llama3.2:13b      | Llama 3.2 13B     | 8192 tokens    | FunctionCalling   |
 | llama3.2:3b       | Llama 3.2 3B      | 8192 tokens    | FunctionCalling   |
 | gemma2:9b         | Gemma 2 9B        | 8192 tokens    | FunctionCalling   |
 +-------------------+-------------------+----------------+-------------------+
@@ -80,22 +80,22 @@ Capabilities:    FunctionCalling, LongContext
 Ollama provides additional metadata:
 
 ```bash
-xzatoma models info --model qwen2.5-coder:7b --provider ollama
+xzatoma models info --model llama3.2:13b --provider ollama
 ```
 
 Example output:
 
 ```
-Model Information (Qwen 2.5 Coder 7B)
+Model Information (Llama 3.2 13B)
 
-Name:            qwen2.5-coder:7b
-Display Name:    Qwen 2.5 Coder 7B
-Context Window:  32768 tokens
+Name:            llama3.2:13b
+Display Name:    Llama 3.2 13B
+Context Window:  8192 tokens
 Capabilities:    FunctionCalling
 
 Provider-Specific Metadata:
-  family: qwen2.5
-  parameter_size: 7B
+  family: llama3.2
+  parameter_size: 13B
   quantization: Q4_0
 ```
 
@@ -115,7 +115,7 @@ Example output:
 Current Model Information
 
 Provider:       ollama
-Active Model:   qwen2.5-coder:7b
+Active Model:   llama3.2:13b
 ```
 
 ### With Provider Override
@@ -139,7 +139,7 @@ Example output:
 ║     Context Window Information      ║
 ╚════════════════════════════════════╝
 
-Current Model:     qwen2.5-coder:7b
+Current Model:     llama3.2:13b
 Context Window:    32768 tokens
 Tokens Used:       2450 tokens
 Remaining:         30318 tokens
@@ -174,8 +174,8 @@ Models with `FunctionCalling` can use XZatoma's tools (file operations, terminal
 
 Use models optimized for code:
 
-- `qwen2.5-coder:7b` (Ollama) - Good balance of speed and quality
-- `qwen2.5-coder:14b` (Ollama) - Higher quality, slower
+- `llama3.2:3b` (Ollama) - Good balance of speed and quality
+- `llama3.2:13b` (Ollama) - Higher quality, slower
 - `gpt-4o` (Copilot) - Excellent quality, cloud-based
 
 ### For Large Context Tasks
@@ -197,13 +197,13 @@ Use smaller, faster models:
 
 ### GitHub Copilot
 
-- Models are predefined and hardcoded
-- No dynamic model discovery
+- Models are discovered dynamically via Copilot's `/models` endpoint
 - No token usage reporting
 - Always available (cloud-based)
 - Requires authentication
 
 Available models:
+
 - gpt-4o
 - gpt-4-turbo
 - gpt-4
@@ -223,7 +223,7 @@ Available models:
 Install models with:
 
 ```bash
-ollama pull qwen2.5-coder:7b
+ollama pull llama3.2:13b
 ollama pull llama3.2:3b
 ```
 
@@ -236,13 +236,15 @@ ollama pull llama3.2:3b
 **For Ollama**:
 
 1. Check if Ollama is running:
+
    ```bash
    curl http://localhost:11434/api/tags
    ```
 
 2. Install a model if none are available:
+
    ```bash
-   ollama pull qwen2.5-coder:7b
+   ollama pull llama3.2:13b
    ```
 
 3. Check Ollama host in config:
@@ -255,6 +257,7 @@ ollama pull llama3.2:3b
 **For Copilot**:
 
 1. Verify authentication:
+
    ```bash
    xzatoma auth --provider copilot
    ```
@@ -272,6 +275,7 @@ ollama pull llama3.2:3b
 **Solution**:
 
 1. List available models first:
+
    ```bash
    xzatoma models list
    ```
@@ -286,11 +290,13 @@ ollama pull llama3.2:3b
 **For Ollama**:
 
 1. Ensure Ollama is running:
+
    ```bash
    ollama list
    ```
 
 2. Start Ollama if needed:
+
    ```bash
    ollama serve
    ```
@@ -317,7 +323,7 @@ provider:
   provider_type: ollama
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder:7b  # Default model
+    model: llama3.2:latest # Default model
 ```
 
 ### Multiple Providers
@@ -326,14 +332,14 @@ You can configure multiple providers and switch between them:
 
 ```yaml
 provider:
-  provider_type: ollama  # Active provider
+  provider_type: ollama # Active provider
 
   copilot:
     model: gpt-4o
 
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder:7b
+    model: llama3.2:latest
 ```
 
 Use `--provider` flag to override:
@@ -375,7 +381,7 @@ xzatoma models list --provider ollama
 
 ```bash
 # Get details
-xzatoma models info --model qwen2.5-coder:14b
+xzatoma models info --model llama3.2:13b
 
 # Check current model
 xzatoma models current
@@ -396,7 +402,7 @@ xzatoma models list --provider ollama | grep "Context Window"
 
 # View specific model details
 xzatoma models info --model gpt-4o --provider copilot
-xzatoma models info --model qwen2.5-coder:14b --provider ollama
+xzatoma models info --model llama3.2:13b --provider ollama
 ```
 
 ## Next Steps

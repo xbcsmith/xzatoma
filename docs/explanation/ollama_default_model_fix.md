@@ -4,20 +4,20 @@
 
 **Note**: This fix was partially superseded by `ollama_tool_support_validation.md`. The default model was changed from `llama3:latest` to `llama3.2:latest` because `llama3:latest` does not support tool calling, which is required for XZatoma.
 
-Fixed a critical bug where the Ollama provider had a hardcoded default model (`qwen2.5-coder`) that was not available in standard Ollama installations. This caused the provider to fail even when users attempted to switch to available models like `llama3:latest`. The fix changes the default to `llama3:latest` and removes all references to Qwen models from code and documentation.
+Fixed a critical bug where the Ollama provider had a hardcoded default model (`qwen2.5-coder`) that was not available in standard Ollama installations. This caused the provider to fail even when users attempted to switch to available models like `llama3.2:latest`. The fix changes the default to `llama3.2:latest` and removes all references to Qwen models from code and documentation.
 
 ## Bug Description
 
 The issue manifested in the following ways:
 
-1. Users could not switch models using the `/models llama3:latest` command
+1. Users could not switch models using the `/models llama3.2:latest` command
 2. Error messages reported `qwen2.5-coder` not found even when requesting different models
 3. The default model was hardcoded in multiple locations throughout the codebase
 
 Example error:
 
 ```text
-/models llama3:latest
+/models llama3.2:latest
 2026-01-22T21:19:04.105040Z  INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:19:04.109755Z ERROR xzatoma::providers::ollama: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 Error: Provider error: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
@@ -51,11 +51,11 @@ Total: 27 changes across 6 files
 
 ### Default Model Function
 
-Changed the default model from `qwen2.5-coder` to `llama3:latest` (later changed to `llama3.2:latest` for tool support):
+Changed the default model from `qwen2.5-coder` to `llama3.2:latest` (final; `llama3:latest` was briefly used but lacks tool support):
 
 ```rust
 fn default_ollama_model() -> String {
-    "llama3:latest".to_string()  // Later changed to llama3.2:latest
+    "llama3.2:latest".to_string() // Final default chosen for tool support
 }
 ```
 
@@ -66,18 +66,18 @@ Updated the default configuration and documentation:
 ```yaml
 ollama:
   host: http://localhost:11434
-  # Model to use (e.g., llama3:latest, llama3.2:latest, gemma3:latest)
-  model: llama3:latest
+  # Model to use (e.g., llama3.2:latest, llama3.3:latest, gemma3:latest)
+  model: llama3.2:latest
 ```
 
 ### Test Updates
 
-All test cases were updated to use `llama3:latest` instead of `qwen2.5-coder`:
+All test cases were updated to use `llama3.2:latest` instead of `qwen2.5-coder`:
 
 ```rust
 let config = OllamaConfig {
     host: "http://localhost:11434".to_string(),
-    model: "llama3:latest".to_string(),
+    model: "llama3.2:latest".to_string(),
 };
 ```
 
@@ -88,7 +88,7 @@ Updated all doc comment examples to reference standard Ollama models:
 ```rust
 /// let config = OllamaConfig {
 ///     host: "http://localhost:11434".to_string(),
-///     model: "llama3:latest".to_string(),
+///     model: "llama3.2:latest".to_string(),
 /// };
 ```
 
@@ -96,8 +96,8 @@ Updated all doc comment examples to reference standard Ollama models:
 
 Per user requirements, only these models should be referenced in Ollama documentation:
 
-- `llama3:latest` - Default model
-- `llama3.2:latest` - Alternative LLaMA variant
+- `llama3.2:latest` - Default model
+- `llama3.3:latest` - Alternative LLaMA variant
 - `gemma3:latest` - Google Gemma model
 
 All references to Qwen models (`qwen2.5-coder`, `qwen3`, etc.) have been removed.
@@ -141,7 +141,7 @@ All 476 tests passed with zero failures.
 
 ### User-Facing Changes
 
-1. **Default Behavior**: New Ollama installations will default to `llama3:latest` instead of `qwen2.5-coder`
+1. **Default Behavior**: New Ollama installations will default to `llama3.2:latest` instead of `qwen2.5-coder`
 2. **Configuration**: Existing config files may need updating if they reference Qwen models
 3. **Documentation**: All examples now use standard, widely-available Ollama models
 
@@ -162,7 +162,7 @@ provider:
 # New configuration (choose one)
 provider:
   ollama:
-    model: llama3:latest      # Recommended default
+    model: llama3.2:latest      # Recommended default
     # OR
     model: llama3.2:latest    # Alternative
     # OR

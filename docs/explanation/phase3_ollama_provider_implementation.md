@@ -5,6 +5,7 @@
 Phase 3 implements the extended provider interface for the Ollama provider, adding model management capabilities, token usage tracking, and caching. This phase mirrors Phase 2 (Copilot Provider Implementation) but tailored to Ollama's local/remote server architecture and REST API.
 
 Ollama providers can now:
+
 - List available models from the Ollama server
 - Retrieve detailed information about specific models
 - Switch between installed models at runtime
@@ -60,6 +61,7 @@ async fn list_models(&self) -> Result<Vec<ModelInfo>> {
 ```
 
 **Features:**
+
 - Parses Ollama's `/api/tags` endpoint response
 - Extracts model name, size, digest, and modification timestamp
 - Normalizes model names (strips digest tags, e.g., "qwen2.5:latest" becomes "qwen2.5")
@@ -68,6 +70,7 @@ async fn list_models(&self) -> Result<Vec<ModelInfo>> {
 - Returns `Vec<ModelInfo>` with populated capabilities
 
 **Error Handling:**
+
 - Connection errors return user-friendly "Failed to connect to Ollama server" message
 - Non-200 responses are logged and converted to Provider errors
 - Parsing failures are caught and reported with details
@@ -112,6 +115,7 @@ async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
 ```
 
 **Features:**
+
 - Calls POST `/api/show` endpoint with model name
 - Extracts parameter size, quantization level, and family info
 - Builds `ModelInfo` with accurate context window from model family
@@ -119,6 +123,7 @@ async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
 - Provides detailed error messages for missing models
 
 **Model Details Extracted:**
+
 - `parameter_size`: Model size (e.g., "7B", "13B", "70B")
 - `quantization_level`: Quantization method (e.g., "Q4_0", "Q5_K")
 - `family`: Model family (e.g., "llama2", "mistral", "qwen")
@@ -151,6 +156,7 @@ let response = if ollama_response.prompt_eval_count > 0
 ```
 
 **Features:**
+
 - Extracts `prompt_eval_count` from Ollama response (prompt tokens)
 - Extracts `eval_count` from Ollama response (completion tokens)
 - Automatically calculates total tokens via `TokenUsage::new()`
@@ -191,6 +197,7 @@ fn get_current_model(&self) -> Result<String> {
 ```
 
 **Features:**
+
 - Validates model exists on Ollama server before switching
 - Uses `Arc<RwLock<>>` for thread-safe interior mutability
 - Acquires write lock to update configuration
@@ -199,6 +206,7 @@ fn get_current_model(&self) -> Result<String> {
 - Maintains logging for audit trail
 
 **Safety:**
+
 - Read/write locks prevent data races
 - Validation prevents switching to non-existent models
 - Cache invalidation ensures fresh data on next list call
@@ -208,6 +216,7 @@ fn get_current_model(&self) -> Result<String> {
 Comprehensive test suite with 25+ tests:
 
 **Unit Tests:**
+
 - Provider creation and configuration
 - Host and model getters with lock behavior
 - Message conversion (basic, with tools, filtering empty)
@@ -217,6 +226,7 @@ Comprehensive test suite with 25+ tests:
 - Capabilities verification
 
 **Integration Tests:**
+
 - Model tag deserialization from JSON
 - Tags response parsing
 - Show response parsing with details
@@ -225,6 +235,7 @@ Comprehensive test suite with 25+ tests:
 - Capability assignment logic
 
 **Coverage:**
+
 - Model caching behavior
 - Cache expiration (5-minute TTL)
 - Model name normalization (digest stripping)
@@ -237,6 +248,7 @@ Comprehensive test suite with 25+ tests:
 All Phase 3 requirements completed:
 
 1. **Extended Provider Interface**
+
    - `list_models()` - Lists all available Ollama models
    - `get_model_info()` - Gets detailed info with caching
    - `get_current_model()` - Returns active model
@@ -245,12 +257,14 @@ All Phase 3 requirements completed:
    - `complete()` - Already implemented, returns token usage
 
 2. **Model Management Features**
+
    - 5-minute cache to reduce API calls
    - Graceful offline handling
    - Model validation before switching
    - Detailed error messages
 
 3. **Token Usage Tracking**
+
    - Extract prompt tokens from responses
    - Extract completion tokens from responses
    - Calculate total tokens automatically
@@ -338,12 +352,14 @@ Formats byte sizes for human-readable display:
 The following function signatures changed to support interior mutability:
 
 **Before:**
+
 ```rust
 pub fn host(&self) -> &str
 pub fn model(&self) -> &str
 ```
 
 **After:**
+
 ```rust
 pub fn host(&self) -> String
 pub fn model(&self) -> String
@@ -354,10 +370,12 @@ Both now return `String` instead of `&str` due to the lock acquisition. These ar
 ### Ollama API Endpoints Used
 
 1. **GET `/api/tags`** - List installed models
+
    - Response: `{ models: [{name, digest, size, modified_at}] }`
    - Used by: `list_models()`
 
 2. **POST `/api/show`** - Get model details
+
    - Request: `{ name: "model-name" }`
    - Response: `{ modelfile, parameters, template, details: {...} }`
    - Used by: `get_model_info()`
@@ -382,7 +400,7 @@ for model in models {
 ### Get Detailed Model Information
 
 ```rust
-let info = provider.get_model_info("qwen2.5-coder").await?;
+let info = provider.get_model_info("llama3.2:latest").await?;
 println!("Model: {}", info.display_name);
 println!("Context: {} tokens", info.context_window);
 for cap in &info.capabilities {
@@ -508,6 +526,7 @@ test result: ok. 27 passed; 0 failed
 ### Phase 2 Dependency
 
 This phase depends on Phase 2's infrastructure:
+
 - `TokenUsage` struct for tracking tokens
 - `ModelInfo` struct for model metadata
 - `ModelCapability` enum for feature flags
@@ -517,6 +536,7 @@ This phase depends on Phase 2's infrastructure:
 ### Phase 3 Provides
 
 Ollama provider now fully implements the extended `Provider` trait:
+
 - Model discovery and listing
 - Runtime model switching
 - Token usage tracking
@@ -525,6 +545,7 @@ Ollama provider now fully implements the extended `Provider` trait:
 ### Future Phase Dependencies
 
 Phase 4 (Agent Integration) depends on Phase 3:
+
 - Will use token tracking to monitor usage
 - Will use model switching for runtime adaptation
 - Will use capability flags to adapt behavior
@@ -533,14 +554,14 @@ Phase 4 (Agent Integration) depends on Phase 3:
 
 Both providers now implement the same interface with these differences:
 
-| Feature | Copilot | Ollama |
-|---------|---------|--------|
-| Model Source | Hardcoded list | Dynamic server discovery |
-| Authentication | OAuth device flow | None required |
-| Token Tracking | Via API response | Via eval_count fields |
-| Caching | No (auth tokens only) | 5-min model list cache |
-| Server Dependency | GitHub (cloud) | Local/remote HTTP |
-| Error Recovery | Handle auth failures | Handle offline gracefully |
+| Feature           | Copilot               | Ollama                    |
+| ----------------- | --------------------- | ------------------------- |
+| Model Source      | Hardcoded list        | Dynamic server discovery  |
+| Authentication    | OAuth device flow     | None required             |
+| Token Tracking    | Via API response      | Via eval_count fields     |
+| Caching           | No (auth tokens only) | 5-min model list cache    |
+| Server Dependency | GitHub (cloud)        | Local/remote HTTP         |
+| Error Recovery    | Handle auth failures  | Handle offline gracefully |
 
 ## Known Limitations
 
@@ -566,6 +587,8 @@ Potential improvements post-Phase 3:
 - **Phase 2 Copilot Implementation**: `docs/explanation/phase2_copilot_provider_implementation.md`
 - **Project Architecture**: `docs/explanation/architecture.md` (if available)
 - **Ollama API Docs**: https://github.com/ollama/ollama/blob/main/docs/api.md
+
 ```
 
 Now let me run the quality checks to make sure everything passes:
+```

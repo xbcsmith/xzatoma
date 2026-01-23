@@ -11,6 +11,7 @@ The color scheme uses intuitive, terminal-friendly colors that clearly indicate 
 ### Chat Modes
 
 - **Planning Mode**: Purple
+
   - Represents analysis and read-only operations
   - Calm, contemplative color for exploration phase
 
@@ -21,6 +22,7 @@ The color scheme uses intuitive, terminal-friendly colors that clearly indicate 
 ### Safety Modes
 
 - **Safe Mode (AlwaysConfirm)**: Cyan
+
   - Represents careful, protected operations
   - Cool, cautious color for confirmation-required state
 
@@ -38,6 +40,7 @@ XZatoma now defaults to the safest possible configuration:
 This ensures users start in a safe, exploratory state where they can analyze code without risk of unintended modifications.
 
 Users can easily switch modes using special commands:
+
 - `/write` - Switch to Write mode
 - `/yolo` - Switch to YOLO mode (NeverConfirm)
 - `/safe` - Switch back to Safe mode (AlwaysConfirm)
@@ -51,6 +54,7 @@ pub fn colored_tag(&self) -> String
 ```
 
 Returns a colored tag representation:
+
 - `[PLANNING]` in purple for Planning mode
 - `[WRITE]` in green for Write mode
 
@@ -61,6 +65,7 @@ pub fn colored_tag(&self) -> String
 ```
 
 Returns a colored tag representation:
+
 - `[SAFE]` in cyan for AlwaysConfirm mode
 - `[YOLO]` in bold yellow for NeverConfirm mode
 
@@ -71,6 +76,7 @@ pub fn format_colored_prompt(&self) -> String
 ```
 
 Returns a complete colored prompt string with both mode and safety tags:
+
 - Example: `[PLANNING][SAFE] >> ` with colors applied
 - Example: `[WRITE][YOLO] >> ` with colors applied
 
@@ -112,9 +118,9 @@ Prompt Format:     [WRITE][YOLO] >>
 The readline prompt now shows colors:
 
 ```
-[PLANNING][SAFE] >> Analyze the project structure
-[WRITE][SAFE] >> Create a new module
-[WRITE][YOLO] >> Execute the refactoring plan
+[PLANNING][SAFE] >>> Analyze the project structure
+[WRITE][SAFE] >>> Create a new module
+[WRITE][YOLO] >>> Execute the refactoring plan
 ```
 
 Each mode and safety indicator displays in its assigned color.
@@ -122,12 +128,14 @@ Each mode and safety indicator displays in its assigned color.
 ## Dependency Addition
 
 Added `colored` crate (version 2.1) for terminal color support:
+
 - Lightweight and well-maintained
 - Works across platforms (Linux, macOS, Windows)
 - Easy to use with method-chaining API
 - No complex setup required
 
 Added to `Cargo.toml`:
+
 ```toml
 colored = "2.1"
 ```
@@ -137,9 +145,11 @@ colored = "2.1"
 ### Modified Files
 
 1. **`Cargo.toml`**
+
    - Added `colored = "2.1"` dependency
 
 2. **`src/chat_mode.rs`** (+120 lines)
+
    - Added `use colored::Colorize;` import
    - `ChatMode::colored_tag()` method
    - `SafetyMode::colored_tag()` method
@@ -156,6 +166,7 @@ colored = "2.1"
 ### New Tests
 
 Added 7 comprehensive tests:
+
 - `test_chat_mode_colored_tag_planning()` - Planning mode tag generation
 - `test_chat_mode_colored_tag_write()` - Write mode tag generation
 - `test_safety_mode_colored_tag_safe()` - Safe mode tag generation
@@ -169,21 +180,25 @@ Added 7 comprehensive tests:
 ### Why Default to Planning + Safe?
 
 **Security**:
+
 - Planning mode prevents accidental file modifications
 - AlwaysConfirm prevents accidental dangerous operations
 - Users must explicitly enable less-safe modes
 
 **User Experience**:
+
 - New users start in a safe exploration environment
 - Lower risk of mistakes for unfamiliar users
 - Users can learn the system before enabling modifications
 
 **Practical**:
+
 - Most workflows start with analysis before execution
 - Mirrors the natural development flow: understand → plan → implement
 - Easy to switch modes with `/write` and `/yolo` commands
 
 **Backward Compatible**:
+
 - The `--safe` CLI flag is still accepted (ignored)
 - Existing users' muscle memory still works
 - Session switching with `/safe` and `/yolo` unaffected
@@ -197,6 +212,7 @@ The `colored` crate provides automatic platform detection:
 - **Other Terminals**: Respects `NO_COLOR` environment variable
 
 Users can explicitly disable colors:
+
 ```bash
 export NO_COLOR=1
 xzatoma chat
@@ -218,7 +234,7 @@ Safety: [SAFE] ← cyan
 Every input line shows the current state:
 
 ```
-[PLANNING][SAFE] >> _
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>> _
 ```
 
 Users always know exactly which mode and safety level they're operating in.
@@ -242,6 +258,7 @@ The new prompt reflects the change immediately.
 ### Contrast
 
 All color combinations provide good contrast:
+
 - Purple + Cyan: Good contrast
 - Green + Cyan: Good contrast
 - Purple + Orange: Good contrast
@@ -260,8 +277,9 @@ While colors help, the text labels (PLANNING, WRITE, SAFE, YOLO) are always visi
 ### Terminal Theme Independence
 
 Works with both light and dark terminal themes:
+
 - Purple, green, cyan, and yellow colors visible on both
-- No pure white or pure black used
+- Provider labels may use white to maximize contrast; otherwise avoid pure white or pure black for general UI elements
 - Readable in all common terminal color schemes
 
 ## Testing Results
@@ -361,6 +379,7 @@ Switched from SAFE to YOLO mode
 ### Enhancement Points
 
 Color-coding enhances:
+
 - **Welcome banner** - More visually appealing and informative
 - **Status display** - Clearer at a glance
 - **Interactive prompt** - User always knows current state
@@ -369,6 +388,7 @@ Color-coding enhances:
 ### No Changes Required
 
 Existing code using chat modes, safety modes, or tool registries works unchanged:
+
 - `ChatMode::Planning` still works as before
 - `SafetyMode::AlwaysConfirm` still works as before
 - All mode switching logic unchanged
@@ -386,12 +406,12 @@ Potential color-related improvements:
 
 ## Files Modified
 
-| File | Changes | Lines |
-|------|---------|-------|
-| `Cargo.toml` | Added colored dependency | +2 |
-| `src/chat_mode.rs` | Color methods + tests | +120 |
-| `src/commands/mod.rs` | Use colors + default mode | +20 |
-| **Total** | | **+142** |
+| File                  | Changes                   | Lines    |
+| --------------------- | ------------------------- | -------- |
+| `Cargo.toml`          | Added colored dependency  | +2       |
+| `src/chat_mode.rs`    | Color methods + tests     | +120     |
+| `src/commands/mod.rs` | Use colors + default mode | +20      |
+| **Total**             |                           | **+142** |
 
 ## References
 

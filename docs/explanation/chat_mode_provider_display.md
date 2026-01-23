@@ -16,7 +16,7 @@ Example (plain):
 Example (colored):
 
 ```/dev/null/example.txt#L1-1
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>   (Copilot is cyan, model is bold)
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>   (Provider is white, model is green)
 ```
 
 ## Motivation
@@ -56,7 +56,7 @@ Example (colored):
   - Provider label is displayed as `Provider: model` with a capitalized provider name
     (simple ASCII-first-letter capitalization).
   - The colored prompt uses the same color scheme as mode/safety tags and presents the
-    provider label for improved visibility (provider in cyan, model bold in terminals that support ANSI).
+    provider label for improved visibility (provider in white, model in green in terminals that support ANSI).
 - Fallbacks:
   - If the provider does not expose a current model or `get_current_model()` fails, the
     base prompt (without provider/model) is used — preserving previous behavior.
