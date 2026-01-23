@@ -267,7 +267,7 @@ impl ChatModeState {
     ///
     /// # Returns
     ///
-    /// A formatted prompt string like "[PLANNING][SAFE] >> "
+    /// A formatted prompt string like "[PLANNING][SAFE] >>> "
     ///
     /// # Examples
     ///
@@ -275,10 +275,10 @@ impl ChatModeState {
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
-    /// assert_eq!(state.format_prompt(), "[WRITE][YOLO] >> ");
+    /// assert_eq!(state.format_prompt(), "[WRITE][YOLO] >>> ");
     /// ```
     pub fn format_prompt(&self) -> String {
-        format!("[{}][{}] >> ", self.chat_mode, self.safety_mode)
+        format!("[{}][{}] >>> ", self.chat_mode, self.safety_mode)
     }
 
     /// Format a prompt string with colored mode indicators
@@ -296,14 +296,99 @@ impl ChatModeState {
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
     /// println!("{}", state.format_colored_prompt());
-    /// // Displays: [WRITE in green][SAFE in cyan] >>
+    /// // Displays: [WRITE in green][SAFE in cyan] >>>
     /// ```
     pub fn format_colored_prompt(&self) -> String {
         format!(
-            "{}{} >> ",
+            "{}{} >>> ",
             self.chat_mode.colored_tag(),
             self.safety_mode.colored_tag()
         )
+    }
+
+    /// Format a prompt string including optional provider/model information.
+    ///
+    /// When both `provider` and `model` are provided, the returned prompt will
+    /// include a provider tag like `[Copilot: gpt-5-mini]` after the mode and safety tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
+    ///
+    /// let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+    /// assert_eq!(
+    ///     state.format_prompt_with_provider(Some("copilot"), Some("gpt-5-mini")),
+    ///     "[PLANNING][SAFE][Copilot: gpt-5-mini] >>> "
+    /// );
+    ///
+    /// // If provider or model is missing, the base prompt is returned unchanged
+    /// assert_eq!(state.format_prompt_with_provider(None, None), "[PLANNING][SAFE] >>> ");
+    /// ```
+    pub fn format_prompt_with_provider(
+        &self,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> String {
+        if let (Some(p), Some(m)) = (provider, model) {
+            // Capitalize provider name for display (simple ASCII-first-letter approach)
+            let provider_display = if p.is_empty() {
+                m.to_string()
+            } else {
+                let mut chars = p.chars();
+                let provider_cap = match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => p.to_string(),
+                };
+                format!("{}: {}", provider_cap, m)
+            };
+            format!(
+                "[{}][{}][{}] >>> ",
+                self.chat_mode, self.safety_mode, provider_display
+            )
+        } else {
+            self.format_prompt()
+        }
+    }
+
+    /// Format a colored prompt string including optional provider/model information.
+    ///
+    /// The provider tag will be bolded to improve visibility.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
+    ///
+    /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
+    /// let s = state.format_colored_prompt_with_provider(Some("copilot"), Some("gpt-5-mini"));
+    /// assert!(s.contains("Copilot: gpt-5-mini"));
+    /// ```
+    pub fn format_colored_prompt_with_provider(
+        &self,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> String {
+        use colored::Colorize;
+
+        if let (Some(p), Some(m)) = (provider, model) {
+            let mut chars = p.chars();
+            let provider_cap = match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => p.to_string(),
+            };
+
+            // Provider shown in white, model shown in green for quick visual parsing
+            let provider_tag = format!("[{}: {}]", provider_cap.white(), m.green());
+            format!(
+                "{}{}{} >>> ",
+                self.chat_mode.colored_tag(),
+                self.safety_mode.colored_tag(),
+                provider_tag
+            )
+        } else {
+            self.format_colored_prompt()
+        }
     }
 
     /// Get the current status as a formatted string
@@ -464,13 +549,13 @@ mod tests {
     #[test]
     fn test_chat_mode_state_format_prompt_planning_safe() {
         let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
-        assert_eq!(state.format_prompt(), "[PLANNING][SAFE] >> ");
+        assert_eq!(state.format_prompt(), "[PLANNING][SAFE] >>> ");
     }
 
     #[test]
     fn test_chat_mode_state_format_prompt_write_yolo() {
         let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
-        assert_eq!(state.format_prompt(), "[WRITE][YOLO] >> ");
+        assert_eq!(state.format_prompt(), "[WRITE][YOLO] >>> ");
     }
 
     #[test]
@@ -523,20 +608,20 @@ mod tests {
     fn test_chat_mode_state_format_colored_prompt() {
         let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
         let prompt = state.format_colored_prompt();
-        // Should contain mode and safety tags and end with " >> "
+        // Should contain mode and safety tags and end with " >>> "
         assert!(prompt.contains("PLANNING"));
         assert!(prompt.contains("SAFE"));
-        assert!(prompt.ends_with(" >> "));
+        assert!(prompt.ends_with(" >>> "));
     }
 
     #[test]
     fn test_chat_mode_state_format_colored_prompt_write_yolo() {
         let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
         let prompt = state.format_colored_prompt();
-        // Should contain mode and safety tags and end with " >> "
+        // Should contain mode and safety tags and end with " >>> "
         assert!(prompt.contains("WRITE"));
         assert!(prompt.contains("YOLO"));
-        assert!(prompt.ends_with(" >> "));
+        assert!(prompt.ends_with(" >>> "));
     }
 
     #[test]
@@ -552,8 +637,8 @@ mod tests {
         for (mode, safety) in combinations {
             let state = ChatModeState::new(mode, safety);
             let prompt = state.format_colored_prompt();
-            // All should end with " >> "
-            assert!(prompt.ends_with(" >> "));
+            // All should end with " >>> "
+            assert!(prompt.ends_with(" >>> "));
             // All should contain the mode name
             assert!(prompt.contains(mode.to_string().as_str()));
             // All should contain the safety name

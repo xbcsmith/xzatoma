@@ -367,7 +367,7 @@ pub struct OllamaConfig {
     #[serde(default = "default_ollama_host")]
     pub host: String,
 
-    /// Model name (default: "qwen2.5-coder")
+    /// Model name (default: "llama3.2:latest")
     #[serde(default = "default_ollama_model")]
     pub model: String,
 }
@@ -377,7 +377,7 @@ fn default_ollama_host() -> String {
 }
 
 fn default_ollama_model() -> String {
-    "qwen2.5-coder".to_string()
+    "llama3.2:latest".to_string()
 }
 
 /// Agent configuration
@@ -733,7 +733,7 @@ provider:
   # Ollama settings (if using ollama)
   ollama:
     host: localhost:11434
-    model: qwen2.5-coder
+    model: llama3.2:latest
 
 agent:
   # Maximum conversation turns before stopping

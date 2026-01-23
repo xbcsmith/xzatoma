@@ -1,12 +1,16 @@
 ---
 description: Implementation plan for model management and provider capabilities
 created: 2025-01-XX
-status: draft
+status: updated-with-copilot-dynamic-fetching-lessons
+last_updated: 2026-01-22
+updated_by: AI implementation - Copilot dynamic model fetching completed
 ---
 
 # Model Management Implementation Plan
 
 ## Overview
+
+**IMPORTANT**: This plan has been updated with critical lessons learned from the actual implementation. See the "Lessons Learned from Implementation" section for issues that MUST be avoided in future implementations.
 
 This plan outlines the implementation of comprehensive model management features for XZatoma, including:
 
@@ -96,9 +100,56 @@ Modify or create response types in `src/providers/base.rs`:
 
 ### Phase 2: Copilot Provider Implementation
 
-Implement the extended provider interface for GitHub Copilot.
+**Goal**: Implement dynamic model management for GitHub Copilot provider.
 
-#### Task 2.1: Implement Model Listing for Copilot
+**CRITICAL**: Copilot MUST use dynamic API-based model fetching, NOT hardcoded lists.
+
+#### Task 2.1: Implement Dynamic Model Fetching for Copilot
+
+**IMPORTANT**: The Copilot provider must fetch models from the API at runtime. Hardcoded model lists are outdated and incorrect.
+
+**Steps**:
+
+1. Add API endpoint constant:
+
+   ```rust
+   const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+   ```
+
+2. Create API response structures (see Lesson 0 for complete structure):
+
+   - `CopilotModelsResponse` with `data: Vec<CopilotModelData>`
+   - `CopilotModelData` with `id`, `name`, `capabilities`, `policy`
+   - `CopilotModelCapabilities` with `limits` and `supports`
+   - All fields optional with `#[serde(default)]`
+
+3. Implement `fetch_copilot_models()` async method:
+
+   - Authenticate with `self.authenticate().await?`
+   - GET request to `COPILOT_MODELS_URL` with Bearer token
+   - Filter to models with `policy.state == "enabled"`
+   - Extract context window from `limits.max_context_window_tokens`
+   - Add FunctionCalling capability if `supports.tool_calls == true`
+   - Add Vision capability if `supports.vision == true`
+   - Add LongContext if context_window > 32000
+   - Return `Vec<ModelInfo>`
+
+4. Update `list_models()` to call `fetch_copilot_models().await`
+
+**Testing**:
+
+- Create `testdata/models.json` with real Copilot API response
+- Test parsing logic with testdata (not hardcoded model names)
+- Verify enabled model filtering
+- Verify capability extraction from API metadata
+
+**DO NOT**:
+
+- ❌ Create hardcoded `Vec<ModelInfo>` with static model list
+- ❌ Assume models like `gpt-4`, `gpt-3.5-turbo` still exist
+- ❌ Hardcode context windows or capabilities
+
+#### Task 2.2: Implement Model Listing for Copilot (LEGACY - SEE 2.1)
 
 Update `src/providers/copilot.rs`:
 
@@ -107,7 +158,7 @@ Update `src/providers/copilot.rs`:
 - Include context window sizes (e.g., gpt-4-turbo: 128k, claude-sonnet-4.5: 200k)
 - Mark all as supporting tools/function calling
 
-#### Task 2.2: Extract Token Usage from Copilot Response
+#### Task 2.3: Extract Token Usage from Copilot Response
 
 Modify `complete()` in `src/providers/copilot.rs`:
 
@@ -115,7 +166,31 @@ Modify `complete()` in `src/providers/copilot.rs`:
 - Return `CompletionResponse` with extracted token counts
 - Handle cases where usage is not provided
 
-#### Task 2.3: Implement Model Switching for Copilot
+#### Task 2.4: Implement Model Switching for Copilot
+
+**IMPORTANT**: Model switching must validate against dynamically fetched models, not hardcoded lists.
+
+**Steps**:
+
+1. Update `set_model()` to be async and fetch current models:
+
+   ```rust
+   async fn set_model(&mut self, model_name: String) -> Result<()> {
+       let models = self.fetch_copilot_models().await?;
+       // Validate and check capabilities
+   }
+   ```
+
+2. Find requested model in fetched list
+3. If not found, return error with list of available models
+4. Check if model supports FunctionCalling capability
+5. If no tool support, return error suggesting models that do
+6. Update config if all validations pass
+
+**Error Messages**:
+
+- Model not found: "Model 'X' not found. Available models: A, B, C, ..."
+- No tool support: "Model 'X' does not support tool calling. Try: A, B, C"
 
 Add to `CopilotProvider`:
 
@@ -124,19 +199,44 @@ Add to `CopilotProvider`:
 - Implement `get_current_model(&self)` to return current model with read lock
 - Validate model name against supported models from `list_models()`
 
-#### Task 2.4: Testing Requirements
+#### Task 2.5: Testing Requirements
+
+**CRITICAL**: Do not hardcode expected model names in tests (API changes).
+
+**Required Tests**:
+
+- Parse `testdata/models.json` successfully
+- Extract enabled models (filter by `policy.state == "enabled"`)
+- Extract context windows from API metadata
+- Extract capabilities (tool_calls, vision) from API
+- Verify `CopilotMessage` can deserialize without `content` field
+- Test complete `CopilotResponse` deserialization with missing content
 
 - Test model listing returns expected models
 - Test token usage extraction from responses
 - Test model switching updates internal state
 - Integration test with actual Copilot API (optional, may require auth)
 
-#### Task 2.5: Deliverables
+#### Task 2.6: Deliverables
+
+- `src/providers/copilot.rs` - Dynamic model fetching implementation
+- `testdata/models.json` - Real Copilot API response for testing
+- `docs/explanation/copilot_dynamic_model_fetching.md` - Implementation documentation
+- `docs/explanation/copilot_response_parsing_fix.md` - Content field parsing fix
 
 - Fully implemented extended provider interface for Copilot
 - Updated tests in `src/providers/copilot.rs`
 
-#### Task 2.6: Success Criteria
+#### Task 2.7: Success Criteria
+
+- ✅ No hardcoded model lists in Copilot provider
+- ✅ Models fetched from API at runtime
+- ✅ Only enabled models shown to users
+- ✅ Capabilities extracted from API metadata
+- ✅ Model switching validates against current API data
+- ✅ Tool calling requirement enforced
+- ✅ All tests pass without hardcoded model names
+- ✅ `/models` command shows actual available models
 
 - `CopilotProvider` implements all new trait methods
 - Token usage accurately extracted from API responses
@@ -164,8 +264,25 @@ Add to `OllamaProvider`:
 
 - Implement `get_model_info()` using `/api/show` endpoint
 - Extract context window size from model details (parameter_size, num_ctx)
-- Detect tool support capability from model metadata
+- **CRITICAL**: Use model family name (not metadata) to detect tool support - Ollama API does not expose tool capability directly
+- **CRITICAL**: Only mark models that actually support tools - see `add_model_capabilities()` whitelist
 - Cache model info to avoid repeated API calls
+
+**Known Models with Tool Support** (as of 2025-01):
+
+- `llama3.2`, `llama3.3` - Meta Llama 3.2/3.3 series
+- `mistral`, `mistral-nemo` - Mistral AI models
+- `firefunction` - Specialized function calling model
+- `command-r`, `command-r-plus` - Cohere Command R series
+- `granite3`, `granite4` - IBM Granite 3/4 series
+
+**Models WITHOUT Tool Support** (do not mark as supporting FunctionCalling):
+
+- `llama3` (original), `llama2` - Older Llama versions
+- `gemma` - Google Gemma series
+- `codellama` - Code-focused models
+- `llava` - Vision-focused models
+- Most other models unless explicitly verified
 
 #### Task 3.3: Extract Token Usage from Ollama Response
 
@@ -175,15 +292,75 @@ Modify `complete()` in `src/providers/ollama.rs`:
 - Return `CompletionResponse` with token counts
 - Calculate total tokens as sum of prompt and completion
 
+**CRITICAL**: Make response parsing flexible for varying model formats:
+
+- Use `#[serde(default)]` for fields that may be missing (`id`, `arguments`, `content`)
+- Use `#[serde(default = "default_tool_type")]` for `type` field (defaults to `"function"`)
+- Generate unique IDs for tool calls with missing/empty `id` field using `call_{timestamp_ms}_{index}` format
+- Handle empty content when models return tool-only responses
+
+**Response Structure Flexibility**:
+
+```rust
+struct OllamaMessage {
+    role: String,
+    #[serde(default)]  // May be empty for tool-only responses
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+}
+
+struct OllamaToolCall {
+    #[serde(default)]  // May be empty, generate if needed
+    id: String,
+    #[serde(default = "default_tool_type")]  // May be missing
+    r#type: String,
+    function: OllamaFunctionCall,
+}
+
+struct OllamaFunctionCall {
+    name: String,  // Required field
+    #[serde(default)]  // May be empty for parameterless functions
+    arguments: serde_json::Value,
+}
+```
+
+This flexibility ensures compatibility with models like `granite4:latest` that may omit certain fields.
+
 #### Task 3.4: Implement Model Switching for Ollama
 
 Add to `OllamaProvider`:
 
 - Wrap `config` field in `Arc<RwLock<OllamaConfig>>` for interior mutability (Decision from Question 3)
 - Implement `set_model(&self, ...)` to update model name with write lock
-- Validate model exists by checking against `list_models()` (may trigger cache refresh)
+- **CRITICAL**: Validate model exists by checking against `list_models()` (may trigger cache refresh)
+- **CRITICAL**: Validate model supports tool calling before allowing switch - XZatoma requires FunctionCalling capability
+- Return descriptive error if model lacks tool support: "Model 'X' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead."
 - Implement `get_current_model(&self)` with read lock
 - Invalidate model list cache on successful switch (Decision from Question 4)
+
+**Validation Logic**:
+
+```rust
+async fn set_model(&mut self, model_name: String) -> Result<()> {
+    let models = self.list_models().await?;
+    let model_info = models.iter().find(|m| m.name == model_name);
+
+    if model_info.is_none() {
+        return Err(Error::ModelNotFound(model_name));
+    }
+
+    // CRITICAL: Check tool support
+    if !model_info.unwrap().supports_capability(ModelCapability::FunctionCalling) {
+        return Err(Error::ModelLacksToolSupport {
+            model: model_name,
+            suggestion: "llama3.2:latest, llama3.3:latest, or mistral:latest"
+        });
+    }
+
+    // Proceed with switch...
+}
+```
 
 #### Task 3.5: Testing Requirements
 
@@ -349,12 +526,14 @@ Update `src/commands/chat_mode.rs`:
 
 - Handle `SpecialCommand::SwitchModel(name)`
 - Validate model is available via `list_models()`
+- **CRITICAL**: Validate model supports tool calling - `set_model()` will reject models without FunctionCalling capability
 - Get new model's context window from `get_model_info(name)`
 - Check if current conversation tokens exceed new context window (Decision from Question 2)
 - If exceeds: Display warning "Current conversation (X tokens) exceeds new model context (Y tokens). Z messages will be pruned. Continue? [y/N]"
 - Require user confirmation before proceeding with switch
 - On confirm: Call `agent.provider.set_model(name)`, update conversation `max_tokens`, trigger immediate pruning
 - Display confirmation with new model, context window, and tokens pruned (if any)
+- **CRITICAL**: Handle tool support error gracefully with helpful message suggesting alternative models
 
 #### Task 6.4: Implement Context Window Display
 
@@ -368,13 +547,15 @@ Add to chat mode:
 
 #### Task 6.5: Update Chat Prompt Display
 
-Modify chat prompt to show context usage:
+Modify chat prompt to show context usage and provider/model information:
 
 - Add optional context indicator to prompt
+- Add provider/model display: include provider and model when available (format: `[Provider: model]`, e.g., `[Copilot: gpt-5-mini]`)
+- Display color rule: provider name shown in white, model name shown in green (so the model stands out visually)
 - Implement `format_token_count(used, total, format)` supporting multiple formats (Decision from Question 5)
-- Default format: `[Planning|Write] [Safe|YOLO] [1.2k/8k] >`
+- Default format: `[Planning|Write] [Safe|YOLO] [1.2k/8k] >>`
 - Alternative formats: `[1234/8000]`, `[15%]`, or `[1.2k/8k | 15%]` based on config
-- Apply color coding: green (<60% used), yellow (60-85%), red (>85%)
+- Apply color coding for context usage: green (<60% used), yellow (60-85%), red (>85%)
 - Make display configurable via `show_context_in_prompt` in chat config
 
 #### Task 6.6: Testing Requirements
@@ -413,26 +594,76 @@ Update `src/config.rs`:
 - Add `model_cache_ttl_seconds: u64` (default: 300 for 5 minutes) (Decision from Question 4)
 - Add validation for model names in config
 - Add helper function to parse context display format from config strings
+- **CRITICAL**: Set Ollama default model to `llama3.2:latest` (NOT `llama3:latest` - lacks tool support)
+- **CRITICAL**: Never use `qwen2.5-coder` or any `qwen*` models - not standard Ollama models
+- **CRITICAL**: Only reference approved Ollama models in documentation: `llama3.2:latest`, `llama3.3:latest`, `mistral:latest`, `granite3:latest`, `granite4:latest`
+
+**Default Model Configuration**:
+
+```yaml
+provider:
+  ollama:
+    host: http://localhost:11434
+    # MUST use llama3.2:latest or newer for tool support
+    model: llama3.2:latest
+```
 
 #### Task 7.2: Create Reference Documentation
 
-Create `docs/reference/models.md`:
+Create `docs/reference/model_management.md`:
 
 - Document all supported models per provider
+- **CRITICAL**: Clearly mark which models support tool calling (required for XZatoma)
 - List context window sizes
-- Document model capabilities
+- Document model capabilities (FunctionCalling, LongContext, Vision, etc.)
 - Include performance characteristics where known
 - Update regularly as providers add models
+- **WARNING**: Explicitly state that models without FunctionCalling capability cannot be used with XZatoma
+- Document Ollama's tool support limitations and which models are verified to work
+
+**Required Content**:
+
+- Core types: ModelInfo, ModelCapability, TokenUsage, ContextInfo, ProviderCapabilities
+- Provider trait methods with signatures and error handling
+- CLI commands reference
+- Chat mode special commands reference
+- Provider comparison (Copilot vs Ollama)
+- Error handling patterns
+- Integration examples
 
 #### Task 7.3: Create How-To Guides
 
-Create `docs/how-to/manage-models.md`:
+Create `docs/how-to/manage_models.md` (note: underscore, not hyphen):
 
-- Guide for listing available models
-- Guide for switching models in chat
-- Guide for monitoring context usage
+- Guide for listing available models (CLI and chat mode)
+- Guide for viewing detailed model information
+- Guide for checking current model
+- Understanding model capabilities (especially FunctionCalling requirement)
+- Choosing the right model for different tasks
+- Provider differences (Copilot vs Ollama)
 - Best practices for model selection
-- Troubleshooting common issues
+- Troubleshooting common issues (model not found, lacks tool support, parsing errors)
+
+Create `docs/how-to/switch_models.md` (note: underscore, not hyphen):
+
+- Quick start examples
+- Switching in interactive chat mode
+- Understanding model switching behavior
+- Conversation persistence and pruning
+- Switching via configuration
+- Switching between providers
+- Advanced model switching strategies
+- Troubleshooting model switch issues (tool support, context window)
+- Best practices for model switching
+- Complete workflow examples
+
+**CRITICAL Documentation Standards**:
+
+- Use lowercase_with_underscores.md for ALL filenames (NOT kebab-case)
+- NO emojis anywhere in documentation
+- All code blocks must specify language (`rust, `yaml, `bash, `text)
+- Cross-reference using relative paths
+- Include troubleshooting sections with actual error messages and solutions
 
 #### Task 7.4: Update CLI Help Text
 
@@ -459,6 +690,10 @@ Add to `docs/reference/provider-api.md`:
 
 - Complete user documentation
 - API documentation for providers
+- `docs/reference/model_management.md` - Comprehensive API reference (~645 lines)
+- `docs/how-to/manage_models.md` - Model discovery and inspection guide (~418 lines)
+- `docs/how-to/switch_models.md` - Model switching guide (~439 lines)
+- Implementation summary in `docs/explanation/` documenting what was delivered
 - Updated configuration schema
 - Updated help text
 
@@ -468,6 +703,501 @@ Add to `docs/reference/provider-api.md`:
 - Examples are tested and working
 - Configuration is well-documented
 - Help text is comprehensive and accurate
+
+## Lessons Learned from Implementation
+
+This section documents critical issues discovered during implementation that future implementations must avoid.
+
+### Lesson 0: Copilot Provider MUST Use Dynamic Model Fetching
+
+**Issue**: Copilot provider used hardcoded list of models (`gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`, `o1-preview`, etc.) that don't exist in the actual Copilot API.
+
+**Impact**: `/models` command showed completely wrong models. Users couldn't see or use actual available models (GPT-5, Claude 4.5, Gemini 2.5, Grok).
+
+**Resolution**: Implemented dynamic model fetching from `https://api.githubcopilot.com/models` API endpoint.
+
+**Critical Requirements**:
+
+- **NEVER use hardcoded model lists for Copilot** - the API changes frequently
+- **ALWAYS fetch models from `/models` endpoint** at runtime
+- Filter to models with `policy.state == "enabled"`
+- Extract capabilities from API metadata (`supports.tool_calls`, `supports.vision`)
+- Extract context window from `limits.max_context_window_tokens`
+- Default model should be `gpt-5-mini` (current standard)
+- Validate model exists and supports tool calling before allowing switch
+
+**API Endpoint**:
+
+```rust
+const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+```
+
+**Response Structure**:
+
+```rust
+#[derive(Debug, Deserialize)]
+struct CopilotModelsResponse {
+    data: Vec<CopilotModelData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelData {
+    id: String,
+    name: String,
+    #[serde(default)]
+    capabilities: Option<CopilotModelCapabilities>,
+    #[serde(default)]
+    policy: Option<CopilotModelPolicy>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelPolicy {
+    state: String,  // "enabled" or other
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelCapabilities {
+    #[serde(default)]
+    limits: Option<CopilotModelLimits>,
+    #[serde(default)]
+    supports: Option<CopilotModelSupports>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelLimits {
+    #[serde(default)]
+    max_context_window_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CopilotModelSupports {
+    #[serde(default)]
+    tool_calls: Option<bool>,
+    #[serde(default)]
+    vision: Option<bool>,
+}
+```
+
+**Implementation Pattern**:
+
+```rust
+async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
+    let token = self.authenticate().await?;
+
+    let response = self
+        .client
+        .get(COPILOT_MODELS_URL)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Editor-Version", "vscode/1.85.0")
+        .send()
+        .await?;
+
+    let models_response: CopilotModelsResponse = response.json().await?;
+
+    let mut models = Vec::new();
+    for model_data in models_response.data {
+        // Only include enabled models
+        if let Some(policy) = &model_data.policy {
+            if policy.state != "enabled" {
+                continue;
+            }
+        }
+
+        // Extract context window (default 128k if missing)
+        let context_window = model_data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.limits.as_ref())
+            .and_then(|l| l.max_context_window_tokens)
+            .unwrap_or(128000);
+
+        let mut model_info = ModelInfo::new(
+            &model_data.id,
+            &model_data.name,
+            context_window
+        );
+
+        // Add capabilities from API metadata
+        if let Some(caps) = &model_data.capabilities {
+            if let Some(supports) = &caps.supports {
+                if supports.tool_calls.unwrap_or(false) {
+                    model_info.add_capability(ModelCapability::FunctionCalling);
+                }
+                if supports.vision.unwrap_or(false) {
+                    model_info.add_capability(ModelCapability::Vision);
+                }
+            }
+        }
+
+        // Infer LongContext for models >32k
+        if context_window > 32000 {
+            model_info.add_capability(ModelCapability::LongContext);
+        }
+
+        models.push(model_info);
+    }
+
+    Ok(models)
+}
+
+async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+    self.fetch_copilot_models().await
+}
+
+async fn set_model(&mut self, model_name: String) -> Result<()> {
+    let models = self.fetch_copilot_models().await?;
+
+    let model_info = models
+        .iter()
+        .find(|m| m.name == model_name)
+        .ok_or_else(|| {
+            let available: Vec<String> =
+                models.iter().map(|m| m.name.clone()).collect();
+            XzatomaError::Provider(format!(
+                "Model '{}' not found. Available models: {}",
+                model_name,
+                available.join(", ")
+            ))
+        })?;
+
+    if !model_info.supports_capability(ModelCapability::FunctionCalling) {
+        return Err(XzatomaError::Provider(format!(
+            "Model '{}' does not support tool calling",
+            model_name
+        )));
+    }
+
+    self.config.write()?.model = model_name;
+    Ok(())
+}
+```
+
+**Why Hardcoded Lists Fail**:
+
+1. GitHub frequently adds new models (GPT-5, Claude 4.5, Gemini 2.5, Grok)
+2. Old models are deprecated/removed (GPT-3.5, GPT-4 original)
+3. Context windows change (GPT-5-mini: 264k, not the hardcoded 8k)
+4. Capabilities change (new models add vision, structured outputs)
+5. Model availability varies by user/organization
+
+---
+
+## Fix Summary (Applied)
+
+To prevent repeated mistakes the Copilot provider implementation was changed to follow these concrete rules:
+
+- Replace any hardcoded model lists with a runtime model discovery call to the Copilot models API (`/models`) and parse its response.
+- Filter models to `policy.state == "enabled"` and extract `id`, `name`, capability flags (`supports.tool_calls`, `supports.vision`) and limits (`max_context_window_tokens`).
+- Map capabilities into explicit `ModelCapability` flags (FunctionCalling, Vision, LongContext for >32k tokens) and use those flags to validate `set_model()` requests.
+- Make deserialization resilient: use `#[serde(default)]` and optional fields so missing fields (e.g., `content` on function/tool call responses) do not cause hard failures.
+- On authentication failures (HTTP 401):
+  - First attempt a non-interactive refresh by exchanging any cached GitHub token for a new Copilot token and retry the request.
+  - If refresh fails or no cached GitHub token exists, perform a best-effort cache invalidation (so `authenticate()` won't reuse stale tokens) and return an actionable `Authentication` error telling the user how to re-auth (e.g. `xzatoma auth --provider copilot`).
+- Do not make UI/CLI behavior assumptions in provider internals — surface clear, actionable errors and leave interactive re-auth to an explicit command or user action.
+
+## Guardrails / PR Checklist (MUST PASS before merging provider changes)
+
+When making changes to providers or model management, PRs must include:
+
+1. No hardcoded provider model lists.
+   - Any list of models must come from a runtime-discovered source or a well-documented local cache with TTL.
+2. Robust parsing tests
+   - Add a fixture to `testdata/` (e.g., `testdata/models.json`) using a real API response shape and include unit tests that parse it.
+   - Add parsing tests for edge cases: missing `content`, missing `id`, omitted `arguments`, and alternate shapes.
+3. Auth resiliency tests
+   - Unit tests for 401→Authentication mapping.
+   - Integration tests (mocked) for 401 → non-interactive refresh → retry → success, and 401 → refresh fails → cache invalidation + actionable error.
+4. Integration/mocked tests
+   - Use a mock server (wiremock or similar) and ensure the code supports an overridable base URL (env var or config) for testing, so CI can test provider flows without hitting production endpoints.
+5. Documentation
+   - Update `docs/explanation/` with a short note about the provider’s model discovery behaviour and auth handling so future implementers don't reintroduce brittle assumptions.
+6. Telemetry / Logging
+   - Add logs (and optionally telemetry hooks) to count or surface repeated parsing failures and authentication failures so we can detect regressions.
+7. Code comments / TODOs
+   - Add an inline comment at the `COPILOT_MODELS_URL` constant reminding contributors to prefer discovery over static lists.
+8. Validation
+   - The PR must run and pass: `cargo fmt --all`, `cargo check --all-targets --all-features`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`.
+
+Adhering to these guardrails will prevent reintroducing hardcoded model lists or brittle parsing and will ensure auth failures are recoverable and actionable.
+
+**Testing Approach**:
+
+- Use `testdata/models.json` with real API response for parsing tests
+- Parse tests verify deserialization logic without API calls
+- Async tests document need for mocking in integration tests
+- Never hardcode expected model names in tests (API changes)
+
+**Reference**: `docs/explanation/copilot_dynamic_model_fetching.md`
+
+### Lesson 1: Ollama Default Model Selection
+
+**Issue**: Initial default model (`qwen2.5-coder`) was not a standard Ollama model and unavailable in most installations.
+
+**Impact**: Provider failed to initialize, users couldn't use Ollama without manual configuration.
+
+**Resolution**: Changed default to `llama3.2:latest` (standard, widely available, supports tools).
+
+**Critical Requirements**:
+
+- Default model MUST be a standard Ollama model (comes with standard installation)
+- Default model MUST support tool calling (FunctionCalling capability required for XZatoma)
+- Never use `qwen*` models as defaults - not standard Ollama models
+- Approved defaults: `llama3.2:latest` (recommended), `llama3.3:latest`, `mistral:latest`
+
+**Reference**: `docs/explanation/ollama_default_model_fix.md`
+
+### Lesson 2: Tool Support Detection and Validation
+
+**Issue**: Initial implementation assumed ALL Ollama models support tool calling (function calling).
+
+**Impact**: Users could switch to models like `llama3:latest` that don't support tools, causing runtime failures.
+
+**Resolution**:
+
+1. Implemented whitelist-based capability detection in `add_model_capabilities()`
+2. Added validation in `set_model()` to reject models without FunctionCalling capability
+3. Provided helpful error messages suggesting alternative models
+
+**Critical Requirements**:
+
+- DO NOT assume all models support tools - only specific models do
+- Use whitelist approach (safer than blacklist - new models default to no support)
+- Validate tool support BEFORE allowing model switch
+- Provide descriptive errors with model suggestions when validation fails
+
+**Known Models WITH Tool Support**:
+
+- `llama3.2`, `llama3.3` - Meta Llama 3.2/3.3
+- `mistral`, `mistral-nemo` - Mistral AI
+- `firefunction` - Specialized function calling
+- `command-r`, `command-r-plus` - Cohere Command R
+- `granite3`, `granite4` - IBM Granite
+
+**Known Models WITHOUT Tool Support**:
+
+- `llama3` (original), `llama2` - Older versions
+- `gemma` - Google Gemma
+- `codellama` - Code-focused
+- `llava` - Vision-focused
+- Most other models unless verified
+
+**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+
+### Lesson 3: Copilot Response Parsing Flexibility
+
+**Issue**: Strict deserialization of Copilot responses failed when API returned tool calls without a `content` field.
+
+**Impact**: Parser crashed with "missing field `content`" error even for valid tool call responses.
+
+**Resolution**: Made `content` field optional with `#[serde(default)]` to default to empty string when missing.
+
+**Critical Requirements**:
+
+- Use `#[serde(default)]` for `content` field in Copilot message structures
+- When model returns tool calls, `content` may be omitted or null
+- This is standard OpenAI-compatible API behavior
+- Empty content is correct for tool-only responses
+
+**Response Structure Template**:
+
+```rust
+#[derive(Debug, Serialize, Deserialize)]
+struct CopilotMessage {
+    role: String,
+    #[serde(default)]  // May be missing when tool calls present
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<CopilotToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+```
+
+**Reference**: `docs/explanation/copilot_response_parsing_fix.md`
+
+### Lesson 4: Ollama Response Parsing Flexibility
+
+**Issue**: Strict deserialization of Ollama responses failed with models like `granite4:latest` that omit optional fields (`type`, `id`, `arguments`, `content`).
+
+**Impact**: Parser crashed with "missing field" errors even though essential data (function name) was present.
+
+**Resolution**:
+
+1. Made optional fields use `#[serde(default)]` or `#[serde(default = "function")]`
+2. Generated unique IDs for tool calls when missing: `call_{timestamp_ms}_{index}`
+3. Handled empty content gracefully for tool-only responses
+
+**Critical Requirements**:
+
+- Use flexible deserialization for Ollama responses (models have varying formats)
+- Use `#[serde(default)]` for: `id`, `arguments`, `content`
+- Use `#[serde(default = "default_tool_type")]` for `type` field
+- Generate unique IDs when missing using timestamp + index pattern
+- Still require essential fields (function name)
+
+**Response Structure Template**:
+
+```rust
+struct OllamaMessage {
+    role: String,
+    #[serde(default)]  // May be empty for tool-only responses
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OllamaToolCall>>,
+}
+
+struct OllamaToolCall {
+    #[serde(default)]  // May be empty, generate if needed
+    id: String,
+    #[serde(default = "default_tool_type")]  // May be missing
+    r#type: String,
+    function: OllamaFunctionCall,
+}
+
+struct OllamaFunctionCall {
+    name: String,  // Required - must have function name
+    #[serde(default)]  // May be empty for parameterless functions
+    arguments: serde_json::Value,
+}
+
+fn default_tool_type() -> String {
+    "function".to_string()
+}
+```
+
+**Reference**: `docs/explanation/ollama_response_parsing_fix.md`
+
+### Lesson 5: Documentation Naming Conventions
+
+**Issue**: Agents commonly use kebab-case (`manage-models.md`) or CamelCase for documentation filenames.
+
+**Impact**: Inconsistent naming, hard to find files, breaks documentation standards.
+
+**Resolution**: Enforce lowercase_with_underscores.md for ALL documentation files.
+
+**Critical Requirements**:
+
+- Use `lowercase_with_underscores.md` for ALL markdown files
+- Exception: `README.md` is the ONLY uppercase filename allowed
+- Never use kebab-case (`manage-models.md`) - use `manage_models.md`
+- Never use CamelCase (`ManageModels.md`) - use `manage_models.md`
+- Never use emojis anywhere in documentation
+- All code blocks must specify language (`rust not `)
+
+**Correct Examples**:
+
+- `docs/how-to/manage_models.md` ✅
+- `docs/how-to/switch_models.md` ✅
+- `docs/reference/model_management.md` ✅
+
+**Wrong Examples**:
+
+- `docs/how-to/manage-models.md` ❌ (kebab-case)
+- `docs/how-to/ManageModels.md` ❌ (CamelCase)
+- `docs/how-to/manage_models_🚀.md` ❌ (emoji)
+
+**Reference**: `AGENTS.md` - Rule 2: Markdown File Naming
+
+### Lesson 6: Model Capability Detection Varies by Provider
+
+**Copilot**: Use API metadata from `/models` endpoint
+
+**Issue**: Ollama `/api/show` endpoint does not expose whether a model supports tool calling.
+
+**Impact**: Cannot programmatically detect tool support from API metadata.
+
+**Resolution**: Maintain curated whitelist of known models with tool support based on model family name.
+
+**Critical Requirements**:
+
+- Use model family name (from `name.split(':').next()`) to detect capabilities
+- Cannot rely on Ollama API metadata for tool support detection
+- Maintain whitelist in code based on: official docs, testing, user feedback
+- Update whitelist as new models are released and verified
+- Document which models are verified vs. assumed to have capabilities
+
+**Detection Pattern**:
+
+```rust
+fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
+    match family.to_lowercase().as_str() {
+        // Whitelist: verified to support tools
+        "llama3.2" | "llama3.3" | "mistral" | "granite4" => {
+            model.add_capability(ModelCapability::FunctionCalling);
+        }
+        _ => {
+            // Default: assume NO tool support unless explicitly verified
+        }
+    }
+}
+```
+
+**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+
+### Lesson 7: Error Messages Must Be Actionable
+
+**Issue**: Generic error messages like "Model not found" don't help users recover.
+
+**Impact**: Users don't know what to do next or which models will work.
+
+**Resolution**: Provide specific, actionable error messages with model suggestions.
+
+**Critical Requirements**:
+
+- Always suggest specific alternative models that will work
+- Include the reason for failure (tool support, not found, etc.)
+- Format: "Model 'X' failed because Y. Try A, B, or C instead."
+- For Ollama, suggest: `llama3.2:latest`, `llama3.3:latest`, `mistral:latest`
+
+**Good Error Example**:
+
+```
+Error: Model 'llama3:latest' does not support tool calling. XZatoma requires
+models with tool/function calling support. Try llama3.2:latest, llama3.3:latest,
+or mistral:latest instead.
+```
+
+**Bad Error Example**:
+
+```
+Error: Model not supported
+```
+
+**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+
+### Implementation Checklist for Future Phases
+
+When implementing model management features, verify:
+
+**Copilot Provider**:
+
+- [ ] Default Copilot model is `gpt-5-mini`
+- [ ] NEVER use hardcoded model lists - ALWAYS fetch from `/models` API
+- [ ] `fetch_copilot_models()` filters to `policy.state == "enabled"`
+- [ ] Capabilities extracted from API metadata (`supports.tool_calls`, `supports.vision`)
+- [ ] Context window extracted from `limits.max_context_window_tokens`
+- [ ] `CopilotMessage.content` uses `#[serde(default)]` for missing field handling
+- [ ] `set_model()` validates against dynamically fetched models
+- [ ] `set_model()` checks tool calling support before allowing switch
+- [ ] Error messages suggest actual available models from API
+
+**Ollama Provider**:
+
+- [ ] Default Ollama model is `llama3.2:latest` (NOT `llama3:latest` or `qwen*`)
+- [ ] `add_model_capabilities()` uses whitelist approach (only verified models get FunctionCalling)
+- [ ] `set_model()` validates tool support before allowing switch
+- [ ] Ollama response structures use `#[serde(default)]` for optional fields
+- [ ] Tool call ID generation implemented for missing/empty IDs
+- [ ] Model capability detection uses family name whitelist, not API metadata
+- [ ] Whitelist is documented and up-to-date
+
+**General**:
+
+- [ ] Error messages are actionable and suggest specific alternative models
+- [ ] Documentation filenames use `lowercase_with_underscores.md`
+- [ ] No emojis in documentation
+- [ ] All code blocks specify language (e.g., `rust not `)
+- [ ] All optional API fields use `#[serde(default)]` or `Option<T>`
 
 ## Open Questions
 

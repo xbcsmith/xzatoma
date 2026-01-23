@@ -10,13 +10,13 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
 use crate::prompts;
-use crate::providers::{Message, Provider, ToolCall};
+use crate::providers::{CompletionResponse, Message, Provider, TokenUsage, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use super::Conversation;
+use super::{ContextInfo, Conversation};
 
 /// The main agent that executes autonomous tasks
 ///
@@ -25,6 +25,7 @@ use super::Conversation;
 /// - Maximum iterations to prevent infinite loops
 /// - Timeout to prevent runaway execution
 /// - Tool execution validation
+/// - Token usage tracking across multiple completions
 ///
 /// # Examples
 ///
@@ -49,6 +50,7 @@ pub struct Agent {
     conversation: Conversation,
     tools: ToolRegistry,
     config: AgentConfig,
+    accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
 }
 
 impl Agent {
@@ -90,6 +92,7 @@ impl Agent {
             conversation,
             tools,
             config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -134,6 +137,7 @@ impl Agent {
             conversation,
             tools,
             config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -196,6 +200,7 @@ impl Agent {
             conversation,
             tools,
             config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -274,6 +279,7 @@ impl Agent {
             conversation,
             tools,
             config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -364,20 +370,38 @@ impl Agent {
 
             // Get completion from provider
             let tool_definitions = self.tools.all_definitions();
-            let response = self
+            let completion_response = self
                 .provider
                 .complete(conversation.messages(), &tool_definitions)
                 .await?;
 
-            debug!("Provider response: {:?}", response);
+            let message = completion_response.message;
+            debug!("Provider response: {:?}", message);
+
+            // Track token usage if provider reported it
+            if let Some(usage) = completion_response.usage {
+                conversation.update_from_provider_usage(&usage);
+
+                // Accumulate token usage at agent level
+                let mut accumulated = self.accumulated_usage.lock().unwrap();
+                if let Some(existing) = *accumulated {
+                    *accumulated = Some(TokenUsage::new(
+                        existing.prompt_tokens + usage.prompt_tokens,
+                        existing.completion_tokens + usage.completion_tokens,
+                    ));
+                } else {
+                    *accumulated = Some(usage);
+                }
+                drop(accumulated);
+            }
 
             // Add assistant message to conversation
-            if let Some(content) = &response.content {
+            if let Some(content) = &message.content {
                 conversation.add_assistant_message(content.clone());
             }
 
             // Handle tool calls if present
-            if let Some(tool_calls) = &response.tool_calls {
+            if let Some(tool_calls) = &message.tool_calls {
                 if tool_calls.is_empty() {
                     // Provider returned empty tool calls, treat as completion
                     debug!("Provider returned empty tool calls, stopping");
@@ -398,7 +422,7 @@ impl Agent {
             }
 
             // No tool calls, check if we have a final response
-            if response.content.is_some() {
+            if message.content.is_some() {
                 debug!("Provider returned final response, stopping");
                 break;
             }
@@ -494,18 +518,104 @@ impl Agent {
         &self.conversation
     }
 
+    /// Returns a reference to the provider
+    ///
+    /// Useful for accessing provider-specific methods like model listing and switching
+    pub fn provider(&self) -> &dyn Provider {
+        &*self.provider
+    }
+
+    /// Returns a reference to the tool registry
+    ///
+    /// Useful for accessing and managing available tools
+    pub fn tools(&self) -> &ToolRegistry {
+        &self.tools
+    }
+
     /// Returns the number of registered tools
     ///
     /// Useful for testing and debugging
     pub fn num_tools(&self) -> usize {
         self.tools.len()
     }
+
+    /// Returns the accumulated token usage from all completions
+    ///
+    /// This tracks the total prompt tokens, completion tokens, and cumulative usage
+    /// from all provider completions across the entire agent session.
+    ///
+    /// # Returns
+    ///
+    /// Returns a TokenUsage struct if the provider has reported token counts,
+    /// otherwise returns None
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::config::AgentConfig;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let provider = unimplemented!();
+    /// # let agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
+    /// # agent.execute("test").await?;
+    /// let usage = agent.get_token_usage();
+    /// if let Some(u) = usage {
+    ///     println!("Used {} prompt tokens and {} completion tokens",
+    ///              u.prompt_tokens, u.completion_tokens);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_token_usage(&self) -> Option<TokenUsage> {
+        *self.accumulated_usage.lock().unwrap()
+    }
+
+    /// Returns context window information for the current conversation
+    ///
+    /// Provides metrics about how the conversation fits within the model's context window,
+    /// including maximum tokens, tokens used, remaining tokens, and percentage used.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_context_window` - The context window size of the current model in tokens
+    ///
+    /// # Returns
+    ///
+    /// Returns ContextInfo with current usage and remaining tokens
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::config::AgentConfig;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let provider = unimplemented!();
+    /// # let agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
+    /// # agent.execute("test").await?;
+    /// let context = agent.get_context_info(8192);
+    /// println!("Context: {}/{} tokens ({:.1}% used)",
+    ///          context.used_tokens, context.max_tokens, context.percentage_used);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_context_info(&self, model_context_window: usize) -> ContextInfo {
+        // Use accumulated agent-level usage if available, otherwise delegate to conversation
+        if let Some(usage) = self.get_token_usage() {
+            ContextInfo::new(model_context_window, usage.total_tokens)
+        } else {
+            self.conversation.get_context_info(model_context_window)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{FunctionCall, Message};
+    use crate::providers::{CompletionResponse, FunctionCall, Message};
     use async_trait::async_trait;
 
     /// Mock provider for testing
@@ -513,6 +623,7 @@ mod tests {
     struct MockProvider {
         responses: Vec<Message>,
         call_count: Arc<std::sync::Mutex<usize>>,
+        token_usage: Option<TokenUsage>,
     }
 
     impl MockProvider {
@@ -520,6 +631,15 @@ mod tests {
             Self {
                 responses,
                 call_count: Arc::new(std::sync::Mutex::new(0)),
+                token_usage: None,
+            }
+        }
+
+        fn with_token_usage(responses: Vec<Message>, usage: TokenUsage) -> Self {
+            Self {
+                responses,
+                call_count: Arc::new(std::sync::Mutex::new(0)),
+                token_usage: Some(usage),
             }
         }
 
@@ -534,16 +654,28 @@ mod tests {
             &self,
             _messages: &[Message],
             _tools: &[serde_json::Value],
-        ) -> Result<Message> {
+        ) -> Result<CompletionResponse> {
             let mut count = self.call_count.lock().unwrap();
             let index = *count;
             *count += 1;
 
             if index < self.responses.len() {
-                Ok(self.responses[index].clone())
+                let message = self.responses[index].clone();
+                let response = if let Some(usage) = self.token_usage {
+                    CompletionResponse::with_usage(message, usage)
+                } else {
+                    CompletionResponse::new(message)
+                };
+                Ok(response)
             } else {
                 // Return final message if we run out of responses
-                Ok(Message::assistant("Done"))
+                let message = Message::assistant("Done");
+                let response = if let Some(usage) = self.token_usage {
+                    CompletionResponse::with_usage(message, usage)
+                } else {
+                    CompletionResponse::new(message)
+                };
+                Ok(response)
             }
         }
     }
@@ -734,5 +866,149 @@ mod tests {
 
         // Should fail (either timeout or tool not found)
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agent_token_usage_accumulation() {
+        let usage1 = TokenUsage::new(100, 50);
+        let _usage2 = TokenUsage::new(150, 75);
+
+        let provider =
+            MockProvider::with_token_usage(vec![Message::assistant("First response")], usage1);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+
+        let agent = Agent::new(provider, tools, config).unwrap();
+        let result = agent.execute("Test token tracking").await;
+
+        assert!(result.is_ok());
+
+        // Check token usage was tracked
+        let usage = agent.get_token_usage();
+        assert!(usage.is_some());
+        let u = usage.unwrap();
+        assert_eq!(u.prompt_tokens, 100);
+        assert_eq!(u.completion_tokens, 50);
+        assert_eq!(u.total_tokens, 150);
+    }
+
+    #[tokio::test]
+    async fn test_agent_context_info_with_provider_tokens() {
+        let usage = TokenUsage::new(2000, 1000);
+        let provider = MockProvider::with_token_usage(vec![Message::assistant("Response")], usage);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+
+        let agent = Agent::new(provider, tools, config).unwrap();
+        let result = agent.execute("Test context").await;
+
+        assert!(result.is_ok());
+
+        // Get context info - should use accumulated agent usage
+        let context = agent.get_context_info(8192);
+        assert_eq!(context.max_tokens, 8192);
+        assert_eq!(context.used_tokens, 3000); // prompt + completion from accumulated usage
+        assert_eq!(context.remaining_tokens, 5192);
+        assert!((context.percentage_used - 36.6).abs() < 0.1); // ~36.6%
+    }
+
+    #[tokio::test]
+    async fn test_conversation_update_from_provider_usage() {
+        let mut conversation = Conversation::new(8000, 10, 0.8);
+        conversation.add_user_message("Hello");
+
+        let usage1 = TokenUsage::new(50, 25);
+        conversation.update_from_provider_usage(&usage1);
+
+        // Check usage is stored
+        let stored = conversation.get_provider_token_usage();
+        assert!(stored.is_some());
+        let u = stored.unwrap();
+        assert_eq!(u.prompt_tokens, 50);
+        assert_eq!(u.completion_tokens, 25);
+
+        // Add more usage
+        let usage2 = TokenUsage::new(100, 50);
+        conversation.update_from_provider_usage(&usage2);
+
+        // Check usage accumulated
+        let stored = conversation.get_provider_token_usage();
+        assert!(stored.is_some());
+        let u = stored.unwrap();
+        assert_eq!(u.prompt_tokens, 150);
+        assert_eq!(u.completion_tokens, 75);
+        assert_eq!(u.total_tokens, 225);
+    }
+
+    #[test]
+    fn test_context_info_creation() {
+        let context = ContextInfo::new(8192, 2048);
+        assert_eq!(context.max_tokens, 8192);
+        assert_eq!(context.used_tokens, 2048);
+        assert_eq!(context.remaining_tokens, 6144);
+        assert!((context.percentage_used - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_context_info_full_context() {
+        let context = ContextInfo::new(8192, 8192);
+        assert_eq!(context.remaining_tokens, 0);
+        assert!((context.percentage_used - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_context_info_overflow_handling() {
+        // Used tokens exceeds max - should clamp to max
+        let context = ContextInfo::new(8192, 10000);
+        assert_eq!(context.used_tokens, 8192); // clamped
+        assert_eq!(context.remaining_tokens, 0);
+        assert!((context.percentage_used - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_conversation_get_context_info_with_heuristic() {
+        let mut conversation = Conversation::new(8000, 10, 0.8);
+        conversation.add_user_message("Hello, world!");
+
+        // Without provider usage, should use heuristic
+        let context = conversation.get_context_info(8192);
+        assert_eq!(context.max_tokens, 8192);
+        assert!(context.used_tokens > 0); // heuristic counted something
+        assert!(context.remaining_tokens < 8192);
+    }
+
+    #[test]
+    fn test_conversation_get_context_info_prefers_provider() {
+        let mut conversation = Conversation::new(8000, 10, 0.8);
+        conversation.add_user_message("Hello");
+
+        // Add provider usage
+        let usage = TokenUsage::new(100, 50);
+        conversation.update_from_provider_usage(&usage);
+
+        // Should use provider usage, not heuristic
+        let context = conversation.get_context_info(8192);
+        assert_eq!(context.max_tokens, 8192);
+        assert_eq!(context.used_tokens, 150); // provider total
+        assert_eq!(context.remaining_tokens, 8042);
+    }
+
+    #[test]
+    fn test_conversation_clear_resets_usage() {
+        let mut conversation = Conversation::new(8000, 10, 0.8);
+        conversation.add_user_message("Hello");
+
+        let usage = TokenUsage::new(100, 50);
+        conversation.update_from_provider_usage(&usage);
+
+        // Verify usage is stored
+        assert!(conversation.get_provider_token_usage().is_some());
+
+        // Clear conversation
+        conversation.clear();
+
+        // Usage should be cleared
+        assert!(conversation.get_provider_token_usage().is_none());
+        assert_eq!(conversation.len(), 0);
     }
 }

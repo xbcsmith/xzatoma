@@ -30,9 +30,11 @@ This plan adds two distinct chat modes to XZatoma's interactive chat: **Planning
 #### Task 1.1: Create Mode Enums and Types
 
 **Files to Create:**
+
 - `src/commands/chat_mode.rs` - Mode definitions and display logic
 
 **Implementation:**
+
 ```rust
 // ChatMode enum with Planning and Write variants
 pub enum ChatMode {
@@ -54,6 +56,7 @@ pub struct ChatModeState {
 ```
 
 **Display formatting:**
+
 - Planning mode prompt: `[PLANNING] >>`
 - Write mode prompt: `[WRITE] >>`
 - Safety mode indicator: `[SAFE]` or `[YOLO]`
@@ -61,9 +64,11 @@ pub struct ChatModeState {
 #### Task 1.2: Update CLI Structure
 
 **Files to Modify:**
+
 - `src/cli.rs` - Add mode and safety flags to `Commands::Chat`
 
 **Changes:**
+
 ```rust
 Chat {
     provider: Option<String>,
@@ -75,6 +80,7 @@ Chat {
 ```
 
 **Tests to Add:**
+
 - `test_cli_parse_chat_with_mode_planning`
 - `test_cli_parse_chat_with_mode_write`
 - `test_cli_parse_chat_with_safety_flag`
@@ -83,19 +89,22 @@ Chat {
 #### Task 1.3: Update Configuration
 
 **Files to Modify:**
+
 - `config/config.yaml` - Add default chat mode settings
 - `src/config.rs` - Add `ChatConfig` struct
 
 **Configuration Schema:**
+
 ```yaml
 agent:
   chat:
-    default_mode: "planning"  # planning or write
+    default_mode: "planning" # planning or write
     default_safety: "confirm" # confirm or yolo
     allow_mode_switching: true
 ```
 
 **Rust Structure:**
+
 ```rust
 pub struct ChatConfig {
     pub default_mode: String,
@@ -132,9 +141,11 @@ pub struct ChatConfig {
 #### Task 2.1: Implement Mode-Aware Tool Registry
 
 **Files to Create:**
+
 - `src/tools/registry_builder.rs` - Builder for mode-specific tool registration
 
 **Implementation:**
+
 ```rust
 pub struct ToolRegistryBuilder {
     mode: ChatMode,
@@ -163,9 +174,11 @@ impl ToolRegistryBuilder {
 #### Task 2.2: Create Read-Only FileOps Tool
 
 **Files to Modify:**
+
 - `src/tools/file_ops.rs` - Add `FileOpsReadOnlyTool` variant
 
 **Implementation:**
+
 - Clone existing `FileOpsTool`
 - Create `FileOpsReadOnlyTool` that only exposes:
   - `read_file(path: string) -> string`
@@ -174,6 +187,7 @@ impl ToolRegistryBuilder {
 - Remove write operations from tool definition
 
 **Alternative Approach:**
+
 - Add `read_only: bool` flag to `FileOpsTool`
 - Conditionally include write operations in `tool_definition()`
 - Return error if write operation called in read-only mode
@@ -181,9 +195,11 @@ impl ToolRegistryBuilder {
 #### Task 2.3: Integrate Mode-Aware Tools in Chat Command
 
 **Files to Modify:**
+
 - `src/commands/mod.rs` - Update `run_chat()` function
 
 **Changes:**
+
 ```rust
 pub async fn run_chat(
     config: Config,
@@ -247,9 +263,11 @@ fn build_tools_for_mode(
 #### Task 3.1: Implement Special Commands Parser
 
 **Files to Create:**
+
 - `src/commands/special_commands.rs` - Parse and handle special commands
 
 **Implementation:**
+
 ```rust
 pub enum SpecialCommand {
     SwitchMode(ChatMode),
@@ -277,13 +295,15 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
 #### Task 3.2: Update Interactive Loop
 
 **Files to Modify:**
+
 - `src/commands/mod.rs` - Update readline loop in `run_chat()`
 
 **Changes:**
+
 ```rust
 loop {
     // Build dynamic prompt based on current mode
-    let prompt = format_prompt(&mode_state);  // e.g., "[PLANNING][SAFE] >> "
+    let prompt = format_prompt(&mode_state);  // e.g., "[PLANNING][SAFE] >>> "
 
     match rl.readline(&prompt) {
         Ok(line) => {
@@ -322,6 +342,7 @@ loop {
 #### Task 3.3: Implement Mode Switching with Conversation Preservation
 
 **Implementation:**
+
 ```rust
 fn handle_mode_switch(
     agent: &mut Agent,
@@ -390,11 +411,13 @@ fn handle_mode_switch(
 #### Task 4.1: Create Mode-Specific System Prompts
 
 **Files to Create:**
+
 - `src/prompts/mod.rs` - System prompts for each mode
 - `src/prompts/planning_prompt.rs` - Planning mode prompt
 - `src/prompts/write_prompt.rs` - Write mode prompt
 
 **Planning Mode System Prompt:**
+
 ```text
 You are in PLANNING mode. Your role is to analyze the request and create a detailed plan.
 
@@ -418,6 +441,7 @@ Focus on creating a thorough, actionable plan that another agent or human can ex
 ```
 
 **Write Mode System Prompt:**
+
 ```text
 You are in WRITE mode. You can read files, modify files, and execute terminal commands.
 
@@ -438,10 +462,12 @@ Your goal is to execute the plan or task using the available tools effectively.
 #### Task 4.2: Integrate System Prompts into Agent
 
 **Files to Modify:**
+
 - `src/agent/core.rs` - Add system message to conversation
 - `src/agent/conversation.rs` - Support system role messages
 
 **Changes:**
+
 ```rust
 impl Agent {
     pub fn new_with_mode(
@@ -465,9 +491,11 @@ impl Agent {
 #### Task 4.3: Implement Plan Format Validators
 
 **Files to Create:**
+
 - `src/tools/plan_format.rs` - Validate and parse plan outputs
 
 **Implementation:**
+
 ```rust
 pub enum PlanFormat {
     Yaml,
@@ -526,9 +554,11 @@ pub fn validate_plan(content: &str) -> Result<ValidatedPlan> {
 #### Task 5.1: Implement Status Display
 
 **Files to Modify:**
+
 - `src/commands/mod.rs` - Add status display functions
 
 **Implementation:**
+
 ```rust
 fn print_status(mode_state: &ChatModeState, agent: &Agent) {
     println!("\n=== XZatoma Status ===");
@@ -571,6 +601,7 @@ fn format_prompt(mode_state: &ChatModeState) -> String {
 #### Task 5.2: Add Welcome Banner
 
 **Implementation:**
+
 ```rust
 fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
     println!("\n╔════════════════════════════════════════╗");
@@ -587,6 +618,7 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 #### Task 5.3: Update Documentation
 
 **Files to Create/Update:**
+
 - `docs/how-to/use_chat_modes.md` - User guide for chat modes
 - `docs/explanation/chat_modes_architecture.md` - Architecture explanation
 - Update `README.md` with chat mode examples
@@ -594,6 +626,7 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 **Documentation Structure:**
 
 **`docs/how-to/use_chat_modes.md`:**
+
 - What are Planning and Write modes
 - When to use each mode
 - How to switch between modes
@@ -601,6 +634,7 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 - Example workflows
 
 **`docs/explanation/chat_modes_architecture.md`:**
+
 - Design decisions
 - Mode switching implementation
 - Tool filtering strategy
@@ -670,12 +704,14 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 ### Configuration Migration
 
 **Before:**
+
 ```yaml
 agent:
   max_iterations: 10
 ```
 
 **After:**
+
 ```yaml
 agent:
   max_iterations: 10
@@ -690,6 +726,7 @@ agent:
 ### New Dependencies
 
 None required - all functionality uses existing dependencies:
+
 - `rustyline` (already in use)
 - `serde_yaml` (already in use)
 - Standard library for string parsing

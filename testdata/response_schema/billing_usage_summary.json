@@ -1,0 +1,100 @@
+{
+  "type": "object",
+  "properties": {
+    "timePeriod": {
+      "type": "object",
+      "properties": {
+        "year": {
+          "type": "integer",
+          "description": "The year for the usage report."
+        },
+        "month": {
+          "type": "integer",
+          "description": "The month for the usage report."
+        },
+        "day": {
+          "type": "integer",
+          "description": "The day for the usage report."
+        }
+      },
+      "required": ["year"]
+    },
+    "user": {
+      "type": "string",
+      "description": "The unique identifier of the user."
+    },
+    "repository": {
+      "type": "string",
+      "description": "The name of the repository for the usage report."
+    },
+    "product": {
+      "type": "string",
+      "description": "The product for the usage report."
+    },
+    "sku": {
+      "type": "string",
+      "description": "The SKU for the usage report."
+    },
+    "usageItems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "product": {
+            "type": "string",
+            "description": "Product name."
+          },
+          "sku": {
+            "type": "string",
+            "description": "SKU name."
+          },
+          "unitType": {
+            "type": "string",
+            "description": "Unit type of the usage line item."
+          },
+          "pricePerUnit": {
+            "type": "number",
+            "description": "Price per unit of the usage line item."
+          },
+          "grossQuantity": {
+            "type": "number",
+            "description": "Gross quantity of the usage line item."
+          },
+          "grossAmount": {
+            "type": "number",
+            "description": "Gross amount of the usage line item."
+          },
+          "discountQuantity": {
+            "type": "number",
+            "description": "Discount quantity of the usage line item."
+          },
+          "discountAmount": {
+            "type": "number",
+            "description": "Discount amount of the usage line item."
+          },
+          "netQuantity": {
+            "type": "number",
+            "description": "Net quantity of the usage line item."
+          },
+          "netAmount": {
+            "type": "number",
+            "description": "Net amount of the usage line item."
+          }
+        },
+        "required": [
+          "product",
+          "sku",
+          "unitType",
+          "pricePerUnit",
+          "grossQuantity",
+          "grossAmount",
+          "discountQuantity",
+          "discountAmount",
+          "netQuantity",
+          "netAmount"
+        ]
+      }
+    }
+  },
+  "required": ["timePeriod", "user", "usageItems"]
+}

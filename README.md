@@ -82,7 +82,7 @@ Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
 
-[PLANNING][SAFE] >> Analyze the project structure and create a refactoring plan
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>> Analyze the project structure and create a refactoring plan
 
 Agent: I'll analyze your project structure.
 [Using tool: list_files]
@@ -95,11 +95,11 @@ Here's the project structure:
 
 I recommend the following refactoring...
 
-[PLANNING][SAFE] >> /write
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>> /write
 
 Switched from PLANNING to WRITE mode
 
-[WRITE][SAFE] >> Now implement the refactoring plan
+[WRITE][SAFE][Copilot: gpt-5-mini] >>> Now implement the refactoring plan
 ```
 
 #### Write Mode (File Modifications)
@@ -107,7 +107,7 @@ Switched from PLANNING to WRITE mode
 ```bash
 $ xzatoma chat --mode write --safe
 
-[WRITE][SAFE] >> Refactor all snake_case function names to camelCase
+[WRITE][SAFE][Copilot: gpt-5-mini] >>> Refactor all snake_case function names to camelCase
 
 Agent: I'll refactor the function names for you.
 [Using tool: read_file]
@@ -157,6 +157,8 @@ Both modes support **Safety Mode** for additional protection:
 - **YOLO** - Execute without confirmations (faster, riskier)
 
 Switch between modes at any time during your chat session - conversation history is preserved!
+
+Note: The interactive prompt now shows provider and model when available (for example: [PLANNING][SAFE][Copilot: gpt-5-mini] >>>). Provider labels are shown in white and model names in green on terminals that support ANSI colors.
 
 For detailed usage guide, see [Using Chat Modes](docs/how-to/use_chat_modes.md).
 

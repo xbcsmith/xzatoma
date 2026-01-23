@@ -43,6 +43,14 @@ pub struct CopilotConfig {
     /// Model to use for Copilot
     #[serde(default = "default_copilot_model")]
     pub model: String,
+
+    /// Optional API base URL for Copilot endpoints (useful for tests and local mocks)
+    ///
+    /// When set, this base is used to build Copilot endpoints (e.g. `/models`,
+    /// `/chat/completions`, `/copilot_internal/v2/token`) which allows tests to
+    /// point the provider at a mock server.
+    #[serde(default)]
+    pub api_base: Option<String>,
 }
 
 fn default_copilot_model() -> String {
@@ -53,6 +61,7 @@ impl Default for CopilotConfig {
     fn default() -> Self {
         Self {
             model: default_copilot_model(),
+            api_base: None,
         }
     }
 }
@@ -74,7 +83,7 @@ fn default_ollama_host() -> String {
 }
 
 fn default_ollama_model() -> String {
-    "qwen2.5-coder".to_string()
+    "llama3.2:latest".to_string()
 }
 
 impl Default for OllamaConfig {
@@ -632,7 +641,7 @@ provider:
     model: gpt-4o
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder
+    model: llama3.2:latest
 
 agent:
   max_turns: 100

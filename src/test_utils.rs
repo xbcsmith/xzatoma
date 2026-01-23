@@ -123,7 +123,7 @@ provider:
     model: gpt-5-mini
   ollama:
     host: http://localhost:11434
-    model: qwen2.5-coder
+    model: llama3.2:latest
 
 agent:
   max_turns: 10
