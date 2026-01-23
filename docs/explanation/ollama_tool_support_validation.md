@@ -30,7 +30,7 @@ The `add_model_capabilities()` function unconditionally added `FunctionCalling` 
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
     // Most Ollama models support function calling
     model.add_capability(ModelCapability::FunctionCalling);  // WRONG!
-    
+
     // ... other capabilities
 }
 ```
@@ -61,7 +61,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
     // Based on Ollama documentation and testing
     match family.to_lowercase().as_str() {
         // Models that support tool calling
-        "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction" 
+        "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
         | "command-r" | "command-r-plus" => {
             model.add_capability(ModelCapability::FunctionCalling);
         }
@@ -70,7 +70,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
             // Including: llama3, llama2, gemma, qwen, codellama, etc.
         }
     }
-    
+
     // Add other capabilities based on model family
     match family.to_lowercase().as_str() {
         "mistral" | "mistral-nemo" | "neural-chat" => {
@@ -109,15 +109,15 @@ Added validation in `set_model()` to reject models without tool support:
 async fn set_model(&mut self, model_name: String) -> Result<()> {
     // Validate that the model exists by fetching the list
     let models = self.list_models().await?;
-    
+
     let model_info = models.iter().find(|m| m.name == model_name);
-    
+
     if model_info.is_none() {
         return Err(XzatomaError::Provider(
             format!("Model not found: {}", model_name)
         ).into());
     }
-    
+
     // Check if the model supports tool calling (required for XZatoma)
     let model = model_info.unwrap();
     if !model.supports_capability(ModelCapability::FunctionCalling) {
@@ -126,17 +126,17 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
             model_name
         )).into());
     }
-    
+
     // Update the model in the config
     let mut config = self.config.write().map_err(|_| {
         XzatomaError::Provider("Failed to acquire write lock on config".to_string())
     })?;
     config.model = model_name.clone();
     drop(config);
-    
+
     // Invalidate cache to ensure fresh model list next time
     self.invalidate_cache();
-    
+
     tracing::info!("Switched Ollama model to: {}", model_name);
     Ok(())
 }
@@ -144,8 +144,8 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
 
 **Error message provides clear guidance**:
 ```text
-Model 'llama3:latest' does not support tool calling. XZatoma requires models 
-with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or 
+Model 'llama3:latest' does not support tool calling. XZatoma requires models
+with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or
 mistral:latest instead.
 ```
 
@@ -300,8 +300,8 @@ This error occurred after the agent had already started, potentially after multi
 The error occurs immediately when attempting to switch:
 
 ```text
-Error: Model 'llama3:latest' does not support tool calling. XZatoma requires 
-models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, 
+Error: Model 'llama3:latest' does not support tool calling. XZatoma requires
+models with tool/function calling support. Try llama3.2:latest, llama3.3:latest,
 or mistral:latest instead.
 ```
 

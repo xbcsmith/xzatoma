@@ -547,13 +547,15 @@ Add to chat mode:
 
 #### Task 6.5: Update Chat Prompt Display
 
-Modify chat prompt to show context usage:
+Modify chat prompt to show context usage and provider/model information:
 
 - Add optional context indicator to prompt
+- Add provider/model display: include provider and model when available (format: `[Provider: model]`, e.g., `[Copilot: gpt-5-mini]`)
+- Display color rule: provider name shown in white, model name shown in green (so the model stands out visually)
 - Implement `format_token_count(used, total, format)` supporting multiple formats (Decision from Question 5)
-- Default format: `[Planning|Write] [Safe|YOLO] [1.2k/8k] >`
+- Default format: `[Planning|Write] [Safe|YOLO] [1.2k/8k] >>`
 - Alternative formats: `[1234/8000]`, `[15%]`, or `[1.2k/8k | 15%]` based on config
-- Apply color coding: green (<60% used), yellow (60-85%), red (>85%)
+- Apply color coding for context usage: green (<60% used), yellow (60-85%), red (>85%)
 - Make display configurable via `show_context_in_prompt` in chat config
 
 #### Task 6.6: Testing Requirements

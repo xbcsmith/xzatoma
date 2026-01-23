@@ -625,10 +625,10 @@ let agent = Agent::new(provider, tools, config)?;
 
 loop {
     let result = agent.execute(&prompt).await?;
-    
+
     let context = agent.get_context_info(8192);
     println!("Context usage: {:.1}%", context.percentage_used);
-    
+
     if context.percentage_used > 90.0 {
         eprintln!("Warning: Context nearly full!");
         break;

@@ -51,16 +51,16 @@ Implemented API-based model discovery that queries the Copilot `/models` endpoin
 ```rust
 async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
     let token = self.authenticate().await?;
-    
+
     let response = self
         .client
         .get(COPILOT_MODELS_URL)
         .header("Authorization", format!("Bearer {}", token))
         .send()
         .await?;
-    
+
     let models_response: CopilotModelsResponse = response.json().await?;
-    
+
     // Filter to enabled models and extract metadata
     let mut models = Vec::new();
     for model_data in models_response.data {
@@ -69,7 +69,7 @@ async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
             models.push(build_model_info(model_data));
         }
     }
-    
+
     Ok(models)
 }
 ```
@@ -148,13 +148,13 @@ Updated `set_model()` to validate against dynamically fetched models:
 async fn set_model(&mut self, model_name: String) -> Result<()> {
     // Fetch current available models from API
     let models = self.fetch_copilot_models().await?;
-    
+
     // Validate model exists
     let model_info = models
         .iter()
         .find(|m| m.name == model_name)
         .ok_or_else(|| {
-            let available: Vec<String> = 
+            let available: Vec<String> =
                 models.iter().map(|m| m.name.clone()).collect();
             XzatomaError::Provider(format!(
                 "Model '{}' not found. Available models: {}",
@@ -162,7 +162,7 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
                 available.join(", ")
             ))
         })?;
-    
+
     // Validate model supports tool calling (required for XZatoma)
     if !model_info.supports_capability(ModelCapability::FunctionCalling) {
         return Err(XzatomaError::Provider(format!(
@@ -170,7 +170,7 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
             model_name
         )));
     }
-    
+
     // Update config
     self.config.write()?.model = model_name;
     Ok(())
@@ -227,13 +227,13 @@ Location: Lines 567-644
 async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
     // Authenticate
     let token = self.authenticate().await?;
-    
+
     // Fetch from API
     let response = self.client.get(COPILOT_MODELS_URL)...
-    
+
     // Parse response
     let models_response: CopilotModelsResponse = response.json().await?;
-    
+
     // Build ModelInfo list with capabilities
     for model_data in models_response.data {
         if model_data.policy.state == "enabled" {
@@ -242,7 +242,7 @@ async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
             models.push(model_info);
         }
     }
-    
+
     Ok(models)
 }
 ```

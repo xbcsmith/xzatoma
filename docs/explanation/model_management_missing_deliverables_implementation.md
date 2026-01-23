@@ -141,7 +141,7 @@ Content:
 
 ### How-To Guides (Diataxis Category: How-To)
 
-Files: 
+Files:
 - `docs/how-to/manage_models.md`
 - `docs/how-to/switch_models.md`
 

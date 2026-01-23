@@ -117,7 +117,16 @@ pub mod chat {
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
         loop {
-            let prompt = mode_state.format_colored_prompt();
+            // Build a prompt that includes provider/model when available.
+            // We query the provider for the current model each loop so the prompt
+            // reflects model switches made during the session.
+            let current_model = agent.provider().get_current_model().ok();
+            let prompt = if let Some(ref model) = current_model {
+                mode_state
+                    .format_colored_prompt_with_provider(Some(provider_type), Some(model.as_str()))
+            } else {
+                mode_state.format_colored_prompt()
+            };
             match rl.readline(&prompt) {
                 Ok(line) => {
                     let trimmed = line.trim();

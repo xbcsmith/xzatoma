@@ -128,11 +128,11 @@ Edit `config/config.yaml`:
 ```yaml
 provider:
   provider_type: ollama  # or 'copilot'
-  
+
   ollama:
     host: http://localhost:11434
     model: qwen2.5-coder:14b  # Change default model
-  
+
   copilot:
     model: gpt-4o  # Copilot default model
 ```

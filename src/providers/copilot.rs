@@ -53,11 +53,19 @@ const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Type alias to reduce type complexity in struct fields (satisfies clippy)
+type ModelsCache = Arc<RwLock<Option<(Vec<ModelInfo>, u64)>>>;
+
 pub struct CopilotProvider {
     client: Client,
     config: Arc<RwLock<CopilotConfig>>,
     keyring_service: String,
     keyring_user: String,
+    /// Cached models and expiry time (epoch seconds). Uses RwLock for cheap reads.
+    models_cache: ModelsCache,
+    /// TTL (seconds) for the models cache
+    models_cache_ttl_secs: u64,
 }
 
 /// Request for GitHub device code
@@ -282,6 +290,8 @@ impl CopilotProvider {
             config: Arc::new(RwLock::new(config)),
             keyring_service: "xzatoma".to_string(),
             keyring_user: "github_copilot".to_string(),
+            models_cache: Arc::new(RwLock::new(None)),
+            models_cache_ttl_secs: 300, // default 5 minutes
         })
     }
 
@@ -463,9 +473,10 @@ impl CopilotProvider {
             token: String,
         }
 
+        let token_url = self.api_endpoint("copilot_internal/v2/token");
         let response: CopilotTokenResponse = self
             .client
-            .get(COPILOT_TOKEN_URL)
+            .get(&token_url)
             .header("Authorization", format!("token {}", github_token))
             .send()
             .await
@@ -578,6 +589,28 @@ impl CopilotProvider {
             .collect()
     }
 
+    /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.
+    fn api_endpoint(&self, path: &str) -> String {
+        if let Ok(cfg) = self.config.read() {
+            if let Some(base) = &cfg.api_base {
+                return format!(
+                    "{}/{}",
+                    base.trim_end_matches('/'),
+                    path.trim_start_matches('/')
+                );
+            }
+        }
+        match path {
+            "models" => COPILOT_MODELS_URL.to_string(),
+            "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
+            "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
+            other => format!(
+                "https://api.githubcopilot.com/{}",
+                other.trim_start_matches('/')
+            ),
+        }
+    }
+
     /// Convert Copilot response message back to XZatoma format
     fn convert_response_message(&self, copilot_msg: CopilotMessage) -> Message {
         if let Some(tool_calls) = copilot_msg.tool_calls {
@@ -598,13 +631,35 @@ impl CopilotProvider {
         }
     }
 
-    /// Fetch the list of available Copilot models from the API
+    /// Fetch the list of available Copilot models from the API.
+    ///
+    /// This function uses an in-memory TTL cache to avoid frequent API calls.
+    /// If `CopilotConfig::api_base` is set, it will be used to construct the
+    /// models endpoint (useful for tests/local mocking).
     async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
+        // Check models cache first
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        if let Ok(cache_guard) = self.models_cache.read() {
+            if let Some((cached_models, expires_at)) = &*cache_guard {
+                if now < *expires_at {
+                    tracing::debug!("Using cached Copilot models");
+                    return Ok(cached_models.clone());
+                } else {
+                    tracing::debug!("Copilot models cache expired");
+                }
+            }
+        }
+
         let token = self.authenticate().await?;
+        let models_url = self.api_endpoint("models");
 
         let response = self
             .client
-            .get(COPILOT_MODELS_URL)
+            .get(&models_url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Editor-Version", "vscode/1.85.0")
             .send()
@@ -648,7 +703,7 @@ impl CopilotProvider {
                             // Retry models request with refreshed token
                             let retry_resp = self
                                 .client
-                                .get(COPILOT_MODELS_URL)
+                                .get(&models_url)
                                 .header("Authorization", format!("Bearer {}", new_token))
                                 .header("Editor-Version", "vscode/1.85.0")
                                 .send()
@@ -740,6 +795,18 @@ impl CopilotProvider {
                                 models.push(model_info);
                             }
 
+                            // Cache the successful result
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            let expires_at = now + self.models_cache_ttl_secs;
+                            if let Ok(mut cache_guard) = self.models_cache.write() {
+                                *cache_guard = Some((models.clone(), expires_at));
+                            } else {
+                                tracing::warn!("Failed to acquire write lock on models cache");
+                            }
+
                             return Ok(models);
                         }
                         Err(e) => {
@@ -807,6 +874,18 @@ impl CopilotProvider {
             models.push(model_info);
         }
 
+        // Cache the result
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expires_at = now + self.models_cache_ttl_secs;
+        if let Ok(mut cache_guard) = self.models_cache.write() {
+            *cache_guard = Some((models.clone(), expires_at));
+        } else {
+            tracing::warn!("Failed to acquire write lock on models cache");
+        }
+
         Ok(models)
     }
 }
@@ -841,9 +920,10 @@ impl Provider for CopilotProvider {
             copilot_request.tools.len()
         );
 
+        let completions_url = self.api_endpoint("chat/completions");
         let response = self
             .client
-            .post(COPILOT_COMPLETIONS_URL)
+            .post(&completions_url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Editor-Version", "vscode/1.85.0")
             .json(&copilot_request)
@@ -882,7 +962,7 @@ impl Provider for CopilotProvider {
                             // Retry the original completion request with refreshed token
                             let retry_response = self
                                 .client
-                                .post(COPILOT_COMPLETIONS_URL)
+                                .post(&completions_url)
                                 .header("Authorization", format!("Bearer {}", new_token))
                                 .header("Editor-Version", "vscode/1.85.0")
                                 .json(&copilot_request)
@@ -1107,9 +1187,7 @@ mod tests {
 
     #[test]
     fn test_copilot_provider_creation() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config);
         assert!(provider.is_ok());
     }
@@ -1161,18 +1239,14 @@ mod tests {
 
     #[test]
     fn test_copilot_provider_model() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     }
 
     #[test]
     fn test_convert_messages_basic() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
 
         let messages = vec![
@@ -1190,9 +1264,7 @@ mod tests {
 
     #[test]
     fn test_convert_messages_with_tool_calls() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
 
         let tool_call = ToolCall {
@@ -1212,9 +1284,7 @@ mod tests {
 
     #[test]
     fn test_convert_tools() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
 
         let tools = vec![serde_json::json!({
@@ -1236,9 +1306,7 @@ mod tests {
 
     #[test]
     fn test_convert_response_message_text() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
 
         let copilot_msg = CopilotMessage {
@@ -1256,9 +1324,7 @@ mod tests {
 
     #[test]
     fn test_convert_response_message_with_tools() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
 
         let copilot_msg = CopilotMessage {
@@ -1283,9 +1349,7 @@ mod tests {
 
     #[test]
     fn test_keyring_service_names() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.keyring_service, "xzatoma");
         assert_eq!(provider.keyring_user, "github_copilot");
@@ -1352,18 +1416,14 @@ mod tests {
 
     #[test]
     fn test_get_current_model() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     }
 
     #[test]
     fn test_provider_capabilities() {
-        let config = CopilotConfig {
-            model: "gpt-5-mini".to_string(),
-        };
+        let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
         let caps = provider.get_provider_capabilities();
 

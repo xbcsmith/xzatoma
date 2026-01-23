@@ -327,10 +327,10 @@ You can configure multiple providers and switch between them:
 ```yaml
 provider:
   provider_type: ollama  # Active provider
-  
+
   copilot:
     model: gpt-4o
-  
+
   ollama:
     host: http://localhost:11434
     model: qwen2.5-coder:7b

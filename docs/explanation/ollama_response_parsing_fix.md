@@ -125,7 +125,7 @@ Since `granite4:latest` supports tool calling, added it to the capability whitel
 ```rust
 match family.to_lowercase().as_str() {
     // Models that support tool calling
-    "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction" 
+    "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
     | "command-r" | "command-r-plus" | "granite3" | "granite4" => {
         model.add_capability(ModelCapability::FunctionCalling);
     }

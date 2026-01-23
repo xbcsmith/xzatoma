@@ -219,11 +219,11 @@ When implementing new AI providers, follow this pattern for response message str
 #[derive(Debug, Serialize, Deserialize)]
 struct ProviderMessage {
     role: String,
-    
+
     // Make content optional with default for tool call responses
     #[serde(default)]
     content: String,
-    
+
     // Optional fields for tool calling
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<ToolCall>>,

@@ -43,6 +43,14 @@ pub struct CopilotConfig {
     /// Model to use for Copilot
     #[serde(default = "default_copilot_model")]
     pub model: String,
+
+    /// Optional API base URL for Copilot endpoints (useful for tests and local mocks)
+    ///
+    /// When set, this base is used to build Copilot endpoints (e.g. `/models`,
+    /// `/chat/completions`, `/copilot_internal/v2/token`) which allows tests to
+    /// point the provider at a mock server.
+    #[serde(default)]
+    pub api_base: Option<String>,
 }
 
 fn default_copilot_model() -> String {
@@ -53,6 +61,7 @@ impl Default for CopilotConfig {
     fn default() -> Self {
         Self {
             model: default_copilot_model(),
+            api_base: None,
         }
     }
 }
