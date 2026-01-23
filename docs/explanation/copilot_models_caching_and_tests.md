@@ -1,4 +1,5 @@
 xzatoma/docs/explanation/copilot_models_caching_and_tests.md#L1-999
+
 # Copilot models caching and tests
 
 ## Overview
@@ -8,6 +9,7 @@ robust and efficient when discovering available models, and how we validate thos
 with mocked integration tests.
 
 Goals:
+
 - Use runtime model discovery from the Copilot `/models` endpoint rather than hardcoding.
 - Be resilient to transient auth failures (401 Unauthorized) by attempting a non-interactive
   refresh with a cached GitHub token and retrying the request.
@@ -34,15 +36,18 @@ Goals:
 Design and rationale:
 
 - Runtime discovery:
+
   - The provider fetches models from `/models` and parses capabilities, context window,
     and policy state. It no longer relies on hardcoded model lists.
 
 - Endpoint override:
+
   - For testability we added `CopilotConfig.api_base: Option<String>`. When set,
     the provider uses this base to compose Copilot endpoints (`/models`, `/chat/completions`,
     `/copilot_internal/v2/token`) so tests can point the provider at a mock server.
 
   Example (config struct):
+
 ```xzatoma/src/config.rs#L36-52
 pub struct CopilotConfig {
     /// Model to use for Copilot
@@ -56,11 +61,13 @@ pub struct CopilotConfig {
 ```
 
 - Caching:
+
   - An in-memory models cache reduces repeated calls to the `/models` endpoint.
   - The default TTL is 300 seconds (5 minutes). The cache stores `(models, expires_at_epoch_seconds)`.
   - Cache is protected by `Arc<RwLock<...>>` to allow cheap concurrent reads.
 
   Key additions:
+
 ```xzatoma/src/providers/copilot.rs#L54-72
 type ModelsCache = Arc<RwLock<Option<(Vec<ModelInfo>, u64)>>>;
 pub struct CopilotProvider {
@@ -76,6 +83,7 @@ pub struct CopilotProvider {
 - Endpoint builder:
   - `api_endpoint(&self, path: &str) -> String` builds endpoint URLs using `api_base` when set,
     otherwise falls back to the documented production endpoints.
+
 ```xzatoma/src/providers/copilot.rs#L587-599
 fn api_endpoint(&self, path: &str) -> String {
     if let Ok(cfg) = self.config.read() {
@@ -103,12 +111,14 @@ fn api_endpoint(&self, path: &str) -> String {
 ## Testing
 
 Overview:
+
 - Unit tests validate parsing and small helpers (already present).
 - Integration tests (mocked) validate end-to-end behavior for:
   - 401 → non-interactive refresh → retry.
   - Cache TTL behavior (only one call to `/models` when cached).
 
 Key integration tests:
+
 - `tests/copilot_integration.rs` uses `wiremock::MockServer` to simulate:
   - `/models` returning 401 for the first request (with initial token).
   - `/copilot_internal/v2/token` returning `{"token":"new_token"}` for the refresh call.
@@ -117,6 +127,7 @@ Key integration tests:
   response (expects exactly 1 request) and calls `list_models()` twice — verifying cache usage.
 
 Highlights from tests (mock + keyring seed):
+
 ```xzatoma/tests/copilot_integration.rs#L13-40
 let cfg = CopilotConfig {
     api_base: Some(server.uri()),
@@ -135,13 +146,19 @@ entry.set_password(&cached.to_string()).unwrap();
 ```
 
 How to run tests locally:
-- Run only the Copilot integration tests:
-```/dev/null/commands.sh#L1-3
-# Run the mocked integration tests
-cargo test --test copilot_integration -- --nocapture
+
+- Note: the Copilot integration tests that write to the system keyring are ignored by default to avoid CI failures (see notes below). To run them locally when you have a system keyring available:
+
+```/dev/null/commands.sh#L1-5
+# Run the Copilot keyring integration tests (ignored by default)
+cargo test --test copilot_integration -- --ignored
+
+# Or run all ignored tests
+cargo test -- --ignored
 ```
 
 - Full test & quality checks:
+
 ```/dev/null/commands.sh#L1-4
 cargo fmt --all
 cargo check --all-targets --all-features
@@ -150,12 +167,21 @@ cargo test --all-features
 ```
 
 Notes on keyring usage:
+
 - Integration tests write a small JSON blob to the system keyring (service: `xzatoma`, user: `github_copilot`) to simulate a cached GitHub/Copilot token pair.
-- On CI or environments without a system keyring, you may need to run tests in an environment where the keyring is available or adjust the test harness to use a test-specific keyring shim.
+- These keyring-dependent integration tests are marked `#[ignore = "requires system keyring"]` and are skipped by default so they do not fail in CI/CD environments that don't expose an interactive system keyring.
+- To run them locally when a keyring is available:
+
+```/dev/null/commands.sh#L1-3
+cargo test --test copilot_integration -- --ignored
+```
+
+- If you need these tests to run in CI, consider using a keyring shim or mocking the keyring access as part of the CI job configuration.
 
 ## Usage Examples
 
 Programmatic usage (example only; not executed by tests):
+
 ```/dev/null/examples/copilot_usage.rs#L1-10
 use xzatoma::config::CopilotConfig;
 use xzatoma::providers::{CopilotProvider, Provider};
@@ -201,6 +227,8 @@ let models = <CopilotProvider as Provider>::list_models(&provider).await?;
   - Tests: `tests/copilot_integration.rs`
 
 ---
+
 If you want, I can:
+
 - Open a review-ready patch that includes the cache TTL as a configurable option in `CopilotConfig` (instead of fixed 300s) and add a short how-to in the docs to adjust it.
 - Add telemetry counters (e.g., 401 counts, parsing failures) so we can monitor regressions in production.

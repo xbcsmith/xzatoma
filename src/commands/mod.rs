@@ -1013,22 +1013,22 @@ pub mod chat {
                 (
                     ChatMode::Planning,
                     SafetyMode::AlwaysConfirm,
-                    "[PLANNING][SAFE] >> ",
+                    "[PLANNING][SAFE] >>> ",
                 ),
                 (
                     ChatMode::Planning,
                     SafetyMode::NeverConfirm,
-                    "[PLANNING][YOLO] >> ",
+                    "[PLANNING][YOLO] >>> ",
                 ),
                 (
                     ChatMode::Write,
                     SafetyMode::AlwaysConfirm,
-                    "[WRITE][SAFE] >> ",
+                    "[WRITE][SAFE] >>> ",
                 ),
                 (
                     ChatMode::Write,
                     SafetyMode::NeverConfirm,
-                    "[WRITE][YOLO] >> ",
+                    "[WRITE][YOLO] >>> ",
                 ),
             ];
 

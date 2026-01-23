@@ -82,7 +82,7 @@ Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
 
-[PLANNING][SAFE] >> Analyze the project structure and create a refactoring plan
+[PLANNING][SAFE] >>> Analyze the project structure and create a refactoring plan
 
 Agent: I'll analyze your project structure.
 [Using tool: list_files]
@@ -95,11 +95,11 @@ Here's the project structure:
 
 I recommend the following refactoring...
 
-[PLANNING][SAFE] >> /write
+[PLANNING][SAFE] >>> /write
 
 Switched from PLANNING to WRITE mode
 
-[WRITE][SAFE] >> Now implement the refactoring plan
+[WRITE][SAFE] >>> Now implement the refactoring plan
 ```
 
 #### Write Mode (File Modifications)
@@ -107,7 +107,7 @@ Switched from PLANNING to WRITE mode
 ```bash
 $ xzatoma chat --mode write --safe
 
-[WRITE][SAFE] >> Refactor all snake_case function names to camelCase
+[WRITE][SAFE] >>> Refactor all snake_case function names to camelCase
 
 Agent: I'll refactor the function names for you.
 [Using tool: read_file]

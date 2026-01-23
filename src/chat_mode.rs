@@ -275,10 +275,10 @@ impl ChatModeState {
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
-    /// assert_eq!(state.format_prompt(), "[WRITE][YOLO] >> ");
+    /// assert_eq!(state.format_prompt(), "[WRITE][YOLO] >>> ");
     /// ```
     pub fn format_prompt(&self) -> String {
-        format!("[{}][{}] >> ", self.chat_mode, self.safety_mode)
+        format!("[{}][{}] >>> ", self.chat_mode, self.safety_mode)
     }
 
     /// Format a prompt string with colored mode indicators
@@ -381,7 +381,7 @@ impl ChatModeState {
             // Provider shown in white, model shown in green for quick visual parsing
             let provider_tag = format!("[{}: {}]", provider_cap.white(), m.green());
             format!(
-                "{}{}{} >> ",
+                "{}{}{} >>> ",
                 self.chat_mode.colored_tag(),
                 self.safety_mode.colored_tag(),
                 provider_tag

@@ -21,6 +21,9 @@ This directory contains detailed implementation documentation for XZatoma featur
 - **[phase5_error_handling_and_user_feedback.md](phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
 - **[model_management_missing_deliverables_implementation.md](model_management_missing_deliverables_implementation.md)** - Documentation completion for model management features (API reference, how-to guides for managing and switching models)
 - **[copilot_models_caching_and_tests.md](copilot_models_caching_and_tests.md)** - Copilot models caching and mocked integration tests
+  - Note: Integration tests that write to the OS keyring (service: `xzatoma`, user: `github_copilot`) are marked `#[ignore = "requires system keyring"]` to avoid failures in CI/CD environments that don't expose an interactive system keyring. Run these locally when you have a keyring available with:
+    - `cargo test -- --ignored` (runs all ignored tests)
+    - or `cargo test --test copilot_integration -- --ignored` (runs the Copilot keyring tests only)
 - **[chat_mode_provider_display.md](chat_mode_provider_display.md)** - Chat mode provider & model display (provider: white, model: green)
 - **[ollama_default_model_fix.md](ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3:latest`, removed all Qwen model references
 - **[ollama_tool_support_validation.md](ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities

@@ -45,6 +45,7 @@ const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = CopilotConfig {
 ///     model: "gpt-5-mini".to_string(),
+///     ..Default::default()
 /// };
 /// let provider = CopilotProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -272,6 +273,7 @@ impl CopilotProvider {
     ///
     /// let config = CopilotConfig {
     ///     model: "gpt-5-mini".to_string(),
+    ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config);
     /// assert!(provider.is_ok());
@@ -305,6 +307,7 @@ impl CopilotProvider {
     ///
     /// let config = CopilotConfig {
     ///     model: "gpt-5-mini".to_string(),
+    ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
     /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");

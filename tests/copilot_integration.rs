@@ -9,6 +9,7 @@ use xzatoma::providers::CopilotProvider;
 
 /// Basic 401 -> non-interactive refresh -> retry flow for Copilot models
 #[tokio::test]
+#[ignore = "requires system keyring"]
 async fn test_copilot_models_401_refresh_retry() {
     let server = MockServer::start().await;
 
@@ -88,6 +89,7 @@ async fn test_copilot_models_401_refresh_retry() {
 
 /// Verify models list is cached and second call does not hit the server
 #[tokio::test]
+#[ignore = "requires system keyring"]
 async fn test_copilot_models_caching_ttl() {
     let server = MockServer::start().await;
 

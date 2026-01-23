@@ -8,13 +8,15 @@ that surfaces provider and model information in the interactive prompt and how i
 was implemented and tested.
 
 Example (plain):
+
 ```/dev/null/example.txt#L1-1
-[PLANNING][SAFE][Copilot: gpt-5-mini] >> 
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>
 ```
 
 Example (colored):
+
 ```/dev/null/example.txt#L1-1
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>   (Copilot is cyan, model is bold)
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>   (Copilot is cyan, model is bold)
 ```
 
 ## Motivation
@@ -60,6 +62,7 @@ Example (colored):
     base prompt (without provider/model) is used — preserving previous behavior.
 
 Relevant code references:
+
 - Prompt helpers are defined in `src/chat_mode.rs` (see `ChatModeState` methods).
 - The chat loop uses the provider-aware prompt when available (`src/commands/mod.rs`).
 
@@ -82,6 +85,7 @@ Relevant code references:
 ## Usage examples
 
 Programmatic usage:
+
 ```/dev/null/example.rs#L1-6
 use xzatoma::chat_mode::{ChatModeState, ChatMode, SafetyMode};
 
@@ -89,10 +93,11 @@ let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
 
 // When provider & model available:
 let prompt = state.format_prompt_with_provider(Some("copilot"), Some("gpt-5-mini"));
-// prompt == "[PLANNING][SAFE][Copilot: gpt-5-mini] >> "
+// prompt == "[PLANNING][SAFE][Copilot: gpt-5-mini] >>> "
 ```
 
 Interactive behavior:
+
 - On startup the chat welcome banner is unchanged.
 - The prompt will show `[Provider: model]` (when available) and will be updated if the
   active model is changed during the session.
@@ -111,6 +116,7 @@ Interactive behavior:
 - Code is covered by unit tests and follows project style requirements and Clippy rules.
 
 If you'd like, I can:
+
 - Add a small integration test that simulates a model switch and asserts the prompt
   contains the new model (would require a bit of harnessing around the readline mock).
 - Make the provider label style configurable through `ChatConfig` (optional).
