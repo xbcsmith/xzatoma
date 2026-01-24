@@ -620,7 +620,7 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 **Files to Create/Update:**
 
 - `docs/how-to/use_chat_modes.md` - User guide for chat modes
-- `docs/explanation/chat_modes_architecture.md` - Architecture explanation
+- `../../explanation/chat_modes_architecture.md` - Architecture explanation
 - Update `README.md` with chat mode examples
 
 **Documentation Structure:**
@@ -767,7 +767,7 @@ None
 
 ## References
 
-- Architecture: `docs/explanation/architecture_validation.md`
+- Architecture: `architecture_validation.md`
 - Plan Format: `PLAN.md`
 - Agent Rules: `AGENTS.md`
-- Terminal Security: `docs/explanation/architecture_fixes_applied.md`
+- Terminal Security: `architecture_fixes_applied.md`

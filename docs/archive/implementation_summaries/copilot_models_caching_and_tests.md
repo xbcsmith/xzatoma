@@ -218,10 +218,10 @@ let models = <CopilotProvider as Provider>::list_models(&provider).await?;
 ## References
 
 - Model Management Plan (guardrails & checklist):
-  - `docs/explanation/model_management_implementation_plan.md`
+  - `model_management_implementation_plan.md`
 - Related docs:
-  - Dynamic model fetching: `docs/explanation/copilot_dynamic_model_fetching.md`
-  - Response parsing fixes (missing content/defaults): `docs/explanation/copilot_response_parsing_fix.md`
+  - Dynamic model fetching: `copilot_dynamic_model_fetching.md`
+  - Response parsing fixes (missing content/defaults): `copilot_response_parsing_fix.md`
 - Implementation:
   - Provider: `src/providers/copilot.rs`
   - Tests: `tests/copilot_integration.rs`

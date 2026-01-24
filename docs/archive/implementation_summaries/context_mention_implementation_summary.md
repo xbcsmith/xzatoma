@@ -162,6 +162,7 @@ pub use mention_parser::{
 ```
 
 Allows library users to:
+
 - Parse mentions programmatically
 - Handle mention-related errors
 - Build on top of mention system
@@ -264,7 +265,7 @@ Summary:
 **Status**: In Progress
 
 - User documentation (`docs/how-to/use_context_mentions.md`)
-- Architecture documentation (`docs/explanation/context_mention_architecture.md`)
+- Architecture documentation (`../../explanation/context_mention_architecture.md`)
 - Implementation summary (this document)
 - Help text integration
 - README updates
@@ -373,11 +374,13 @@ let (augmented, errors, successes) = augment_prompt_with_mentions(
 ### Augmented Prompt Example
 
 Original input:
+
 ```
 Review @config.yaml and find all error handlers with @grep:"Error"
 ```
 
 Augmented prompt:
+
 ```
 Review this file and find all error handlers:
 
@@ -594,7 +597,7 @@ fn test_line_range_extraction() {
 ### New Files
 
 - `docs/how-to/use_context_mentions.md` - User guide (606 lines)
-- `docs/explanation/context_mention_architecture.md` - Architecture (610 lines)
+- `../../explanation/context_mention_architecture.md` - Architecture (610 lines)
 - `docs/explanation/context_mention_implementation_summary.md` - This file
 
 ### Modified Files
@@ -671,7 +674,7 @@ Typical performance on medium project (~10K files, ~1M lines):
 - [x] User feedback with helpful suggestions
 - [x] SSRF protection for URL fetching
 - [x] Caching for performance
-- [x] >80% test coverage
+- [x] > 80% test coverage
 - [x] All quality checks pass
 - [x] Documentation complete
 - [x] No emojis in documentation

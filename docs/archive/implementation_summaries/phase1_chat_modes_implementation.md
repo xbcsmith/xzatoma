@@ -27,6 +27,7 @@ Total: ~540 lines of new/modified code
 Implemented three core types:
 
 #### ChatMode Enum
+
 ```rust
 pub enum ChatMode {
     Planning,  // Read-only mode for creating plans
@@ -35,12 +36,14 @@ pub enum ChatMode {
 ```
 
 Features:
+
 - Display trait for `[PLANNING]` and `[WRITE]` formatting
 - `from_str()` parser supporting case-insensitive input ("planning", "PLANNING", "Planning")
 - `description()` method for help text
 - Copy + Clone semantics for lightweight usage
 
 #### SafetyMode Enum
+
 ```rust
 pub enum SafetyMode {
     AlwaysConfirm,  // [SAFE] - Confirm dangerous operations
@@ -49,6 +52,7 @@ pub enum SafetyMode {
 ```
 
 Features:
+
 - Display trait for `[SAFE]` and `[YOLO]` formatting
 - `from_str()` parser supporting multiple aliases:
   - AlwaysConfirm: "confirm", "always", "safe", "on"
@@ -56,6 +60,7 @@ Features:
 - Case-insensitive parsing
 
 #### ChatModeState Struct
+
 ```rust
 pub struct ChatModeState {
     pub chat_mode: ChatMode,
@@ -64,6 +69,7 @@ pub struct ChatModeState {
 ```
 
 Features:
+
 - `new(ChatMode, SafetyMode)` constructor
 - `switch_mode(ChatMode)` and `switch_safety(SafetyMode)` methods
 - `format_prompt()` returns prompt like `[PLANNING][SAFE] >> `
@@ -71,6 +77,7 @@ Features:
 - Clone support for persistence across mode switches
 
 **Test Coverage:**
+
 - 16 unit tests covering all enum variants, parsing, display formatting
 - Case-insensitivity validation
 - Invalid input rejection
@@ -93,11 +100,13 @@ Chat {
 ```
 
 Features:
+
 - `--mode planning|write` flag (defaults to "planning")
 - `-s` / `--safe` flag for safety mode (defaults to false = NeverConfirm)
 - Full backward compatibility with existing `xzatoma chat` command
 
 **New CLI Tests:**
+
 - `test_cli_parse_chat_with_mode_planning` - Planning mode parsing
 - `test_cli_parse_chat_with_mode_write` - Write mode parsing
 - `test_cli_parse_chat_with_safe_flag` - Safety flag parsing
@@ -122,6 +131,7 @@ pub struct ChatConfig {
 ```
 
 Implementation details:
+
 - Default functions: `default_chat_mode()`, `default_safety_mode()`, `default_allow_mode_switching()`
 - Serde YAML serialization with sensible defaults
 - Integrated into `AgentConfig::default()`
@@ -129,6 +139,7 @@ Implementation details:
 **Configuration File: `config/config.yaml`**
 
 Added section:
+
 ```yaml
 agent:
   chat:
@@ -138,6 +149,7 @@ agent:
 ```
 
 **Tests:**
+
 - `test_chat_config_defaults` - Verify default values
 - `test_chat_config_from_yaml` - Parse custom YAML configuration
 - `test_agent_config_includes_chat` - Verify ChatConfig integration
@@ -160,6 +172,7 @@ pub async fn run_chat(
 Currently parameters are prefixed with `_` (unused) - they will be consumed in Phase 2 for tool filtering.
 
 Updated test:
+
 - `test_run_chat_unknown_provider` now passes all 4 parameters
 
 **File: `src/main.rs`**
@@ -190,6 +203,7 @@ Proper logging for debugging mode switches.
 ### Test Categories
 
 **Chat Mode Tests (16 tests):**
+
 - ChatMode::Planning and ChatMode::Write display and parsing
 - SafetyMode::AlwaysConfirm and SafetyMode::NeverConfirm display and parsing
 - ChatModeState construction, switching, and prompt formatting
@@ -198,12 +212,14 @@ Proper logging for debugging mode switches.
 - Status string generation
 
 **CLI Tests (6 new + 15 existing):**
+
 - Mode flag parsing (planning, write, defaults)
 - Safety flag parsing (short and long forms)
 - Provider override compatibility
 - Combined flag testing
 
 **Configuration Tests (3 new + existing):**
+
 - ChatConfig defaults
 - YAML deserialization with custom values
 - Integration with AgentConfig
@@ -276,11 +292,13 @@ Config (struct)
 ✅ **Full backward compatibility maintained:**
 
 1. **Existing commands work unchanged:**
+
    - `xzatoma chat` → defaults to planning mode, no safety confirmation
    - `xzatoma run --plan file.yaml` → unaffected
    - `xzatoma auth` → unaffected
 
 2. **Configuration defaults are sensible:**
+
    - If `config.yaml` missing `chat` section, defaults apply
    - Existing configs continue to work without modification
 
@@ -292,10 +310,12 @@ Config (struct)
 ## Known Limitations and Notes
 
 1. **Mode and safety parameters not yet used:**
+
    - `run_chat()` receives but ignores `mode` and `safe` parameters
    - Implementation happens in Phase 2 (tool filtering)
 
 2. **No mode persistence yet:**
+
    - Conversation history structure not yet updated
    - Mode-aware system prompts added in Phase 4
 
@@ -306,9 +326,11 @@ Config (struct)
 ## Files Modified/Created
 
 ### New Files
+
 - ✅ `src/commands/chat_mode.rs` - 415 lines
 
 ### Modified Files
+
 - ✅ `src/cli.rs` - +45 lines (6 new tests, mode/safe fields)
 - ✅ `src/commands/mod.rs` - +10 lines (function signature update)
 - ✅ `src/main.rs` - +10 lines (parameter routing)
@@ -316,6 +338,7 @@ Config (struct)
 - ✅ `config/config.yaml` - +10 lines (chat section)
 
 ### Total Impact
+
 - **530 lines added/modified**
 - **18 new unit tests**
 - **0 breaking changes**
@@ -346,8 +369,8 @@ With Phase 1 complete, Phase 2 will:
 
 ## References
 
-- Architecture: `docs/explanation/architecture_validation.md`
-- Plan: `docs/explanation/chat_modes_implementation_plan.md`
+- Architecture: `architecture_validation.md`
+- Plan: `chat_modes_implementation_plan.md`
 - Agent Rules: `AGENTS.md`
 - Source: `src/commands/chat_mode.rs`, `src/cli.rs`, `src/config.rs`
 

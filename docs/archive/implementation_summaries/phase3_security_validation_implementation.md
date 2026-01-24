@@ -184,7 +184,7 @@ assert!(validator.validate("vim file.txt").is_err());
 ## References
 
 - Architecture: `docs/explanation/architecture.md`
-- Implementation Plan: `docs/explanation/implementation_plan_refactored.md`
+- Implementation Plan: `docs/explanation/implementation_plan.md`
 - API Reference: `docs/reference/api.md`
 - Development Guidelines: `AGENTS.md`
 

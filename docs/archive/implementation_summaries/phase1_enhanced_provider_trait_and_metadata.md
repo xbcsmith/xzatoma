@@ -63,6 +63,7 @@ pub struct ModelInfo {
 ```
 
 Methods:
+
 - `new()` - Create a new model
 - `add_capability()` - Register supported capabilities
 - `supports_capability()` - Query capability support
@@ -96,6 +97,7 @@ pub struct CompletionResponse {
 ```
 
 Constructors:
+
 - `new(message)` - Create without usage data
 - `with_usage(message, usage)` - Create with token usage
 
@@ -127,15 +129,18 @@ Default implementations return appropriate error messages or empty capabilities,
 Test coverage includes:
 
 ### TokenUsage Tests (3 tests)
+
 - Creation with values
 - Zero values edge case
 - Serialization roundtrip
 
 ### ModelCapability Tests (2 tests)
+
 - Display formatting for all variants
 - JSON serialization/deserialization
 
 ### ModelInfo Tests (5 tests)
+
 - Creation and initialization
 - Capability management (add, duplicate detection)
 - Capability queries
@@ -143,23 +148,28 @@ Test coverage includes:
 - Serialization with all fields
 
 ### ProviderCapabilities Tests (2 tests)
+
 - Default initialization (all disabled)
 - Manual creation with various combinations
 
 ### CompletionResponse Tests (2 tests)
+
 - Creation without usage
 - Creation with usage data
 
 ### Provider Trait Tests (4 tests)
+
 - Default `list_models()` returns error
 - Default `get_model_info()` returns error
 - Default `get_current_model()` returns error
 - Default `set_model()` returns error
 
 ### Message/Tool Tests (12 existing tests)
+
 All existing message creation and serialization tests continue to pass
 
 **Test Execution Results:**
+
 - Total unit tests: 424 (up from 412 baseline)
 - New tests: 12 for Phase 1 functionality
 - Doc tests: 55 (all passing)
@@ -264,8 +274,8 @@ This implementation maintains clean architecture boundaries:
 
 ## References
 
-- Architecture: `docs/explanation/architecture.md`
-- Implementation Plan: `docs/explanation/model_management_implementation_plan.md`
+- Architecture: `../../reference/architecture.md`
+- Implementation Plan: `model_management_implementation_plan.md`
 - Next Phase: Phase 2 (Copilot Provider Implementation)
 
 ## Future Considerations

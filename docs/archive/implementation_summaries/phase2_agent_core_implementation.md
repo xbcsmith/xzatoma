@@ -143,6 +143,7 @@ pub struct ToolRegistry {
 ```
 
 This enables:
+
 - Dynamic tool registration
 - Runtime tool execution
 - Shared tool instances across agent executions
@@ -152,12 +153,14 @@ This enables:
 Updated the `Provider` trait for simpler message handling:
 
 **Old Signature:**
+
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[Tool])
     -> Result<CompletionResponse>;
 ```
 
 **New Signature:**
+
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[serde_json::Value])
     -> Result<Message>;
@@ -244,11 +247,13 @@ This enables testing the agent loop without external API dependencies.
 ### Why Stop on First Content Response?
 
 Real AI provider behavior:
+
 - Tool calls indicate "I need to execute these tools before responding"
 - Content without tool calls indicates "Here's my final answer"
 - Both content and tool calls is provider-specific (some support, some don't)
 
 Our agent:
+
 - Stops on content-only response (final answer received)
 - Continues on tool calls (execute tools, then get next response)
 - Handles empty tool call array as completion signal
@@ -256,6 +261,7 @@ Our agent:
 ### Why Clone Messages in recalculate_tokens?
 
 Rust borrow checker issue:
+
 - `recalculate_tokens` needs `&mut self` to update `token_count`
 - Can't iterate `&self.messages` while holding `&mut self`
 - Solution: Clone messages vector for iteration
@@ -292,6 +298,7 @@ agent:
 ### 1. Token Estimation Accuracy
 
 The chars/4 heuristic is approximate:
+
 - Works well for English text
 - Less accurate for code, special characters, non-English
 - Can vary by up to 20% from actual tokenization
@@ -301,6 +308,7 @@ The chars/4 heuristic is approximate:
 ### 2. Pruning Granularity
 
 Pruning operates on conversation turns:
+
 - Can't prune individual tool calls within a turn
 - May keep more tokens than ideal to preserve turn structure
 
@@ -309,6 +317,7 @@ Pruning operates on conversation turns:
 ### 3. No Streaming Support
 
 Current implementation uses synchronous request/response:
+
 - Provider returns complete message
 - No support for streaming token-by-token output
 
@@ -317,6 +326,7 @@ Current implementation uses synchronous request/response:
 ### 4. Tool Execution is Serial
 
 Tools execute one at a time:
+
 - Can't parallelize independent tool calls
 - May be slower for multiple file operations
 
@@ -432,6 +442,7 @@ registry.register("my_tool", Arc::new(MyTool));
 ### Phase 3 Preparation
 
 Phase 2 sets up for security validation:
+
 - Tool execution abstraction (ToolExecutor trait)
 - Agent config includes security settings
 - Tool results include metadata for audit logging
@@ -439,6 +450,7 @@ Phase 2 sets up for security validation:
 ### Phase 4 Preparation
 
 Phase 2 enables provider implementation:
+
 - Provider trait finalized
 - Message format matches OpenAI/Ollama APIs
 - Tool calling structure compatible with function calling APIs
@@ -463,9 +475,9 @@ Phase 2 enables provider implementation:
 
 ## References
 
-- Implementation Plan: `docs/explanation/implementation_plan_refactored.md`
+- Implementation Plan: `../../explanation/implementation_plan.md`
 - Architecture: `AGENTS.md` - Module Structure section
-- Phase 1 Foundation: `docs/explanation/phase1_foundation_implementation.md`
+- Phase 1 Foundation: `phase1_foundation_implementation.md`
 - API Reference: Run `cargo doc --open` for detailed API documentation
 
 ## Conclusion

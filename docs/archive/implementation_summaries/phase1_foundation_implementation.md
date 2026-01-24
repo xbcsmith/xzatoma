@@ -469,7 +469,7 @@ Phase 2 will implement:
 ## References
 
 - Architecture: `docs/reference/architecture.md`
-- Implementation Plan: `docs/explanation/implementation_plan_refactored.md`
+- Implementation Plan: `../../explanation/implementation_plan.md`
 - Development Guidelines: `AGENTS.md`
 - Project Status: `STATUS.md`
 

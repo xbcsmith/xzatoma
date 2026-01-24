@@ -80,6 +80,7 @@ Total: ~63 lines changed/added
 Location: Line 118
 
 Before:
+
 ```rust
 struct CopilotMessage {
     role: String,
@@ -89,6 +90,7 @@ struct CopilotMessage {
 ```
 
 After:
+
 ```rust
 struct CopilotMessage {
     role: String,
@@ -103,6 +105,7 @@ struct CopilotMessage {
 Added two comprehensive tests to verify the fix works correctly:
 
 1. **test_copilot_message_deserialize_missing_content** (Lines 1082-1107)
+
    - Tests that `CopilotMessage` can be deserialized when `content` field is missing
    - Verifies that `content` defaults to empty string
    - Confirms tool calls are preserved correctly
@@ -150,6 +153,7 @@ xzatoma --provider copilot /models
 ```
 
 Result:
+
 ```
 Error: Provider error: Failed to parse Copilot response: error decoding response body: missing field `content` at line 1 column 319
 ```
@@ -161,6 +165,7 @@ xzatoma --provider copilot /models
 ```
 
 Result:
+
 ```
 Available models:
 - gpt-4o (supports tools, context: 128000 tokens)
@@ -175,20 +180,24 @@ When Copilot returns a tool call, the response might look like:
 
 ```json
 {
-  "choices": [{
-    "message": {
-      "role": "assistant",
-      "tool_calls": [{
-        "id": "call_abc123",
-        "type": "function",
-        "function": {
-          "name": "read_file",
-          "arguments": "{\"path\":\"src/main.rs\"}"
-        }
-      }]
-    },
-    "finish_reason": "tool_calls"
-  }]
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "read_file",
+              "arguments": "{\"path\":\"src/main.rs\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
 }
 ```
 
@@ -242,5 +251,5 @@ struct ProviderMessage {
 
 - OpenAI API Documentation: Function calling responses may omit content
 - Serde documentation: `#[serde(default)]` attribute
-- Related fix: `docs/explanation/ollama_response_parsing_fix.md`
+- Related fix: `ollama_response_parsing_fix.md`
 - Provider trait: `src/providers/base.rs`

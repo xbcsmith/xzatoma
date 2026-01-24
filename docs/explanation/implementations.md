@@ -1,38 +1,40 @@
 # Implementation Documentation Index
 
+Note: Developer-focused implementation logs (phase reports, detailed implementation notes, and internal planning documents) have been moved to `docs/archive/implementation_summaries/`. These files are archived to keep the top-level explanation docs user-facing and maintainable; consult the archive for historical implementation detail. See [documentation_cleanup_summary.md](documentation_cleanup_summary.md) for an audit of moved files and the rationale.
+
 This directory contains detailed implementation documentation for XZatoma features and architecture.
 
 ## Documentation Overview
 
 ### Architecture and Planning
 
-- **[architecture_validation.md](architecture_validation.md)** - Initial validation of the XZatoma architecture against project rules
-- **[required_architecture_updates.md](required_architecture_updates.md)** - Critical issues identified during validation
-- **[architecture_fixes_applied.md](architecture_fixes_applied.md)** - Record of fixes applied to address architecture issues
-- **[architecture_validation_status.md](architecture_validation_status.md)** - Final validation status (9/10, approved)
-- **[notes_for_implementation_planning.md](notes_for_implementation_planning.md)** - Handoff notes for implementation planning phase
-- **[quick_reference_for_next_session.md](quick_reference_for_next_session.md)** - Quick reference guide for next session
+- **[architecture_validation.md](../archive/implementation_summaries/architecture_validation.md)** - Initial validation of the XZatoma architecture against project rules
+- **[required_architecture_updates.md](../archive/implementation_summaries/required_architecture_updates.md)** - Critical issues identified during validation
+- **[architecture_fixes_applied.md](../archive/implementation_summaries/architecture_fixes_applied.md)** - Record of fixes applied to address architecture issues
+- **[architecture_validation_status.md](../archive/implementation_summaries/architecture_validation_status.md)** - Final validation status (9/10, approved)
+- **[notes_for_implementation_planning.md](../archive/implementation_summaries/notes_for_implementation_planning.md)** - Handoff notes for implementation planning phase
+- **[quick_reference_for_next_session.md](../archive/implementation_summaries/quick_reference_for_next_session.md)** - Quick reference guide for next session
 - **[competitive_analysis.md](competitive_analysis.md)** - Comparison of XZatoma vs Goose vs Zed Agent
 
 ### Implementation Documentation
 
-- **[phase3_security_validation_implementation.md](phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
-- **[auth_provider_flag_implementation.md](auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
-- **[phase5_error_handling_and_user_feedback.md](phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
-- **[model_management_missing_deliverables_implementation.md](model_management_missing_deliverables_implementation.md)** - Documentation completion for model management features (API reference, how-to guides for managing and switching models)
-- **[copilot_models_caching_and_tests.md](copilot_models_caching_and_tests.md)** - Copilot models caching and mocked integration tests
+- **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
+- **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
+- **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
+- **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** - Documentation completion for model management features (API reference, how-to guides for managing and switching models)
+- **[copilot_models_caching_and_tests.md](../archive/implementation_summaries/copilot_models_caching_and_tests.md)** - Copilot models caching and mocked integration tests
   - Note: Integration tests that write to the OS keyring (service: `xzatoma`, user: `github_copilot`) are marked `#[ignore = "requires system keyring"]` to avoid failures in CI/CD environments that don't expose an interactive system keyring. Run these locally when you have a keyring available with:
     - `cargo test -- --ignored` (runs all ignored tests)
     - or `cargo test --test copilot_integration -- --ignored` (runs the Copilot keyring tests only)
-- **[chat_mode_provider_display.md](chat_mode_provider_display.md)** - Chat mode provider & model display (provider: white, model: green)
-- **[ollama_default_model_fix.md](ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3.2:latest`, removed all Qwen model references
-- **[ollama_tool_support_validation.md](ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities
-- **[ollama_response_parsing_fix.md](ollama_response_parsing_fix.md)** - Bug fix: Made Ollama response parsing flexible to handle models with varying response formats (missing fields, empty IDs), added support for granite3 and granite4 models
+- **[use_chat_modes.md](../how-to/use_chat_modes.md)** - Chat mode provider & model display (provider: white, model: green)
+- **[ollama_default_model_fix.md](../archive/implementation_summaries/ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3.2:latest`, removed all Qwen model references
+- **[ollama_tool_support_validation.md](../archive/implementation_summaries/ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities
+- **[ollama_response_parsing_fix.md](../archive/implementation_summaries/ollama_response_parsing_fix.md)** - Bug fix: Made Ollama response parsing flexible to handle models with varying response formats (missing fields, empty IDs), added support for granite3 and granite4 models
 
 ### Provider Abstraction Implementation
 
-- **[provider_abstraction_implementation_plan.md](provider_abstraction_implementation_plan.md)** - Complete language-agnostic plan for implementing provider abstraction layer supporting OpenAI, Anthropic, GitHub Copilot, and Ollama
-- **[provider_abstraction_quick_reference.md](provider_abstraction_quick_reference.md)** - Quick reference guide for provider abstraction patterns and examples
+- **[provider_abstraction_implementation_plan.md](../archive/implementation_summaries/provider_abstraction_implementation_plan.md)** - Complete language-agnostic plan for implementing provider abstraction layer supporting OpenAI, Anthropic, GitHub Copilot, and Ollama
+- **[provider_abstraction.md](../reference/provider_abstraction.md)** - Quick reference guide for provider abstraction patterns and examples
 - **[../reference/provider_api_comparison.md](../reference/provider_api_comparison.md)** - Detailed API specification comparison for all four providers
 
 ## Implementation Plan Status
@@ -62,7 +64,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Three execution modes: Interactive, Restricted Autonomous, Full Autonomous
 - Path validation to prevent directory traversal
 - Comprehensive test suite (17 tests, 100% coverage)
-- Documentation: `docs/explanation/phase3_security_validation_implementation.md`
+  Documentation: `../archive/implementation_summaries/phase3_security_validation_implementation.md`
 - ~291 lines of code with full validation
 
 ✅ **Model Management Documentation** - Complete
@@ -225,7 +227,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 - **Planning Rules**: `PLAN.md` - Planning template and guidelines
 - **Agent Rules**: `AGENTS.md` - Development standards and quality gates
 - **Security Implementation**: `docs/explanation/phase3_security_validation_implementation.md`
-- **Provider Plan**: `docs/explanation/provider_abstraction_implementation_plan.md`
+- **Provider Plan**: `../archive/implementation_summaries/provider_abstraction_implementation_plan.md`
 
 ## Quality Requirements
 

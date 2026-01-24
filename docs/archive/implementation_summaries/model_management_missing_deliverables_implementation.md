@@ -9,10 +9,12 @@ This document describes the implementation of the remaining missing deliverables
 During validation of the Model Management Implementation Plan, the following missing deliverables were identified:
 
 ### Critical (Code)
+
 - `get_context_info()` method on Agent - **ACTUALLY EXISTS** (false positive in analysis)
 - `ContextInfo` type definition and export - **ACTUALLY EXISTS** (false positive in analysis)
 
 ### Documentation (Missing)
+
 1. `docs/reference/model_management.md` - Model management API reference
 2. `docs/how-to/manage_models.md` - Guide for managing models
 3. `docs/how-to/switch_models.md` - Guide for switching models in chat
@@ -132,6 +134,7 @@ File: `docs/reference/model_management.md`
 Purpose: Information-oriented technical specification
 
 Content:
+
 - Type definitions with field descriptions
 - Method signatures and parameters
 - Return values and error conditions
@@ -142,12 +145,14 @@ Content:
 ### How-To Guides (Diataxis Category: How-To)
 
 Files:
+
 - `docs/how-to/manage_models.md`
 - `docs/how-to/switch_models.md`
 
 Purpose: Task-oriented problem-solving recipes
 
 Content:
+
 - Step-by-step instructions
 - Concrete examples
 - Troubleshooting procedures
@@ -179,6 +184,7 @@ Content:
 ### Naming Conventions
 
 All files follow AGENTS.md requirements:
+
 - Lowercase with underscores: `model_management.md`, `manage_models.md`, `switch_models.md`
 - No emojis anywhere in documentation
 - Consistent with existing documentation structure
@@ -194,6 +200,7 @@ All files follow AGENTS.md requirements:
 ### Diataxis Framework Compliance
 
 Documentation correctly categorized:
+
 - Reference material in `docs/reference/`
 - How-to guides in `docs/how-to/`
 - Follows Diataxis framework for technical documentation
@@ -229,6 +236,7 @@ cargo test --all-features
 ### Completeness Verification
 
 Phase 1-6 deliverables (already complete):
+
 - Provider trait extension
 - Copilot provider implementation
 - Ollama provider implementation
@@ -237,6 +245,7 @@ Phase 1-6 deliverables (already complete):
 - Chat mode commands
 
 Phase 7 deliverables (completed in this implementation):
+
 - API reference documentation
 - How-to guides for model management
 - How-to guides for model switching
@@ -246,6 +255,7 @@ Phase 7 deliverables (completed in this implementation):
 ### API Reference Coverage
 
 All public APIs documented:
+
 - 5 core types (ModelInfo, ModelCapability, TokenUsage, ContextInfo, ProviderCapabilities)
 - 6 provider trait methods
 - 2 agent methods
@@ -256,6 +266,7 @@ All public APIs documented:
 ### How-To Guide Coverage
 
 All user workflows documented:
+
 - Listing models (CLI and chat)
 - Viewing model details
 - Checking current model
@@ -270,17 +281,19 @@ All user workflows documented:
 ### Cross-References Added
 
 New documentation links to:
+
 - `docs/reference/architecture.md` - Architecture overview
 - `docs/reference/provider_api_comparison.md` - Provider comparison
 - `docs/reference/quick_reference.md` - Configuration guide
 - `docs/how-to/use_chat_modes.md` - Chat modes guide
-- `docs/explanation/model_management_implementation_plan.md` - Implementation plan
-- `docs/explanation/phase4_agent_integration_implementation.md` - Agent integration
-- `docs/explanation/phase6_chat_mode_model_management_implementation.md` - Chat implementation
+- `model_management_implementation_plan.md` - Implementation plan
+- `phase4_agent_integration_implementation.md` - Agent integration
+- `phase6_chat_mode_model_management_implementation.md` - Chat implementation
 
 ### Referenced By
 
 New documentation is referenced in:
+
 - API examples throughout the codebase
 - CLI help text (implicitly)
 - Chat mode help command (implicitly)
@@ -349,9 +362,9 @@ Potential additions to documentation:
 
 ## References
 
-- Implementation Plan: `docs/explanation/model_management_implementation_plan.md`
-- Phase 4 Implementation: `docs/explanation/phase4_agent_integration_implementation.md`
-- Phase 6 Implementation: `docs/explanation/phase6_chat_mode_model_management_implementation.md`
+- Implementation Plan: `model_management_implementation_plan.md`
+- Phase 4 Implementation: `phase4_agent_integration_implementation.md`
+- Phase 6 Implementation: `phase6_chat_mode_model_management_implementation.md`
 - AGENTS.md: Project development guidelines
 - Diataxis Framework: https://diataxis.fr/
 

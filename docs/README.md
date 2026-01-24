@@ -20,9 +20,9 @@ This documentation follows the [Diataxis framework](https://diataxis.fr/), organ
 
 **When to use**: You have a specific task to accomplish.
 
-- [Configure AI Providers](how_to/configure_providers.md) _(coming soon)_ - Set up GitHub Copilot or Ollama
-- [Create Workflows](how_to/create_workflows.md) _(coming soon)_ - Build custom workflow plans
-- [Generate Documentation](how_to/generate_documentation.md) _(coming soon)_ - Generate specific doc types
+- [Configure AI Providers](how-to/configure_providers.md) _(coming soon)_ - Set up GitHub Copilot or Ollama
+- [Create Workflows](how-to/create_workflows.md) _(coming soon)_ - Build custom workflow plans
+- [Generate Documentation](how-to/generate_documentation.md) _(coming soon)_ - Generate specific doc types
 
 ### 💡 Explanations (Understanding-Oriented)
 
@@ -52,24 +52,27 @@ This documentation follows the [Diataxis framework](https://diataxis.fr/), organ
 - **See the technical design** → [Architecture](reference/architecture.md)
 - **Know the implementation plan** → [Implementation Plan](explanation/implementation_plan.md)
 - **Find a command or pattern** → [Quick Reference](reference/quick_reference.md)
-- **Configure a provider** → [Configure Providers](how_to/configure_providers.md) _(coming soon)_
-- **Create a workflow** → [Create Workflows](how_to/create_workflows.md) _(coming soon)_
+- **Configure a provider** → [Configure Providers](how-to/configure_providers.md) _(coming soon)_
+- **Create a workflow** → [Create Workflows](how-to/create_workflows.md) _(coming soon)_
 
 ### I am a...
 
 #### New User
+
 1. Start with [Project Overview](explanation/overview.md)
 2. Follow [Quickstart Tutorial](tutorials/quickstart.md) _(coming soon)_
-3. Learn to [Configure Providers](how_to/configure_providers.md) _(coming soon)_
-4. Create your first workflow with [Create Workflows](how_to/create_workflows.md) _(coming soon)_
+3. Learn to [Configure Providers](how-to/configure_providers.md) _(coming soon)_
+4. Create your first workflow with [Create Workflows](how-to/create_workflows.md) _(coming soon)_
 
 #### Developer
+
 1. Read [Architecture](reference/architecture.md)
 2. Review [Implementation Plan](explanation/implementation_plan.md)
 3. Check [Quick Reference](reference/quick_reference.md)
 4. Follow coding standards in [AGENTS.md](../AGENTS.md)
 
 #### Contributor
+
 1. Review [Project Overview](explanation/overview.md)
 2. Read [Implementation Plan](explanation/implementation_plan.md)
 3. Follow [AGENTS.md](../AGENTS.md) guidelines
@@ -99,6 +102,7 @@ Documentation follows the Diataxis framework:
 - **Reference**: Technical specifications and API docs
 
 When adding documentation:
+
 1. Choose the appropriate category based on purpose
 2. Use descriptive lowercase filenames with underscores
 3. Follow the writing style of existing docs in that category

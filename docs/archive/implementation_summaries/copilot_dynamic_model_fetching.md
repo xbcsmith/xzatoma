@@ -180,6 +180,7 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
 ## Components Delivered
 
 - `src/providers/copilot.rs` (~130 lines changed/added):
+
   - Added `COPILOT_MODELS_URL` constant
   - Added `CopilotModelsResponse` and related structs for API deserialization
   - Implemented `fetch_copilot_models()` async method
@@ -192,9 +193,11 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
   - Added `test_copilot_models_response_deserialization()` test
 
 - `src/config.rs` (no changes needed):
+
   - Default model already set to `gpt-5-mini`
 
 - `config/config.yaml` (no changes needed):
+
   - Config already specifies `gpt-5-mini`
 
 - `docs/explanation/copilot_dynamic_model_fetching.md` (this document)
@@ -260,6 +263,7 @@ Location: Lines 726-740, 760-799
 Location: Lines 871-1137
 
 Replaced tests that called the removed `get_copilot_models()` static method with:
+
 - Tests that parse the `testdata/models.json` file
 - Async test stubs that document need for mocking
 - Tests that verify deserialization logic
@@ -294,6 +298,7 @@ Since the new implementation requires API authentication, unit tests use two app
 2. **Async Stubs**: Placeholder tests document where mocking would be needed for integration tests
 
 Future integration tests should:
+
 - Mock the Copilot models API endpoint
 - Provide fixture responses for different scenarios
 - Test error handling (network errors, auth failures, malformed responses)
@@ -307,6 +312,7 @@ xzatoma --provider copilot /models
 ```
 
 Result (incorrect):
+
 ```
 Available models:
 - gpt-4 (8192 tokens)
@@ -323,6 +329,7 @@ xzatoma --provider copilot /models
 ```
 
 Result (correct, actual available models):
+
 ```
 Available models:
 - gpt-5-mini (supports tools, vision; context: 264000 tokens)
@@ -343,6 +350,7 @@ xzatoma --provider copilot /model gpt-5.1-codex
 ```
 
 Result:
+
 ```
 Switched to model: gpt-5.1-codex
 Capabilities: FunctionCalling, LongContext
@@ -358,6 +366,7 @@ xzatoma --provider copilot /model gpt-3.5-turbo
 ```
 
 Result:
+
 ```
 Error: Model 'gpt-3.5-turbo' not found. Available models: gpt-5-mini, gpt-5, gpt-5.1, gpt-5.1-codex, gpt-5.2, claude-sonnet-4.5, claude-opus-4.5, gemini-2.5-pro, grok-code-fast-1
 ```
@@ -369,6 +378,7 @@ xzatoma --provider copilot /model text-embedding-3-large
 ```
 
 Result:
+
 ```
 Error: Model 'text-embedding-3-large' does not support tool calling, which is required for XZatoma. Models with tool support: gpt-5-mini, gpt-5, gpt-5.1, ...
 ```
@@ -489,4 +499,4 @@ Note: The testdata file contains the array directly without the wrapping `{"data
 - Python Implementation: Reference implementation in notes.md
 - Testdata: `testdata/models.json` - Real Copilot models API response
 - Provider Trait: `src/providers/base.rs`
-- Related: `docs/explanation/copilot_response_parsing_fix.md`
+- Related: `copilot_response_parsing_fix.md`

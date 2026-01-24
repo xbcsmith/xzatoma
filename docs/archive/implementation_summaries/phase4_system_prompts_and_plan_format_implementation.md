@@ -127,6 +127,7 @@ pub struct ValidatedPlan {
 ```
 
 The validated plan includes:
+
 - Detected format (YAML, Markdown, Markdown with frontmatter)
 - Extracted title (from YAML field or markdown header)
 - Original content
@@ -178,6 +179,7 @@ The system prompt becomes the first message in the conversation, guiding the AI'
 Test coverage includes:
 
 - **Prompt Generation** (12 tests):
+
   - Planning mode prompt with both safety settings
   - Write mode prompt with both safety settings
   - Prompt non-emptiness and minimum length
@@ -185,6 +187,7 @@ Test coverage includes:
   - Inclusion of required keywords and sections
 
 - **Format Detection** (8 tests):
+
   - YAML detection (basic and with colons)
   - Markdown detection (level 1, 2, 3 headers)
   - Frontmatter detection (with and without spaces)
@@ -312,12 +315,14 @@ fn switch_mode_and_update_agent(
 ### Mode-Aware Instructions
 
 System prompts automatically adapt to:
+
 - **ChatMode**: Planning vs Write capabilities
 - **SafetyMode**: Confirmation requirements and risk level
 
 ### Flexible Plan Format Support
 
 Agents can output plans in:
+
 - YAML for structured, machine-readable formats
 - Markdown for human-readable documentation
 - Markdown with YAML frontmatter for both readability and structure
@@ -325,6 +330,7 @@ Agents can output plans in:
 ### Validation and Error Reporting
 
 ValidatedPlan provides:
+
 - Automatic format detection
 - Detailed error messages for invalid plans
 - Title extraction across all formats
@@ -342,6 +348,7 @@ ValidatedPlan provides:
 ### System Message Placement
 
 System prompts are added as the first message in each Conversation, ensuring:
+
 - They're included in all provider requests
 - They set context before any user interactions
 - They're preserved across conversation pruning
@@ -349,6 +356,7 @@ System prompts are added as the first message in each Conversation, ensuring:
 ### Format Detection Strategy
 
 Uses a simple, efficient detection algorithm:
+
 1. Check for YAML frontmatter delimiter (most specific)
 2. Check for markdown headers (next most specific)
 3. Default to YAML (most common structured format)
@@ -358,6 +366,7 @@ This avoids expensive parsing attempts and works with partial content.
 ### Validation vs Parsing
 
 ValidatedPlan validates structure without requiring full parsing:
+
 - YAML: Uses serde_yaml for true validation
 - Markdown: Checks for required structure elements
 - Frontmatter: Validates both components separately
@@ -368,12 +377,13 @@ This allows graceful error handling without panics.
 
 - [Chat Modes Implementation Plan](./chat_modes_implementation_plan.md)
 - [Phase 3: Interactive Mode Switching](./phase3_interactive_mode_switching_implementation.md)
-- [Phase 2: Tool Filtering and Registration](./phase2_tool_filtering_and_registration_implementation.md)
-- [XZatoma Architecture](./architecture.md)
+- [Phase 2: Tool Filtering and Registration](phase2_tool_filtering_implementation.md)
+- [XZatoma Architecture](../../reference/architecture.md)
 
 ## Next Steps
 
 Phase 5 will add:
+
 - Status display showing current mode and safety settings
 - Welcome banner for interactive sessions
 - Updated documentation for end users

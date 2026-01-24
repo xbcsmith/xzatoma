@@ -21,7 +21,7 @@ This document describes recent changes to how the Copilot provider handles authe
   - Display test for the new `Authentication` error (`test_authentication_error_display`).
 
 - Docs:
-  - This document: `docs/explanation/copilot_authentication_handling.md`
+  - This document: `copilot_authentication_handling.md`
 
 ## Implementation details
 
@@ -147,5 +147,5 @@ Copilot returned error 401 Unauthorized: unauthorized: token expired. Token may 
   - `src/providers/copilot.rs` — API error mapping & cache invalidation additions
   - `src/error.rs` — new `XzatomaError::Authentication` variant
 - Related docs:
-  - `docs/explanation/copilot_dynamic_model_fetching.md` (model management)
-  - This file: `docs/explanation/copilot_authentication_handling.md`
+  - `copilot_dynamic_model_fetching.md` (model management)
+  - This file: `copilot_authentication_handling.md`

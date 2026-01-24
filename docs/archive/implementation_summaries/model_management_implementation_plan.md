@@ -979,9 +979,9 @@ Adhering to these guardrails will prevent reintroducing hardcoded model lists or
 - `gemma` - Google Gemma
 - `codellama` - Code-focused
 - `llava` - Vision-focused
-- Most other models unless verified
+  Most other models unless verified
 
-**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+**Reference**: `ollama_tool_support_validation.md`
 
 ### Lesson 3: Copilot Response Parsing Flexibility
 
@@ -1013,7 +1013,7 @@ struct CopilotMessage {
 }
 ```
 
-**Reference**: `docs/explanation/copilot_response_parsing_fix.md`
+**Reference**: `copilot_response_parsing_fix.md`
 
 ### Lesson 4: Ollama Response Parsing Flexibility
 
@@ -1065,7 +1065,7 @@ fn default_tool_type() -> String {
 }
 ```
 
-**Reference**: `docs/explanation/ollama_response_parsing_fix.md`
+**Reference**: `ollama_response_parsing_fix.md`
 
 ### Lesson 5: Documentation Naming Conventions
 
@@ -1132,7 +1132,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
 }
 ```
 
-**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+**Reference**: `ollama_tool_support_validation.md`
 
 ### Lesson 7: Error Messages Must Be Actionable
 
@@ -1163,7 +1163,7 @@ or mistral:latest instead.
 Error: Model not supported
 ```
 
-**Reference**: `docs/explanation/ollama_tool_support_validation.md`
+**Reference**: `ollama_tool_support_validation.md`
 
 ### Implementation Checklist for Future Phases
 

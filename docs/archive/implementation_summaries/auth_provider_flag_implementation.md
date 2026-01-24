@@ -5,6 +5,7 @@
 The `auth` subcommand now accepts an explicit `--provider <name>` flag (e.g. `--provider copilot`) instead of a positional provider argument. The CLI, runtime behavior, tests and documentation were updated so the codebase matches the examples in `README.md` and the CLI is consistent across commands.
 
 Key behavioural points:
+
 - Preferred usage: `xzatoma auth --provider copilot`
 - If `--provider` is omitted, the configured/default provider (from `config`) is used.
 - Positional form (`xzatoma auth copilot`) is no longer accepted — see migration notes.
@@ -16,18 +17,20 @@ Rationale: consistency with other subcommands (they use `--provider`), clearer C
 - `src/cli.rs` — `Auth` subcommand changed to accept `--provider` (optional); CLI unit tests updated/added.
 - `src/main.rs` — `auth` match-arm now falls back to configured provider when flag omitted.
 - `src/config.rs` — tests updated to construct the new CLI shape.
-- `docs/explanation/phase1_foundation_implementation.md` — example usage corrected.
-- `docs/explanation/implementations.md` — index updated to reference this change.
+- `phase1_foundation_implementation.md` — example usage corrected.
+- `../../explanation/implementations.md` — index updated to reference this change.
 - Tests updated/added in `src/cli.rs` and `src/config.rs`.
 
 ## Implementation details
 
 What changed (high-level)
+
 - `Auth` subcommand: positional required `provider: String` → optional flag `--provider <name>` (`Option<String>`).
 - Runtime: when CLI provider is None, use `config.provider.provider_type`.
 - Tests and documentation updated to reflect the canonical `--provider` form.
 
 Before (positional provider)
+
 ```xzatoma/src/cli.rs#L48-58
     /// Authenticate with a provider
     Auth {
@@ -37,6 +40,7 @@ Before (positional provider)
 ```
 
 After (flag-style, optional)
+
 ```xzatoma/src/cli.rs#L48-62
     /// Authenticate with a provider
     Auth {
@@ -49,6 +53,7 @@ After (flag-style, optional)
 ```
 
 Runtime fallback (use configured provider when flag omitted)
+
 ```xzatoma/src/main.rs#L86-96
 Commands::Auth { provider } => {
     let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
@@ -59,6 +64,7 @@ Commands::Auth { provider } => {
 ```
 
 Testing change example (unit test updated to use `--provider`)
+
 ```xzatoma/src/cli.rs#L180-196
 #[test]
 fn test_cli_parse_auth() {
@@ -76,6 +82,7 @@ fn test_cli_parse_auth() {
 ## Tests added / updated
 
 - Updated: `src/cli.rs`
+
   - `test_cli_parse_auth` — now asserts `--provider` parsing
   - `test_cli_default` — asserts default CLI uses `auth` with provider `Some("copilot")`
   - `test_cli_parse_chat_with_provider` — unchanged pattern, preserved consistency
@@ -85,11 +92,13 @@ fn test_cli_parse_auth() {
   - `test_load_nonexistent_file_uses_defaults` — constructs `Cli` with `Auth { provider: Some("copilot") }` for the config-loading path.
 
 Why these tests:
+
 - Verify explicit flag parsing.
 - Verify omission falls back to configuration (no surprise behavior at runtime).
 - Prevent regressions where positional arguments might be re-introduced.
 
 Expected quick verification (examples)
+
 ```/dev/null/verify_commands.sh#L1-6
 # CLI usage (manual check)
 xzatoma auth --provider copilot
@@ -102,11 +111,13 @@ cargo test --lib -- test_cli_parse_auth test_cli_parse_auth_without_provider
 ## Migration notes (for users and maintainers)
 
 - User-facing change: `xzatoma auth copilot` (positional) will now fail to parse. Update scripts and docs to use:
+
 ```xzatoma/README.md#L36-36
 xzatoma auth --provider copilot
 ```
 
 - Quick automated replacement (example):
+
 ```/dev/null/migrate_one_liner.sh#L1-2
 # replace positional `xzatoma auth <token>` with `xzatoma auth --provider <token>`
 git grep -l "xzatoma auth \\w\\+" | xargs sed -E -i 's/(xzatoma auth) ([[:alnum:]_-]+)/\\1 --provider \\2/g'
@@ -123,12 +134,14 @@ git grep -l "xzatoma auth \\w\\+" | xargs sed -E -i 's/(xzatoma auth) ([[:alnum:
 
 - Update completed code + tests
 - Run locally (maintainer steps):
+
 ```/dev/null/validation_steps.sh#L1-6
 cargo fmt --all
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
+
 Expected result: all commands complete with zero errors/warnings and tests passing.
 
 ## Notes for reviewers
@@ -140,6 +153,7 @@ Expected result: all commands complete with zero errors/warnings and tests passi
 ## References
 
 - Primary example (authoritative): `README.md` — usage examples already used `--provider`
+
 ```xzatoma/README.md#L36-38
 # Authenticate with provider
 xzatoma auth --provider copilot
@@ -152,5 +166,6 @@ xzatoma auth --provider copilot
 ---
 
 If you'd like, I can:
+
 - Open a short PR description you can copy into the PR body (includes the migration snippet and test summary).
 - Add an optional compatibility wrapper (accept positional + flag) and tests for a deprecation period — tell me if you want that and I'll propose an implementation.

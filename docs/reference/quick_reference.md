@@ -367,7 +367,7 @@ async fn test_workflow_execution() {
 ### How-To Guide
 
 - **Purpose**: Task-oriented
-- **Location**: `docs/how_to/`
+- **Location**: `docs/how-to/`
 - **Example**: `configure_providers.md`
 - **Content**: Problem-solving guides
 

@@ -9,6 +9,7 @@ Phase 5 completes the chat modes system with comprehensive UI/UX polish and end-
 ### 1. Enhanced UI Display Functions (Task 5.1)
 
 **Files Modified:**
+
 - `src/commands/mod.rs` (+100 lines) - New UI display functions
 
 **Functions Implemented:**
@@ -18,12 +19,14 @@ Phase 5 completes the chat modes system with comprehensive UI/UX polish and end-
 Displays a formatted welcome banner when starting interactive chat mode.
 
 **Features:**
+
 - Box-drawing characters for professional appearance
 - Shows current chat mode and safety mode
 - Displays descriptions for each mode
 - Provides quick help instructions
 
 **Example Output:**
+
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║         XZatoma Interactive Chat Mode - Welcome!             ║
@@ -40,6 +43,7 @@ Type '/help' for available commands, 'exit' to quit
 Displays detailed session status when user types `/status` command.
 
 **Information Shown:**
+
 - Current chat mode with description
 - Current safety mode with description
 - Number of available tools
@@ -47,6 +51,7 @@ Displays detailed session status when user types `/status` command.
 - Current prompt format
 
 **Example Output:**
+
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║                     XZatoma Session Status                   ║
@@ -66,12 +71,14 @@ Prompt Format:     [WRITE][SAFE] >>
 The `run_chat` function now calls `print_welcome_banner()` immediately after creating the readline instance, replacing the basic println statements.
 
 **Before:**
+
 ```rust
 println!("XZatoma Interactive Chat Mode");
 println!("Type '/help' for available commands, 'exit' to quit\n");
 ```
 
 **After:**
+
 ```rust
 print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 ```
@@ -81,6 +88,7 @@ print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 The `/status` special command now uses the new `print_status_display()` function instead of just showing `ChatModeState::status()`.
 
 **Before:**
+
 ```rust
 SpecialCommand::ShowStatus => {
     println!("\n{}\n", mode_state.status());
@@ -89,6 +97,7 @@ SpecialCommand::ShowStatus => {
 ```
 
 **After:**
+
 ```rust
 SpecialCommand::ShowStatus => {
     let tool_count = agent.num_tools();
@@ -105,6 +114,7 @@ SpecialCommand::ShowStatus => {
 **Comprehensive user guide covering:**
 
 **Sections:**
+
 1. **Overview** - Introduction to Planning and Write modes
 2. **When to Use Each Mode** - Decision guidance with examples
 3. **Starting Interactive Chat** - CLI options and configuration
@@ -119,6 +129,7 @@ SpecialCommand::ShowStatus => {
 12. **Getting Help** - Resources and support information
 
 **Key Features:**
+
 - Practical examples for every concept
 - Clear distinction between modes and safety levels
 - Workflow patterns for different use cases
@@ -130,6 +141,7 @@ SpecialCommand::ShowStatus => {
 **Comprehensive technical documentation covering:**
 
 **Sections:**
+
 1. **Design Overview** - Problem statement and solution
 2. **Architecture Components** - System design details
    - ChatMode enum and implementation
@@ -149,6 +161,7 @@ SpecialCommand::ShowStatus => {
 10. **Conclusion** - Summary of design principles
 
 **Key Content:**
+
 - Detailed rationale for design decisions
 - Tool availability matrix
 - State transition diagrams
@@ -161,17 +174,20 @@ SpecialCommand::ShowStatus => {
 **Enhancements:**
 
 1. **Chat Modes Quick Start Section**
+
    - Planning mode examples
    - Write mode examples with safety flags
    - Brief comparison table
 
 2. **Interactive Session Example**
+
    - Planning mode exploration
    - Mode switching demonstration
    - Status display example
    - Write mode execution
 
 3. **Chat Modes Feature Description**
+
    - What Planning mode enables
    - What Write mode enables
    - Safety mode options
@@ -188,22 +204,27 @@ SpecialCommand::ShowStatus => {
 #### UI Display Function Tests
 
 **`test_print_welcome_banner_planning_safe()`**
+
 - Verifies welcome banner displays without panicking for Planning + Safe mode
 
 **`test_print_welcome_banner_write_yolo()`**
+
 - Verifies welcome banner displays without panicking for Write + YOLO mode
 
 **`test_print_status_display_planning_mode()`**
+
 - Verifies status display works for Planning mode
 - Tests with realistic tool and conversation counts
 
 **`test_print_status_display_write_mode()`**
+
 - Verifies status display works for Write mode
 - Tests with YOLO safety mode
 
 #### Mode State Tests
 
 **`test_chat_mode_state_format_prompt_all_combinations()`**
+
 - Tests all four mode combinations:
   - [PLANNING][SAFE]
   - [PLANNING][YOLO]
@@ -212,17 +233,20 @@ SpecialCommand::ShowStatus => {
 - Verifies exact prompt format for each
 
 **`test_chat_mode_state_status_includes_all_info()`**
+
 - Verifies status string includes all required information
 - Checks for mode names, safety names, and descriptions
 
 #### Mode Description Tests
 
 **`test_chat_mode_descriptions()`**
+
 - Verifies all descriptions are non-empty
 - Checks for key terms in descriptions
 - Uses case-insensitive matching for robustness
 
 **`test_mode_display_formatting()`**
+
 - Verifies modes display as uppercase: PLANNING, WRITE, SAFE, YOLO
 
 ## Architecture Alignment
@@ -267,14 +291,17 @@ Coverage:            >80% across new code
 ### Documentation
 
 **Files Created:**
+
 - `docs/how-to/use_chat_modes.md` (370 lines)
 - `docs/explanation/chat_modes_architecture.md` (520 lines)
 
 **Files Updated:**
+
 - `README.md` (+50 lines of chat mode examples)
 - `src/commands/mod.rs` (enhanced with UI functions and tests)
 
 **Standards Compliance:**
+
 - All markdown files use `.md` extension
 - All filenames use lowercase_with_underscores
 - No emojis in any documentation
@@ -286,18 +313,21 @@ Coverage:            >80% across new code
 ### Startup Experience
 
 Users now see a professional welcome banner with:
+
 - Clear visual formatting with box-drawing characters
 - Current mode and safety setting
 - Descriptions of what each mode means
 - Quick help reminder
 
 **Before:**
+
 ```
 XZatoma Interactive Chat Mode
 Type '/help' for available commands, 'exit' to quit
 ```
 
 **After:**
+
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║         XZatoma Interactive Chat Mode - Welcome!             ║
@@ -312,6 +342,7 @@ Type '/help' for available commands, 'exit' to quit
 ### Session Awareness
 
 Users can now run `/status` to see:
+
 - Exactly what mode they're in
 - What safety setting is active
 - How many tools are available
@@ -321,12 +352,14 @@ Users can now run `/status` to see:
 ### Documentation Quality
 
 Users have two documentation paths:
+
 1. **Task-Oriented** (`how-to/use_chat_modes.md`): How do I use this feature?
 2. **Understanding-Oriented** (`explanation/chat_modes_architecture.md`): Why is it designed this way?
 
 ### README Integration
 
 The main README now includes:
+
 - Quick start examples for chat modes
 - Realistic session transcripts
 - Links to detailed documentation
@@ -334,16 +367,16 @@ The main README now includes:
 
 ## Deliverables Summary
 
-| Component | Location | Lines | Status |
-|-----------|----------|-------|--------|
-| Welcome banner function | `src/commands/mod.rs` | 10 | Complete |
-| Status display function | `src/commands/mod.rs` | 20 | Complete |
-| Integration in run_chat | `src/commands/mod.rs` | 5 | Complete |
-| UI tests | `src/commands/mod.rs` | 120 | Complete |
-| User guide | `docs/how-to/use_chat_modes.md` | 370 | Complete |
-| Architecture doc | `docs/explanation/chat_modes_architecture.md` | 520 | Complete |
-| README enhancements | `README.md` | 50 | Complete |
-| **TOTAL** | | **1,095** | **Complete** |
+| Component               | Location                                      | Lines     | Status       |
+| ----------------------- | --------------------------------------------- | --------- | ------------ |
+| Welcome banner function | `src/commands/mod.rs`                         | 10        | Complete     |
+| Status display function | `src/commands/mod.rs`                         | 20        | Complete     |
+| Integration in run_chat | `src/commands/mod.rs`                         | 5         | Complete     |
+| UI tests                | `src/commands/mod.rs`                         | 120       | Complete     |
+| User guide              | `docs/how-to/use_chat_modes.md`               | 370       | Complete     |
+| Architecture doc        | `docs/explanation/chat_modes_architecture.md` | 520       | Complete     |
+| README enhancements     | `README.md`                                   | 50        | Complete     |
+| **TOTAL**               |                                               | **1,095** | **Complete** |
 
 ## Testing Coverage
 
@@ -399,12 +432,12 @@ Potential improvements identified for future phases:
 
 ### Architecture Documents
 
-- [Chat Modes Architecture](./chat_modes_architecture.md) - Technical design document
+- [Chat Modes Architecture](../../explanation/chat_modes_architecture.md) - Technical design document
 - [Chat Modes Implementation Plan](./chat_modes_implementation_plan.md) - Original planning document
 
 ### User Documentation
 
-- [How to Use Chat Modes](../how-to/use_chat_modes.md) - User guide for chat modes
+- [How to Use Chat Modes](../../how-to/use_chat_modes.md) - User guide for chat modes
 - [README.md](../../README.md) - Project overview with examples
 
 ## Conclusion

@@ -348,10 +348,10 @@ The XZatoma architecture design is solid, secure, and ready for phased implement
 **Appendix A: Key Files**
 
 - Architecture: `docs/reference/architecture.md` (1,114 lines)
-- Validation: `docs/explanation/architecture_validation.md` (685 lines)
-- Updates: `docs/explanation/required_architecture_updates.md` (866 lines)
-- Fixes: `docs/explanation/architecture_fixes_applied.md` (347 lines)
-- Status: `docs/explanation/architecture_validation_status.md` (this document)
+- Validation: `architecture_validation.md` (685 lines)
+- Updates: `required_architecture_updates.md` (866 lines)
+- Fixes: `architecture_fixes_applied.md` (347 lines)
+- Status: `architecture_validation_status.md` (this document)
 
 **Appendix B: Validation Checklist**
 

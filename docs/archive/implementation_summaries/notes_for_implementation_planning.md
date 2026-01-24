@@ -33,10 +33,10 @@ This document provides critical context for the AI agent who will create the pha
 
 **Files Created**:
 
-- `docs/explanation/architecture_validation.md` (685 lines) - Full validation analysis
-- `docs/explanation/required_architecture_updates.md` (866 lines) - Update specifications
-- `docs/explanation/architecture_fixes_applied.md` (347 lines) - Summary of fixes
-- `docs/explanation/architecture_validation_status.md` (353 lines) - Final approval
+- `architecture_validation.md` (685 lines) - Full validation analysis
+- `required_architecture_updates.md` (866 lines) - Update specifications
+- `architecture_fixes_applied.md` (347 lines) - Summary of fixes
+- `architecture_validation_status.md` (353 lines) - Final approval
 
 **Validation Score**: 9/10 (improved from 6/10)
 

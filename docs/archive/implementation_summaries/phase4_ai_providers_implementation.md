@@ -567,7 +567,7 @@ Potential improvements for Phase 4:
 ### Internal Documentation
 
 - Architecture: `docs/reference/architecture.md`
-- Implementation Plan: `docs/explanation/implementation_plan_refactored.md`
+- Implementation Plan: `docs/explanation/implementation_plan.md`
 - AGENTS.md: Development guidelines
 
 ## Conclusion

@@ -13,6 +13,7 @@
 ### Core Components
 
 - [x] `src/agent/conversation.rs` (357 lines)
+
   - [x] Conversation struct with token tracking
   - [x] Token counting with estimate_tokens() heuristic
   - [x] Automatic pruning when threshold exceeded
@@ -22,6 +23,7 @@
   - [x] Token count and remaining tokens accessors
 
 - [x] `src/agent/core.rs` (555 lines)
+
   - [x] Agent struct with provider, conversation, tools, config
   - [x] Agent::new() with configuration validation
   - [x] Agent::execute() with full execution loop
@@ -32,6 +34,7 @@
   - [x] execute_tool_call() helper method
 
 - [x] `src/tools/mod.rs` (487 lines)
+
   - [x] ToolExecutor trait definition
   - [x] ToolRegistry updated to store Arc<dyn ToolExecutor>
   - [x] Tool registration and retrieval
@@ -55,7 +58,8 @@
 
 ### Documentation
 
-- [x] `docs/explanation/phase2_agent_core_implementation.md` (485 lines)
+- [x] `phase2_agent_core_implementation.md` (485 lines)
+
   - [x] Overview and scope
   - [x] Components delivered
   - [x] Implementation details for all components
@@ -69,7 +73,7 @@
   - [x] Future enhancements
   - [x] References
 
-- [x] `docs/explanation/phase2_completion_checklist.md` (this file)
+- [x] `phase2_completion_checklist.md` (this file)
 
 ---
 
@@ -297,14 +301,17 @@ cargo doc --no-deps --open
 ### Documented Limitations
 
 1. [x] Token estimation is approximate (chars/4 heuristic)
+
    - Documented in phase2_agent_core_implementation.md
    - Mitigation strategy provided
 
 2. [x] Pruning operates on conversation turns
+
    - Documented limitation
    - Mitigation: Appropriate min_retain_turns setting
 
 3. [x] No streaming support yet
+
    - Documented as Phase 4 enhancement
    - Current synchronous approach works for MVP
 
@@ -449,7 +456,7 @@ cargo doc --no-deps --open
 
 **Phase 2 Status**: ✅ **COMPLETE AND VALIDATED**
 
-All Phase 2 requirements from `implementation_plan_refactored.md` have been successfully implemented:
+All Phase 2 requirements from `implementation_plan.md` have been successfully implemented:
 
 ✅ Conversation management with token tracking
 ✅ Tool system and registry with ToolExecutor trait
@@ -462,6 +469,7 @@ All Phase 2 requirements from `implementation_plan_refactored.md` have been succ
 The agent core is now ready for Phase 3 (Security and Terminal Validation).
 
 **Total Project Status**:
+
 - Phase 1: ✅ Complete
 - Phase 2: ✅ Complete
 - Phase 3: ⏳ Ready to start

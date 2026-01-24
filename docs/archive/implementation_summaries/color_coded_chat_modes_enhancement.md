@@ -416,9 +416,9 @@ Potential color-related improvements:
 ## References
 
 - [Colored Crate Documentation](https://docs.rs/colored/)
-- [Chat Modes Architecture](./chat_modes_architecture.md)
+- [Chat Modes Architecture](../../explanation/chat_modes_architecture.md)
 - [Phase 5 UI/UX Polish](./phase5_ui_ux_polish_and_documentation_implementation.md)
-- [How to Use Chat Modes](../how-to/use_chat_modes.md)
+- [How to Use Chat Modes](../../how-to/use_chat_modes.md)
 
 ## Validation
 
