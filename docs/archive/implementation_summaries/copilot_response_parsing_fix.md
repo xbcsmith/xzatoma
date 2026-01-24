@@ -20,10 +20,10 @@ The `CopilotMessage` struct required the `content` field to be present in all AP
 
 ```rust
 struct CopilotMessage {
-    role: String,
-    content: String,  // Required field - causes deserialization to fail if missing
-    tool_calls: Option<Vec<CopilotToolCall>>,
-    tool_call_id: Option<String>,
+  role: String,
+  content: String, // Required field - causes deserialization to fail if missing
+  tool_calls: Option<Vec<CopilotToolCall>>,
+  tool_call_id: Option<String>,
 }
 ```
 
@@ -45,13 +45,13 @@ Made the `content` field optional with a default empty string value using serde'
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
 struct CopilotMessage {
-    role: String,
-    #[serde(default)]  // Defaults to empty string if field is missing
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<CopilotToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
+  role: String,
+  #[serde(default)] // Defaults to empty string if field is missing
+  content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<CopilotToolCall>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_call_id: Option<String>,
 }
 ```
 
@@ -60,8 +60,8 @@ struct CopilotMessage {
 1. **Graceful Deserialization**: When `content` is missing from the JSON response, serde automatically provides an empty string (`""`) as the default value
 2. **No Breaking Changes**: Existing code that uses `copilot_msg.content` continues to work without modification
 3. **Correct Behavior**: The `convert_response_message` method already handles empty content correctly:
-   - If `tool_calls` is present, it creates a `Message::assistant_with_tools()` (content is ignored)
-   - If `tool_calls` is absent, it creates a `Message::assistant(copilot_msg.content)` (content is used)
+  - If `tool_calls` is present, it creates a `Message::assistant_with_tools()` (content is ignored)
+  - If `tool_calls` is absent, it creates a `Message::assistant(copilot_msg.content)` (content is used)
 
 ## Components Delivered
 
@@ -83,9 +83,9 @@ Before:
 
 ```rust
 struct CopilotMessage {
-    role: String,
-    content: String,
-    // ... other fields
+  role: String,
+  content: String,
+  // ... other fields
 }
 ```
 
@@ -93,10 +93,10 @@ After:
 
 ```rust
 struct CopilotMessage {
-    role: String,
-    #[serde(default)]
-    content: String,
-    // ... other fields
+  role: String,
+  #[serde(default)]
+  content: String,
+  // ... other fields
 }
 ```
 
@@ -106,14 +106,14 @@ Added two comprehensive tests to verify the fix works correctly:
 
 1. **test_copilot_message_deserialize_missing_content** (Lines 1082-1107)
 
-   - Tests that `CopilotMessage` can be deserialized when `content` field is missing
-   - Verifies that `content` defaults to empty string
-   - Confirms tool calls are preserved correctly
+  - Tests that `CopilotMessage` can be deserialized when `content` field is missing
+  - Verifies that `content` defaults to empty string
+  - Confirms tool calls are preserved correctly
 
 2. **test_copilot_response_deserialize_missing_content** (Lines 1109-1141)
-   - Tests that a complete `CopilotResponse` can be deserialized with missing content
-   - Verifies the full response parsing pipeline works
-   - Ensures `usage` information is preserved
+  - Tests that a complete `CopilotResponse` can be deserialized with missing content
+  - Verifies the full response parsing pipeline works
+  - Ensures `usage` information is preserved
 
 ### Test Coverage
 
@@ -180,24 +180,24 @@ When Copilot returns a tool call, the response might look like:
 
 ```json
 {
-  "choices": [
-    {
-      "message": {
-        "role": "assistant",
-        "tool_calls": [
-          {
-            "id": "call_abc123",
-            "type": "function",
-            "function": {
-              "name": "read_file",
-              "arguments": "{\"path\":\"src/main.rs\"}"
-            }
-          }
-        ]
-      },
-      "finish_reason": "tool_calls"
-    }
-  ]
+ "choices": [
+  {
+   "message": {
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "id": "call_abc123",
+      "type": "function",
+      "function": {
+       "name": "read_file",
+       "arguments": "{\"path\":\"src/main.rs\"}"
+      }
+     }
+    ]
+   },
+   "finish_reason": "tool_calls"
+  }
+ ]
 }
 ```
 
@@ -207,10 +207,10 @@ Note: No `content` field is present. Before the fix, this would fail to parse. A
 
 All quality gates passed:
 
-- ✅ `cargo fmt --all` - No formatting issues
-- ✅ `cargo check --all-targets --all-features` - Compilation successful
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ `cargo test --all-features` - All 478 tests passed
+- `cargo fmt --all` - No formatting issues
+- `cargo check --all-targets --all-features` - Compilation successful
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- `cargo test --all-features` - All 478 tests passed
 
 ## Related Work
 
@@ -227,15 +227,15 @@ When implementing new AI providers, follow this pattern for response message str
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
 struct ProviderMessage {
-    role: String,
+  role: String,
 
-    // Make content optional with default for tool call responses
-    #[serde(default)]
-    content: String,
+  // Make content optional with default for tool call responses
+  #[serde(default)]
+  content: String,
 
-    // Optional fields for tool calling
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<ToolCall>>,
+  // Optional fields for tool calling
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<ToolCall>>,
 }
 ```
 

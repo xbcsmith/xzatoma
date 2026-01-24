@@ -12,13 +12,13 @@ The Copilot provider previously used a static, hardcoded list of models:
 
 ```rust
 fn get_copilot_models() -> Vec<ModelInfo> {
-    vec![
-        ModelInfo::new("gpt-4", "GPT-4", 8192),
-        ModelInfo::new("gpt-4-turbo", "GPT-4 Turbo", 128000),
-        ModelInfo::new("gpt-3.5-turbo", "GPT-3.5 Turbo", 4096),
-        ModelInfo::new("claude-3.5-sonnet", "Claude 3.5 Sonnet", 200000),
-        // ...
-    ]
+  vec![
+    ModelInfo::new("gpt-4", "GPT-4", 8192),
+    ModelInfo::new("gpt-4-turbo", "GPT-4 Turbo", 128000),
+    ModelInfo::new("gpt-3.5-turbo", "GPT-3.5 Turbo", 4096),
+    ModelInfo::new("claude-3.5-sonnet", "Claude 3.5 Sonnet", 200000),
+    // ...
+  ]
 }
 ```
 
@@ -50,27 +50,27 @@ Implemented API-based model discovery that queries the Copilot `/models` endpoin
 
 ```rust
 async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-    let token = self.authenticate().await?;
+  let token = self.authenticate().await?;
 
-    let response = self
-        .client
-        .get(COPILOT_MODELS_URL)
-        .header("Authorization", format!("Bearer {}", token))
-        .send()
-        .await?;
+  let response = self
+    .client
+    .get(COPILOT_MODELS_URL)
+    .header("Authorization", format!("Bearer {}", token))
+    .send()
+    .await?;
 
-    let models_response: CopilotModelsResponse = response.json().await?;
+  let models_response: CopilotModelsResponse = response.json().await?;
 
-    // Filter to enabled models and extract metadata
-    let mut models = Vec::new();
-    for model_data in models_response.data {
-        if model_data.policy.state == "enabled" {
-            // Build ModelInfo from API data
-            models.push(build_model_info(model_data));
-        }
+  // Filter to enabled models and extract metadata
+  let mut models = Vec::new();
+  for model_data in models_response.data {
+    if model_data.policy.state == "enabled" {
+      // Build ModelInfo from API data
+      models.push(build_model_info(model_data));
     }
+  }
 
-    Ok(models)
+  Ok(models)
 }
 ```
 
@@ -81,32 +81,32 @@ Created data structures to deserialize the Copilot models API response:
 ```rust
 #[derive(Debug, Deserialize)]
 struct CopilotModelsResponse {
-    data: Vec<CopilotModelData>,
+  data: Vec<CopilotModelData>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelData {
-    id: String,
-    name: String,
-    capabilities: Option<CopilotModelCapabilities>,
-    policy: Option<CopilotModelPolicy>,
+  id: String,
+  name: String,
+  capabilities: Option<CopilotModelCapabilities>,
+  policy: Option<CopilotModelPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelCapabilities {
-    limits: Option<CopilotModelLimits>,
-    supports: Option<CopilotModelSupports>,
+  limits: Option<CopilotModelLimits>,
+  supports: Option<CopilotModelSupports>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelLimits {
-    max_context_window_tokens: Option<usize>,
+  max_context_window_tokens: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelSupports {
-    tool_calls: Option<bool>,
-    vision: Option<bool>,
+  tool_calls: Option<bool>,
+  vision: Option<bool>,
 }
 ```
 
@@ -119,24 +119,24 @@ Automatically detect model capabilities from API metadata:
 ```rust
 // Extract context window
 let context_window = model_data
-    .capabilities
-    .as_ref()
-    .and_then(|c| c.limits.as_ref())
-    .and_then(|l| l.max_context_window_tokens)
-    .unwrap_or(128000); // Default to 128k
+  .capabilities
+  .as_ref()
+  .and_then(|c| c.limits.as_ref())
+  .and_then(|l| l.max_context_window_tokens)
+  .unwrap_or(128000); // Default to 128k
 
 // Add capabilities based on API flags
 if model_data.capabilities.supports.tool_calls == Some(true) {
-    model_info.add_capability(ModelCapability::FunctionCalling);
+  model_info.add_capability(ModelCapability::FunctionCalling);
 }
 
 if model_data.capabilities.supports.vision == Some(true) {
-    model_info.add_capability(ModelCapability::Vision);
+  model_info.add_capability(ModelCapability::Vision);
 }
 
 // Infer LongContext for models >32k tokens
 if context_window > 32000 {
-    model_info.add_capability(ModelCapability::LongContext);
+  model_info.add_capability(ModelCapability::LongContext);
 }
 ```
 
@@ -146,34 +146,34 @@ Updated `set_model()` to validate against dynamically fetched models:
 
 ```rust
 async fn set_model(&mut self, model_name: String) -> Result<()> {
-    // Fetch current available models from API
-    let models = self.fetch_copilot_models().await?;
+  // Fetch current available models from API
+  let models = self.fetch_copilot_models().await?;
 
-    // Validate model exists
-    let model_info = models
-        .iter()
-        .find(|m| m.name == model_name)
-        .ok_or_else(|| {
-            let available: Vec<String> =
-                models.iter().map(|m| m.name.clone()).collect();
-            XzatomaError::Provider(format!(
-                "Model '{}' not found. Available models: {}",
-                model_name,
-                available.join(", ")
-            ))
-        })?;
+  // Validate model exists
+  let model_info = models
+    .iter()
+    .find(|m| m.name == model_name)
+    .ok_or_else(|| {
+      let available: Vec<String> =
+        models.iter().map(|m| m.name.clone()).collect();
+      XzatomaError::Provider(format!(
+        "Model '{}' not found. Available models: {}",
+        model_name,
+        available.join(", ")
+      ))
+    })?;
 
-    // Validate model supports tool calling (required for XZatoma)
-    if !model_info.supports_capability(ModelCapability::FunctionCalling) {
-        return Err(XzatomaError::Provider(format!(
-            "Model '{}' does not support tool calling",
-            model_name
-        )));
-    }
+  // Validate model supports tool calling (required for XZatoma)
+  if !model_info.supports_capability(ModelCapability::FunctionCalling) {
+    return Err(XzatomaError::Provider(format!(
+      "Model '{}' does not support tool calling",
+      model_name
+    )));
+  }
 
-    // Update config
-    self.config.write()?.model = model_name;
-    Ok(())
+  // Update config
+  self.config.write()?.model = model_name;
+  Ok(())
 }
 ```
 
@@ -181,24 +181,24 @@ async fn set_model(&mut self, model_name: String) -> Result<()> {
 
 - `src/providers/copilot.rs` (~130 lines changed/added):
 
-  - Added `COPILOT_MODELS_URL` constant
-  - Added `CopilotModelsResponse` and related structs for API deserialization
-  - Implemented `fetch_copilot_models()` async method
-  - Updated `list_models()` to call `fetch_copilot_models()`
-  - Updated `get_model_info()` to use dynamic fetching
-  - Enhanced `set_model()` with API-based validation and tool calling check
-  - Replaced hardcoded model tests with API parsing tests
-  - Added `test_parse_models_from_testdata()` test
-  - Added `test_model_context_window_extraction()` test
-  - Added `test_copilot_models_response_deserialization()` test
+ - Added `COPILOT_MODELS_URL` constant
+ - Added `CopilotModelsResponse` and related structs for API deserialization
+ - Implemented `fetch_copilot_models()` async method
+ - Updated `list_models()` to call `fetch_copilot_models()`
+ - Updated `get_model_info()` to use dynamic fetching
+ - Enhanced `set_model()` with API-based validation and tool calling check
+ - Replaced hardcoded model tests with API parsing tests
+ - Added `test_parse_models_from_testdata()` test
+ - Added `test_model_context_window_extraction()` test
+ - Added `test_copilot_models_response_deserialization()` test
 
 - `src/config.rs` (no changes needed):
 
-  - Default model already set to `gpt-5-mini`
+ - Default model already set to `gpt-5-mini`
 
 - `config/config.yaml` (no changes needed):
 
-  - Config already specifies `gpt-5-mini`
+ - Config already specifies `gpt-5-mini`
 
 - `docs/explanation/copilot_dynamic_model_fetching.md` (this document)
 
@@ -228,25 +228,25 @@ Location: Lines 567-644
 
 ```rust
 async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-    // Authenticate
-    let token = self.authenticate().await?;
+  // Authenticate
+  let token = self.authenticate().await?;
 
-    // Fetch from API
-    let response = self.client.get(COPILOT_MODELS_URL)...
+  // Fetch from API
+  let response = self.client.get(COPILOT_MODELS_URL)...
 
-    // Parse response
-    let models_response: CopilotModelsResponse = response.json().await?;
+  // Parse response
+  let models_response: CopilotModelsResponse = response.json().await?;
 
-    // Build ModelInfo list with capabilities
-    for model_data in models_response.data {
-        if model_data.policy.state == "enabled" {
-            let model_info = ModelInfo::new(...);
-            // Add capabilities from API metadata
-            models.push(model_info);
-        }
+  // Build ModelInfo list with capabilities
+  for model_data in models_response.data {
+    if model_data.policy.state == "enabled" {
+      let model_info = ModelInfo::new(...);
+      // Add capabilities from API metadata
+      models.push(model_info);
     }
+  }
 
-    Ok(models)
+  Ok(models)
 }
 ```
 
@@ -387,10 +387,10 @@ Error: Model 'text-embedding-3-large' does not support tool calling, which is re
 
 All quality gates passed:
 
-- ✅ `cargo fmt --all` - No formatting issues
-- ✅ `cargo check --all-targets --all-features` - Compilation successful
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ `cargo test --all-features` - All 479 tests passed
+- `cargo fmt --all` - No formatting issues
+- `cargo check --all-targets --all-features` - Compilation successful
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- `cargo test --all-features` - All 479 tests passed
 
 ## Benefits
 
@@ -418,10 +418,10 @@ data = response.json()
 
 models_dict = {}
 for model in data.get("data", []):
-    if model.get("policy", {}).get("state") == "enabled":
-        model_id = model.get("id")
-        if model_id:
-            models_dict[model_id] = model
+  if model.get("policy", {}).get("state") == "enabled":
+    model_id = model.get("id")
+    if model_id:
+      models_dict[model_id] = model
 ```
 
 Our Rust implementation improves on this by:
@@ -438,31 +438,31 @@ The Copilot models API returns:
 
 ```json
 {
-  "data": [
-    {
-      "id": "gpt-5-mini",
-      "name": "GPT-5 mini",
-      "object": "model",
-      "policy": {
-        "state": "enabled"
-      },
-      "capabilities": {
-        "family": "gpt-5-mini",
-        "type": "chat",
-        "limits": {
-          "max_context_window_tokens": 264000,
-          "max_output_tokens": 64000
-        },
-        "supports": {
-          "tool_calls": true,
-          "vision": true,
-          "streaming": true,
-          "structured_outputs": true,
-          "parallel_tool_calls": true
-        }
-      }
+ "data": [
+  {
+   "id": "gpt-5-mini",
+   "name": "GPT-5 mini",
+   "object": "model",
+   "policy": {
+    "state": "enabled"
+   },
+   "capabilities": {
+    "family": "gpt-5-mini",
+    "type": "chat",
+    "limits": {
+     "max_context_window_tokens": 264000,
+     "max_output_tokens": 64000
+    },
+    "supports": {
+     "tool_calls": true,
+     "vision": true,
+     "streaming": true,
+     "structured_outputs": true,
+     "parallel_tool_calls": true
     }
-  ]
+   }
+  }
+ ]
 }
 ```
 

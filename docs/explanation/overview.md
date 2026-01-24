@@ -19,26 +19,26 @@ To provide a simple, powerful AI agent that can:
 
 1. **Multi-Provider AI Integration**
 
-   - GitHub Copilot support with OAuth authentication
-   - Ollama support for local models
-   - Simple provider abstraction
+  - GitHub Copilot support with OAuth authentication
+  - Ollama support for local models
+  - Simple provider abstraction
 
 2. **Autonomous Agent**
 
-   - Conversation-based execution loop
-   - Multi-turn tool calling
-   - Handles errors and retries
+  - Conversation-based execution loop
+  - Multi-turn tool calling
+  - Handles errors and retries
 
 3. **Basic Tools**
 
-   - File operations: list, read, write, delete, diff
-   - Terminal execution: run shell commands
-   - Plan parsing: JSON, YAML, Markdown
+  - File operations: list, read, write, delete, diff
+  - Terminal execution: run shell commands
+  - Plan parsing: JSON, YAML, Markdown
 
 4. **Flexible Input**
-   - Interactive chat mode
-   - Structured plan files
-   - One-shot prompts
+  - Interactive chat mode
+  - Structured plan files
+  - One-shot prompts
 
 ## Technical Architecture
 
@@ -46,9 +46,9 @@ To provide a simple, powerful AI agent that can:
 
 ```
 User Input → CLI → Agent Core → AI Provider
-                      ↓              ↓
-                   Tools ← ─ ─ ─ ─ ─ ┘
-                   (File ops, Terminal)
+           ↓       ↓
+          Tools ← ─ ─ ─ ─ ─ ┘
+          (File ops, Terminal)
 ```
 
 ### Core Components
@@ -137,16 +137,16 @@ Done! Created tasks.md with 5 TODO items found.
 goal: "Refactor function names to follow snake_case convention"
 
 context:
-  directory: "src/"
+ directory: "src/"
 
 instructions:
-  - List all Python files in src/
-  - Read each file
-  - Identify functions with camelCase names
-  - Rename to snake_case
-  - Update all references
-  - Write updated files
-  - Show summary of changes
+ - List all Python files in src/
+ - Read each file
+ - Identify functions with camelCase names
+ - Rename to snake_case
+ - Update all references
+ - Write updated files
+ - Show summary of changes
 ```
 
 ```bash
@@ -312,7 +312,7 @@ XZatoma is similar to Zed's agent chat but:
 
 ### For Users
 
-1. Read `docs/tutorials/quickstart.md` _(coming soon)_
+1. Read `docs/tutorials/quickstart.md` 
 2. Configure your AI provider
 3. Try interactive chat mode
 4. Create your first plan file

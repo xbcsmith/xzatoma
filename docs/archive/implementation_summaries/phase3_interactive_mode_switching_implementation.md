@@ -97,21 +97,21 @@ The special commands parser follows a simple pattern:
 
 ```rust
 pub enum SpecialCommand {
-    SwitchMode(ChatMode),
-    SwitchSafety(SafetyMode),
-    ShowStatus,
-    Help,
-    Exit,
-    None,  // Not a special command
+  SwitchMode(ChatMode),
+  SwitchSafety(SafetyMode),
+  ShowStatus,
+  Help,
+  Exit,
+  None, // Not a special command
 }
 
 pub fn parse_special_command(input: &str) -> SpecialCommand {
-    let trimmed = input.trim().to_lowercase();
-    match trimmed.as_str() {
-        "/mode planning" | "/planning" => SpecialCommand::SwitchMode(ChatMode::Planning),
-        // ... other patterns
-        _ => SpecialCommand::None,
-    }
+  let trimmed = input.trim().to_lowercase();
+  match trimmed.as_str() {
+    "/mode planning" | "/planning" => SpecialCommand::SwitchMode(ChatMode::Planning),
+    // ... other patterns
+    _ => SpecialCommand::None,
+  }
 }
 ```
 
@@ -137,35 +137,35 @@ This preserves all conversation state while updating available tools.
 
 ```rust
 loop {
-    let prompt = mode_state.format_prompt();
-    match rl.readline(&prompt) {
-        Ok(line) => {
-            match parse_special_command(trimmed) {
-                SpecialCommand::SwitchMode(new_mode) => {
-                    handle_mode_switch(&mut agent, &mut mode_state, ...)?;
-                    continue;
-                }
-                SpecialCommand::SwitchSafety(new_safety) => {
-                    mode_state.switch_safety(new_safety);
-                    continue;
-                }
-                SpecialCommand::ShowStatus => {
-                    println!("{}", mode_state.status());
-                    continue;
-                }
-                SpecialCommand::Help => {
-                    print_help();
-                    continue;
-                }
-                SpecialCommand::Exit => break,
-                SpecialCommand::None => {
-                    // Regular agent prompt
-                }
-            }
-            agent.execute(trimmed).await?;
+  let prompt = mode_state.format_prompt();
+  match rl.readline(&prompt) {
+    Ok(line) => {
+      match parse_special_command(trimmed) {
+        SpecialCommand::SwitchMode(new_mode) => {
+          handle_mode_switch(&mut agent, &mut mode_state, ...)?;
+          continue;
         }
-        // ... error handling
+        SpecialCommand::SwitchSafety(new_safety) => {
+          mode_state.switch_safety(new_safety);
+          continue;
+        }
+        SpecialCommand::ShowStatus => {
+          println!("{}", mode_state.status());
+          continue;
+        }
+        SpecialCommand::Help => {
+          print_help();
+          continue;
+        }
+        SpecialCommand::Exit => break,
+        SpecialCommand::None => {
+          // Regular agent prompt
+        }
+      }
+      agent.execute(trimmed).await?;
     }
+    // ... error handling
+  }
 }
 ```
 
@@ -249,9 +249,9 @@ Special Commands for Interactive Chat Mode
 ===========================================
 
 CHAT MODE SWITCHING:
-  /mode planning  - Switch to Planning mode (read-only)
-  /planning       - Shorthand for /mode planning
-  ...
+ /mode planning - Switch to Planning mode (read-only)
+ /planning    - Shorthand for /mode planning
+ ...
 
 [PLANNING][SAFE] >>
 ```

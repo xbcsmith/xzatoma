@@ -28,13 +28,13 @@ Relevant excerpt:
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMode {
-    /// Require explicit user confirmation for each command
-    Interactive,
-    /// Allow safe commands automatically, require confirmation for dangerous ones
-    #[default]
-    RestrictedAutonomous,
-    /// Allow all commands without confirmation (use with caution)
-    FullAutonomous,
+  /// Require explicit user confirmation for each command
+  Interactive,
+  /// Allow safe commands automatically, require confirmation for dangerous ones
+  #[default]
+  RestrictedAutonomous,
+  /// Allow all commands without confirmation (use with caution)
+  FullAutonomous,
 }
 ```
 
@@ -53,23 +53,23 @@ To make validation robust, `resolve_mention_path` now accepts the resolved path 
 
 Relevant excerpt:
 ```xzatoma/src/mention_parser.rs#L592-612
-    let canonical_wd = working_dir
-        .canonicalize()
-        .unwrap_or_else(|_| working_dir.to_path_buf());
+  let canonical_wd = working_dir
+    .canonicalize()
+    .unwrap_or_else(|_| working_dir.to_path_buf());
 
-    // Check if the path is within the working directory.
-    // Accept both the canonical working directory (resolves symlinks) and the
-    // original working directory (may itself be a symlink). This is important
-    // because canonicalizing `path` can fail for non-existent files (e.g. a
-    // mention to a file not yet present). In that case `canonical` will be the
-    // joined path (`working_dir.join(mention_path)`) and will start with the
-    // possibly symlinked `working_dir` rather than its canonicalized target.
-    if !(canonical.starts_with(&canonical_wd) || canonical.starts_with(working_dir)) {
-        return Err(anyhow::anyhow!(
-            "Path escapes working directory: {}",
-            mention_path
-        ));
-    }
+  // Check if the path is within the working directory.
+  // Accept both the canonical working directory (resolves symlinks) and the
+  // original working directory (may itself be a symlink). This is important
+  // because canonicalizing `path` can fail for non-existent files (e.g. a
+  // mention to a file not yet present). In that case `canonical` will be the
+  // joined path (`working_dir.join(mention_path)`) and will start with the
+  // possibly symlinked `working_dir` rather than its canonicalized target.
+  if !(canonical.starts_with(&canonical_wd) || canonical.starts_with(working_dir)) {
+    return Err(anyhow::anyhow!(
+      "Path escapes working directory: {}",
+      mention_path
+    ));
+  }
 ```
 
 This approach keeps the validation strict (still prevents directory traversal and absolute paths), but avoids false negatives due to symlink differences between the working directory and the resolved target path.
@@ -79,13 +79,13 @@ This approach keeps the validation strict (still prevents directory traversal an
 Manual & automated validation performed:
 
 - Formatted code:
-  - `cargo fmt --all` → passed
+ - `cargo fmt --all` → passed
 - Compilation check:
-  - `cargo check --all-targets --all-features` → passed
+ - `cargo check --all-targets --all-features` → passed
 - Lint (warnings as errors):
-  - `cargo clippy --all-targets --all-features -- -D warnings` → passed (no clippy errors)
+ - `cargo clippy --all-targets --all-features -- -D warnings` → passed (no clippy errors)
 - Tests:
-  - `cargo test --all-features` → passed (all tests), including previously failing `mention_parser::tests::test_resolve_mention_path_relative`.
+ - `cargo test --all-features` → passed (all tests), including previously failing `mention_parser::tests::test_resolve_mention_path_relative`.
 
 Notes:
 - The failing test (`test_resolve_mention_path_relative`) was the signal that prompted the `resolve_mention_path` fix. After applying the change, the test passes across environments that use symlinked tmp dirs (e.g., macOS) as well as environments where `/tmp` is not a symlink.
@@ -97,8 +97,8 @@ Notes:
 use xzatoma::config::ExecutionMode;
 
 fn example() {
-    let mode = ExecutionMode::default();
-    assert_eq!(mode, ExecutionMode::RestrictedAutonomous);
+  let mode = ExecutionMode::default();
+  assert_eq!(mode, ExecutionMode::RestrictedAutonomous);
 }
 ```
 
@@ -114,10 +114,10 @@ println!("Resolved path: {:?}", resolved);
 
 ## Validation Results
 
-- ✅ `cargo fmt --all` — passed
-- ✅ `cargo check --all-targets --all-features` — passed
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` — passed
-- ✅ `cargo test --all-features` — all tests passed (including the previously failing `test_resolve_mention_path_relative`)
+- `cargo fmt --all` — passed
+- `cargo check --all-targets --all-features` — passed
+- `cargo clippy --all-targets --all-features -- -D warnings` — passed
+- `cargo test --all-features` — all tests passed (including the previously failing `test_resolve_mention_path_relative`)
 
 ## References
 

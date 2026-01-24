@@ -29,29 +29,29 @@ Located at lines 1-61 of `src/agent/conversation.rs`:
 
 ```rust
 pub struct ContextInfo {
-    pub max_tokens: usize,
-    pub used_tokens: usize,
-    pub remaining_tokens: usize,
-    pub percentage_used: f64,
+  pub max_tokens: usize,
+  pub used_tokens: usize,
+  pub remaining_tokens: usize,
+  pub percentage_used: f64,
 }
 
 impl ContextInfo {
-    pub fn new(max_tokens: usize, used_tokens: usize) -> Self {
-        let used_tokens = used_tokens.min(max_tokens);
-        let remaining_tokens = max_tokens - used_tokens;
-        let percentage_used = if max_tokens == 0 {
-            0.0
-        } else {
-            (used_tokens as f64 / max_tokens as f64) * 100.0
-        };
+  pub fn new(max_tokens: usize, used_tokens: usize) -> Self {
+    let used_tokens = used_tokens.min(max_tokens);
+    let remaining_tokens = max_tokens - used_tokens;
+    let percentage_used = if max_tokens == 0 {
+      0.0
+    } else {
+      (used_tokens as f64 / max_tokens as f64) * 100.0
+    };
 
-        Self {
-            max_tokens,
-            used_tokens,
-            remaining_tokens,
-            percentage_used,
-        }
+    Self {
+      max_tokens,
+      used_tokens,
+      remaining_tokens,
+      percentage_used,
     }
+  }
 }
 ```
 
@@ -61,11 +61,11 @@ Located at lines 605-612 of `src/agent/core.rs`:
 
 ```rust
 pub fn get_context_info(&self, model_context_window: usize) -> ContextInfo {
-    if let Some(usage) = self.get_token_usage() {
-        ContextInfo::new(model_context_window, usage.total_tokens)
-    } else {
-        self.conversation.get_context_info(model_context_window)
-    }
+  if let Some(usage) = self.get_token_usage() {
+    ContextInfo::new(model_context_window, usage.total_tokens)
+  } else {
+    self.conversation.get_context_info(model_context_window)
+  }
 }
 ```
 

@@ -37,23 +37,23 @@ xzatoma chat --provider ollama
 ## Supported Providers & Auth Methods
 
 - OpenAI
-  - Auth: Bearer API key via `OPENAI_API_KEY`
-  - Optional: `OPENAI_HOST`, `OPENAI_TIMEOUT`
-  - Typical use: cloud-hosted API (HTTPS)
+ - Auth: Bearer API key via `OPENAI_API_KEY`
+ - Optional: `OPENAI_HOST`, `OPENAI_TIMEOUT`
+ - Typical use: cloud-hosted API (HTTPS)
 
 - Anthropic
-  - Auth: API key via `ANTHROPIC_API_KEY`
-  - Optional: `ANTHROPIC_HOST`
+ - Auth: API key via `ANTHROPIC_API_KEY`
+ - Optional: `ANTHROPIC_HOST`
 
 - GitHub Copilot
-  - Auth: OAuth device flow (recommended) via `xzatoma auth --provider copilot`
-  - Alternatives: `GITHUB_TOKEN` (when available) or `COPILOT_API_KEY` (if supported by your deployment)
-  - Tokens are typically cached in the system keyring for convenience.
+ - Auth: OAuth device flow (recommended) via `xzatoma auth --provider copilot`
+ - Alternatives: `GITHUB_TOKEN` (when available) or `COPILOT_API_KEY` (if supported by your deployment)
+ - Tokens are typically cached in the system keyring for convenience.
 
 - Ollama
-  - Auth: Typically none (local model server)
-  - Host & model: `OLLAMA_HOST` and `OLLAMA_MODEL` (Ollama model names are runtime-specific)
-  - Common host: `http://localhost:11434`
+ - Auth: Typically none (local model server)
+ - Host & model: `OLLAMA_HOST` and `OLLAMA_MODEL` (Ollama model names are runtime-specific)
+ - Common host: `http://localhost:11434`
 
 For provider implementation details and differences (tool formats, streaming formats, request/response shapes) see the reference:
 - Provider reference: ../reference/provider_abstraction.md
@@ -68,7 +68,7 @@ Example environment variables and brief explanations:
 export OPENAI_API_KEY="sk-..."
 # Optional
 export OPENAI_HOST="https://api.openai.com"
-export OPENAI_TIMEOUT="600"  # seconds
+export OPENAI_TIMEOUT="600" # seconds
 ```
 
 - Anthropic
@@ -116,7 +116,7 @@ xzatoma models current --provider copilot
 
 - Start an interactive chat with a specific provider
 ```bash
-xzatoma chat --provider ollama  # or openai, copilot, anthropic
+xzatoma chat --provider ollama # or openai, copilot, anthropic
 ```
 
 If the above commands return errors (authentication or network), consult the troubleshooting section below.
@@ -126,12 +126,12 @@ If the above commands return errors (authentication or network), consult the tro
 You can also configure providers in the YAML config file. Example:
 ```yaml
 provider:
-  provider_type: copilot         # default provider: copilot|ollama|openai|anthropic
-  copilot:
-    model: "gpt-5-mini"
-  ollama:
-    host: "http://localhost:11434"
-    model: "llama3.2:latest"
+ provider_type: copilot     # default provider: copilot|ollama|openai|anthropic
+ copilot:
+  model: "gpt-5-mini"
+ ollama:
+  host: "http://localhost:11434"
+  model: "llama3.2:latest"
 ```
 
 When using a config file, sensitive values (API keys) are still recommended to be set via environment variables or a secure keyring.
@@ -139,24 +139,24 @@ When using a config file, sensitive values (API keys) are still recommended to b
 ## Troubleshooting
 
 - 401 / Unauthorized
-  - Verify the API key is set (`echo $OPENAI_API_KEY`) and is correct.
-  - Ensure there are no stray characters or quotes.
-  - For Copilot, confirm OAuth completed successfully: re-run `xzatoma auth --provider copilot`.
+ - Verify the API key is set (`echo $OPENAI_API_KEY`) and is correct.
+ - Ensure there are no stray characters or quotes.
+ - For Copilot, confirm OAuth completed successfully: re-run `xzatoma auth --provider copilot`.
 
 - Provider not reachable / network errors
-  - Verify `OPENAI_HOST`/`ANTHROPIC_HOST`/`OLLAMA_HOST` are reachable.
-  - For Ollama ensure the local service is running. Example: `curl $OLLAMA_HOST` (should respond).
+ - Verify `OPENAI_HOST`/`ANTHROPIC_HOST`/`OLLAMA_HOST` are reachable.
+ - For Ollama ensure the local service is running. Example: `curl $OLLAMA_HOST` (should respond).
 
 - Ollama model not found
-  - Confirm `OLLAMA_MODEL` is correct and available in your local Ollama instance.
-  - Use the Ollama CLI (outside the scope of XZatoma) to list or pull models, e.g. `ollama pull <model>`.
+ - Confirm `OLLAMA_MODEL` is correct and available in your local Ollama instance.
+ - Use the Ollama CLI (outside the scope of XZatoma) to list or pull models, e.g. `ollama pull <model>`.
 
 - Copilot device flow hangs in CI / headless environments
-  - Use `COPILOT_API_KEY` or `GITHUB_TOKEN` if available and supported, or run the device flow in an environment where you can complete the browser-based step.
-  - Some integration tests that rely on the system keyring are ignored in CI (they require an interactive keyring).
+ - Use `COPILOT_API_KEY` or `GITHUB_TOKEN` if available and supported, or run the device flow in an environment where you can complete the browser-based step.
+ - Some integration tests that rely on the system keyring are ignored in CI (they require an interactive keyring).
 
 - Rate-limited / 429
-  - Check provider-specific rate limits and throttle accordingly. Consider adding retry/backoff in your usage patterns.
+ - Check provider-specific rate limits and throttle accordingly. Consider adding retry/backoff in your usage patterns.
 
 ## Security Best Practices
 
@@ -177,9 +177,9 @@ When using a config file, sensitive values (API keys) are still recommended to b
 ## When to Consult Reference Docs
 
 - For implementation details, error types, provider differences, tool calling formats, and streaming specifics, refer to:
-  - Provider reference: ../reference/provider_abstraction.md
-  - Model management reference: ../reference/model_management.md
-  - Implementation plans and archived notes: ../archive/implementation_summaries/
+ - Provider reference: ../reference/provider_abstraction.md
+ - Model management reference: ../reference/model_management.md
+ - Implementation plans and archived notes: ../archive/implementation_summaries/
 
 ## Examples & Notes
 

@@ -14,12 +14,12 @@ Why:
 ## Components delivered
 
 - Code: change default provider behavior so `CopilotConfig::default()` returns `gpt-5-mini`.
-  - `xzatoma/src/config.rs` — default value change
-  - `xzatoma/src/providers/copilot.rs` — doc examples and added unit test
-  - `xzatoma/src/test_utils.rs` — test fixture updated
-  - `config/config.yaml` — example/default config updated
+ - `xzatoma/src/config.rs` — default value change
+ - `xzatoma/src/providers/copilot.rs` — doc examples and added unit test
+ - `xzatoma/src/test_utils.rs` — test fixture updated
+ - `config/config.yaml` — example/default config updated
 - Docs: update references that stated the old default (explanations + reference docs)
-  - `docs/explanation/*` and `docs/reference/*` — relevant occurrences updated
+ - `docs/explanation/*` and `docs/reference/*` — relevant occurrences updated
 - Tests: new unit test asserting the new default
 
 ## Implementation details
@@ -34,7 +34,7 @@ Critical code changes (high-level):
 
 ```xzatoma/src/config.rs#L36-44
 fn default_copilot_model() -> String {
-    "gpt-5-mini".to_string()
+  "gpt-5-mini".to_string()
 }
 ```
 
@@ -42,8 +42,8 @@ fn default_copilot_model() -> String {
 
 ```xzatoma/config/config.yaml#L9-15
 copilot:
-  # Model to use (e.g., gpt-5-mini, gpt-4-turbo)
-  model: gpt-5-mini
+ # Model to use (e.g., gpt-5-mini, gpt-4-turbo)
+ model: gpt-5-mini
 ```
 
 - new unit test (verifies default)
@@ -51,8 +51,8 @@ copilot:
 ```xzatoma/src/providers/copilot.rs#L520-528
 #[test]
 fn test_copilot_config_default_model() {
-    let cfg = CopilotConfig::default();
-    assert_eq!(cfg.model, "gpt-5-mini");
+  let cfg = CopilotConfig::default();
+  assert_eq!(cfg.model, "gpt-5-mini");
 }
 ```
 
@@ -60,7 +60,7 @@ fn test_copilot_config_default_model() {
 
 ```xzatoma/src/providers/copilot.rs#L220-236
 /// let config = CopilotConfig {
-///     model: "gpt-5-mini".to_string(),
+///   model: "gpt-5-mini".to_string(),
 /// };
 /// assert_eq!(provider.model(), "gpt-5-mini");
 ```
@@ -75,26 +75,26 @@ Notes:
 What I ran locally (summary):
 
 ```/dev/null/validation_output.txt#L1-10
-cargo fmt --all                     -> no formatting changes
+cargo fmt --all           -> no formatting changes
 cargo check --all-targets --all-features -> finished (0 errors)
 cargo clippy --all-targets --all-features -- -D warnings -> finished (0 warnings)
-cargo test --all-features           -> test result: ok. 138 passed; 0 failed
+cargo test --all-features      -> test result: ok. 138 passed; 0 failed
 ```
 
 Targeted validations you can run locally:
 
 - Unit test that proves the default:
-  - `cargo test test_copilot_config_default_model -- --nocapture`
+ - `cargo test test_copilot_config_default_model -- --nocapture`
 - Integration tests that require a system keyring:
-  - The integration tests in `tests/copilot_integration.rs` write a small JSON blob to the system keyring (service: `xzatoma`, user: `github_copilot`) and have been marked `#[ignore = "requires system keyring"]` so they are skipped by default (prevents CI failures in environments without an interactive keyring).
-  - To run them locally when a system keyring is available:
-    - `cargo test --test copilot_integration -- --ignored`
-    - or `cargo test -- --ignored` (runs all ignored tests)
+ - The integration tests in `tests/copilot_integration.rs` write a small JSON blob to the system keyring (service: `xzatoma`, user: `github_copilot`) and have been marked `#[ignore = "requires system keyring"]` so they are skipped by default (prevents CI failures in environments without an interactive keyring).
+ - To run them locally when a system keyring is available:
+  - `cargo test --test copilot_integration -- --ignored`
+  - or `cargo test -- --ignored` (runs all ignored tests)
 - Full validation (must pass before merging):
-  - `cargo fmt --all`
-  - `cargo check --all-targets --all-features`
-  - `cargo clippy --all-targets --all-features -- -D warnings`
-  - `cargo test --all-features`
+ - `cargo fmt --all`
+ - `cargo check --all-targets --all-features`
+ - `cargo clippy --all-targets --all-features -- -D warnings`
+ - `cargo test --all-features`
 
 What the new test asserts (important regression guard):
 
@@ -108,8 +108,8 @@ assert_eq!(cfg.model, "gpt-5-mini");
 
 - Backward-compatible: existing user configs that explicitly set `copilot.model` continue to work unchanged.
 - To keep the old default behavior, users may:
-  - Set `copilot.model: gpt-4o` in their config file, or
-  - Export env var: `export XZATOMA_COPILOT_MODEL=gpt-4o`
+ - Set `copilot.model: gpt-4o` in their config file, or
+ - Export env var: `export XZATOMA_COPILOT_MODEL=gpt-4o`
 - No migration of persisted data is required — this is a configuration-default change only.
 
 ## Rollback plan
@@ -123,10 +123,10 @@ assert_eq!(cfg.model, "gpt-5-mini");
 - [x] All existing tests continue to pass (no regressions)
 - [x] Documentation and example configs updated to avoid confusion
 - [x] All quality gates green:
-  - `cargo fmt --all`
-  - `cargo check --all-targets --all-features`
-  - `cargo clippy --all-targets --all-features -- -D warnings`
-  - `cargo test --all-features`
+ - `cargo fmt --all`
+ - `cargo check --all-targets --all-features`
+ - `cargo clippy --all-targets --all-features -- -D warnings`
+ - `cargo test --all-features`
 
 ## Usage examples
 
@@ -143,7 +143,7 @@ Override in config file:
 
 ```xzatoma/config/config.yaml#L9-15
 copilot:
-  model: gpt-4o   # explicit override to retain previous model
+ model: gpt-4o  # explicit override to retain previous model
 ```
 
 Override via environment variable:
@@ -163,11 +163,11 @@ xzatoma run --plan my_plan.yaml
 ## Files changed (summary)
 
 - Primary behavior
-  - `xzatoma/src/config.rs` — default value changed to `gpt-5-mini`
-  - `xzatoma/src/providers/copilot.rs` — examples updated, unit test added
-  - `xzatoma/src/test_utils.rs` — test fixture updated
+ - `xzatoma/src/config.rs` — default value changed to `gpt-5-mini`
+ - `xzatoma/src/providers/copilot.rs` — examples updated, unit test added
+ - `xzatoma/src/test_utils.rs` — test fixture updated
 - Configuration example
-  - `xzatoma/config/config.yaml` — example/default updated
+ - `xzatoma/config/config.yaml` — example/default updated
 - Documentation (explanation + reference) updated where they described the previous default
 
 ## References

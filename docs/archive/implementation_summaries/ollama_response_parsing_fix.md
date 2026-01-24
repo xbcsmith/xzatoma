@@ -10,7 +10,7 @@ When attempting to use certain Ollama models like `granite4:latest`, the agent w
 
 ```text
 /models granite4:latest
-2026-01-22T21:52:12.205357Z  INFO xzatoma::agent::core: Starting agent execution
+2026-01-22T21:52:12.205357Z INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:52:13.039591Z ERROR xzatoma::providers::ollama: Failed to parse Ollama response: error decoding response body: missing field `type` at line 1 column 260
 Error: Provider error: Failed to parse Ollama response: error decoding response body: missing field `type` at line 1 column 260
 ```
@@ -36,24 +36,24 @@ Updated the Ollama response structures to be more tolerant:
 /// Tool call in Ollama format
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaToolCall {
-    #[serde(default)]
-    id: String,
-    #[serde(default = "default_tool_type")]
-    r#type: String,
-    function: OllamaFunctionCall,
+  #[serde(default)]
+  id: String,
+  #[serde(default = "default_tool_type")]
+  r#type: String,
+  function: OllamaFunctionCall,
 }
 
 /// Function call details in Ollama format
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaFunctionCall {
-    name: String,
-    #[serde(default)]
-    arguments: serde_json::Value,
+  name: String,
+  #[serde(default)]
+  arguments: serde_json::Value,
 }
 
 /// Default type for tool calls (used when field is missing)
 fn default_tool_type() -> String {
-    "function".to_string()
+  "function".to_string()
 }
 ```
 
@@ -63,11 +63,11 @@ fn default_tool_type() -> String {
 /// Message structure for Ollama API
 #[derive(Debug, Serialize, Deserialize)]
 struct OllamaMessage {
-    role: String,
-    #[serde(default)]
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OllamaToolCall>>,
+  role: String,
+  #[serde(default)]
+  content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<OllamaToolCall>>,
 }
 ```
 
@@ -77,39 +77,39 @@ When tool call IDs are missing or empty, generate unique IDs:
 
 ```rust
 fn convert_response_message(&self, ollama_msg: OllamaMessage) -> Message {
-    if let Some(tool_calls) = ollama_msg.tool_calls {
-        let converted_calls: Vec<ToolCall> = tool_calls
-            .into_iter()
-            .enumerate()
-            .map(|(idx, tc)| ToolCall {
-                id: if tc.id.is_empty() {
-                    format!(
-                        "call_{}_{}",
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis(),
-                        idx
-                    )
-                } else {
-                    tc.id
-                },
-                function: FunctionCall {
-                    name: tc.function.name,
-                    arguments: serde_json::to_string(&tc.function.arguments)
-                        .unwrap_or_else(|_| "{}".to_string()),
-                },
-            })
-            .collect();
-
-        Message::assistant_with_tools(converted_calls)
-    } else {
-        Message::assistant(if ollama_msg.content.is_empty() {
-            "".to_string()
+  if let Some(tool_calls) = ollama_msg.tool_calls {
+    let converted_calls: Vec<ToolCall> = tool_calls
+      .into_iter()
+      .enumerate()
+      .map(|(idx, tc)| ToolCall {
+        id: if tc.id.is_empty() {
+          format!(
+            "call_{}_{}",
+            std::time::SystemTime::now()
+              .duration_since(std::time::UNIX_EPOCH)
+              .unwrap_or_default()
+              .as_millis(),
+            idx
+          )
         } else {
-            ollama_msg.content
-        })
-    }
+          tc.id
+        },
+        function: FunctionCall {
+          name: tc.function.name,
+          arguments: serde_json::to_string(&tc.function.arguments)
+            .unwrap_or_else(|_| "{}".to_string()),
+        },
+      })
+      .collect();
+
+    Message::assistant_with_tools(converted_calls)
+  } else {
+    Message::assistant(if ollama_msg.content.is_empty() {
+      "".to_string()
+    } else {
+      ollama_msg.content
+    })
+  }
 }
 ```
 
@@ -124,14 +124,14 @@ Since `granite4:latest` supports tool calling, added it to the capability whitel
 
 ```rust
 match family.to_lowercase().as_str() {
-    // Models that support tool calling
-    "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
-    | "command-r" | "command-r-plus" | "granite3" | "granite4" => {
-        model.add_capability(ModelCapability::FunctionCalling);
-    }
-    _ => {
-        // Most other models do NOT support tool calling
-    }
+  // Models that support tool calling
+  "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
+  | "command-r" | "command-r-plus" | "granite3" | "granite4" => {
+    model.add_capability(ModelCapability::FunctionCalling);
+  }
+  _ => {
+    // Most other models do NOT support tool calling
+  }
 }
 ```
 
@@ -140,12 +140,12 @@ match family.to_lowercase().as_str() {
 ### Code Changes
 
 - `src/providers/ollama.rs` (4 structures modified, 1 function added, 1 function updated)
-  - `OllamaMessage` - Made `content` field use `#[serde(default)]`
-  - `OllamaToolCall` - Made `id` and `type` fields use defaults
-  - `OllamaFunctionCall` - Made `arguments` field use `#[serde(default)]`
-  - `default_tool_type()` - New helper function for default type value
-  - `convert_response_message()` - Added ID generation for empty IDs
-  - `add_model_capabilities()` - Added `granite3` and `granite4` to whitelist
+ - `OllamaMessage` - Made `content` field use `#[serde(default)]`
+ - `OllamaToolCall` - Made `id` and `type` fields use defaults
+ - `OllamaFunctionCall` - Made `arguments` field use `#[serde(default)]`
+ - `default_tool_type()` - New helper function for default type value
+ - `convert_response_message()` - Added ID generation for empty IDs
+ - `add_model_capabilities()` - Added `granite3` and `granite4` to whitelist
 
 Total: 6 changes in 1 file
 
@@ -168,10 +168,10 @@ Tool call IDs are used to correlate tool results back to the original request. W
 - Tool execution framework expects valid IDs
 
 **Timestamp-based approach**:
-- ✅ Unique across calls (millisecond precision)
-- ✅ Sortable/traceable for debugging
-- ✅ No external dependencies (no UUID crate needed)
-- ✅ Deterministic within a response (index ensures ordering)
+- Unique across calls (millisecond precision)
+- Sortable/traceable for debugging
+- No external dependencies (no UUID crate needed)
+- Deterministic within a response (index ensures ordering)
 
 ### Why Not Validate Response Format Strictly?
 
@@ -218,20 +218,20 @@ The existing tests continue to work because they provide all fields. The default
 ```bash
 /model llama3.2:latest
 /model mistral:latest
-# Result: ✅ Works as before (all fields present)
+# Result: Works as before (all fields present)
 ```
 
 #### Scenario 2: Model with Missing Fields (Granite)
 ```bash
 /model granite4:latest
 # Expected: Previously failed with parsing error
-# Result: ✅ Now works with generated IDs and default values
+# Result: Now works with generated IDs and default values
 ```
 
 #### Scenario 3: Tool Calls with Empty IDs
 ```text
 Response with: {"id": "", "function": {"name": "read_file"}}
-# Result: ✅ Generates ID like "call_1737582732039_0"
+# Result: Generates ID like "call_1737582732039_0"
 ```
 
 ### Integration Test Validation
@@ -289,13 +289,13 @@ Missing fields use sensible defaults:
 
 ## Validation Results
 
-- ✅ `cargo fmt --all` passed with no changes needed
-- ✅ `cargo check --all-targets --all-features` passed with zero errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
-- ✅ `cargo test --lib` passed with 470 tests (0 failures)
-- ✅ All file extensions correct (`.rs`, `.md`)
-- ✅ Documentation filename follows lowercase_with_underscores convention
-- ✅ No emojis in documentation
+- `cargo fmt --all` passed with no changes needed
+- `cargo check --all-targets --all-features` passed with zero errors
+- `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
+- `cargo test --lib` passed with 470 tests (0 failures)
+- All file extensions correct (`.rs`, `.md`)
+- Documentation filename follows lowercase_with_underscores convention
+- No emojis in documentation
 
 ## Future Enhancements
 

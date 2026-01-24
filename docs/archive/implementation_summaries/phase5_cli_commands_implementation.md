@@ -28,9 +28,9 @@ Updated `src/cli.rs` to add a new `Models` variant to the `Commands` enum:
 ```rust
 /// Manage AI models
 Models {
-    /// Model management subcommand
-    #[command(subcommand)]
-    command: ModelCommand,
+  /// Model management subcommand
+  #[command(subcommand)]
+  command: ModelCommand,
 }
 ```
 
@@ -40,30 +40,30 @@ Added nested `ModelCommand` enum with three subcommands:
 /// Model management subcommands
 #[derive(Subcommand, Debug, Clone)]
 pub enum ModelCommand {
-    /// List available models
-    List {
-        /// Filter by provider (copilot, ollama)
-        #[arg(short, long)]
-        provider: Option<String>,
-    },
+  /// List available models
+  List {
+    /// Filter by provider (copilot, ollama)
+    #[arg(short, long)]
+    provider: Option<String>,
+  },
 
-    /// Show detailed information about a model
-    Info {
-        /// Model name/identifier
-        #[arg(short, long)]
-        model: String,
+  /// Show detailed information about a model
+  Info {
+    /// Model name/identifier
+    #[arg(short, long)]
+    model: String,
 
-        /// Filter by provider (copilot, ollama)
-        #[arg(short, long)]
-        provider: Option<String>,
-    },
+    /// Filter by provider (copilot, ollama)
+    #[arg(short, long)]
+    provider: Option<String>,
+  },
 
-    /// Show the currently active model
-    Current {
-        /// Filter by provider (copilot, ollama)
-        #[arg(short, long)]
-        provider: Option<String>,
-    },
+  /// Show the currently active model
+  Current {
+    /// Filter by provider (copilot, ollama)
+    #[arg(short, long)]
+    provider: Option<String>,
+  },
 }
 ```
 
@@ -90,10 +90,10 @@ Features:
 - Uses `providers::create_provider()` to instantiate the correct provider
 - Calls `provider.list_models()` to retrieve available models
 - Formats output as a formatted table with columns:
-  - Model Name (unique identifier like "gpt-4", "qwen2.5-coder")
-  - Display Name (user-friendly display like "GPT-4 Turbo")
-  - Context Window (token count)
-  - Capabilities (comma-separated list of supported features)
+ - Model Name (unique identifier like "gpt-4", "qwen2.5-coder")
+ - Display Name (user-friendly display like "GPT-4 Turbo")
+ - Context Window (token count)
+ - Capabilities (comma-separated list of supported features)
 - Handles empty model list gracefully with informative message
 - Error handling for provider unavailability or authentication failures
 
@@ -102,11 +102,11 @@ Example output structure:
 Available models from copilot:
 
 +-----------------+-----------------+-------------------+-------------------------------------+
-| Model Name      | Display Name    | Context Window    | Capabilities                        |
+| Model Name   | Display Name  | Context Window  | Capabilities            |
 +=================+=================+===================+=====================================+
-| gpt-4           | GPT-4           | 8192 tokens       | FunctionCalling, Vision             |
+| gpt-4      | GPT-4      | 8192 tokens    | FunctionCalling, Vision       |
 +-----------------+-----------------+-------------------+-------------------------------------+
-| gpt-5-mini      | GPT-5 Mini      | 128000 tokens     | FunctionCalling                     |
+| gpt-5-mini   | GPT-5 Mini   | 128000 tokens   | FunctionCalling           |
 +-----------------+-----------------+-------------------+-------------------------------------+
 ```
 
@@ -118,9 +118,9 @@ Created `show_model_info()` async function in `src/commands/models.rs`:
 
 ```rust
 pub async fn show_model_info(
-    config: &Config,
-    model_name: &str,
-    provider_name: Option<&str>,
+  config: &Config,
+  model_name: &str,
+  provider_name: Option<&str>,
 ) -> Result<()>
 ```
 
@@ -129,25 +129,25 @@ Features:
 - Accepts optional provider override
 - Calls `provider.get_model_info(model_name)` for detailed information
 - Displays comprehensive model details:
-  - Name (identifier)
-  - Display Name (human-readable)
-  - Context Window (in tokens)
-  - Capabilities (formatted capability list)
-  - Provider-Specific Metadata (key-value pairs for provider-specific information)
+ - Name (identifier)
+ - Display Name (human-readable)
+ - Context Window (in tokens)
+ - Capabilities (formatted capability list)
+ - Provider-Specific Metadata (key-value pairs for provider-specific information)
 - Error handling for model not found or provider unavailable
 
 Example output structure:
 ```
 Model Information (GPT-4)
 
-Name:            gpt-4
-Display Name:    GPT-4
-Context Window:  8192 tokens
-Capabilities:    FunctionCalling, Vision
+Name:      gpt-4
+Display Name:  GPT-4
+Context Window: 8192 tokens
+Capabilities:  FunctionCalling, Vision
 
 Provider-Specific Metadata:
-  version: 2024-01
-  base_url: https://api.openai.com
+ version: 2024-01
+ base_url: https://api.openai.com
 ```
 
 ### Task 5.4: Implement Current Model Command
@@ -164,8 +164,8 @@ Features:
 - Accepts optional provider override
 - Calls `provider.get_current_model()` to retrieve active model
 - Displays:
-  - Provider name
-  - Currently active model name
+ - Provider name
+ - Currently active model name
 - Simple, concise output focused on current state
 - Error handling for providers that don't support model query
 
@@ -173,8 +173,8 @@ Example output:
 ```
 Current Model Information
 
-Provider:       copilot
-Active Model:   gpt-4
+Provider:    copilot
+Active Model:  gpt-4
 ```
 
 ### Task 5.5: Wire Up CLI Handler
@@ -185,21 +185,21 @@ Updated `src/main.rs` to handle the new `Commands::Models` variant:
 
 ```rust
 Commands::Models { command } => {
-    tracing::info!("Starting model management command");
-    match command {
-        ModelCommand::List { provider } => {
-            commands::models::list_models(&config, provider.as_deref()).await?;
-            Ok(())
-        }
-        ModelCommand::Info { model, provider } => {
-            commands::models::show_model_info(&config, &model, provider.as_deref()).await?;
-            Ok(())
-        }
-        ModelCommand::Current { provider } => {
-            commands::models::show_current_model(&config, provider.as_deref()).await?;
-            Ok(())
-        }
+  tracing::info!("Starting model management command");
+  match command {
+    ModelCommand::List { provider } => {
+      commands::models::list_models(&config, provider.as_deref()).await?;
+      Ok(())
     }
+    ModelCommand::Info { model, provider } => {
+      commands::models::show_model_info(&config, &model, provider.as_deref()).await?;
+      Ok(())
+    }
+    ModelCommand::Current { provider } => {
+      commands::models::show_current_model(&config, provider.as_deref()).await?;
+      Ok(())
+    }
+  }
 }
 ```
 
@@ -243,33 +243,33 @@ Integration tests with real providers would validate:
 All deliverables provided:
 
 1. **`src/cli.rs`** (480 lines)
-   - CLI definition with new `Models` subcommand
-   - `ModelCommand` enum with List, Info, Current variants
-   - 7 new tests for model command parsing
-   - Updated from original 394 lines
+  - CLI definition with new `Models` subcommand
+  - `ModelCommand` enum with List, Info, Current variants
+  - 7 new tests for model command parsing
+  - Updated from original 394 lines
 
 2. **`src/commands/models.rs`** (204 lines)
-   - `list_models()` function with table formatting
-   - `show_model_info()` function with detailed output
-   - `show_current_model()` function for active model display
-   - Module-level test
-   - Full doc comments with examples
+  - `list_models()` function with table formatting
+  - `show_model_info()` function with detailed output
+  - `show_current_model()` function for active model display
+  - Module-level test
+  - Full doc comments with examples
 
 3. **`src/commands/mod.rs`** (3 lines added)
-   - Export for new models module
+  - Export for new models module
 
 4. **`src/main.rs`** (20 lines added)
-   - Command routing for Models variant
-   - Integration with existing error handling
+  - Command routing for Models variant
+  - Integration with existing error handling
 
 5. **`Cargo.toml`** (1 dependency)
-   - Added `prettytable-rs = "0.10.0"` for formatted output
+  - Added `prettytable-rs = "0.10.0"` for formatted output
 
 6. **`docs/explanation/phase5_cli_commands_implementation.md`**
-   - This implementation document
-   - Complete task breakdown
-   - Usage examples
-   - Testing strategy
+  - This implementation document
+  - Complete task breakdown
+  - Usage examples
+  - Testing strategy
 
 ### Task 5.8: Success Criteria
 
@@ -277,24 +277,24 @@ All deliverables provided:
 
 All success criteria have been achieved:
 
-✅ **`xzatoma models list` works with both providers**
+ **`xzatoma models list` works with both providers**
 - Implemented with provider override support
 - Default uses configured provider
 - Can override with `--provider copilot` or `--provider ollama`
 - Proper error handling for unsupported providers
 
-✅ **`xzatoma models info <name>` shows detailed model information**
+ **`xzatoma models info <name>` shows detailed model information**
 - Implemented with required `--model` argument
 - Displays: name, display name, context window, capabilities
 - Shows provider-specific metadata when available
 - Proper error messages if model not found
 
-✅ **`xzatoma models current` displays active model**
+ **`xzatoma models current` displays active model**
 - Implemented to show current provider and model
 - Simple, focused output
 - Error handling for providers without current model support
 
-✅ **Error messages are helpful and actionable**
+ **Error messages are helpful and actionable**
 - All functions return `Result<()>` with proper error propagation
 - Provider errors forwarded through error handling chain
 - Missing model errors from provider are user-facing
@@ -368,9 +368,9 @@ $ xzatoma models list --provider copilot
 Available models from copilot:
 
 +-----------------+-----------------+-------------------+-------------------------------------+
-| Model Name      | Display Name    | Context Window    | Capabilities                        |
+| Model Name   | Display Name  | Context Window  | Capabilities            |
 +=================+=================+===================+=====================================+
-| gpt-4           | GPT-4           | 8192 tokens       | FunctionCalling, Vision             |
+| gpt-4      | GPT-4      | 8192 tokens    | FunctionCalling, Vision       |
 +-----------------+-----------------+-------------------+-------------------------------------+
 
 # Get detailed info about a model
@@ -378,42 +378,42 @@ $ xzatoma models info --model qwen2.5-coder --provider ollama
 
 Model Information (Qwen2.5-Coder)
 
-Name:            qwen2.5-coder
-Display Name:    Qwen2.5-Coder
-Context Window:  32768 tokens
-Capabilities:    FunctionCalling, LongContext
+Name:      qwen2.5-coder
+Display Name:  Qwen2.5-Coder
+Context Window: 32768 tokens
+Capabilities:  FunctionCalling, LongContext
 
 Provider-Specific Metadata:
-  version: 2024-12
-  parameters: 32B
+ version: 2024-12
+ parameters: 32B
 
 # Show current model
 $ xzatoma models current
 
 Current Model Information
 
-Provider:       copilot
-Active Model:   gpt-4
+Provider:    copilot
+Active Model:  gpt-4
 ```
 
 ## Validation Results
 
 ### Code Quality Checks
 
-✅ **`cargo fmt --all`**
+ **`cargo fmt --all`**
 - All files formatted successfully
 - No style violations
 
-✅ **`cargo check --all-targets --all-features`**
+ **`cargo check --all-targets --all-features`**
 - All targets compile without errors
 - Complete feature coverage verified
 
-✅ **`cargo clippy --all-targets --all-features -- -D warnings`**
+ **`cargo clippy --all-targets --all-features -- -D warnings`**
 - Zero warnings (treating warnings as errors)
 - All clippy suggestions applied
 - Code follows Rust idioms
 
-✅ **`cargo test --all-features`**
+ **`cargo test --all-features`**
 - 462 library tests passing
 - 426 integration tests passing
 - 61 doc tests passing
@@ -443,20 +443,20 @@ No warnings or errors.
 
 ```
 main.rs
-  ├─ Cli parsing (cli.rs)
-  │   └─ Commands::Models variant
-  │       └─ ModelCommand enum (List, Info, Current)
-  │
-  └─ Commands routing
-      └─ commands/models.rs
-          ├─ list_models()
-          ├─ show_model_info()
-          └─ show_current_model()
-              └─ Provider trait methods
-                  ├─ list_models()
-                  ├─ get_model_info()
-                  └─ get_current_model()
-                      └─ CopilotProvider, OllamaProvider
+ ├─ Cli parsing (cli.rs)
+ │  └─ Commands::Models variant
+ │    └─ ModelCommand enum (List, Info, Current)
+ │
+ └─ Commands routing
+   └─ commands/models.rs
+     ├─ list_models()
+     ├─ show_model_info()
+     └─ show_current_model()
+       └─ Provider trait methods
+         ├─ list_models()
+         ├─ get_model_info()
+         └─ get_current_model()
+           └─ CopilotProvider, OllamaProvider
 ```
 
 ### Error Handling Strategy
@@ -476,55 +476,55 @@ This ensures consistent error propagation and user-friendly error messages.
 ### Potential Improvements (Post-Phase 5)
 
 1. **Model Search/Filter**
-   - Add `--filter` flag to `models list` for searching by name or capability
-   - Add `--capability` flag to filter by specific features
+  - Add `--filter` flag to `models list` for searching by name or capability
+  - Add `--capability` flag to filter by specific features
 
 2. **JSON Output**
-   - Add `--json` flag to output raw JSON for programmatic use
-   - Useful for scripts and integration with other tools
+  - Add `--json` flag to output raw JSON for programmatic use
+  - Useful for scripts and integration with other tools
 
 3. **Model Comparison**
-   - New `models compare` subcommand to compare models side-by-side
-   - Display context window and capability differences
+  - New `models compare` subcommand to compare models side-by-side
+  - Display context window and capability differences
 
 4. **Model Caching**
-   - Cache model list for faster repeated queries
-   - Add `--refresh` flag to force cache refresh
+  - Cache model list for faster repeated queries
+  - Add `--refresh` flag to force cache refresh
 
 5. **Interactive Selection**
-   - `models select` interactive command to choose a model
-   - Integration with model switching for chat mode
+  - `models select` interactive command to choose a model
+  - Integration with model switching for chat mode
 
 6. **Cost Display**
-   - Show per-token pricing if available from provider
-   - Estimate cost for conversation based on model and context window
+  - Show per-token pricing if available from provider
+  - Estimate cost for conversation based on model and context window
 
 7. **Ollama-Specific Features**
-   - Show local model storage location
-   - Display model size and download status
-   - Model health/availability check
+  - Show local model storage location
+  - Display model size and download status
+  - Model health/availability check
 
 ## References
 
 - **Phase 4 Implementation**: Agent integration with token usage tracking
-  - Location: `docs/explanation/phase4_agent_integration_implementation.md`
-  - Provides: `Agent::get_token_usage()`, `Agent::get_context_info()`
+ - Location: `docs/explanation/phase4_agent_integration_implementation.md`
+ - Provides: `Agent::get_token_usage()`, `Agent::get_context_info()`
 
 - **Provider Trait**: Base provider interface and model management methods
-  - Location: `src/providers/base.rs`
-  - Provides: `list_models()`, `get_model_info()`, `get_current_model()`
+ - Location: `src/providers/base.rs`
+ - Provides: `list_models()`, `get_model_info()`, `get_current_model()`
 
 - **Copilot Provider**: GitHub Copilot implementation
-  - Location: `src/providers/copilot.rs`
+ - Location: `src/providers/copilot.rs`
 
 - **Ollama Provider**: Local Ollama implementation
-  - Location: `src/providers/ollama.rs`
+ - Location: `src/providers/ollama.rs`
 
 - **CLI Architecture**: Command-line interface design
-  - Location: `src/cli.rs`
+ - Location: `src/cli.rs`
 
 - **Command Handlers**: Pattern for implementing new commands
-  - Location: `src/commands/mod.rs`
+ - Location: `src/commands/mod.rs`
 
 ## Implementation Timeline
 

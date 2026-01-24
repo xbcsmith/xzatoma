@@ -17,38 +17,38 @@ Files in this directory are preserved and traceable through Git history. Moves w
 
 - From files under `docs/explanation/` use a relative link to the archive:
 
-  - Example:
-    ```text
-    Link text: Phase 3 security implementation
-    Path: ../archive/implementation_summaries/phase3_security_validation_implementation.md
-    ```
+ - Example:
+  ```text
+  Link text: Phase 3 security implementation
+  Path: ../archive/implementation_summaries/phase3_security_validation_implementation.md
+  ```
 
 - From an archived file to an explanation doc use:
 
-  - Example:
-    ```text
-    Link text: Chat modes architecture
-    Path: ../../explanation/chat_modes_architecture.md
-    ```
+ - Example:
+  ```text
+  Link text: Chat modes architecture
+  Path: ../../explanation/chat_modes_architecture.md
+  ```
 
 - When linking across archived files inside the archive folder prefer local filenames (no directories). Note: from this README (located at `docs/archive/`) prefix with `implementation_summaries/`:
-  - Example:
-    ```text
-    Link text: Copilot model fetching
-    Path: implementation_summaries/copilot_dynamic_model_fetching.md
-    ```
-  - From a file inside `docs/archive/implementation_summaries/` you can use:
-    ```text
-    Link text: Copilot model fetching
-    Path: copilot_dynamic_model_fetching.md
-    ```
+ - Example:
+  ```text
+  Link text: Copilot model fetching
+  Path: implementation_summaries/copilot_dynamic_model_fetching.md
+  ```
+ - From a file inside `docs/archive/implementation_summaries/` you can use:
+  ```text
+  Link text: Copilot model fetching
+  Path: copilot_dynamic_model_fetching.md
+  ```
 
 ## Move-only PR guidance (recommended checklist)
 
 1. Use `git mv` to move files (preserves history).
 2. Update referencing files to point to the new locations:
-   - `docs/explanation/*` → `../archive/implementation_summaries/<file>.md`
-   - `docs/archive/implementation_summaries/*` linking to each other → local filenames (`<file>.md`)
+  - `docs/explanation/*` → `../archive/implementation_summaries/<file>.md`
+  - `docs/archive/implementation_summaries/*` linking to each other → local filenames (`<file>.md`)
 3. Do not delete or substantially edit the moved files in the same PR.
 4. Include a short audit in the PR description that lists moved files and rationale (for example: `docs/explanation/documentation_cleanup_summary.md`).
 5. Run the validation steps below (link checks, filename checks, emoji scan).
@@ -58,38 +58,38 @@ Files in this directory are preserved and traceable through Git history. Moves w
 
 - Search for remaining references to the old locations:
 
-  ```bash
-  # find any lingering references to docs/explanation/
-  grep -R "docs/explanation/" docs/ || true
-  ```
+ ```bash
+ # find any lingering references to docs/explanation/
+ grep -R "docs/explanation/" docs/ || true
+ ```
 
 - Confirm new archive links exist:
 
-  ```bash
-  grep -R "\.\./archive/implementation_summaries/" docs/ || true
-  ```
+ ```bash
+ grep -R "\.\./archive/implementation_summaries/" docs/ || true
+ ```
 
 - Ensure filenames follow lowercase_with_underscores:
 
-  ```bash
-  # should return nothing if names are conformant
-  find docs/ -type f -name '*[A-Z]*' -print || true
-  ```
+ ```bash
+ # should return nothing if names are conformant
+ find docs/ -type f -name '*[A-Z]*' -print || true
+ ```
 
 - Recommended CI checks (if available):
-  - Markdown link check (ensure internal links resolve)
-  - Filename policy (lowercase + underscores)
-  - Emoji scan (no emojis in docs)
-  - Code-fence language enforcement (all fenced code blocks include a language)
+ - Markdown link check (ensure internal links resolve)
+ - Filename policy (lowercase + underscores)
+ - Emoji scan (no emojis in docs)
+ - Code-fence language enforcement (all fenced code blocks include a language)
 
 ## Restoring an archived file
 
 If a file must be restored from the archive to a user-facing location:
 
 1. Create a branch and use `git mv` to move the file back:
-   ```bash
-   git mv docs/archive/implementation_summaries/<file>.md docs/explanation/<file>.md
-   ```
+  ```bash
+  git mv docs/archive/implementation_summaries/<file>.md docs/explanation/<file>.md
+  ```
 2. Update all references that pointed to the archived location so they now reference the explanation location.
 3. Run validation checks (link-checker, filename policy, emoji scan).
 4. Open a PR that explains why the document should be promoted and request maintainer review.
@@ -98,14 +98,14 @@ If a file must be restored from the archive to a user-facing location:
 
 - List all archived implementation summaries:
 
-  ```bash
-  ls docs/archive/implementation_summaries
-  ```
+ ```bash
+ ls docs/archive/implementation_summaries
+ ```
 
 - Search across archived content:
-  ```bash
-  grep -R "security" docs/archive/implementation_summaries || true
-  ```
+ ```bash
+ grep -R "security" docs/archive/implementation_summaries || true
+ ```
 
 ## CI / long-term recommendations
 

@@ -15,9 +15,9 @@ Files touched:
 ## Components Delivered
 
 - `src/tools/terminal.rs` (modified)
-  - Updated `execute_command` helper to use struct initialization instead of a mutable default and a subsequent field assignment.
-  - Removed unnecessary `mut` declarations where variables aren't mutably used.
-  - Updated tests to use struct initialization rather than field reassignment.
+ - Updated `execute_command` helper to use struct initialization instead of a mutable default and a subsequent field assignment.
+ - Removed unnecessary `mut` declarations where variables aren't mutably used.
+ - Updated tests to use struct initialization rather than field reassignment.
 
 ## Implementation Details
 
@@ -37,8 +37,8 @@ After:
 ```xzatoma/src/tools/terminal.rs#L49-58
 let validator = CommandValidator::new(mode, working_dir.clone());
 let config = TerminalConfig {
-    default_mode: mode,
-    ..Default::default()
+  default_mode: mode,
+  ..Default::default()
 };
 let tool = TerminalTool::new(validator, config);
 ```
@@ -50,7 +50,7 @@ Rationale: Using struct initialization with `..Default::default()` adheres to `c
 Before:
 ```xzatoma/src/tools/terminal.rs#L398-405
 let mut child = cmd.spawn().map_err(|e| {
-    /* error mapping */
+  /* error mapping */
 })?;
 let pid = child.id();
 let wait_handle = tokio::spawn(async move { child.wait_with_output().await });
@@ -59,7 +59,7 @@ let wait_handle = tokio::spawn(async move { child.wait_with_output().await });
 After:
 ```xzatoma/src/tools/terminal.rs#L398-405
 let child = cmd.spawn().map_err(|e| {
-    /* error mapping */
+  /* error mapping */
 })?;
 let pid = child.id();
 let wait_handle = tokio::spawn(async move { child.wait_with_output().await });
@@ -76,8 +76,8 @@ let mut sleep = time::sleep(Duration::from_secs(timeout_seconds));
 tokio::pin!(sleep);
 ...
 let output = tokio::select! {
-    join_res = &mut join_fut => ...,
-    _ = &mut sleep => { ... }
+  join_res = &mut join_fut => ...,
+  _ = &mut sleep => { ... }
 };
 ```
 
@@ -88,8 +88,8 @@ let sleep = time::sleep(Duration::from_secs(timeout_seconds));
 tokio::pin!(sleep);
 ...
 let output = tokio::select! {
-    join_res = &mut join_fut => ...,
-    _ = &mut sleep => { ... }
+  join_res = &mut join_fut => ...,
+  _ = &mut sleep => { ... }
 };
 ```
 
@@ -117,18 +117,18 @@ Rationale: Same as #1 — immutable initialization is clearer and Clippy-friendl
 Validation steps applied (executed in the repository root):
 
 - Formatting:
-  - `cargo fmt --all` — applied formatting changes.
+ - `cargo fmt --all` — applied formatting changes.
 - Compilation:
-  - `cargo check --all-targets --all-features` — ensures code compiles.
+ - `cargo check --all-targets --all-features` — ensures code compiles.
 - Linting:
-  - `cargo clippy --all-targets --all-features -- -D warnings` — shows no warnings after the changes.
+ - `cargo clippy --all-targets --all-features -- -D warnings` — shows no warnings after the changes.
 - Tests:
-  - `cargo test --all-features` — all unit tests pass.
+ - `cargo test --all-features` — all unit tests pass.
 
 Test run results (representative):
 - `cargo test --all-features` output indicated all tests passed with:
-  - library tests: `test result: ok. 137 passed; 0 failed; 0 ignored`
-  - binary tests: `test result: ok. 135 passed; 0 failed`
+ - library tests: `test result: ok. 137 passed; 0 failed; 0 ignored`
+ - binary tests: `test result: ok. 135 passed; 0 failed`
 
 Note: Test counts depend on the repository's current test suite and may change over time.
 
@@ -139,8 +139,8 @@ No behavior changes were introduced — all tools and helper functions should be
 Example usage:
 ```xzatoma/src/tools/terminal.rs#L38-46
 let tool = TerminalTool::new(
-    CommandValidator::new(ExecutionMode::RestrictedAutonomous, PathBuf::from(".")),
-    TerminalConfig { default_mode: ExecutionMode::RestrictedAutonomous, ..Default::default() },
+  CommandValidator::new(ExecutionMode::RestrictedAutonomous, PathBuf::from(".")),
+  TerminalConfig { default_mode: ExecutionMode::RestrictedAutonomous, ..Default::default() },
 );
 let res = tool.execute(json!({ "command": "echo hello", "timeout_seconds": 30 })).await?;
 ```
@@ -157,9 +157,9 @@ let res = tool.execute(json!({ "command": "echo hello", "timeout_seconds": 30 })
 - No functional changes were made; all edits are stylistic and meant to address Clippy suggestions. Behavior remains the same.
 - The changes increase code clarity and avoid needless mutable bindings.
 - When future changes are necessary, follow these guidelines:
-  - Prefer `Struct { field: value, ..Default::default() }` over `let mut s = Struct::default(); s.field = value;`.
-  - Avoid `mut` unless required by mutation or mutable borrowing.
-  - Use `tokio::pin!` properly for pinned futures like `sleep`.
+ - Prefer `Struct { field: value, ..Default::default() }` over `let mut s = Struct::default(); s.field = value;`.
+ - Avoid `mut` unless required by mutation or mutable borrowing.
+ - Use `tokio::pin!` properly for pinned futures like `sleep`.
 - Keep an eye out for other lint suggestions from Clippy and address them similarly when they provide clarity or correctness improvements.
 
 ## References

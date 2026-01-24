@@ -8,24 +8,24 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 ## Comparison Matrix
 
-| Aspect                 | XZatoma               | Goose                                                  | Zed Agent                   |
+| Aspect         | XZatoma        | Goose                         | Zed Agent          |
 | ---------------------- | --------------------- | ------------------------------------------------------ | --------------------------- |
-| **Maturity**           | 🔴 Design phase       | 🟢 Production (v0.9+)                                  | 🟢 Production               |
-| **Lines of Code**      | ~0 (planned ~3-5k)    | ~9k+ core                                              | ~9.6k+ assistant            |
-| **Platform**           | CLI only              | CLI + Desktop App                                      | Editor-integrated           |
-| **Provider Support**   | Copilot, Ollama       | OpenAI, Anthropic, Databricks, Groq, OpenRouter        | Copilot, Claude             |
-| **MCP Support**        | ❌ No                 | ✅ Yes (native)                                        | ❌ No                       |
-| **Extensions**         | ❌ No                 | ✅ Yes (MCP servers)                                   | ✅ Limited (slash commands) |
-| **Built-in Tools**     | File ops, terminal    | File ops, terminal, web scraping, memory, integrations | Editor operations, terminal |
-| **Autonomous Mode**    | ✅ Yes (core feature) | ✅ Yes (with modes)                                    | ⚠️ Semi (user in loop)      |
-| **UI**                 | Terminal only         | Terminal + Electron app                                | Editor UI (GPUI)            |
-| **Local LLM**          | ✅ Yes (Ollama)       | ✅ Yes (Ollama)                                        | ❌ No                       |
-| **Context Management** | Token pruning         | Summarization + algorithms                             | Editor context aware        |
-| **Security Model**     | Command validation    | Permission system                                      | Editor sandboxing           |
-| **Plan Support**       | ✅ YAML/JSON/Markdown | ✅ Recipes (YAML)                                      | ❌ No                       |
-| **License**            | Not set               | Apache 2.0                                             | GPL v3                      |
-| **Language**           | Rust                  | Rust                                                   | Rust                        |
-| **Team**               | Solo/small            | Block (Square) team                                    | Zed Industries              |
+| **Maturity**      | Design phase    | Production (v0.9+)                 | Production        |
+| **Lines of Code**   | ~0 (planned ~3-5k)  | ~9k+ core                       | ~9.6k+ assistant      |
+| **Platform**      | CLI only       | CLI + Desktop App                   | Editor-integrated      |
+| **Provider Support**  | Copilot, Ollama    | OpenAI, Anthropic, Databricks, Groq, OpenRouter    | Copilot, Claude       |
+| **MCP Support**    | No         | Yes (native)                    | No            |
+| **Extensions**     | No         | Yes (MCP servers)                  | Limited (slash commands) |
+| **Built-in Tools**   | File ops, terminal  | File ops, terminal, web scraping, memory, integrations | Editor operations, terminal |
+| **Autonomous Mode**  | Yes (core feature) | Yes (with modes)                  | WARNING: Semi (user in loop)   |
+| **UI**         | Terminal only     | Terminal + Electron app                | Editor UI (GPUI)      |
+| **Local LLM**     | Yes (Ollama)    | Yes (Ollama)                    | No            |
+| **Context Management** | Token pruning     | Summarization + algorithms               | Editor context aware    |
+| **Security Model**   | Command validation  | Permission system                   | Editor sandboxing      |
+| **Plan Support**    | YAML/JSON/Markdown | Recipes (YAML)                   | No            |
+| **License**      | Not set        | Apache 2.0                       | GPL v3           |
+| **Language**      | Rust         | Rust                          | Rust            |
+| **Team**        | Solo/small      | Block (Square) team                  | Zed Industries       |
 
 ## Detailed Comparison
 
@@ -59,20 +59,20 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 #### Tool/Extension System
 
-**XZatoma**: ❌ No extensions
+**XZatoma**: No extensions
 
 - Built-in only: `list_files`, `read_file`, `write_file`, `create_directory`, `delete_path`, `diff_files`, `execute_command`, `parse_plan`
 - Hardcoded tools, no plugin system
 - Simple, predictable, limited
 
-**Goose**: ✅ Rich extension ecosystem
+**Goose**: Rich extension ecosystem
 
 - Built-in: Developer, Jetbrains, Google Drive, Scrapy, Memory
 - MCP-compatible: Can use any MCP server
 - Custom extensions: Full MCP server creation support
 - Extensible, complex, powerful
 
-**Zed Agent**: ⚠️ Limited extensions
+**Zed Agent**: WARNING: Limited extensions
 
 - Built-in: Editor operations, terminal, file system
 - Slash commands: `/workflow`, `/search`, `/diagnostics`, etc.
@@ -106,21 +106,21 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 #### Autonomous Operation
 
-**XZatoma**: ✅ Core feature
+**XZatoma**: Core feature
 
 - Three modes: Interactive, Restricted Autonomous, Full Autonomous
 - Command allowlist/denylist
 - Iteration limits (max 100 turns)
 - Designed for unattended execution
 
-**Goose**: ✅ Supported
+**Goose**: Supported
 
 - Four modes: Chat, Smart Approval, Approval, Autonomous
 - Permission system for dangerous operations
 - Recipe-based workflows
 - Can run fully autonomous with safeguards
 
-**Zed Agent**: ⚠️ Semi-autonomous
+**Zed Agent**: WARNING: Semi-autonomous
 
 - Primarily human-in-loop
 - Can execute commands with approval
@@ -205,11 +205,11 @@ This document provides an honest, technical comparison of XZatoma against two es
 ```yaml
 goal: "Generate documentation"
 context:
-  directory: "src/"
+ directory: "src/"
 instructions:
-  - List all source files
-  - Read key components
-  - Generate docs/api.md
+ - List all source files
+ - Read key components
+ - Generate docs/api.md
 ```
 
 - Simple YAML/JSON/Markdown plans
@@ -223,10 +223,10 @@ name: "deploy"
 description: "Deploy application"
 kickoff_message: "Starting deployment"
 plan:
-  - action: "run"
-    command: "cargo build --release"
-  - action: "run"
-    command: "docker build -t app ."
+ - action: "run"
+  command: "cargo build --release"
+ - action: "run"
+  command: "docker build -t app ."
 ```
 
 - Rich recipe system with actions
@@ -243,14 +243,14 @@ plan:
 
 ### 5. Maturity & Production Readiness
 
-**XZatoma**: 🔴 Pre-alpha
+**XZatoma**: Pre-alpha
 
 - Architecture designed but not implemented
 - No code written yet
 - ~1-2 months to MVP estimate
 - No users, no production deployments
 
-**Goose**: 🟢 Production
+**Goose**: Production
 
 - v0.9+ releases
 - Active development by Block (Square)
@@ -259,7 +259,7 @@ plan:
 - Active Discord community
 - Comprehensive documentation
 
-**Zed Agent**: 🟢 Production
+**Zed Agent**: Production
 
 - Shipped in Zed editor
 - Thousands of active users
@@ -273,65 +273,65 @@ plan:
 
 **Strengths**:
 
-- ✅ Simple, focused architecture
-- ✅ No external dependencies (except AI provider)
-- ✅ Easy to understand and modify
-- ✅ CLI-native (scriptable, CI/CD friendly)
-- ✅ Designed for autonomous operation
-- ✅ Works with local LLMs (Ollama)
-- ✅ Plan-based repeatable tasks
+- Simple, focused architecture
+- No external dependencies (except AI provider)
+- Easy to understand and modify
+- CLI-native (scriptable, CI/CD friendly)
+- Designed for autonomous operation
+- Works with local LLMs (Ollama)
+- Plan-based repeatable tasks
 
 **Weaknesses**:
 
-- ❌ Not implemented yet (vaporware)
-- ❌ No extension system
-- ❌ Limited built-in tools
-- ❌ No UI (terminal only)
-- ❌ No MCP support
-- ❌ Solo/small team vs established projects
-- ❌ No community yet
-- ❌ Limited provider options
+- Not implemented yet (vaporware)
+- No extension system
+- Limited built-in tools
+- No UI (terminal only)
+- No MCP support
+- Solo/small team vs established projects
+- No community yet
+- Limited provider options
 
 #### Goose
 
 **Strengths**:
 
-- ✅ Production-ready, battle-tested
-- ✅ Rich extension ecosystem (MCP)
-- ✅ Multiple provider support
-- ✅ Desktop app + CLI
-- ✅ Active community and team
-- ✅ Comprehensive documentation
-- ✅ Recipe system for workflows
-- ✅ Sophisticated context management
+- Production-ready, battle-tested
+- Rich extension ecosystem (MCP)
+- Multiple provider support
+- Desktop app + CLI
+- Active community and team
+- Comprehensive documentation
+- Recipe system for workflows
+- Sophisticated context management
 
 **Weaknesses**:
 
-- ⚠️ More complex (~9k+ lines)
-- ⚠️ Requires understanding MCP for extensions
-- ⚠️ Desktop app adds dependency (Electron)
-- ⚠️ Not as simple to deploy in CI/CD
-- ⚠️ More configuration options (can be overwhelming)
+- WARNING: More complex (~9k+ lines)
+- WARNING: Requires understanding MCP for extensions
+- WARNING: Desktop app adds dependency (Electron)
+- WARNING: Not as simple to deploy in CI/CD
+- WARNING: More configuration options (can be overwhelming)
 
 #### Zed Agent
 
 **Strengths**:
 
-- ✅ Seamless editor integration
-- ✅ Fast, responsive UI
-- ✅ No context switching
-- ✅ LSP-aware, project understanding
-- ✅ Stable, well-tested
-- ✅ Strong editor company backing
+- Seamless editor integration
+- Fast, responsive UI
+- No context switching
+- LSP-aware, project understanding
+- Stable, well-tested
+- Strong editor company backing
 
 **Weaknesses**:
 
-- ❌ Requires Zed editor (not standalone)
-- ❌ No autonomous operation
-- ❌ No CLI mode
-- ❌ No local LLM support
-- ❌ Limited to editor use cases
-- ❌ Can't run unattended
+- Requires Zed editor (not standalone)
+- No autonomous operation
+- No CLI mode
+- No local LLM support
+- Limited to editor use cases
+- Can't run unattended
 
 ## Ranking by Criteria
 
@@ -441,34 +441,34 @@ XZatoma should position itself as:
 
 **Must Have** (to be viable):
 
-1. ✅ Implement the architecture (obviously)
-2. ✅ Prove the security model works
-3. ✅ Demonstrate autonomous operation safety
-4. ✅ Keep codebase under 5k lines
-5. ✅ Excellent documentation
-6. ✅ Clear examples and use cases
+1. Implement the architecture (obviously)
+2. Prove the security model works
+3. Demonstrate autonomous operation safety
+4. Keep codebase under 5k lines
+5. Excellent documentation
+6. Clear examples and use cases
 
 **Should Have** (to compete):
 
-1. ⚠️ Integration examples (GitHub Actions, GitLab CI)
-2. ⚠️ Docker image for easy deployment
-3. ⚠️ Comprehensive test suite (>80% coverage)
-4. ⚠️ Benchmark comparison (vs Goose in CLI mode)
-5. ⚠️ Active community building
+1. WARNING: Integration examples (GitHub Actions, GitLab CI)
+2. WARNING: Docker image for easy deployment
+3. WARNING: Comprehensive test suite (>80% coverage)
+4. WARNING: Benchmark comparison (vs Goose in CLI mode)
+5. WARNING: Active community building
 
 **Nice to Have** (future):
 
-1. 🔮 Basic MCP support (connect to existing servers)
-2. 🔮 Web UI for monitoring (optional)
-3. 🔮 Plugin system (if kept simple)
-4. 🔮 Cloud provider integrations
+1. Basic MCP support (connect to existing servers)
+2. Web UI for monitoring (optional)
+3. Plugin system (if kept simple)
+4. Cloud provider integrations
 
 **Should NOT Do** (stay focused):
 
-- ❌ Don't try to match Goose feature-for-feature
-- ❌ Don't build a desktop app
-- ❌ Don't add complex abstractions
-- ❌ Don't sacrifice simplicity for features
+- Don't try to match Goose feature-for-feature
+- Don't build a desktop app
+- Don't add complex abstractions
+- Don't sacrifice simplicity for features
 
 ### Honest Assessment
 

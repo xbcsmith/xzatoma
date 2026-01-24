@@ -7,20 +7,20 @@ Phase 2 implements file content injection into agent prompts, enabling the agent
 ## Components Delivered
 
 - `src/mention_parser.rs` - Content loading and caching (800+ lines added)
-  - `MentionContent` struct with metadata and line range extraction
-  - `MentionCache` struct with mtime-based invalidation
-  - `load_file_content()` async function for file loading with size limits
-  - `augment_prompt_with_mentions()` async function for prompt augmentation
-  - 21 comprehensive integration tests including cache behavior and error cases
+ - `MentionContent` struct with metadata and line range extraction
+ - `MentionCache` struct with mtime-based invalidation
+ - `load_file_content()` async function for file loading with size limits
+ - `augment_prompt_with_mentions()` async function for prompt augmentation
+ - 21 comprehensive integration tests including cache behavior and error cases
 
 - `src/commands/mod.rs` - Chat loop integration (50 lines modified)
-  - Initialize `MentionCache` at session start
-  - Load and augment prompts with file contents
-  - Display file loading errors to user
+ - Initialize `MentionCache` at session start
+ - Load and augment prompts with file contents
+ - Display file loading errors to user
 
 - `src/lib.rs` - Export new types for public API
-  - Export `MentionCache`, `MentionContent`
-  - Export `load_file_content()`, `augment_prompt_with_mentions()`
+ - Export `MentionCache`, `MentionContent`
+ - Export `load_file_content()`, `augment_prompt_with_mentions()`
 
 - `docs/explanation/phase2_file_content_injection_implementation.md` - This document
 
@@ -34,18 +34,18 @@ The `MentionContent` struct holds loaded file information with metadata:
 
 ```rust
 pub struct MentionContent {
-    /// The resolved file path (canonical, for actual file operations)
-    pub path: PathBuf,
-    /// The original mention path (for display in prompts)
-    pub original_path: String,
-    /// File contents
-    pub contents: String,
-    /// File size in bytes
-    pub size_bytes: u64,
-    /// Total number of lines in file
-    pub line_count: usize,
-    /// Last modification time
-    pub mtime: Option<SystemTime>,
+  /// The resolved file path (canonical, for actual file operations)
+  pub path: PathBuf,
+  /// The original mention path (for display in prompts)
+  pub original_path: String,
+  /// File contents
+  pub contents: String,
+  /// File size in bytes
+  pub size_bytes: u64,
+  /// Total number of lines in file
+  pub line_count: usize,
+  /// Last modification time
+  pub mtime: Option<SystemTime>,
 }
 ```
 
@@ -61,7 +61,7 @@ The `MentionCache` provides efficient caching with mtime-based invalidation:
 
 ```rust
 pub struct MentionCache {
-    cache: HashMap<PathBuf, MentionContent>,
+  cache: HashMap<PathBuf, MentionContent>,
 }
 ```
 
@@ -78,9 +78,9 @@ Async function that loads file contents with validation and limits:
 
 ```rust
 pub async fn load_file_content(
-    mention: &FileMention,
-    working_dir: &Path,
-    max_size_bytes: u64,
+  mention: &FileMention,
+  working_dir: &Path,
+  max_size_bytes: u64,
 ) -> crate::error::Result<MentionContent>
 ```
 
@@ -106,22 +106,22 @@ Async function that processes all file mentions and augments the prompt:
 
 ```rust
 pub async fn augment_prompt_with_mentions(
-    mentions: &[Mention],
-    original_prompt: &str,
-    working_dir: &Path,
-    max_size_bytes: u64,
-    cache: &mut MentionCache,
+  mentions: &[Mention],
+  original_prompt: &str,
+  working_dir: &Path,
+  max_size_bytes: u64,
+  cache: &mut MentionCache,
 ) -> (String, Vec<String>)
 ```
 
 Algorithm:
 1. Iterate through mentions in order
 2. For each `Mention::File`:
-   a. Try cache first (with mtime check)
-   b. Load from disk if not cached
-   c. Store in cache if loaded successfully
-   d. Extract line range if specified
-   e. Format with header: `File: path (Lines X-Y)`
+  a. Try cache first (with mtime check)
+  b. Load from disk if not cached
+  c. Store in cache if loaded successfully
+  d. Extract line range if specified
+  e. Format with header: `File: path (Lines X-Y)`
 3. Collect any non-fatal errors
 4. Prepend formatted file contents to original prompt
 5. Separate sections with `\n---\n\n`
@@ -140,26 +140,26 @@ let max_file_size = config.agent.tools.max_file_read_size as u64;
 
 // In main loop, after parsing mentions:
 let (augmented_prompt, load_errors) =
-    crate::mention_parser::augment_prompt_with_mentions(
-        &mentions,
-        trimmed,
-        &working_dir,
-        max_file_size,
-        &mut mention_cache,
-    )
-    .await;
+  crate::mention_parser::augment_prompt_with_mentions(
+    &mentions,
+    trimmed,
+    &working_dir,
+    max_file_size,
+    &mut mention_cache,
+  )
+  .await;
 
 // Display any file loading errors to user
 if !load_errors.is_empty() {
-    for error in &load_errors {
-        eprintln!("Warning: {}", error);
-    }
+  for error in &load_errors {
+    eprintln!("Warning: {}", error);
+  }
 }
 
 // Execute with augmented prompt
 match agent.execute(augmented_prompt).await {
-    Ok(response) => println!("\n{}\n", response),
-    Err(e) => eprintln!("Error: {}\n", e),
+  Ok(response) => println!("\n{}\n", response),
+  Err(e) => eprintln!("Error: {}\n", e),
 }
 ```
 
@@ -176,34 +176,34 @@ Key behaviors:
 Located in `src/mention_parser.rs`:
 
 1. **MentionContent tests**:
-   - `test_mention_content_new()` - Creation and metadata
-   - `test_mention_content_extract_line_range()` - Line extraction with inclusive bounds
-   - `test_mention_content_extract_line_range_invalid()` - Invalid ranges rejected
-   - `test_mention_content_extract_line_range_beyond_end()` - Clamping to file end
-   - `test_mention_content_format_with_header()` - Header formatting without line range
-   - `test_mention_content_format_with_line_range()` - Header formatting with line range
+  - `test_mention_content_new()` - Creation and metadata
+  - `test_mention_content_extract_line_range()` - Line extraction with inclusive bounds
+  - `test_mention_content_extract_line_range_invalid()` - Invalid ranges rejected
+  - `test_mention_content_extract_line_range_beyond_end()` - Clamping to file end
+  - `test_mention_content_format_with_header()` - Header formatting without line range
+  - `test_mention_content_format_with_line_range()` - Header formatting with line range
 
 2. **MentionCache tests**:
-   - `test_mention_cache_new()` - Empty cache creation
-   - `test_mention_cache_insert_and_get()` - Insert and basic retrieval
-   - `test_mention_cache_clear()` - Clear all entries
-   - `test_mention_cache_default()` - Default constructor
+  - `test_mention_cache_new()` - Empty cache creation
+  - `test_mention_cache_insert_and_get()` - Insert and basic retrieval
+  - `test_mention_cache_clear()` - Clear all entries
+  - `test_mention_cache_default()` - Default constructor
 
 ### Integration Tests (10 async tests)
 
 1. **load_file_content() tests**:
-   - `test_load_file_content_success()` - Basic file loading
-   - `test_load_file_content_not_found()` - Missing file handling
-   - `test_load_file_content_exceeds_size_limit()` - Size limit enforcement
-   - `test_load_file_content_binary_detection()` - Binary file rejection
+  - `test_load_file_content_success()` - Basic file loading
+  - `test_load_file_content_not_found()` - Missing file handling
+  - `test_load_file_content_exceeds_size_limit()` - Size limit enforcement
+  - `test_load_file_content_binary_detection()` - Binary file rejection
 
 2. **augment_prompt_with_mentions() tests**:
-   - `test_augment_prompt_with_single_file()` - Single file injection
-   - `test_augment_prompt_with_line_range()` - Line range extraction in augmentation
-   - `test_augment_prompt_cache_hit()` - Cache reuse across calls
-   - `test_augment_prompt_with_multiple_files()` - Multiple files, consistent ordering
-   - `test_augment_prompt_with_missing_file()` - Graceful error handling
-   - `test_augment_prompt_non_file_mentions_ignored()` - Non-file mentions skipped
+  - `test_augment_prompt_with_single_file()` - Single file injection
+  - `test_augment_prompt_with_line_range()` - Line range extraction in augmentation
+  - `test_augment_prompt_cache_hit()` - Cache reuse across calls
+  - `test_augment_prompt_with_multiple_files()` - Multiple files, consistent ordering
+  - `test_augment_prompt_with_missing_file()` - Graceful error handling
+  - `test_augment_prompt_non_file_mentions_ignored()` - Non-file mentions skipped
 
 ### Test Coverage
 
@@ -254,7 +254,7 @@ File: src/main.rs (X lines)
 
 ```
 fn main() {
-    // contents here
+  // contents here
 }
 ```
 ---
@@ -335,22 +335,22 @@ The cache uses modification time (mtime) to detect stale entries:
 
 ```rust
 pub fn get(&self, path: &Path) -> Option<MentionContent> {
-    let cached = self.cache.get(path)?;
+  let cached = self.cache.get(path)?;
 
-    // Check if file was modified since we cached it
-    if let Ok(metadata) = std::fs::metadata(path) {
-        if let Ok(current_mtime) = metadata.modified() {
-            if let Some(cached_mtime) = cached.mtime {
-                if current_mtime <= cached_mtime {
-                    // Cache is still valid
-                    return Some(cached.clone());
-                }
-            }
+  // Check if file was modified since we cached it
+  if let Ok(metadata) = std::fs::metadata(path) {
+    if let Ok(current_mtime) = metadata.modified() {
+      if let Some(cached_mtime) = cached.mtime {
+        if current_mtime <= cached_mtime {
+          // Cache is still valid
+          return Some(cached.clone());
         }
+      }
     }
+  }
 
-    // Cache is stale
-    None
+  // Cache is stale
+  None
 }
 ```
 
@@ -398,18 +398,18 @@ All quality gates pass:
 
 ```
 ✓ cargo fmt --all
-  → All code formatted correctly
+ → All code formatted correctly
 
 ✓ cargo check --all-targets --all-features
-  → Compilation successful, no errors
+ → Compilation successful, no errors
 
 ✓ cargo clippy --all-targets --all-features -- -D warnings
-  → Zero clippy warnings
+ → Zero clippy warnings
 
 ✓ cargo test --all-features
-  → 322 tests passed (21 new tests for Phase 2)
-  → 0 tests failed
-  → Test coverage: >80%
+ → 322 tests passed (21 new tests for Phase 2)
+ → 0 tests failed
+ → Test coverage: >80%
 ```
 
 ## Key Achievements

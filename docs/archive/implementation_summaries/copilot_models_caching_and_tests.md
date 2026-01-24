@@ -12,24 +12,24 @@ Goals:
 
 - Use runtime model discovery from the Copilot `/models` endpoint rather than hardcoding.
 - Be resilient to transient auth failures (401 Unauthorized) by attempting a non-interactive
-  refresh with a cached GitHub token and retrying the request.
+ refresh with a cached GitHub token and retrying the request.
 - Reduce repeated model-list requests by adding a small in-memory TTL cache for the fetched
-  model list.
+ model list.
 - Provide reliable, mocked integration tests that run without calling production endpoints by
-  allowing tests to override the provider API base URL.
+ allowing tests to override the provider API base URL.
 
 ## Components Delivered
 
 - Code:
-  - `src/providers/copilot.rs` — Added model-list TTL cache, endpoint override support, and
-    improved 401 → refresh → retry logic.
-  - `src/config.rs` — Added `CopilotConfig::api_base` (optional) to allow tests / overrides.
+ - `src/providers/copilot.rs` — Added model-list TTL cache, endpoint override support, and
+  improved 401 → refresh → retry logic.
+ - `src/config.rs` — Added `CopilotConfig::api_base` (optional) to allow tests / overrides.
 - Tests:
-  - `tests/copilot_integration.rs` — Wiremock-based integration tests covering:
-    - 401 → non-interactive refresh → retry success
-    - models TTL caching behavior (only one `/models` request when cached)
+ - `tests/copilot_integration.rs` — Wiremock-based integration tests covering:
+  - 401 → non-interactive refresh → retry success
+  - models TTL caching behavior (only one `/models` request when cached)
 - Docs:
-  - `docs/explanation/copilot_models_caching_and_tests.md` (this file)
+ - `docs/explanation/copilot_models_caching_and_tests.md` (this file)
 
 ## Implementation Details
 
@@ -37,76 +37,76 @@ Design and rationale:
 
 - Runtime discovery:
 
-  - The provider fetches models from `/models` and parses capabilities, context window,
-    and policy state. It no longer relies on hardcoded model lists.
+ - The provider fetches models from `/models` and parses capabilities, context window,
+  and policy state. It no longer relies on hardcoded model lists.
 
 - Endpoint override:
 
-  - For testability we added `CopilotConfig.api_base: Option<String>`. When set,
-    the provider uses this base to compose Copilot endpoints (`/models`, `/chat/completions`,
-    `/copilot_internal/v2/token`) so tests can point the provider at a mock server.
+ - For testability we added `CopilotConfig.api_base: Option<String>`. When set,
+  the provider uses this base to compose Copilot endpoints (`/models`, `/chat/completions`,
+  `/copilot_internal/v2/token`) so tests can point the provider at a mock server.
 
-  Example (config struct):
+ Example (config struct):
 
 ```xzatoma/src/config.rs#L36-52
 pub struct CopilotConfig {
-    /// Model to use for Copilot
-    #[serde(default = "default_copilot_model")]
-    pub model: String,
+  /// Model to use for Copilot
+  #[serde(default = "default_copilot_model")]
+  pub model: String,
 
-    /// Optional API base URL for Copilot endpoints (useful for tests and local mocks)
-    #[serde(default)]
-    pub api_base: Option<String>,
+  /// Optional API base URL for Copilot endpoints (useful for tests and local mocks)
+  #[serde(default)]
+  pub api_base: Option<String>,
 }
 ```
 
 - Caching:
 
-  - An in-memory models cache reduces repeated calls to the `/models` endpoint.
-  - The default TTL is 300 seconds (5 minutes). The cache stores `(models, expires_at_epoch_seconds)`.
-  - Cache is protected by `Arc<RwLock<...>>` to allow cheap concurrent reads.
+ - An in-memory models cache reduces repeated calls to the `/models` endpoint.
+ - The default TTL is 300 seconds (5 minutes). The cache stores `(models, expires_at_epoch_seconds)`.
+ - Cache is protected by `Arc<RwLock<...>>` to allow cheap concurrent reads.
 
-  Key additions:
+ Key additions:
 
 ```xzatoma/src/providers/copilot.rs#L54-72
 type ModelsCache = Arc<RwLock<Option<(Vec<ModelInfo>, u64)>>>;
 pub struct CopilotProvider {
-    client: Client,
-    config: Arc<RwLock<CopilotConfig>>,
-    keyring_service: String,
-    keyring_user: String,
-    models_cache: ModelsCache,
-    models_cache_ttl_secs: u64,
+  client: Client,
+  config: Arc<RwLock<CopilotConfig>>,
+  keyring_service: String,
+  keyring_user: String,
+  models_cache: ModelsCache,
+  models_cache_ttl_secs: u64,
 }
 ```
 
 - Endpoint builder:
-  - `api_endpoint(&self, path: &str) -> String` builds endpoint URLs using `api_base` when set,
-    otherwise falls back to the documented production endpoints.
+ - `api_endpoint(&self, path: &str) -> String` builds endpoint URLs using `api_base` when set,
+  otherwise falls back to the documented production endpoints.
 
 ```xzatoma/src/providers/copilot.rs#L587-599
 fn api_endpoint(&self, path: &str) -> String {
-    if let Ok(cfg) = self.config.read() {
-        if let Some(base) = &cfg.api_base {
-            return format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'));
-        }
+  if let Ok(cfg) = self.config.read() {
+    if let Some(base) = &cfg.api_base {
+      return format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'));
     }
-    match path {
-        "models" => COPILOT_MODELS_URL.to_string(),
-        "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
-        "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
-        other => format!("https://api.githubcopilot.com/{}", other.trim_start_matches('/')),
-    }
+  }
+  match path {
+    "models" => COPILOT_MODELS_URL.to_string(),
+    "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
+    "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
+    other => format!("https://api.githubcopilot.com/{}", other.trim_start_matches('/')),
+  }
 }
 ```
 
 - Auth recovery and cache invalidation:
-  - On 401, `fetch_copilot_models()` and `complete()` attempt a non-interactive refresh:
-    1. Read cached keyring entry (contains `github_token`).
-    2. Call Copilot token exchange endpoint (`/copilot_internal/v2/token`) with `Authorization: token <github_token>`.
-    3. If refresh succeeds, cache the new copilot token and retry the original request once.
-    4. If refresh fails or there is no cached GitHub token, clear the cached copilot token (best-effort) and return an actionable Authentication error.
-  - We avoid forcing interactive device flows in request paths (interactive flows must be explicit).
+ - On 401, `fetch_copilot_models()` and `complete()` attempt a non-interactive refresh:
+  1. Read cached keyring entry (contains `github_token`).
+  2. Call Copilot token exchange endpoint (`/copilot_internal/v2/token`) with `Authorization: token <github_token>`.
+  3. If refresh succeeds, cache the new copilot token and retry the original request once.
+  4. If refresh fails or there is no cached GitHub token, clear the cached copilot token (best-effort) and return an actionable Authentication error.
+ - We avoid forcing interactive device flows in request paths (interactive flows must be explicit).
 
 ## Testing
 
@@ -114,32 +114,32 @@ Overview:
 
 - Unit tests validate parsing and small helpers (already present).
 - Integration tests (mocked) validate end-to-end behavior for:
-  - 401 → non-interactive refresh → retry.
-  - Cache TTL behavior (only one call to `/models` when cached).
+ - 401 → non-interactive refresh → retry.
+ - Cache TTL behavior (only one call to `/models` when cached).
 
 Key integration tests:
 
 - `tests/copilot_integration.rs` uses `wiremock::MockServer` to simulate:
-  - `/models` returning 401 for the first request (with initial token).
-  - `/copilot_internal/v2/token` returning `{"token":"new_token"}` for the refresh call.
-  - `/models` returning a valid models payload when retried with refreshed token.
+ - `/models` returning 401 for the first request (with initial token).
+ - `/copilot_internal/v2/token` returning `{"token":"new_token"}` for the refresh call.
+ - `/models` returning a valid models payload when retried with refreshed token.
 - A second test seeds a valid cached Copilot token in the system keyring, mounts a single `/models` mock
-  response (expects exactly 1 request) and calls `list_models()` twice — verifying cache usage.
+ response (expects exactly 1 request) and calls `list_models()` twice — verifying cache usage.
 
 Highlights from tests (mock + keyring seed):
 
 ```xzatoma/tests/copilot_integration.rs#L13-40
 let cfg = CopilotConfig {
-    api_base: Some(server.uri()),
-    ..Default::default()
+  api_base: Some(server.uri()),
+  ..Default::default()
 };
 let provider = CopilotProvider::new(cfg).unwrap();
 
 // Set keyring cached token (JSON blob)
 let cached = serde_json::json!({
-    "github_token": "gho_old",
-    "copilot_token": "initial_token",
-    "expires_at": now + 3600
+  "github_token": "gho_old",
+  "copilot_token": "initial_token",
+  "expires_at": now + 3600
 });
 let entry = keyring::Entry::new("xzatoma", "github_copilot").unwrap();
 entry.set_password(&cached.to_string()).unwrap();
@@ -187,8 +187,8 @@ use xzatoma::config::CopilotConfig;
 use xzatoma::providers::{CopilotProvider, Provider};
 
 let cfg = CopilotConfig {
-    api_base: Some(\"http://localhost:12345\".to_string()),
-    ..Default::default()
+  api_base: Some(\"http://localhost:12345\".to_string()),
+  ..Default::default()
 };
 
 let provider = CopilotProvider::new(cfg)?;
@@ -198,13 +198,13 @@ let models = <CopilotProvider as Provider>::list_models(&provider).await?;
 ## Validation Results
 
 - Local validation performed:
-  - `cargo fmt --all` — OK
-  - `cargo check --all-targets --all-features` — OK
-  - `cargo clippy --all-targets --all-features -- -D warnings` — OK
-  - `cargo test --all-features` — OK (integration tests included)
+ - `cargo fmt --all` — OK
+ - `cargo check --all-targets --all-features` — OK
+ - `cargo clippy --all-targets --all-features -- -D warnings` — OK
+ - `cargo test --all-features` — OK (integration tests included)
 - Mocked integration tests verify core scenarios:
-  - 401 → refresh → retry flows succeed.
-  - TTL caching prevents repeated `/models` requests.
+ - 401 → refresh → retry flows succeed.
+ - TTL caching prevents repeated `/models` requests.
 
 ## Acceptance Criteria
 
@@ -218,13 +218,13 @@ let models = <CopilotProvider as Provider>::list_models(&provider).await?;
 ## References
 
 - Model Management Plan (guardrails & checklist):
-  - `model_management_implementation_plan.md`
+ - `model_management_implementation_plan.md`
 - Related docs:
-  - Dynamic model fetching: `copilot_dynamic_model_fetching.md`
-  - Response parsing fixes (missing content/defaults): `copilot_response_parsing_fix.md`
+ - Dynamic model fetching: `copilot_dynamic_model_fetching.md`
+ - Response parsing fixes (missing content/defaults): `copilot_response_parsing_fix.md`
 - Implementation:
-  - Provider: `src/providers/copilot.rs`
-  - Tests: `tests/copilot_integration.rs`
+ - Provider: `src/providers/copilot.rs`
+ - Tests: `tests/copilot_integration.rs`
 
 ---
 

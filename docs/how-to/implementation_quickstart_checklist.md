@@ -1,7 +1,7 @@
 # XZatoma Implementation Quick Start Checklist
 
-**Date**: 2025-01-15  
-**For**: Implementation Team  
+**Date**: 2025-01-15 
+**For**: Implementation Team 
 **Reference**: `docs/explanation/implementation_plan.md`
 
 ## Purpose
@@ -40,7 +40,7 @@ rustup component add clippy rustfmt
 
 # Optional but recommended
 cargo install cargo-audit
-cargo install cargo-tarpaulin  # coverage tool
+cargo install cargo-tarpaulin # coverage tool
 
 # Verify
 cargo --version
@@ -106,10 +106,10 @@ cargo test --all-features
 
 Critical security test examples:
 ```text
-- rm -rf /        -> BLOCKED
-- :(){ :|:& };:   -> BLOCKED (fork bomb)
-- curl ... | sh   -> BLOCKED
-- /etc/passwd     -> REJECTED (absolute)
+- rm -rf /    -> BLOCKED
+- :(){ :|:& };:  -> BLOCKED (fork bomb)
+- curl ... | sh  -> BLOCKED
+- /etc/passwd   -> REJECTED (absolute)
 - ../../etc/passwd -> REJECTED (escape)
 ```
 

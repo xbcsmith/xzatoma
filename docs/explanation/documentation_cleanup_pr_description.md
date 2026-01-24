@@ -13,33 +13,33 @@ small link updates required to preserve navigation and prevent broken references
 ## Key changes (high level)
 
 - Created archive directory:
-  - `docs/archive/implementation_summaries/`
-  - `docs/archive/README.md` (archive policy & guidance)
+ - `docs/archive/implementation_summaries/`
+ - `docs/archive/README.md` (archive policy & guidance)
 - Moved developer-oriented files from `docs/explanation/` → `docs/archive/implementation_summaries/`
-  - Phase reports (`phase1_*` … `phase7_*`)
-  - Provider internals and fixes (`copilot_*`, `ollama_*`)
-  - Planning notes, checklists, and developer notes (`notes*.md`, `implementation_plan_refactoring_summary.md`, etc.)
+ - Phase reports (`phase1_*` … `phase7_*`)
+ - Provider internals and fixes (`copilot_*`, `ollama_*`)
+ - Planning notes, checklists, and developer notes (`notes*.md`, `implementation_plan_refactoring_summary.md`, etc.)
 - Added `docs/explanation/documentation_cleanup_summary.md` (audit of moved files and rationale)
 - Updated internal links:
-  - `docs/explanation/*` references to archived files now point to `../archive/implementation_summaries/<file>.md`
-  - Files inside the archive reference other archived files using local filenames (`<file>.md`)
+ - `docs/explanation/*` references to archived files now point to `../archive/implementation_summaries/<file>.md`
+ - Files inside the archive reference other archived files using local filenames (`<file>.md`)
 - Added a short archival note to `docs/explanation/implementations.md` pointing to the archive
 - No functional code changes
 
 ## Rationale
 
 - Improve developer UX for new users: keep `docs/` user-facing (tutorials/how-to/reference/explanation) and
-  move low-value-for-most-users implementation noise into an explicit archive.
+ move low-value-for-most-users implementation noise into an explicit archive.
 - Conservative move-only approach preserves full Git history and allows maintainers to review moves
-  before any consolidation or deletion.
+ before any consolidation or deletion.
 
 ## What to review
 
 - Confirm this is strictly a move-only change set (no content deletions or structural rewrites).
 - Verify all links to moved files have been updated and resolve properly:
-  - From `docs/explanation/` → `../archive/implementation_summaries/<file>.md`
-  - From within `docs/archive/implementation_summaries/` → local `<file>.md` where appropriate
-  - From docs that should remain in `docs/explanation/` (e.g., `overview.md`, `implementations.md`) ensure they still live at the top-level explanation area
+ - From `docs/explanation/` → `../archive/implementation_summaries/<file>.md`
+ - From within `docs/archive/implementation_summaries/` → local `<file>.md` where appropriate
+ - From docs that should remain in `docs/explanation/` (e.g., `overview.md`, `implementations.md`) ensure they still live at the top-level explanation area
 - Validate the `docs/archive/README.md` content and the archival policy (maintainer decision: keep forever / move-and-delete-after-signoff / archival TTL)
 - Confirm no user-facing docs were accidentally removed or truncated
 - Confirm file names follow `lowercase_with_underscores.md`
@@ -63,19 +63,19 @@ python3 - <<'PY'
 import os,re,sys
 bad=[]
 for root,_,files in os.walk("docs"):
-  for fn in files:
-    if not fn.endswith(".md"): continue
-    path=os.path.join(root,fn)
-    with open(path,'r',encoding='utf-8') as fh:
-      text=fh.read()
-    for m in re.findall(r'\]\(([^)]+)\)', text):
-      if m.startswith('http') or m.startswith('#') or m.startswith('mailto:'): continue
-      tgt=os.path.normpath(os.path.join(root,m.split()[0]))
-      if not os.path.exists(tgt):
-        bad.append((path,m,tgt))
+ for fn in files:
+  if not fn.endswith(".md"): continue
+  path=os.path.join(root,fn)
+  with open(path,'r',encoding='utf-8') as fh:
+   text=fh.read()
+  for m in re.findall(r'\]\(([^)]+)\)', text):
+   if m.startswith('http') or m.startswith('#') or m.startswith('mailto:'): continue
+   tgt=os.path.normpath(os.path.join(root,m.split()[0]))
+   if not os.path.exists(tgt):
+    bad.append((path,m,tgt))
 if bad:
-  for p,m,t in bad: print("MISSING:",p,"->",m,"(resolved",t,")")
-  sys.exit(1)
+ for p,m,t in bad: print("MISSING:",p,"->",m,"(resolved",t,")")
+ sys.exit(1)
 print("NO_MISSING_LINKS")
 PY
 ```
@@ -117,20 +117,20 @@ ls -la docs/archive/implementation_summaries | wc -l
 ## Notes about remaining missing links
 
 - The link checker will report a small set of missing files that are intentional placeholders for future docs:
-  - `docs/tutorials/quickstart.md`
-  - `docs/how-to/configure_providers.md`
-  - `docs/reference/cli.md`
-  - `docs/reference/configuration.md`
-  - `docs/reference/workflow_format.md`
-  - `docs/reference/api.md`
-    These are planned for Phase 3 (quickstart, provider how-to, CLI references). The PR is safe to merge despite these planned missing pages; they will be created in a follow-up PR.
+ - `docs/tutorials/quickstart.md`
+ - `docs/how-to/configure_providers.md`
+ - `docs/reference/cli.md`
+ - `docs/reference/configuration.md`
+ - `docs/reference/workflow_format.md`
+ - `docs/reference/api.md`
+  These are planned for Phase 3 (quickstart, provider how-to, CLI references). The PR is safe to merge despite these planned missing pages; they will be created in a follow-up PR.
 
 ## Suggested merge strategy & commit message
 
 - Keep moves as separate commits where possible to preserve history (recommend one commit per logical group if you want granularity).
 - Do NOT squash-merge if you want to preserve per-file git history; if the project's policy prefers squashes, maintainers should be aware that rename history is harder to inspect after a squash.
 - Suggested commit message (conventional):
-  - `chore(docs): move historical implementation summaries to docs/archive/implementation_summaries (move-only)`
+ - `chore(docs): move historical implementation summaries to docs/archive/implementation_summaries (move-only)`
 - Suggested PR labels: `docs`, `chore`, `documentation`
 
 Post-merge recommendations (Phase 2+)
@@ -138,10 +138,10 @@ Post-merge recommendations (Phase 2+)
 - Maintainers confirm archive policy (retain vs delete rule).
 - Reclassify and reassign misfiled documents (how-to / reference) in follow-up PR(s).
 - Add lightweight docs CI checks:
-  - filename policy (lowercase + underscores)
-  - markdown link checker on changed docs
-  - emoji scan
-  - code-fence language enforcement
+ - filename policy (lowercase + underscores)
+ - markdown link checker on changed docs
+ - emoji scan
+ - code-fence language enforcement
 - Create high-priority missing docs (quickstart, configure_providers, CLI reference) in Phase 3.
 
 ## PR: Reclassify & Consolidate (Phase 2) — Suggested PR description

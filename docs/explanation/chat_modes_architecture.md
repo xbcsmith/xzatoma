@@ -23,8 +23,8 @@ Together, these create four distinct configurations:
 
 ```rust
 pub enum ChatMode {
-    Planning,  // Read-only access to files
-    Write,     // Read and write access
+  Planning, // Read-only access to files
+  Write,   // Read and write access
 }
 ```
 
@@ -45,8 +45,8 @@ pub enum ChatMode {
 
 ```rust
 pub struct ChatModeState {
-    pub chat_mode: ChatMode,
-    pub safety_mode: SafetyMode,
+  pub chat_mode: ChatMode,
+  pub safety_mode: SafetyMode,
 }
 ```
 
@@ -61,8 +61,8 @@ Tracks the current mode configuration during a session. Provides methods for:
 
 ```rust
 pub enum SafetyMode {
-    AlwaysConfirm,  // Ask before dangerous operations
-    NeverConfirm,   // Execute without asking
+  AlwaysConfirm, // Ask before dangerous operations
+  NeverConfirm,  // Execute without asking
 }
 ```
 
@@ -86,30 +86,30 @@ The core mechanism for enforcing modes is the **mode-aware tool registry**. Diff
 
 ```rust
 pub struct ToolRegistryBuilder {
-    mode: ChatMode,
-    safety_mode: SafetyMode,
-    working_dir: PathBuf,
-    config: AgentConfig,
+  mode: ChatMode,
+  safety_mode: SafetyMode,
+  working_dir: PathBuf,
+  config: AgentConfig,
 }
 
 impl ToolRegistryBuilder {
-    pub fn build_for_planning(&self) -> ToolRegistry {
-        // Read-only tools only
-        // - List files: allowed
-        // - Read files: allowed
-        // - Write files: BLOCKED
-        // - Delete files: BLOCKED
-        // - Terminal: BLOCKED
-    }
+  pub fn build_for_planning(&self) -> ToolRegistry {
+    // Read-only tools only
+    // - List files: allowed
+    // - Read files: allowed
+    // - Write files: BLOCKED
+    // - Delete files: BLOCKED
+    // - Terminal: BLOCKED
+  }
 
-    pub fn build_for_write(&self) -> ToolRegistry {
-        // All tools available
-        // - List files: allowed
-        // - Read files: allowed
-        // - Write files: allowed
-        // - Delete files: allowed
-        // - Terminal: allowed
-    }
+  pub fn build_for_write(&self) -> ToolRegistry {
+    // All tools available
+    // - List files: allowed
+    // - Read files: allowed
+    // - Write files: allowed
+    // - Delete files: allowed
+    // - Terminal: allowed
+  }
 }
 ```
 
@@ -191,12 +191,12 @@ Interactive mode provides special commands for controlling the session, implemen
 
 ```rust
 pub enum SpecialCommand {
-    SwitchMode(ChatMode),      // /mode planning, /write
-    SwitchSafety(SafetyMode),  // /safe, /yolo
-    ShowStatus,                // /status
-    Help,                      // /help
-    Exit,                      // exit, quit
-    None,                      // Regular agent prompt
+  SwitchMode(ChatMode),   // /mode planning, /write
+  SwitchSafety(SafetyMode), // /safe, /yolo
+  ShowStatus,        // /status
+  Help,           // /help
+  Exit,           // exit, quit
+  None,           // Regular agent prompt
 }
 ```
 
@@ -214,10 +214,10 @@ Displayed when starting interactive chat:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║         XZatoma Interactive Chat Mode - Welcome!             ║
+║     XZatoma Interactive Chat Mode - Welcome!       ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Mode:   PLANNING (Read-only mode for creating plans)
+Mode:  PLANNING (Read-only mode for creating plans)
 Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
@@ -229,14 +229,14 @@ Shown when user types `/status`:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║                     XZatoma Session Status                   ║
+║           XZatoma Session Status          ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Chat Mode:         WRITE (Read/write mode for executing tasks)
-Safety Mode:       SAFE (Confirm dangerous operations)
-Available Tools:   5
+Chat Mode:     WRITE (Read/write mode for executing tasks)
+Safety Mode:    SAFE (Confirm dangerous operations)
+Available Tools:  5
 Conversation Size: 12 messages
-Prompt Format:     [WRITE][SAFE] >>
+Prompt Format:   [WRITE][SAFE] >>
 ```
 
 #### Mode Indicator Prompt
@@ -256,19 +256,19 @@ This provides constant visibility into what the agent can and cannot do.
 
 ```
 User Request
-    ↓
+  ↓
 Parse CLI Arguments (mode, safety)
-    ↓
+  ↓
 Initialize ChatModeState
-    ↓
+  ↓
 Build ToolRegistry for mode
-    ↓
+  ↓
 Create Provider
-    ↓
+  ↓
 Create Agent with system prompt
-    ↓
+  ↓
 Display Welcome Banner
-    ↓
+  ↓
 Enter Interactive Loop
 ```
 
@@ -276,19 +276,19 @@ Enter Interactive Loop
 
 ```
 User Types Input
-    ↓
+  ↓
 Check if Special Command
-    ├─ Yes: Execute command (switch mode, show status, etc.)
-    └─ No: Continue to Agent
-    ↓
+  ├─ Yes: Execute command (switch mode, show status, etc.)
+  └─ No: Continue to Agent
+  ↓
 Send to Agent with Tools
-    ↓
+  ↓
 Agent Uses Available Tools
-    ↓
+  ↓
 Add Results to Conversation
-    ↓
+  ↓
 Display Response
-    ↓
+  ↓
 Loop
 ```
 
@@ -296,19 +296,19 @@ Loop
 
 ```
 User Types: /mode write
-    ↓
+  ↓
 Parse Special Command
-    ↓
+  ↓
 Create new ToolRegistry for Write mode
-    ↓
+  ↓
 Create new Agent with Write system prompt
-    ↓
+  ↓
 Preserve conversation history
-    ↓
+  ↓
 Update ChatModeState
-    ↓
+  ↓
 Display switch confirmation
-    ↓
+  ↓
 Continue with new mode
 ```
 
@@ -452,17 +452,17 @@ Chat modes are provider-agnostic:
 
 ```
 src/
-├── chat_mode.rs           # ChatMode, SafetyMode, ChatModeState enums
+├── chat_mode.rs      # ChatMode, SafetyMode, ChatModeState enums
 ├── commands/
-│   ├── mod.rs             # print_welcome_banner, print_status_display
-│   ├── chat.rs (mod)      # run_chat, build_tools_for_mode
-│   └── special_commands.rs # parse_special_command, print_help
+│  ├── mod.rs       # print_welcome_banner, print_status_display
+│  ├── chat.rs (mod)   # run_chat, build_tools_for_mode
+│  └── special_commands.rs # parse_special_command, print_help
 ├── tools/
-│   ├── registry_builder.rs # ToolRegistryBuilder
-│   └── mod.rs             # Tool implementations
-└── prompts/               # Mode-specific system prompts
-    ├── planning_prompt.rs
-    └── write_prompt.rs
+│  ├── registry_builder.rs # ToolRegistryBuilder
+│  └── mod.rs       # Tool implementations
+└── prompts/        # Mode-specific system prompts
+  ├── planning_prompt.rs
+  └── write_prompt.rs
 ```
 
 ### Tool Registry Rebuilding

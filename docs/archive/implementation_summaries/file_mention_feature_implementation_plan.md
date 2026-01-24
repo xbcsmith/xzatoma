@@ -57,9 +57,9 @@ Create `src/mention_parser.rs` with core parsing logic:
 - Define `UrlMention` struct for web URLs
 - Implement `parse_mentions()` function to extract all mention types from input strings
 - Support syntax patterns:
-  - Files: `@filename`, `@path/to/file.rs`, `@file.rs#L10-20`
-  - Search: `@search:"pattern"`, `@grep:"regex pattern"`
-  - URLs: `@url:https://example.com`
+ - Files: `@filename`, `@path/to/file.rs`, `@file.rs#L10-20`
+ - Search: `@search:"pattern"`, `@grep:"regex pattern"`
+ - URLs: `@url:https://example.com`
 - Handle edge cases: escaped @, @ in middle of words, invalid characters
 - Return both parsed mentions and cleaned input text
 
@@ -194,10 +194,10 @@ Create `src/tools/grep.rs` with regex-based code search:
 
 - Define `GrepTool` struct with working directory and config
 - Implement async `search()` method with parameters:
-  - `regex` pattern (string)
-  - `include_pattern` optional glob filter
-  - `case_sensitive` boolean flag
-  - `offset` for pagination (u32)
+ - `regex` pattern (string)
+ - `include_pattern` optional glob filter
+ - `case_sensitive` boolean flag
+ - `offset` for pagination (u32)
 - Use `regex` crate for pattern matching
 - Use `walkdir` crate for file traversal (already in dependencies)
 - Return paginated results (20 matches per page)
@@ -212,10 +212,10 @@ Modify `src/tools/mod.rs` and tool registry:
 - Register `GrepTool` in `ToolRegistryBuilder`
 - Available in both Planning and Write modes
 - Add grep-specific configuration to `ToolsConfig`:
-  - `max_results_per_page` (default: 20)
-  - `context_lines` (default: 2)
-  - `max_file_size_for_grep` (default: 1 MB)
-  - `excluded_patterns` (default: `["*.lock", "target/**", "node_modules/**"]`)
+ - `max_results_per_page` (default: 20)
+ - `context_lines` (default: 2)
+ - `max_file_size_for_grep` (default: 1 MB)
+ - `excluded_patterns` (default: `["*.lock", "target/**", "node_modules/**"]`)
 
 #### Task 3.3: Integrate Search Mentions into Parser
 
@@ -245,16 +245,16 @@ Extend context augmentation for search mentions:
 
 - Format search results with clear structure:
 
-  ```
-  Search results for "pattern" (15 matches in 5 files):
+ ```
+ Search results for "pattern" (15 matches in 5 files):
 
-  File: src/main.rs (Line 42)
-  40: fn main() {
-  41:     let config = load_config();
-  42:     let pattern = "example"; // Match here
-  43:     process_pattern(&pattern);
-  44: }
-  ```
+ File: src/main.rs (Line 42)
+ 40: fn main() {
+ 41:   let config = load_config();
+ 42:   let pattern = "example"; // Match here
+ 43:   process_pattern(&pattern);
+ 44: }
+ ```
 
 - Show summary: total matches, number of files
 - Include snippet context around each match
@@ -333,11 +333,11 @@ Modify tool registry for fetch tool:
 - Add `fetch` module export in `src/tools/mod.rs`
 - Register `FetchTool` in both Planning and Write modes
 - Add fetch-specific configuration to `ToolsConfig`:
-  - `fetch_timeout_seconds` (default: 30)
-  - `max_fetch_size_bytes` (default: 5 MB)
-  - `allowed_domains` (optional allowlist)
-  - `blocked_domains` (optional denylist)
-  - `max_fetches_per_minute` (default: 10)
+ - `fetch_timeout_seconds` (default: 30)
+ - `max_fetch_size_bytes` (default: 5 MB)
+ - `allowed_domains` (optional allowlist)
+ - `blocked_domains` (optional denylist)
+ - `max_fetches_per_minute` (default: 10)
 
 #### Task 4.4: Integrate URL Mentions into Parser
 
@@ -367,15 +367,15 @@ Extend context augmentation for URL mentions:
 
 - Format fetched content with clear structure:
 
-  ```
-  Web content from https://docs.rs/tokio (fetched 2024-01-15 10:30:00):
+ ```
+ Web content from https://docs.rs/tokio (fetched 2024-01-15 10:30:00):
 
-  # Tokio Documentation
+ # Tokio Documentation
 
-  [Converted Markdown content here...]
+ [Converted Markdown content here...]
 
-  [Content truncated at 5 MB limit]
-  ```
+ [Content truncated at 5 MB limit]
+ ```
 
 - Show source URL and fetch timestamp
 - Include content-type and size metadata
@@ -428,16 +428,16 @@ Fetch tool and integration tests:
 Extend error handling in `src/error.rs`:
 
 - Add `MentionError` variants:
-  - File errors: FileNotFound, PermissionDenied, FileTooLarge, InvalidPath, BinaryFile
-  - Search errors: InvalidRegex, SearchTimeout, TooManyResults
-  - URL errors: InvalidUrl, FetchFailed, SsrfBlocked, ContentTooLarge, RateLimited
+ - File errors: FileNotFound, PermissionDenied, FileTooLarge, InvalidPath, BinaryFile
+ - Search errors: InvalidRegex, SearchTimeout, TooManyResults
+ - URL errors: InvalidUrl, FetchFailed, SsrfBlocked, ContentTooLarge, RateLimited
 - Implement user-friendly error messages with context
 - Add suggestions for common mistakes (typos, wrong paths, regex syntax)
 - Include specific details in errors (file, URL, pattern, actual vs expected)
 - Format errors appropriately:
-  - "Error: @large_file.txt is too large (5.2 MB). Maximum file size is 1 MB."
-  - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
-  - "Error: @url:http://192.168.1.1 - Blocked: private IP address (SSRF prevention)"
+ - "Error: @large_file.txt is too large (5.2 MB). Maximum file size is 1 MB."
+ - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
+ - "Error: @url:http://192.168.1.1 - Blocked: private IP address (SSRF prevention)"
 
 #### Task 5.2: Graceful Degradation
 
@@ -455,23 +455,23 @@ Implement partial success handling for all mention types:
 Add visual feedback in chat loop for all mention types:
 
 - Show colored status for mention processing:
-  - Files: "Loading @file.rs..." (cyan)
-  - Search: "Searching @grep:\"pattern\"..." (cyan)
-  - URLs: "Fetching @url:https://example.com..." (cyan)
+ - Files: "Loading @file.rs..." (cyan)
+ - Search: "Searching @grep:\"pattern\"..." (cyan)
+ - URLs: "Fetching @url:https://example.com..." (cyan)
 - Indicate cached content: "Using cached @config.yaml" (green)
 - Display metadata:
-  - Files: size, line count, cache status
-  - Search: match count, file count
-  - URLs: content size, fetch time, cache status
+ - Files: size, line count, cache status
+ - Search: match count, file count
+ - URLs: content size, fetch time, cache status
 - Use existing colored tag infrastructure from chat modes
 - Show success examples:
-  - "Loaded @config.yaml (42 lines, 1.2 KB)" (green)
-  - "Search @grep:\"TODO\" found 23 matches in 8 files" (green)
-  - "Fetched @url:https://docs.rs/tokio (45 KB, cached)" (green)
+ - "Loaded @config.yaml (42 lines, 1.2 KB)" (green)
+ - "Search @grep:\"TODO\" found 23 matches in 8 files" (green)
+ - "Fetched @url:https://docs.rs/tokio (45 KB, cached)" (green)
 - Show errors with appropriate context (red):
-  - "Error: @missing.txt - File not found. Did you mean @main.txt?"
-  - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
-  - "Error: @url:http://localhost - Blocked: SSRF prevention"
+ - "Error: @missing.txt - File not found. Did you mean @main.txt?"
+ - "Error: @grep:\"[invalid\" - Invalid regex: unclosed character class"
+ - "Error: @url:http://localhost - Blocked: SSRF prevention"
 
 #### Task 5.4: Testing Requirements
 
@@ -522,16 +522,16 @@ Implement smart path resolution:
 Support convenient shortcuts and smart patterns:
 
 - File abbreviations:
-  - `@README` resolves to `README.md`
-  - `@Cargo` resolves to `Cargo.toml`
-  - `@main` searches for `main.rs`, `main.go`, etc.
+ - `@README` resolves to `README.md`
+ - `@Cargo` resolves to `Cargo.toml`
+ - `@main` searches for `main.rs`, `main.go`, etc.
 - Search shortcuts:
-  - `@todo` expands to `@search:"TODO"`
-  - `@fixme` expands to `@search:"FIXME"`
-  - `@impl:StructName` expands to `@grep:"impl.*StructName"`
+ - `@todo` expands to `@search:"TODO"`
+ - `@fixme` expands to `@search:"FIXME"`
+ - `@impl:StructName` expands to `@grep:"impl.*StructName"`
 - URL shortcuts:
-  - `@docs:tokio` expands to `@url:https://docs.rs/tokio`
-  - `@gh:user/repo` expands to `@url:https://github.com/user/repo`
+ - `@docs:tokio` expands to `@url:https://docs.rs/tokio`
+ - `@gh:user/repo` expands to `@url:https://github.com/user/repo`
 - Configurable abbreviation map in ToolsConfig
 - Clear indication when abbreviation is expanded
 
@@ -542,11 +542,11 @@ Enhance display formatting for all mention types:
 - Syntax highlighting for file type in mention summary
 - Color-coded status (green=loaded, red=failed, yellow=warning, cyan=loading)
 - Progress indicator for multiple mentions:
-  - "Processing mentions: 2/5 complete (files: 2, searches: 1, URLs: 2)"
+ - "Processing mentions: 2/5 complete (files: 2, searches: 1, URLs: 2)"
 - Smart warnings:
-  - File size warnings before loading large files
-  - Search result count warnings (e.g., "500+ results, showing first 20")
-  - URL fetch time warnings for slow responses
+ - File size warnings before loading large files
+ - Search result count warnings (e.g., "500+ results, showing first 20")
+ - URL fetch time warnings for slow responses
 - Consistent formatting with existing colored tags
 - Summary table for complex mention groups
 
@@ -602,10 +602,10 @@ Create user-facing documentation in `docs/how-to/use_context_mentions.md`:
 
 - Quick start examples for all mention types
 - Syntax reference:
-  - File mentions: `@file.rs`, `@path/to/file#L10-20`
-  - Search mentions: `@search:"pattern"`, `@grep:"regex"`
-  - URL mentions: `@url:https://example.com`
-  - Abbreviations and shortcuts
+ - File mentions: `@file.rs`, `@path/to/file#L10-20`
+ - Search mentions: `@search:"pattern"`, `@grep:"regex"`
+ - URL mentions: `@url:https://example.com`
+ - Abbreviations and shortcuts
 - Line range syntax examples
 - Search pattern examples (literal vs regex)
 - Common patterns and best practices
@@ -692,9 +692,9 @@ Documentation validation:
 
 4. **Line Range Behavior**: Line ranges use inclusive bounds on both ends. The syntax `@file.rs#L10-20` includes both line 10 and line 20. This matches common editor behavior and user expectations. For example:
 
-   - `#L10-20` includes lines 10, 11, 12, ..., 19, 20 (11 lines total)
-   - `#L15` includes only line 15 (single line)
-   - `#L1-3` includes lines 1, 2, 3 (first three lines)
+  - `#L10-20` includes lines 10, 11, 12, ..., 19, 20 (11 lines total)
+  - `#L15` includes only line 15 (single line)
+  - `#L1-3` includes lines 1, 2, 3 (first three lines)
 
 5. **Content Caching**: Implement session-level caching of file contents. When a file is mentioned multiple times in the same session, read it once and cache the contents. Cache is invalidated if the file is modified (check mtime). This improves performance for repeated references.
 
@@ -712,9 +712,9 @@ Documentation validation:
 - Mention type usage: distribution of file vs search vs URL mentions
 - Error rate: percentage of mentions that fail to resolve (target: under 5%)
 - Performance targets:
-  - File loading: under 100ms for typical files
-  - Search execution: under 2 seconds for typical codebase
-  - URL fetching: under 5 seconds for typical pages
+ - File loading: under 100ms for typical files
+ - Search execution: under 2 seconds for typical codebase
+ - URL fetching: under 5 seconds for typical pages
 - User satisfaction: reduction in explicit tool invocations
 - Security: zero SSRF incidents, zero path traversal incidents
 - Test coverage: maintain 80%+ coverage across all phases and tools
@@ -752,42 +752,42 @@ This implementation plan addresses multiple critical gaps identified in the XZat
 
 1. **Advanced Code Search (Grep Tool)** - Phase 3
 
-   - Regex-based search with pagination
-   - File filtering with glob patterns
-   - Context lines around matches
-   - Integrated with `@search` and `@grep` mention syntax
+  - Regex-based search with pagination
+  - File filtering with glob patterns
+  - Context lines around matches
+  - Integrated with `@search` and `@grep` mention syntax
 
 2. **Web Content Retrieval (Fetch Tool)** - Phase 4
 
-   - URL fetching with HTML-to-Markdown conversion
-   - SSRF prevention and security validation
-   - Integrated with `@url` mention syntax
-   - Rate limiting and size controls
+  - URL fetching with HTML-to-Markdown conversion
+  - SSRF prevention and security validation
+  - Integrated with `@url` mention syntax
+  - Rate limiting and size controls
 
 3. **Unified Context Injection** - Phases 1-2
-   - Single framework for files, search, and web content
-   - Consistent caching and error handling
-   - Conversation history preservation
+  - Single framework for files, search, and web content
+  - Consistent caching and error handling
+  - Conversation history preservation
 
 ### Gaps NOT Addressed (Separate Implementation)
 
 1. **Web Search Tool** - Requires API integration (Exa, Google)
 
-   - Could add `@websearch:"query"` syntax in future extension
-   - Separate implementation plan recommended
+  - Could add `@websearch:"query"` syntax in future extension
+  - Separate implementation plan recommended
 
 2. **Token Usage Tracking** - Provider-level feature
 
-   - Unrelated to context mentions
-   - Should be implemented in provider abstraction layer
+  - Unrelated to context mentions
+  - Should be implemented in provider abstraction layer
 
 3. **Conversation Persistence** - Agent-level feature
 
-   - Separate from context injection
-   - Requires storage layer design
+  - Separate from context injection
+  - Requires storage layer design
 
 4. **Subagent/Multi-Agent** - Advanced coordination
-   - Future enhancement after core features stabilize
+  - Future enhancement after core features stabilize
 
 ### Architecture Benefits
 

@@ -19,12 +19,12 @@ and `../archive/implementation_summaries/implementation_plan_refactoring_summary
 
 ## Provider Comparison
 
-| Provider  | Auth Method    | Base URL              | Default Model     | Context Limit   | Streaming  | Tool Calls        |
+| Provider | Auth Method  | Base URL       | Default Model   | Context Limit  | Streaming | Tool Calls    |
 | --------- | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
-| OpenAI    | Bearer Token   | api.openai.com        | gpt-4o            | 128K            | SSE        | Native            |
-| Anthropic | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Content blocks    |
-| Copilot   | OAuth Device   | api.githubcopilot.com | gpt-5-mini        | 128K            | SSE        | OpenAI-compatible |
-| Ollama    | None (local)   | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
+| OpenAI  | Bearer Token  | api.openai.com    | gpt-4o      | 128K      | SSE    | Native      |
+| Anthropic | API Key Header | api.anthropic.com   | claude-sonnet-4-0 | 200K      | SSE    | Content blocks  |
+| Copilot  | OAuth Device  | api.githubcopilot.com | gpt-5-mini    | 128K      | SSE    | OpenAI-compatible |
+| Ollama  | None (local)  | localhost:11434    | User-configured  | Model-dependent | JSON Lines | Limited      |
 
 ---
 
@@ -33,11 +33,11 @@ and `../archive/implementation_summaries/implementation_plan_refactoring_summary
 ```rust
 // Language-agnostic pseudo-signature
 interface Provider {
-    async fn complete(messages: &[Message], tools: &[Tool]) -> Result<CompletionResponse>;
-    async fn stream(messages: &[Message], tools: &[Tool]) -> Stream<CompletionChunk>;
-    fn get_model_config(&self) -> ModelConfig;
-    fn name(&self) -> &str;
-    fn supports_streaming(&self) -> bool;
+  async fn complete(messages: &[Message], tools: &[Tool]) -> Result<CompletionResponse>;
+  async fn stream(messages: &[Message], tools: &[Tool]) -> Stream<CompletionChunk>;
+  fn get_model_config(&self) -> ModelConfig;
+  fn name(&self) -> &str;
+  fn supports_streaming(&self) -> bool;
 }
 ```
 
@@ -57,24 +57,24 @@ struct ToolCall { id: String, name: String, arguments: serde_json::Value }
 OpenAI
 
 ```bash
-export OPENAI_API_KEY="sk-..."          # Required
-export OPENAI_HOST="https://api.openai.com"  # Optional
-export OPENAI_TIMEOUT="600"             # Optional (seconds)
+export OPENAI_API_KEY="sk-..."     # Required
+export OPENAI_HOST="https://api.openai.com" # Optional
+export OPENAI_TIMEOUT="600"       # Optional (seconds)
 ```
 
 Anthropic
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."   # Required
-export ANTHROPIC_HOST="https://api.anthropic.com"  # Optional
+export ANTHROPIC_API_KEY="sk-ant-..."  # Required
+export ANTHROPIC_HOST="https://api.anthropic.com" # Optional
 ```
 
 GitHub Copilot
 
 ```bash
 # Preferred: run the CLI device OAuth flow (xzatoma auth --provider copilot)
-export GITHUB_TOKEN="ghp_..."           # Optional for some flows
-export COPILOT_API_KEY="..."            # Alternative (if supported)
+export GITHUB_TOKEN="ghp_..."      # Optional for some flows
+export COPILOT_API_KEY="..."      # Alternative (if supported)
 ```
 
 Ollama (local)
@@ -170,9 +170,9 @@ retry_on_status: [429, 500, 502, 503, 504]
 ```text
 # Create provider from config
 config = ProviderConfig {
-    provider_type: "openai",
-    model: "gpt-4o",
-    api_key: env("OPENAI_API_KEY")
+  provider_type: "openai",
+  model: "gpt-4o",
+  api_key: env("OPENAI_API_KEY")
 }
 provider = ProviderFactory.create(config)
 
@@ -222,16 +222,16 @@ print(response.message.content)
 
 ```
 providers/
-├── base.rs                 # Provider trait and base types
-├── types.rs                # Message, Tool, Response types
-├── errors.rs               # Error types & conversions
-├── config.rs               # Provider configuration
-├── api_client.rs           # Shared HTTP client & retry
-├── openai.rs               # OpenAI implementation
-├── anthropic.rs            # Anthropic implementation
-├── copilot.rs              # GitHub Copilot (OAuth) implementation
-├── ollama.rs               # Ollama local/remote provider
-└── tests/                  # Provider unit/integration tests with mocks
+├── base.rs         # Provider trait and base types
+├── types.rs        # Message, Tool, Response types
+├── errors.rs        # Error types & conversions
+├── config.rs        # Provider configuration
+├── api_client.rs      # Shared HTTP client & retry
+├── openai.rs        # OpenAI implementation
+├── anthropic.rs      # Anthropic implementation
+├── copilot.rs       # GitHub Copilot (OAuth) implementation
+├── ollama.rs        # Ollama local/remote provider
+└── tests/         # Provider unit/integration tests with mocks
 ```
 
 ---

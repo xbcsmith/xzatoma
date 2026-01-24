@@ -16,35 +16,35 @@ This document summarizes the complete implementation of the context mention syst
 
 ```rust
 pub enum Mention {
-    File(FileMention),
-    Search(SearchMention),
-    Grep(SearchMention),
-    Url(UrlMention),
+  File(FileMention),
+  Search(SearchMention),
+  Grep(SearchMention),
+  Url(UrlMention),
 }
 
 pub struct FileMention {
-    pub path: String,
-    pub start_line: Option<usize>,
-    pub end_line: Option<usize>,
+  pub path: String,
+  pub start_line: Option<usize>,
+  pub end_line: Option<usize>,
 }
 
 pub struct LoadError {
-    pub kind: LoadErrorKind,
-    pub source: String,
-    pub message: String,
-    pub suggestion: Option<String>,
+  pub kind: LoadErrorKind,
+  pub source: String,
+  pub message: String,
+  pub suggestion: Option<String>,
 }
 
 pub enum LoadErrorKind {
-    FileNotFound,
-    FileTooLarge,
-    FileBinary,
-    UrlSsrf,
-    UrlRateLimited,
-    UrlHttpError,
-    UrlFetchTimeout,
-    ParseError,
-    Unknown,
+  FileNotFound,
+  FileTooLarge,
+  FileBinary,
+  UrlSsrf,
+  UrlRateLimited,
+  UrlHttpError,
+  UrlFetchTimeout,
+  ParseError,
+  Unknown,
 }
 ```
 
@@ -89,22 +89,22 @@ pub enum LoadErrorKind {
 pub struct FetchTool;
 
 impl FetchTool {
-    pub async fn fetch(
-        url: &str,
-        timeout: Duration,
-    ) -> Result<String, LoadError> {
-        // URL validation (SSRF checks)
-        // HTTP request with timeout
-        // Size enforcement
-        // HTML conversion
-        // Caching
-    }
+  pub async fn fetch(
+    url: &str,
+    timeout: Duration,
+  ) -> Result<String, LoadError> {
+    // URL validation (SSRF checks)
+    // HTTP request with timeout
+    // Size enforcement
+    // HTML conversion
+    // Caching
+  }
 }
 
 fn is_ssrf_safe(url: &Url) -> bool {
-    // Check IPv4: no loopback, private, link-local
-    // Check IPv6: no loopback, unique local
-    // Check domain: no localhost
+  // Check IPv4: no loopback, private, link-local
+  // Check IPv6: no loopback, unique local
+  // Check domain: no localhost
 }
 ```
 
@@ -123,18 +123,18 @@ fn is_ssrf_safe(url: &Url) -> bool {
 
 ```rust
 pub enum XzatomaError {
-    Mention(LoadError),
-    FileLoad(String),
-    Fetch(String),
-    Search(String),
-    RateLimitExceeded,
-    // ... existing variants
+  Mention(LoadError),
+  FileLoad(String),
+  Fetch(String),
+  Search(String),
+  RateLimitExceeded,
+  // ... existing variants
 }
 
 impl Display for LoadError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        // User-friendly error message with suggestion
-    }
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    // User-friendly error message with suggestion
+  }
 }
 ```
 
@@ -151,13 +151,13 @@ impl Display for LoadError {
 
 ```rust
 pub use mention_parser::{
-    Mention,
-    FileMention,
-    SearchMention,
-    UrlMention,
-    MentionContent,
-    LoadError,
-    LoadErrorKind,
+  Mention,
+  FileMention,
+  SearchMention,
+  UrlMention,
+  MentionContent,
+  LoadError,
+  LoadErrorKind,
 };
 ```
 
@@ -181,16 +181,16 @@ Allows library users to:
 
 ```
 Loading mentions:
-  [LOADING] @config.yaml...
-  [CACHED]  @src/lib.rs (from cache, 245 bytes)
-  [FETCHING] @url:https://...
-  [SEARCHING] @search:"error"
+ [LOADING] @config.yaml...
+ [CACHED] @src/lib.rs (from cache, 245 bytes)
+ [FETCHING] @url:https://...
+ [SEARCHING] @search:"error"
 
 Summary:
-  Loaded: 4 mentions (2 files, 1 URL, 1 search)
-  Failed: 1 mention
-    - @nonexistent.rs: File not found
-      Suggestion: Try @search:"nonexistent"
+ Loaded: 4 mentions (2 files, 1 URL, 1 search)
+ Failed: 1 mention
+  - @nonexistent.rs: File not found
+   Suggestion: Try @search:"nonexistent"
 ```
 
 #### 6. Help Text and Special Commands (`src/commands/special_commands.rs`)
@@ -284,9 +284,9 @@ let (mentions, cleaned) = parse_mentions(input)?;
 let input = "Check @src/main.rs#L10-20";
 let (mentions, cleaned) = parse_mentions(input)?;
 // mentions[0] = Mention::File(FileMention {
-//     path: "src/main.rs",
-//     start_line: Some(10),
-//     end_line: Some(20),
+//   path: "src/main.rs",
+//   start_line: Some(10),
+//   end_line: Some(20),
 // })
 
 // Abbreviated mention
@@ -302,7 +302,7 @@ let (mentions, cleaned) = parse_mentions(input)?;
 let input = "Find @search:\"error handling\"";
 let (mentions, cleaned) = parse_mentions(input)?;
 // mentions[0] = Mention::Search(SearchMention {
-//     pattern: "error handling"
+//   pattern: "error handling"
 // })
 
 // Results in augmented prompt:
@@ -319,7 +319,7 @@ let (mentions, cleaned) = parse_mentions(input)?;
 let input = "Show @grep:\"^pub fn.*Result\"";
 let (mentions, cleaned) = parse_mentions(input)?;
 // mentions[0] = Mention::Grep(SearchMention {
-//     pattern: "^pub fn.*Result"
+//   pattern: "^pub fn.*Result"
 // })
 
 // Results in augmented prompt:
@@ -336,7 +336,7 @@ let (mentions, cleaned) = parse_mentions(input)?;
 let input = "@url:https://docs.rs/tokio/latest/tokio/";
 let (mentions, cleaned) = parse_mentions(input)?;
 // mentions[0] = Mention::Url(UrlMention {
-//     url: "https://docs.rs/tokio/latest/tokio/"
+//   url: "https://docs.rs/tokio/latest/tokio/"
 // })
 
 // Content fetched and converted:
@@ -353,17 +353,17 @@ let (mentions, cleaned) = parse_mentions(input)?;
 let input = "@nonexistent.rs";
 let (mentions, cleaned) = parse_mentions(input)?;
 let (augmented, errors, successes) = augment_prompt_with_mentions(
-    input,
-    &root,
-    &mut cache,
+  input,
+  &root,
+  &mut cache,
 ).await;
 
 // errors contains:
 // LoadError {
-//     kind: LoadErrorKind::FileNotFound,
-//     source: "nonexistent.rs",
-//     message: "File not found: nonexistent.rs",
-//     suggestion: Some("Try @search:\"nonexistent\""),
+//   kind: LoadErrorKind::FileNotFound,
+//   source: "nonexistent.rs",
+//   message: "File not found: nonexistent.rs",
+//   suggestion: Some("Try @search:\"nonexistent\""),
 // }
 
 // Augmented prompt contains:
@@ -388,21 +388,21 @@ File: config.yaml
 Lines: 1-42
 ---
 server:
-  host: localhost
-  port: 8080
+ host: localhost
+ port: 8080
 
 database:
-  url: postgres://localhost/db
-  pool_size: 10
+ url: postgres://localhost/db
+ pool_size: 10
 ---
 
 Search results for regex "Error":
 
 src/error.rs:1: pub enum Error {
-src/error.rs:2:     FileNotFound,
-src/error.rs:5:     NetworkError(String),
+src/error.rs:2:   FileNotFound,
+src/error.rs:5:   NetworkError(String),
 src/error.rs:15: impl Display for Error {
-src/handlers.rs:45:     Err(Error::FileNotFound) => {...}
+src/handlers.rs:45:   Err(Error::FileNotFound) => {...}
 
 [Agent sees augmented prompt with full context]
 ```
@@ -443,48 +443,48 @@ src/handlers.rs:45:     Err(Error::FileNotFound) => {...}
 ```rust
 #[tokio::test]
 async fn test_augment_with_multiple_mentions() {
-    let input = "Review @config.yaml and @src/main.rs";
-    let (augmented, errors, successes) = augment_prompt_with_mentions(
-        input,
-        &test_root,
-        &mut cache,
-    ).await;
+  let input = "Review @config.yaml and @src/main.rs";
+  let (augmented, errors, successes) = augment_prompt_with_mentions(
+    input,
+    &test_root,
+    &mut cache,
+  ).await;
 
-    assert!(errors.is_empty());
-    assert_eq!(successes.len(), 2);
-    assert!(augmented.contains("File: config.yaml"));
-    assert!(augmented.contains("File: src/main.rs"));
+  assert!(errors.is_empty());
+  assert_eq!(successes.len(), 2);
+  assert!(augmented.contains("File: config.yaml"));
+  assert!(augmented.contains("File: src/main.rs"));
 }
 
 #[tokio::test]
 async fn test_graceful_degradation_on_missing_file() {
-    let input = "@nonexistent.rs and @config.yaml";
-    let (augmented, errors, successes) = augment_prompt_with_mentions(
-        input,
-        &test_root,
-        &mut cache,
-    ).await;
+  let input = "@nonexistent.rs and @config.yaml";
+  let (augmented, errors, successes) = augment_prompt_with_mentions(
+    input,
+    &test_root,
+    &mut cache,
+  ).await;
 
-    assert_eq!(errors.len(), 1);
-    assert_eq!(successes.len(), 1);
-    assert!(augmented.contains("file not found"));
-    assert!(augmented.contains("config.yaml"));
+  assert_eq!(errors.len(), 1);
+  assert_eq!(successes.len(), 1);
+  assert!(augmented.contains("file not found"));
+  assert!(augmented.contains("config.yaml"));
 }
 
 #[test]
 fn test_ssrf_protection() {
-    assert!(!is_ssrf_safe("http://127.0.0.1:8000"));
-    assert!(!is_ssrf_safe("http://localhost:3000"));
-    assert!(!is_ssrf_safe("http://10.0.0.1"));
-    assert!(!is_ssrf_safe("http://192.168.1.1"));
-    assert!(is_ssrf_safe("https://example.com"));
+  assert!(!is_ssrf_safe("http://127.0.0.1:8000"));
+  assert!(!is_ssrf_safe("http://localhost:3000"));
+  assert!(!is_ssrf_safe("http://10.0.0.1"));
+  assert!(!is_ssrf_safe("http://192.168.1.1"));
+  assert!(is_ssrf_safe("https://example.com"));
 }
 
 #[test]
 fn test_line_range_extraction() {
-    let content = "line1\nline2\nline3\nline4\nline5";
-    let result = apply_line_range(content, Some(2), Some(4)).unwrap();
-    assert_eq!(result, "line2\nline3\nline4");
+  let content = "line1\nline2\nline3\nline4\nline5";
+  let result = apply_line_range(content, Some(2), Some(4)).unwrap();
+  assert_eq!(result, "line2\nline3\nline4");
 }
 ```
 
@@ -628,30 +628,30 @@ xzatoma chat
 
 ```rust
 use xzatoma::mention_parser::{
-    parse_mentions,
-    augment_prompt_with_mentions,
-    LoadErrorKind,
+  parse_mentions,
+  augment_prompt_with_mentions,
+  LoadErrorKind,
 };
 
 #[tokio::main]
 async fn main() {
-    let input = "Review @src/lib.rs#L1-50";
-    let (mentions, cleaned) = parse_mentions(input).unwrap();
+  let input = "Review @src/lib.rs#L1-50";
+  let (mentions, cleaned) = parse_mentions(input).unwrap();
 
-    let (augmented, errors, successes) = augment_prompt_with_mentions(
-        input,
-        &PathBuf::from("."),
-        &mut cache,
-    ).await;
+  let (augmented, errors, successes) = augment_prompt_with_mentions(
+    input,
+    &PathBuf::from("."),
+    &mut cache,
+  ).await;
 
-    for error in errors {
-        eprintln!("Error loading {}: {}", error.source, error.message);
-        if let Some(suggestion) = error.suggestion {
-            eprintln!("  Suggestion: {}", suggestion);
-        }
+  for error in errors {
+    eprintln!("Error loading {}: {}", error.source, error.message);
+    if let Some(suggestion) = error.suggestion {
+      eprintln!(" Suggestion: {}", suggestion);
     }
+  }
 
-    println!("Augmented prompt:\n{}", augmented);
+  println!("Augmented prompt:\n{}", augmented);
 }
 ```
 

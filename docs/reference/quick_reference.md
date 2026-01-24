@@ -54,27 +54,27 @@ cargo build --release
 ```
 xzatoma/
 ├── src/
-│   ├── main.rs              # Binary entry point
-│   ├── lib.rs               # Library root
-│   ├── cli.rs               # CLI parser
-│   ├── config.rs            # Configuration
-│   ├── error.rs             # Error types
-│   ├── agent/               # Agent core
-│   ├── providers/           # AI providers
-│   ├── workflow/            # Workflow engine
-│   ├── repository/          # Repository ops
-│   ├── docgen/              # Doc generation
-│   └── tools/               # Agent tools
+│  ├── main.rs       # Binary entry point
+│  ├── lib.rs        # Library root
+│  ├── cli.rs        # CLI parser
+│  ├── config.rs      # Configuration
+│  ├── error.rs       # Error types
+│  ├── agent/        # Agent core
+│  ├── providers/      # AI providers
+│  ├── workflow/      # Workflow engine
+│  ├── repository/     # Repository ops
+│  ├── docgen/       # Doc generation
+│  └── tools/        # Agent tools
 ├── tests/
-│   ├── unit/                # Unit tests
-│   ├── integration/         # Integration tests
-│   └── fixtures/            # Test fixtures
+│  ├── unit/        # Unit tests
+│  ├── integration/     # Integration tests
+│  └── fixtures/      # Test fixtures
 ├── docs/
-│   ├── tutorials/           # Learning-oriented
-│   ├── how_to/              # Task-oriented
-│   ├── explanation/         # Understanding-oriented
-│   └── reference/           # Information-oriented
-└── examples/                # Usage examples
+│  ├── tutorials/      # Learning-oriented
+│  ├── how_to/       # Task-oriented
+│  ├── explanation/     # Understanding-oriented
+│  └── reference/      # Information-oriented
+└── examples/        # Usage examples
 ```
 
 ## Module Organization
@@ -95,10 +95,10 @@ xzatoma/
 
 ```
 main → cli → agent → provider
-       ↓      ↓       ↓
-    config  workflow tools
-              ↓       ↓
-          repository docgen
+    ↓   ↓    ↓
+  config workflow tools
+       ↓    ↓
+     repository docgen
 ```
 
 ## Key Traits
@@ -108,13 +108,13 @@ main → cli → agent → provider
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn metadata() -> ProviderMetadata;
-    fn get_name(&self) -> &str;
-    async fn complete(
-        &self,
-        messages: Vec<Message>,
-        tools: Vec<Tool>,
-    ) -> Result<Message, ProviderError>;
+  fn metadata() -> ProviderMetadata;
+  fn get_name(&self) -> &str;
+  async fn complete(
+    &self,
+    messages: Vec<Message>,
+    tools: Vec<Tool>,
+  ) -> Result<Message, ProviderError>;
 }
 ```
 
@@ -123,7 +123,7 @@ pub trait Provider: Send + Sync {
 ```rust
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    async fn execute(&self, params: Value) -> Result<ToolResult>;
+  async fn execute(&self, params: Value) -> Result<ToolResult>;
 }
 ```
 
@@ -135,32 +135,32 @@ pub trait ToolExecutor: Send + Sync {
 # ~/.config/xzatoma/config.yaml
 
 provider:
-  type: copilot # or 'ollama'
-  copilot:
-    model: gpt-5-mini
-  ollama:
-    host: localhost:11434
-    model: qwen3
+ type: copilot # or 'ollama'
+ copilot:
+  model: gpt-5-mini
+ ollama:
+  host: localhost:11434
+  model: qwen3
 
 agent:
-  max_turns: 50
-  timeout_seconds: 600
-  retry_attempts: 3
+ max_turns: 50
+ timeout_seconds: 600
+ retry_attempts: 3
 
 repository:
-  clone_depth: 1
-  ignore_patterns:
-    - node_modules
-    - target
-    - .git
+ clone_depth: 1
+ ignore_patterns:
+  - node_modules
+  - target
+  - .git
 
 documentation:
-  output_dir: docs
-  categories:
-    - tutorials
-    - how_to
-    - explanation
-    - reference
+ output_dir: docs
+ categories:
+  - tutorials
+  - how_to
+  - explanation
+  - reference
 ```
 
 ### Environment Variables
@@ -240,47 +240,47 @@ description: Analyze and document repository
 repository: git@github.com:user/project.git
 
 steps:
-  - id: scan
-    description: Scan repository
-    action: scan_repository
+ - id: scan
+  description: Scan repository
+  action: scan_repository
 
-  - id: analyze
-    description: Analyze code
-    action: analyze_code
-    dependencies: [scan]
+ - id: analyze
+  description: Analyze code
+  action: analyze_code
+  dependencies: [scan]
 
-  - id: generate
-    description: Generate docs
-    action: generate_documentation
-    category: reference
-    dependencies: [analyze]
+ - id: generate
+  description: Generate docs
+  action: generate_documentation
+  category: reference
+  dependencies: [analyze]
 
 deliverables:
-  - docs/reference/api.md
-  - docs/explanation/implementation.md
+ - docs/reference/api.md
+ - docs/explanation/implementation.md
 ```
 
 ### JSON Format
 
 ```json
 {
-  "name": "Generate Documentation",
-  "description": "Analyze and document repository",
-  "repository": "git@github.com:user/project.git",
-  "steps": [
-    {
-      "id": "scan",
-      "description": "Scan repository",
-      "action": "scan_repository"
-    },
-    {
-      "id": "analyze",
-      "description": "Analyze code",
-      "action": "analyze_code",
-      "dependencies": ["scan"]
-    }
-  ],
-  "deliverables": ["docs/reference/api.md"]
+ "name": "Generate Documentation",
+ "description": "Analyze and document repository",
+ "repository": "git@github.com:user/project.git",
+ "steps": [
+  {
+   "id": "scan",
+   "description": "Scan repository",
+   "action": "scan_repository"
+  },
+  {
+   "id": "analyze",
+   "description": "Analyze code",
+   "action": "analyze_code",
+   "dependencies": ["scan"]
+  }
+ ],
+ "deliverables": ["docs/reference/api.md"]
 }
 ```
 
@@ -303,16 +303,16 @@ XzatomaError
 use anyhow::{Context, Result};
 
 pub fn load_config(path: &Path) -> Result<Config> {
-    let content = fs::read_to_string(path)
-        .context("Failed to read config file")?;
+  let content = fs::read_to_string(path)
+    .context("Failed to read config file")?;
 
-    let config: Config = serde_yaml::from_str(&content)
-        .context("Failed to parse config")?;
+  let config: Config = serde_yaml::from_str(&content)
+    .context("Failed to parse config")?;
 
-    config.validate()
-        .context("Config validation failed")?;
+  config.validate()
+    .context("Config validation failed")?;
 
-    Ok(config)
+  Ok(config)
 }
 ```
 
@@ -323,20 +323,20 @@ pub fn load_config(path: &Path) -> Result<Config> {
 ```rust
 #[cfg(test)]
 mod tests {
-    use super::*;
+  use super::*;
 
-    #[test]
-    fn test_config_loading() {
-        let config = Config::default();
-        assert_eq!(config.agent.max_turns, 50);
-    }
+  #[test]
+  fn test_config_loading() {
+    let config = Config::default();
+    assert_eq!(config.agent.max_turns, 50);
+  }
 
-    #[tokio::test]
-    async fn test_provider_completion() {
-        let provider = MockProvider::new();
-        let result = provider.complete(vec![], vec![]).await;
-        assert!(result.is_ok());
-    }
+  #[tokio::test]
+  async fn test_provider_completion() {
+    let provider = MockProvider::new();
+    let result = provider.complete(vec![], vec![]).await;
+    assert!(result.is_ok());
+  }
 }
 ```
 
@@ -345,13 +345,13 @@ mod tests {
 ```rust
 #[tokio::test]
 async fn test_workflow_execution() {
-    let plan = Plan::from_yaml(EXAMPLE_PLAN)?;
-    let executor = WorkflowExecutor::new(plan, agent);
+  let plan = Plan::from_yaml(EXAMPLE_PLAN)?;
+  let executor = WorkflowExecutor::new(plan, agent);
 
-    let result = executor.execute().await?;
+  let result = executor.execute().await?;
 
-    assert_eq!(result.steps_completed, 3);
-    assert!(result.deliverables.contains(&"docs/api.md"));
+  assert_eq!(result.steps_completed, 3);
+  assert!(result.deliverables.contains(&"docs/api.md"));
 }
 ```
 
@@ -391,28 +391,28 @@ async fn test_workflow_execution() {
 
 ```rust
 pub struct MyProvider {
-    client: Client,
-    model: ModelConfig,
-    name: String,
+  client: Client,
+  model: ModelConfig,
+  name: String,
 }
 
 #[async_trait]
 impl Provider for MyProvider {
-    fn metadata() -> ProviderMetadata {
-        ProviderMetadata {
-            name: "my-provider".to_string(),
-            display_name: "My Provider".to_string(),
-            // ...
-        }
+  fn metadata() -> ProviderMetadata {
+    ProviderMetadata {
+      name: "my-provider".to_string(),
+      display_name: "My Provider".to_string(),
+      // ...
     }
+  }
 
-    async fn complete(
-        &self,
-        messages: Vec<Message>,
-        tools: Vec<Tool>,
-    ) -> Result<Message, ProviderError> {
-        // Implementation
-    }
+  async fn complete(
+    &self,
+    messages: Vec<Message>,
+    tools: Vec<Tool>,
+  ) -> Result<Message, ProviderError> {
+    // Implementation
+  }
 }
 ```
 
@@ -423,19 +423,19 @@ pub struct MyTool;
 
 #[async_trait]
 impl ToolExecutor for MyTool {
-    async fn execute(&self, params: Value) -> Result<ToolResult> {
-        // Parse parameters
-        let args: MyArgs = serde_json::from_value(params)?;
+  async fn execute(&self, params: Value) -> Result<ToolResult> {
+    // Parse parameters
+    let args: MyArgs = serde_json::from_value(params)?;
 
-        // Execute logic
-        let result = self.do_work(&args).await?;
+    // Execute logic
+    let result = self.do_work(&args).await?;
 
-        // Return result
-        Ok(ToolResult {
-            success: true,
-            data: serde_json::to_value(result)?,
-        })
-    }
+    // Return result
+    Ok(ToolResult {
+      success: true,
+      data: serde_json::to_value(result)?,
+    })
+  }
 }
 ```
 

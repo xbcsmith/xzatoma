@@ -26,9 +26,9 @@ Edit `config/config.yaml`:
 
 ```yaml
 provider:
-  provider_type: ollama
-  ollama:
-    model: qwen2.5-coder:14b  # Change this line
+ provider_type: ollama
+ ollama:
+  model: qwen2.5-coder:14b # Change this line
 ```
 
 ## Switching Models in Interactive Chat
@@ -48,10 +48,10 @@ xzatoma chat
 Example output:
 
 ```
-Model Name            Display Name          Context Window    Capabilities
-qwen2.5-coder:7b      Qwen 2.5 Coder 7B     32768 tokens      FunctionCalling
-qwen2.5-coder:14b     Qwen 2.5 Coder 14B    32768 tokens      FunctionCalling
-llama3.2:3b           Llama 3.2 3B          8192 tokens       FunctionCalling
+Model Name      Display Name     Context Window  Capabilities
+qwen2.5-coder:7b   Qwen 2.5 Coder 7B   32768 tokens   FunctionCalling
+qwen2.5-coder:14b   Qwen 2.5 Coder 14B  32768 tokens   FunctionCalling
+llama3.2:3b      Llama 3.2 3B     8192 tokens    FunctionCalling
 
 Note: Current model is highlighted in green
 ```
@@ -127,14 +127,14 @@ Edit `config/config.yaml`:
 
 ```yaml
 provider:
-  provider_type: ollama  # or 'copilot'
+ provider_type: ollama # or 'copilot'
 
-  ollama:
-    host: http://localhost:11434
-    model: qwen2.5-coder:14b  # Change default model
+ ollama:
+  host: http://localhost:11434
+  model: qwen2.5-coder:14b # Change default model
 
-  copilot:
-    model: gpt-4o  # Copilot default model
+ copilot:
+  model: gpt-4o # Copilot default model
 ```
 
 Restart XZatoma to use the new default.
@@ -159,7 +159,7 @@ Or update config:
 
 ```yaml
 provider:
-  provider_type: copilot
+ provider_type: copilot
 ```
 
 ### From Copilot to Ollama
@@ -174,7 +174,7 @@ Update config:
 
 ```yaml
 provider:
-  provider_type: ollama
+ provider_type: ollama
 ```
 
 Or use override:
@@ -281,13 +281,13 @@ Upgrade for complex tasks:
 Small context for focused tasks:
 
 ```
-/model gpt-4  # 8k context
+/model gpt-4 # 8k context
 ```
 
 Large context for comprehensive analysis:
 
 ```
-/model gpt-4o  # 128k context
+/model gpt-4o # 128k context
 ```
 
 ## Troubleshooting
@@ -299,19 +299,19 @@ Large context for comprehensive analysis:
 **Solution**:
 
 1. List available models:
-   ```
-   /models list
-   ```
+  ```
+  /models list
+  ```
 
 2. Use exact model name (case-sensitive):
-   ```
-   /model qwen2.5-coder:7b
-   ```
+  ```
+  /model qwen2.5-coder:7b
+  ```
 
 3. For Ollama, ensure model is installed:
-   ```bash
-   ollama pull qwen2.5-coder:7b
-   ```
+  ```bash
+  ollama pull qwen2.5-coder:7b
+  ```
 
 ### Model Switch Fails Silently
 
@@ -320,16 +320,16 @@ Large context for comprehensive analysis:
 **Solution**:
 
 1. Check provider capabilities:
-   ```bash
-   xzatoma models list
-   ```
+  ```bash
+  xzatoma models list
+  ```
 
 2. Verify you have permission to switch models
 
 3. Check logs for errors:
-   ```bash
-   RUST_LOG=debug xzatoma chat
-   ```
+  ```bash
+  RUST_LOG=debug xzatoma chat
+  ```
 
 ### Context Pruning After Switch
 
@@ -340,13 +340,13 @@ Large context for comprehensive analysis:
 **Prevention**:
 
 1. Check new model context before switching:
-   ```bash
-   xzatoma models info --model target-model
-   ```
+  ```bash
+  xzatoma models info --model target-model
+  ```
 
 2. Save important context before switching:
-   - Copy important messages
-   - Export conversation if needed
+  - Copy important messages
+  - Export conversation if needed
 
 3. Choose models with adequate context for your needs
 
@@ -359,14 +359,14 @@ Large context for comprehensive analysis:
 **Solution**:
 
 1. Exit current session:
-   ```
-   /exit
-   ```
+  ```
+  /exit
+  ```
 
 2. Start new session with different provider:
-   ```bash
-   xzatoma chat --provider copilot
-   ```
+  ```bash
+  xzatoma chat --provider copilot
+  ```
 
 Or update config permanently.
 
@@ -426,7 +426,7 @@ Compare quality and speed.
 In long sessions, note which model produced which results:
 
 ```
-/context  # Shows current model
+/context # Shows current model
 ```
 
 This helps when reviewing conversation history.

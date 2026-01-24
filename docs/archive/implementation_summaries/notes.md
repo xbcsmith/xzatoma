@@ -6,7 +6,7 @@ Trying to switch models in Ollama provider to a model exists and I got this erro
 
 ```bash
 /models llama3.2:latest
-2026-01-22T21:19:04.105040Z  INFO xzatoma::agent::core: Starting agent execution
+2026-01-22T21:19:04.105040Z INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:19:04.109755Z ERROR xzatoma::providers::ollama: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 Error: Provider error: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 ```
@@ -63,10 +63,10 @@ data = response.json()
 
 models_dict = {}
 for model in data.get("data", []):
-    if model.get("policy", {}).get("state") == "enabled":
-        model_id = model.get("id")
-        if model_id:
-            models_dict[model_id] = model
+  if model.get("policy", {}).get("state") == "enabled":
+    model_id = model.get("id")
+    if model_id:
+      models_dict[model_id] = model
 
 return models_dict
 except httpx.RequestError as e:
@@ -75,16 +75,16 @@ raise ProviderError(f"Failed to get model details: {e}") from e
 
 ```text
 /models
-2026-01-22T22:17:51.972639Z  INFO xzatoma::agent::core: Starting agent execution
-2026-01-22T22:17:59.215180Z  INFO xzatoma::providers::copilot: Starting GitHub OAuth device flow
+2026-01-22T22:17:51.972639Z INFO xzatoma::agent::core: Starting agent execution
+2026-01-22T22:17:59.215180Z INFO xzatoma::providers::copilot: Starting GitHub OAuth device flow
 
 GitHub Authentication Required:
-  1. Visit: https://github.com/login/device
-  2. Enter code: D423-9B55
+ 1. Visit: https://github.com/login/device
+ 2. Enter code: D423-9B55
 
 Waiting for authorization...
 Authorization successful!
-2026-01-22T22:18:29.754700Z  INFO xzatoma::providers::copilot: GitHub OAuth device flow completed successfully
+2026-01-22T22:18:29.754700Z INFO xzatoma::providers::copilot: GitHub OAuth device flow completed successfully
 2026-01-22T22:18:32.064059Z ERROR xzatoma::providers::copilot: Failed to parse Copilot response: error decoding response body: missing field `content` at line 1 column 319
 Error: Provider error: Failed to parse Copilot response: error decoding response body: missing field `content` at line 1 column 319
 ```

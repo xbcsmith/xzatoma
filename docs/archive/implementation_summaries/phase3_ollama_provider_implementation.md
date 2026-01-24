@@ -24,12 +24,12 @@ Ollama providers can now:
 2. **Model Cache**: Added `model_cache: Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>` for 5-minute TTL caching
 3. **New API Endpoints**: Implemented calls to `/api/tags` and `/api/show`
 4. **Provider Trait Methods**: Implemented all 6 extended trait methods:
-   - `list_models()` - Fetch and cache models
-   - `get_model_info()` - Get detailed model information
-   - `get_current_model()` - Return currently active model
-   - `set_model()` - Switch to different model with validation
-   - `get_provider_capabilities()` - Return supported features
-   - `complete()` - Already supported, now with proper token extraction
+  - `list_models()` - Fetch and cache models
+  - `get_model_info()` - Get detailed model information
+  - `get_current_model()` - Return currently active model
+  - `set_model()` - Switch to different model with validation
+  - `get_provider_capabilities()` - Return supported features
+  - `complete()` - Already supported, now with proper token extraction
 
 ## Implementation Details
 
@@ -39,24 +39,24 @@ Implemented `list_models()` using Ollama's `/api/tags` endpoint:
 
 ```rust
 async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-    // Check 5-minute cache first
-    if let Ok(cache) = self.model_cache.read() {
-        if let Some((models, cached_at)) = cache.as_ref() {
-            if Self::is_cache_valid(*cached_at) {
-                return Ok(models.clone());
-            }
-        }
+  // Check 5-minute cache first
+  if let Ok(cache) = self.model_cache.read() {
+    if let Some((models, cached_at)) = cache.as_ref() {
+      if Self::is_cache_valid(*cached_at) {
+        return Ok(models.clone());
+      }
     }
+  }
 
-    // Fetch from API if cache miss or expired
-    let models = self.fetch_models_from_api().await?;
+  // Fetch from API if cache miss or expired
+  let models = self.fetch_models_from_api().await?;
 
-    // Update cache with timestamp
-    if let Ok(mut cache) = self.model_cache.write() {
-        *cache = Some((models.clone(), Instant::now()));
-    }
+  // Update cache with timestamp
+  if let Ok(mut cache) = self.model_cache.write() {
+    *cache = Some((models.clone(), Instant::now()));
+  }
 
-    Ok(models)
+  Ok(models)
 }
 ```
 
@@ -81,36 +81,36 @@ Implemented `get_model_info()` using Ollama's `/api/show` endpoint:
 
 ```rust
 async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> {
-    // Try cache first
-    if let Ok(cache) = self.model_cache.read() {
-        if let Some((models, cached_at)) = cache.as_ref() {
-            if Self::is_cache_valid(*cached_at) {
-                if let Some(model) = models.iter().find(|m| m.name == model_name) {
-                    return Ok(model.clone());
-                }
-            }
+  // Try cache first
+  if let Ok(cache) = self.model_cache.read() {
+    if let Some((models, cached_at)) = cache.as_ref() {
+      if Self::is_cache_valid(*cached_at) {
+        if let Some(model) = models.iter().find(|m| m.name == model_name) {
+          return Ok(model.clone());
         }
+      }
     }
+  }
 
-    // Fetch detailed info from /api/show
-    self.fetch_model_details(model_name).await
+  // Fetch detailed info from /api/show
+  self.fetch_model_details(model_name).await
 }
 
 async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
-    let response = self.client.post(&url)
-        .json(&json!({"name": model_name}))
-        .send()
-        .await?;
+  let response = self.client.post(&url)
+    .json(&json!({"name": model_name}))
+    .send()
+    .await?;
 
-    let show_response: OllamaShowResponse = response.json().await?;
+  let show_response: OllamaShowResponse = response.json().await?;
 
-    // Build ModelInfo with details
-    let mut model_info = ModelInfo::new(...);
+  // Build ModelInfo with details
+  let mut model_info = ModelInfo::new(...);
 
-    // Extract capabilities and metadata
-    add_model_capabilities(&mut model_info, family);
+  // Extract capabilities and metadata
+  add_model_capabilities(&mut model_info, family);
 
-    Ok(model_info)
+  Ok(model_info)
 }
 ```
 
@@ -135,23 +135,23 @@ Token usage extraction was already implemented in Phase 2's base code, but now f
 ```rust
 // OllamaResponse includes these fields:
 struct OllamaResponse {
-    message: OllamaMessage,
-    done: bool,
-    prompt_eval_count: usize,  // Tokens used in prompt
-    eval_count: usize,         // Tokens generated
-    total_duration: u64,
+  message: OllamaMessage,
+  done: bool,
+  prompt_eval_count: usize, // Tokens used in prompt
+  eval_count: usize,     // Tokens generated
+  total_duration: u64,
 }
 
 // In complete() method:
 let response = if ollama_response.prompt_eval_count > 0
-    || ollama_response.eval_count > 0 {
-    let usage = TokenUsage::new(
-        ollama_response.prompt_eval_count,
-        ollama_response.eval_count,
-    );
-    CompletionResponse::with_usage(message, usage)
+  || ollama_response.eval_count > 0 {
+  let usage = TokenUsage::new(
+    ollama_response.prompt_eval_count,
+    ollama_response.eval_count,
+  );
+  CompletionResponse::with_usage(message, usage)
 } else {
-    CompletionResponse::new(message)
+  CompletionResponse::new(message)
 };
 ```
 
@@ -169,30 +169,30 @@ Implemented `set_model()` with validation and cache invalidation:
 
 ```rust
 async fn set_model(&mut self, model_name: String) -> Result<()> {
-    // Validate model exists on server by checking list
-    let models = self.list_models().await?;
-    if !models.iter().any(|m| m.name == model_name) {
-        return Err(XzatomaError::Provider(
-            format!("Model not found: {}", model_name)
-        ).into());
-    }
+  // Validate model exists on server by checking list
+  let models = self.list_models().await?;
+  if !models.iter().any(|m| m.name == model_name) {
+    return Err(XzatomaError::Provider(
+      format!("Model not found: {}", model_name)
+    ).into());
+  }
 
-    // Update config with write lock
-    let mut config = self.config.write()?;
-    config.model = model_name.clone();
-    drop(config);
+  // Update config with write lock
+  let mut config = self.config.write()?;
+  config.model = model_name.clone();
+  drop(config);
 
-    // Invalidate cache since model changed
-    self.invalidate_cache();
+  // Invalidate cache since model changed
+  self.invalidate_cache();
 
-    tracing::info!("Switched Ollama model to: {}", model_name);
-    Ok(())
+  tracing::info!("Switched Ollama model to: {}", model_name);
+  Ok(())
 }
 
 fn get_current_model(&self) -> Result<String> {
-    self.config.read()
-        .map(|config| config.model.clone())
-        .map_err(|_| ...)
+  self.config.read()
+    .map(|config| config.model.clone())
+    .map_err(|_| ...)
 }
 ```
 
@@ -249,32 +249,32 @@ All Phase 3 requirements completed:
 
 1. **Extended Provider Interface**
 
-   - `list_models()` - Lists all available Ollama models
-   - `get_model_info()` - Gets detailed info with caching
-   - `get_current_model()` - Returns active model
-   - `set_model()` - Switches model with validation
-   - `get_provider_capabilities()` - Returns feature flags
-   - `complete()` - Already implemented, returns token usage
+  - `list_models()` - Lists all available Ollama models
+  - `get_model_info()` - Gets detailed info with caching
+  - `get_current_model()` - Returns active model
+  - `set_model()` - Switches model with validation
+  - `get_provider_capabilities()` - Returns feature flags
+  - `complete()` - Already implemented, returns token usage
 
 2. **Model Management Features**
 
-   - 5-minute cache to reduce API calls
-   - Graceful offline handling
-   - Model validation before switching
-   - Detailed error messages
+  - 5-minute cache to reduce API calls
+  - Graceful offline handling
+  - Model validation before switching
+  - Detailed error messages
 
 3. **Token Usage Tracking**
 
-   - Extract prompt tokens from responses
-   - Extract completion tokens from responses
-   - Calculate total tokens automatically
-   - Available via `CompletionResponse.usage`
+  - Extract prompt tokens from responses
+  - Extract completion tokens from responses
+  - Calculate total tokens automatically
+  - Available via `CompletionResponse.usage`
 
 4. **Testing & Documentation**
-   - 25+ unit and integration tests
-   - All tests passing
-   - Comprehensive doc comments on all public items
-   - Real-world examples in doctests
+  - 25+ unit and integration tests
+  - All tests passing
+  - Comprehensive doc comments on all public items
+  - Real-world examples in doctests
 
 ### Task 3.7: Success Criteria
 
@@ -299,17 +299,17 @@ Maps model names to reasonable context window sizes:
 
 ```rust
 fn get_context_window_for_model(model_name: &str) -> usize {
-    if model_name.contains("7b") {
-        4096
-    } else if model_name.contains("13b") {
-        4096
-    } else if model_name.contains("70b") {
-        8192
-    } else if model_name.contains("mistral") || model_name.contains("neural-chat") {
-        8192
-    } else {
-        4096  // Default
-    }
+  if model_name.contains("7b") {
+    4096
+  } else if model_name.contains("13b") {
+    4096
+  } else if model_name.contains("70b") {
+    8192
+  } else if model_name.contains("mistral") || model_name.contains("neural-chat") {
+    8192
+  } else {
+    4096 // Default
+  }
 }
 ```
 
@@ -319,19 +319,19 @@ Assigns capabilities based on model family:
 
 ```rust
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
-    // All models support function calling
-    model.add_capability(ModelCapability::FunctionCalling);
+  // All models support function calling
+  model.add_capability(ModelCapability::FunctionCalling);
 
-    // Add family-specific capabilities
-    match family.to_lowercase().as_str() {
-        "mistral" | "neural-chat" => {
-            model.add_capability(ModelCapability::LongContext);
-        }
-        "llava" => {
-            model.add_capability(ModelCapability::Vision);
-        }
-        _ => {}
+  // Add family-specific capabilities
+  match family.to_lowercase().as_str() {
+    "mistral" | "neural-chat" => {
+      model.add_capability(ModelCapability::LongContext);
     }
+    "llava" => {
+      model.add_capability(ModelCapability::Vision);
+    }
+    _ => {}
+  }
 }
 ```
 
@@ -371,17 +371,17 @@ Both now return `String` instead of `&str` due to the lock acquisition. These ar
 
 1. **GET `/api/tags`** - List installed models
 
-   - Response: `{ models: [{name, digest, size, modified_at}] }`
-   - Used by: `list_models()`
+  - Response: `{ models: [{name, digest, size, modified_at}] }`
+  - Used by: `list_models()`
 
 2. **POST `/api/show`** - Get model details
 
-   - Request: `{ name: "model-name" }`
-   - Response: `{ modelfile, parameters, template, details: {...} }`
-   - Used by: `get_model_info()`
+  - Request: `{ name: "model-name" }`
+  - Response: `{ modelfile, parameters, template, details: {...} }`
+  - Used by: `get_model_info()`
 
 3. **POST `/api/chat`** - Generate completions (unchanged)
-   - Already implemented in earlier phases
+  - Already implemented in earlier phases
 
 ## Usage Examples
 
@@ -392,8 +392,8 @@ use xzatoma::providers::Provider;
 
 let models = provider.list_models().await?;
 for model in models {
-    println!("{}: {} tokens context",
-        model.name, model.context_window);
+  println!("{}: {} tokens context",
+    model.name, model.context_window);
 }
 ```
 
@@ -404,7 +404,7 @@ let info = provider.get_model_info("llama3.2:latest").await?;
 println!("Model: {}", info.display_name);
 println!("Context: {} tokens", info.context_window);
 for cap in &info.capabilities {
-    println!("- {}", cap);
+  println!("- {}", cap);
 }
 ```
 
@@ -422,9 +422,9 @@ println!("Active model: {}", current);
 let response = provider.complete(&messages, &tools).await?;
 let message = response.message;
 if let Some(usage) = response.usage {
-    println!("Prompt tokens: {}", usage.prompt_tokens);
-    println!("Completion tokens: {}", usage.completion_tokens);
-    println!("Total: {}", usage.total_tokens);
+  println!("Prompt tokens: {}", usage.prompt_tokens);
+  println!("Completion tokens: {}", usage.completion_tokens);
+  println!("Total: {}", usage.total_tokens);
 }
 ```
 
@@ -454,22 +454,22 @@ Comprehensive error handling for offline/unavailable Ollama:
 ```rust
 // Connection error (Ollama not running)
 Err(XzatomaError::Provider(
-    "Failed to connect to Ollama server: connection refused".into()
+  "Failed to connect to Ollama server: connection refused".into()
 ))
 
 // HTTP error from Ollama
 Err(XzatomaError::Provider(
-    "Ollama returned error 404: model not found".into()
+  "Ollama returned error 404: model not found".into()
 ))
 
 // Model not found during validation
 Err(XzatomaError::Provider(
-    "Model not found: invalid-model-name".into()
+  "Model not found: invalid-model-name".into()
 ))
 
 // Lock acquisition error (very rare)
 Err(XzatomaError::Provider(
-    "Failed to acquire read lock on config".into()
+  "Failed to acquire read lock on config".into()
 ))
 ```
 
@@ -554,14 +554,14 @@ Phase 4 (Agent Integration) depends on Phase 3:
 
 Both providers now implement the same interface with these differences:
 
-| Feature           | Copilot               | Ollama                    |
+| Feature      | Copilot        | Ollama          |
 | ----------------- | --------------------- | ------------------------- |
-| Model Source      | Hardcoded list        | Dynamic server discovery  |
-| Authentication    | OAuth device flow     | None required             |
-| Token Tracking    | Via API response      | Via eval_count fields     |
-| Caching           | No (auth tokens only) | 5-min model list cache    |
-| Server Dependency | GitHub (cloud)        | Local/remote HTTP         |
-| Error Recovery    | Handle auth failures  | Handle offline gracefully |
+| Model Source   | Hardcoded list    | Dynamic server discovery |
+| Authentication  | OAuth device flow   | None required       |
+| Token Tracking  | Via API response   | Via eval_count fields   |
+| Caching      | No (auth tokens only) | 5-min model list cache  |
+| Server Dependency | GitHub (cloud)    | Local/remote HTTP     |
+| Error Recovery  | Handle auth failures | Handle offline gracefully |
 
 ## Known Limitations
 

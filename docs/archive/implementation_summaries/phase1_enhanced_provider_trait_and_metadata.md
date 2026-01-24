@@ -20,11 +20,11 @@ The `ModelCapability` enum provides feature flags for model capabilities:
 
 ```rust
 pub enum ModelCapability {
-    LongContext,      // Context windows typically 100k+ tokens
-    FunctionCalling,  // Tool calling support
-    Vision,          // Image understanding
-    Streaming,       // Streaming responses
-    JsonMode,        // JSON output formatting
+  LongContext,   // Context windows typically 100k+ tokens
+  FunctionCalling, // Tool calling support
+  Vision,     // Image understanding
+  Streaming,    // Streaming responses
+  JsonMode,    // JSON output formatting
 }
 ```
 
@@ -36,13 +36,13 @@ The `TokenUsage` struct tracks token consumption:
 
 ```rust
 pub struct TokenUsage {
-    pub prompt_tokens: usize,
-    pub completion_tokens: usize,
-    pub total_tokens: usize,
+  pub prompt_tokens: usize,
+  pub completion_tokens: usize,
+  pub total_tokens: usize,
 }
 
 impl TokenUsage {
-    pub fn new(prompt_tokens: usize, completion_tokens: usize) -> Self { ... }
+  pub fn new(prompt_tokens: usize, completion_tokens: usize) -> Self { ... }
 }
 ```
 
@@ -54,11 +54,11 @@ The `ModelInfo` struct represents a single model:
 
 ```rust
 pub struct ModelInfo {
-    pub name: String,
-    pub display_name: String,
-    pub context_window: usize,
-    pub capabilities: Vec<ModelCapability>,
-    pub provider_specific: HashMap<String, String>,
+  pub name: String,
+  pub display_name: String,
+  pub context_window: usize,
+  pub capabilities: Vec<ModelCapability>,
+  pub provider_specific: HashMap<String, String>,
 }
 ```
 
@@ -75,11 +75,11 @@ The `ProviderCapabilities` struct describes provider-level features:
 
 ```rust
 pub struct ProviderCapabilities {
-    pub supports_model_listing: bool,
-    pub supports_model_details: bool,
-    pub supports_model_switching: bool,
-    pub supports_token_counts: bool,
-    pub supports_streaming: bool,
+  pub supports_model_listing: bool,
+  pub supports_model_details: bool,
+  pub supports_model_switching: bool,
+  pub supports_token_counts: bool,
+  pub supports_streaming: bool,
 }
 ```
 
@@ -91,8 +91,8 @@ The `CompletionResponse` struct combines messages with token usage:
 
 ```rust
 pub struct CompletionResponse {
-    pub message: Message,
-    pub usage: Option<TokenUsage>,
+  pub message: Message,
+  pub usage: Option<TokenUsage>,
 }
 ```
 
@@ -109,16 +109,16 @@ The `Provider` trait now includes new methods with default implementations:
 
 ```rust
 pub trait Provider: Send + Sync {
-    // Existing method
-    async fn complete(&self, messages: &[Message],
-                     tools: &[serde_json::Value]) -> Result<Message>;
+  // Existing method
+  async fn complete(&self, messages: &[Message],
+           tools: &[serde_json::Value]) -> Result<Message>;
 
-    // New methods with defaults
-    async fn list_models(&self) -> Result<Vec<ModelInfo>> { ... }
-    async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> { ... }
-    fn get_current_model(&self) -> Result<String> { ... }
-    fn get_provider_capabilities(&self) -> ProviderCapabilities { ... }
-    async fn set_model(&mut self, model_name: String) -> Result<()> { ... }
+  // New methods with defaults
+  async fn list_models(&self) -> Result<Vec<ModelInfo>> { ... }
+  async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> { ... }
+  fn get_current_model(&self) -> Result<String> { ... }
+  fn get_provider_capabilities(&self) -> ProviderCapabilities { ... }
+  async fn set_model(&mut self, model_name: String) -> Result<()> { ... }
 }
 ```
 
@@ -194,7 +194,7 @@ model.set_provider_metadata("organization", "openai");
 
 ```rust
 if model.supports_capability(ModelCapability::FunctionCalling) {
-    // Enable tool calling for this model
+  // Enable tool calling for this model
 }
 ```
 
@@ -215,8 +215,8 @@ println!("Total: {} tokens", usage.total_tokens);
 use xzatoma::providers::{CompletionResponse, Message, TokenUsage};
 
 let response = CompletionResponse::with_usage(
-    Message::assistant("Hello!"),
-    TokenUsage::new(100, 50)
+  Message::assistant("Hello!"),
+  TokenUsage::new(100, 50)
 );
 ```
 
@@ -228,25 +228,25 @@ use async_trait::async_trait;
 
 #[async_trait]
 impl Provider for MyProvider {
-    async fn complete(&self, messages: &[Message],
-                     tools: &[serde_json::Value]) -> Result<Message> {
-        // Existing implementation
-        Ok(Message::assistant("Response"))
-    }
+  async fn complete(&self, messages: &[Message],
+           tools: &[serde_json::Value]) -> Result<Message> {
+    // Existing implementation
+    Ok(Message::assistant("Response"))
+  }
 
-    fn get_provider_capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            supports_model_listing: true,
-            supports_token_counts: true,
-            supports_streaming: true,
-            ..Default::default()
-        }
+  fn get_provider_capabilities(&self) -> ProviderCapabilities {
+    ProviderCapabilities {
+      supports_model_listing: true,
+      supports_token_counts: true,
+      supports_streaming: true,
+      ..Default::default()
     }
+  }
 
-    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        // Provider-specific implementation
-        Ok(vec![...])
-    }
+  async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+    // Provider-specific implementation
+    Ok(vec![...])
+  }
 }
 ```
 

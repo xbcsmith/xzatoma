@@ -92,17 +92,17 @@ Comprehensive plan format support with three detection mechanisms:
 
 ```rust
 pub fn detect_plan_format(content: &str) -> PlanFormat {
-    let trimmed = content.trim_start();
+  let trimmed = content.trim_start();
 
-    if trimmed.starts_with("---") {
-        return PlanFormat::MarkdownWithFrontmatter;
-    }
+  if trimmed.starts_with("---") {
+    return PlanFormat::MarkdownWithFrontmatter;
+  }
 
-    if trimmed.starts_with("# ") || trimmed.starts_with("## ") {
-        return PlanFormat::Markdown;
-    }
+  if trimmed.starts_with("# ") || trimmed.starts_with("## ") {
+    return PlanFormat::Markdown;
+  }
 
-    PlanFormat::Yaml
+  PlanFormat::Yaml
 }
 ```
 
@@ -118,11 +118,11 @@ Each format has specialized validation:
 
 ```rust
 pub struct ValidatedPlan {
-    pub format: String,
-    pub title: String,
-    pub content: String,
-    pub is_valid: bool,
-    pub errors: Vec<String>,
+  pub format: String,
+  pub title: String,
+  pub content: String,
+  pub is_valid: bool,
+  pub errors: Vec<String>,
 }
 ```
 
@@ -140,11 +140,11 @@ New public method: `Agent::new_with_mode()`
 
 ```rust
 pub fn new_with_mode(
-    provider: Box<dyn Provider>,
-    tools: ToolRegistry,
-    config: AgentConfig,
-    mode: ChatMode,
-    safety: SafetyMode,
+  provider: Box<dyn Provider>,
+  tools: ToolRegistry,
+  config: AgentConfig,
+  mode: ChatMode,
+  safety: SafetyMode,
 ) -> Result<Self>
 ```
 
@@ -180,26 +180,26 @@ Test coverage includes:
 
 - **Prompt Generation** (12 tests):
 
-  - Planning mode prompt with both safety settings
-  - Write mode prompt with both safety settings
-  - Prompt non-emptiness and minimum length
-  - Prompt differentiation based on mode and safety
-  - Inclusion of required keywords and sections
+ - Planning mode prompt with both safety settings
+ - Write mode prompt with both safety settings
+ - Prompt non-emptiness and minimum length
+ - Prompt differentiation based on mode and safety
+ - Inclusion of required keywords and sections
 
 - **Format Detection** (8 tests):
 
-  - YAML detection (basic and with colons)
-  - Markdown detection (level 1, 2, 3 headers)
-  - Frontmatter detection (with and without spaces)
-  - Accurate format identification
+ - YAML detection (basic and with colons)
+ - Markdown detection (level 1, 2, 3 headers)
+ - Frontmatter detection (with and without spaces)
+ - Accurate format identification
 
 - **Format Validation** (26 tests):
-  - YAML validation (valid, no title, invalid)
-  - Markdown validation (valid, no headers, empty)
-  - Frontmatter validation (valid, invalid YAML, no closing)
-  - Plan format auto-detection and validation
-  - Empty plan handling
-  - ValidatedPlan structure and methods
+ - YAML validation (valid, no title, invalid)
+ - Markdown validation (valid, no headers, empty)
+ - Frontmatter validation (valid, invalid YAML, no closing)
+ - Plan format auto-detection and validation
+ - Empty plan handling
+ - ValidatedPlan structure and methods
 
 ### Test Results
 
@@ -221,25 +221,25 @@ use xzatoma::tools::ToolRegistry;
 use xzatoma::providers::create_provider;
 
 async fn example() -> Result<()> {
-    let provider = create_provider("copilot")?;
-    let tools = ToolRegistry::new();
-    let config = AgentConfig::default();
+  let provider = create_provider("copilot")?;
+  let tools = ToolRegistry::new();
+  let config = AgentConfig::default();
 
-    // Create agent with planning mode system prompt
-    let agent = Agent::new_with_mode(
-        provider,
-        tools,
-        config,
-        ChatMode::Planning,
-        SafetyMode::AlwaysConfirm,
-    )?;
+  // Create agent with planning mode system prompt
+  let agent = Agent::new_with_mode(
+    provider,
+    tools,
+    config,
+    ChatMode::Planning,
+    SafetyMode::AlwaysConfirm,
+  )?;
 
-    // Agent now has planning mode instructions
-    let result = agent.execute(
-        "Create a plan for implementing a new feature"
-    ).await?;
+  // Agent now has planning mode instructions
+  let result = agent.execute(
+    "Create a plan for implementing a new feature"
+  ).await?;
 
-    Ok(())
+  Ok(())
 }
 ```
 
@@ -249,18 +249,18 @@ async fn example() -> Result<()> {
 use xzatoma::tools::plan_format::{validate_plan, PlanFormat};
 
 fn validate_agent_output(output: &str) -> Result<()> {
-    let validated = validate_plan(output)?;
+  let validated = validate_plan(output)?;
 
-    if !validated.is_valid_plan() {
-        println!("Plan validation errors:");
-        for error in validated.errors {
-            println!("  - {}", error);
-        }
-        return Err("Invalid plan format".into());
+  if !validated.is_valid_plan() {
+    println!("Plan validation errors:");
+    for error in validated.errors {
+      println!(" - {}", error);
     }
+    return Err("Invalid plan format".into());
+  }
 
-    println!("Valid {} plan: {}", validated.format, validated.title);
-    Ok(())
+  println!("Valid {} plan: {}", validated.format, validated.title);
+  Ok(())
 }
 ```
 
@@ -270,20 +270,20 @@ fn validate_agent_output(output: &str) -> Result<()> {
 use xzatoma::prompts::build_system_prompt;
 
 fn switch_mode_and_update_agent(
-    old_agent: Agent,
-    new_mode: ChatMode,
-    safety: SafetyMode,
+  old_agent: Agent,
+  new_mode: ChatMode,
+  safety: SafetyMode,
 ) -> Result<Agent> {
-    // Get existing conversation
-    let mut conversation = old_agent.conversation().clone();
+  // Get existing conversation
+  let mut conversation = old_agent.conversation().clone();
 
-    // Update system prompt for new mode
-    let new_system_prompt = build_system_prompt(new_mode, safety);
-    conversation.add_system_message(new_system_prompt);
+  // Update system prompt for new mode
+  let new_system_prompt = build_system_prompt(new_mode, safety);
+  conversation.add_system_message(new_system_prompt);
 
-    // Create new agent with same conversation but new tools/prompt
-    let new_tools = build_tools_for_mode(new_mode, safety);
-    Agent::with_conversation(provider, new_tools, config, conversation)
+  // Create new agent with same conversation but new tools/prompt
+  let new_tools = build_tools_for_mode(new_mode, safety);
+  Agent::with_conversation(provider, new_tools, config, conversation)
 }
 ```
 
@@ -291,10 +291,10 @@ fn switch_mode_and_update_agent(
 
 ### Code Quality
 
-- `cargo fmt --all` ✅ Passed
-- `cargo check --all-targets --all-features` ✅ Passed
-- `cargo clippy --all-targets --all-features -- -D warnings` ✅ Passed (0 warnings)
-- `cargo test --all-features` ✅ Passed (256 tests)
+- `cargo fmt --all` Passed
+- `cargo check --all-targets --all-features` Passed
+- `cargo clippy --all-targets --all-features -- -D warnings` Passed (0 warnings)
+- `cargo test --all-features` Passed (256 tests)
 
 ### Test Coverage
 

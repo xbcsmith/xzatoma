@@ -26,37 +26,37 @@ The `GrepTool` struct provides regex-based searching with the following capabili
 **Public Interface:**
 ```rust
 pub struct GrepTool {
-    working_dir: PathBuf,
-    max_results_per_page: usize,
-    context_lines: usize,
-    max_file_size: u64,
-    excluded_patterns: Vec<String>,
+  working_dir: PathBuf,
+  max_results_per_page: usize,
+  context_lines: usize,
+  max_file_size: u64,
+  excluded_patterns: Vec<String>,
 }
 
 impl GrepTool {
-    pub fn new(...) -> Self
-    pub async fn search(
-        &self,
-        regex: &str,
-        include_pattern: Option<&str>,
-        case_sensitive: bool,
-        offset: usize,
-    ) -> Result<(Vec<SearchMatch>, usize)>
+  pub fn new(...) -> Self
+  pub async fn search(
+    &self,
+    regex: &str,
+    include_pattern: Option<&str>,
+    case_sensitive: bool,
+    offset: usize,
+  ) -> Result<(Vec<SearchMatch>, usize)>
 }
 ```
 
 **Key Features:**
 
 1. **Regex Pattern Matching**: Uses the `regex` crate for powerful pattern matching
-   - Supports full regex syntax: `fn\s+\w+`, `pub async fn.*\(`, etc.
-   - Case-sensitive and case-insensitive modes via regex flag injection
-   - Invalid regex patterns return descriptive error messages
+  - Supports full regex syntax: `fn\s+\w+`, `pub async fn.*\(`, etc.
+  - Case-sensitive and case-insensitive modes via regex flag injection
+  - Invalid regex patterns return descriptive error messages
 
 2. **File Traversal and Filtering**:
-   - Walks directory tree using `walkdir` crate
-   - Respects include patterns (glob) to filter files
-   - Excludes files based on patterns: `*.lock`, `target/**`, `node_modules/**`, `.git/**`
-   - Skips binary files using null-byte heuristic
+  - Walks directory tree using `walkdir` crate
+  - Respects include patterns (glob) to filter files
+  - Excludes files based on patterns: `*.lock`, `target/**`, `node_modules/**`, `.git/**`
+  - Skips binary files using null-byte heuristic
 
 3. **File Size Limits**: Configurable per-file size limit (default 1 MB) to prevent performance issues with large files
 
@@ -72,15 +72,15 @@ The `SearchMatch` struct represents a single search result:
 
 ```rust
 pub struct SearchMatch {
-    pub file: PathBuf,
-    pub line_number: usize,
-    pub line: String,
-    pub context_before: Vec<String>,
-    pub context_after: Vec<String>,
+  pub file: PathBuf,
+  pub line_number: usize,
+  pub line: String,
+  pub context_before: Vec<String>,
+  pub context_after: Vec<String>,
 }
 
 impl SearchMatch {
-    pub fn format_with_context(&self, max_width: usize) -> String
+  pub fn format_with_context(&self, max_width: usize) -> String
 }
 ```
 
@@ -94,10 +94,10 @@ impl SearchMatch {
 Example output:
 ```
 src/main.rs:42
-  40 | fn main() {
-  41 |     let pattern = "example";
-> 42 |     process_pattern(&pattern); // Match here
-  43 | }
+ 40 | fn main() {
+ 41 |   let pattern = "example";
+> 42 |   process_pattern(&pattern); // Match here
+ 43 | }
 ---
 ```
 
@@ -108,8 +108,8 @@ GrepTool implements `ToolExecutor` trait for integration with agent tool registr
 ```rust
 #[async_trait]
 impl ToolExecutor for GrepTool {
-    fn tool_definition(&self) -> serde_json::Value
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>
+  fn tool_definition(&self) -> serde_json::Value
+  async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>
 }
 ```
 
@@ -125,19 +125,19 @@ Extended `ToolsConfig` with grep-specific settings:
 
 ```rust
 pub struct ToolsConfig {
-    // ... existing fields ...
+  // ... existing fields ...
 
-    /// Maximum results per page for grep tool (default: 20)
-    pub grep_max_results_per_page: usize,
+  /// Maximum results per page for grep tool (default: 20)
+  pub grep_max_results_per_page: usize,
 
-    /// Number of context lines around matches (default: 2)
-    pub grep_context_lines: usize,
+  /// Number of context lines around matches (default: 2)
+  pub grep_context_lines: usize,
 
-    /// Maximum file size for grep searches (default: 1 MB)
-    pub grep_max_file_size: u64,
+  /// Maximum file size for grep searches (default: 1 MB)
+  pub grep_max_file_size: u64,
 
-    /// File patterns to exclude from searches
-    pub grep_excluded_patterns: Vec<String>,
+  /// File patterns to exclude from searches
+  pub grep_excluded_patterns: Vec<String>,
 }
 ```
 
@@ -153,14 +153,14 @@ Added support for search mention formatting and placeholder for integration:
 
 ```rust
 pub fn format_search_results(
-    matches: &[SearchMatch],
-    pattern: &str,
+  matches: &[SearchMatch],
+  pattern: &str,
 ) -> String
 
 struct SearchResultsCache {
-    pattern: String,
-    matches: Vec<SearchMatch>,
-    timestamp: SystemTime,
+  pattern: String,
+  matches: Vec<SearchMatch>,
+  timestamp: SystemTime,
 }
 ```
 
@@ -202,28 +202,28 @@ use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let tool = GrepTool::new(
-        PathBuf::from("."),           // working directory
-        20,                            // max results per page
-        2,                             // context lines
-        1_048_576,                     // max file size
-        vec!["*.lock".to_string()],    // excluded patterns
-    );
+  let tool = GrepTool::new(
+    PathBuf::from("."),      // working directory
+    20,              // max results per page
+    2,               // context lines
+    1_048_576,           // max file size
+    vec!["*.lock".to_string()],  // excluded patterns
+  );
 
-    // Search for function definitions
-    let (matches, total) = tool.search(
-        r"pub fn \w+\(",               // regex pattern
-        Some("src/**/*.rs"),            // include pattern (optional)
-        false,                          // case insensitive
-        0,                              // offset for pagination
-    ).await?;
+  // Search for function definitions
+  let (matches, total) = tool.search(
+    r"pub fn \w+\(",        // regex pattern
+    Some("src/**/*.rs"),      // include pattern (optional)
+    false,             // case insensitive
+    0,               // offset for pagination
+  ).await?;
 
-    println!("Found {} total matches", total);
-    for m in matches {
-        println!("{}", m.format_with_context(120));
-    }
+  println!("Found {} total matches", total);
+  for m in matches {
+    println!("{}", m.format_with_context(120));
+  }
 
-    Ok(())
+  Ok(())
 }
 ```
 
@@ -233,30 +233,30 @@ The grep tool will be available to agents as a callable tool with parameters:
 
 ```json
 {
-  "name": "grep",
-  "description": "Search codebase with regex patterns. Returns matching lines with context.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "regex": {
-        "type": "string",
-        "description": "Regular expression pattern to search for"
-      },
-      "include_pattern": {
-        "type": "string",
-        "description": "Optional glob pattern to filter files (e.g., '**/*.rs')"
-      },
-      "case_sensitive": {
-        "type": "boolean",
-        "description": "Whether search is case-sensitive (default: false)"
-      },
-      "offset": {
-        "type": "integer",
-        "description": "Starting result number for pagination (default: 0)"
-      }
-    },
-    "required": ["regex"]
-  }
+ "name": "grep",
+ "description": "Search codebase with regex patterns. Returns matching lines with context.",
+ "parameters": {
+  "type": "object",
+  "properties": {
+   "regex": {
+    "type": "string",
+    "description": "Regular expression pattern to search for"
+   },
+   "include_pattern": {
+    "type": "string",
+    "description": "Optional glob pattern to filter files (e.g., '**/*.rs')"
+   },
+   "case_sensitive": {
+    "type": "boolean",
+    "description": "Whether search is case-sensitive (default: false)"
+   },
+   "offset": {
+    "type": "integer",
+    "description": "Starting result number for pagination (default: 0)"
+   }
+  },
+  "required": ["regex"]
+ }
 }
 ```
 

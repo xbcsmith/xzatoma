@@ -14,14 +14,14 @@ This phase focuses on correctness and safety: all file operations are confined t
 ## Components Delivered
 
 - `src/tools/file_ops.rs` — File operations tool and convenience functions
-  - Provides `FileOpsTool` with methods: `new`, `validate_path`, `list_files`, `read_file`, `write_file`, `delete_file`, `file_diff`.
-  - Provides convenience async helper functions: `read_file`, `write_file`, `list_files`, `search_files`.
-  - Uses `walkdir`, `regex`, `similar`, `tokio::fs`, and `rust std::fs` for file ops, patterns and diffs.
+ - Provides `FileOpsTool` with methods: `new`, `validate_path`, `list_files`, `read_file`, `write_file`, `delete_file`, `file_diff`.
+ - Provides convenience async helper functions: `read_file`, `write_file`, `list_files`, `search_files`.
+ - Uses `walkdir`, `regex`, `similar`, `tokio::fs`, and `rust std::fs` for file ops, patterns and diffs.
 - `src/tools/plan.rs` — Plan parsing utilities
-  - Provides the `Plan` and `PlanStep` data structures.
-  - Provides `PlanParser` with `from_file`, `from_yaml`, `from_json`, `from_markdown`, and `validate` methods.
+ - Provides the `Plan` and `PlanStep` data structures.
+ - Provides `PlanParser` with `from_file`, `from_yaml`, `from_json`, `from_markdown`, and `validate` methods.
 - `src/tools/mod.rs` — Re-exports convenience and ensures the tools are available to registries and the Agent.
-  - Re-exports: `FileOpsTool`, `PlanParser`, `Plan`, `PlanStep`, `generate_diff`, and the convenience `read_file`, `write_file`, `list_files`, etc.
+ - Re-exports: `FileOpsTool`, `PlanParser`, `Plan`, `PlanStep`, `generate_diff`, and the convenience `read_file`, `write_file`, `list_files`, etc.
 - Tests were added to both modules to validate behavior and edge cases (`#[cfg(test)]` unit tests in the same files).
 
 ## Implementation Details
@@ -36,36 +36,36 @@ The `FileOpsTool` is a `ToolExecutor` with its `tool_definition` returning a JSO
 Key design decisions:
 
 - Working Directory Confinement
-  - All paths are treated as relative to the tool's configured `working_dir`. The `validate_path` function performs:
-    - Reject absolute paths and `~` (home) references.
-    - Reject `..` path components (directory traversal).
-    - If a target exists, canonicalize and ensure it is under the canonicalized `working_dir`.
-    - For non-existent target (e.g., writing a new file), ensure the parent directory (canonicalized if possible) is within the `working_dir`.
-  - This approach prevents escapes via symlinks and ensures files must remain in the allowed working directory.
+ - All paths are treated as relative to the tool's configured `working_dir`. The `validate_path` function performs:
+  - Reject absolute paths and `~` (home) references.
+  - Reject `..` path components (directory traversal).
+  - If a target exists, canonicalize and ensure it is under the canonicalized `working_dir`.
+  - For non-existent target (e.g., writing a new file), ensure the parent directory (canonicalized if possible) is within the `working_dir`.
+ - This approach prevents escapes via symlinks and ensures files must remain in the allowed working directory.
 
 - Read File:
-  - `read_file` enforces `config.max_file_read_size` (from `ToolsConfig`) and returns an error `ToolResult` if exceeded.
-  - Reads are async via `tokio::fs`.
+ - `read_file` enforces `config.max_file_read_size` (from `ToolsConfig`) and returns an error `ToolResult` if exceeded.
+ - Reads are async via `tokio::fs`.
 
 - Write File:
-  - Creates parent directories as necessary (`fs::create_dir_all`), with async write performed using `tokio::fs::write`.
-  - Returns a `ToolResult` with a success message on success.
+ - Creates parent directories as necessary (`fs::create_dir_all`), with async write performed using `tokio::fs::write`.
+ - Returns a `ToolResult` with a success message on success.
 
 - Delete File:
-  - The `execute` entrypoint only performs delete when `confirm` is `true`.
-  - `delete_file` checks existence and then removes the file with `tokio::fs::remove_file`.
+ - The `execute` entrypoint only performs delete when `confirm` is `true`.
+ - `delete_file` checks existence and then removes the file with `tokio::fs::remove_file`.
 
 - Listing Files:
-  - `list_files` uses `walkdir` and can filter using either a regex (if it compiles) or a simple substring match.
-  - Supports non-recursive (`max_depth = 1`) and recursive walks.
+ - `list_files` uses `walkdir` and can filter using either a regex (if it compiles) or a simple substring match.
+ - Supports non-recursive (`max_depth = 1`) and recursive walks.
 
 - File Diff:
-  - `file_diff` reads both files and uses `similar::TextDiff` to create a line-based unified output.
+ - `file_diff` reads both files and uses `similar::TextDiff` to create a line-based unified output.
 
 - `ToolResult` semantics:
-  - A `ToolResult` contains `success`, `output`, `error`, `truncated`, and `metadata`.
-  - `success` indicates the operation outcome; `error` contains failure messages.
-  - `truncate_if_needed` is available on `ToolResult` for agent level truncation based on `max_output_size`.
+ - A `ToolResult` contains `success`, `output`, `error`, `truncated`, and `metadata`.
+ - `success` indicates the operation outcome; `error` contains failure messages.
+ - `truncate_if_needed` is available on `ToolResult` for agent level truncation based on `max_output_size`.
 
 Security: The path validation is deliberately conservative. It uses canonicalization for existing targets to avoid symlink escapes and lexically validates non-existing paths. It rejects absolute and home path usage and uses `..` checks. `delete` requires `confirm=true` to prevent accidental destruction.
 
@@ -86,30 +86,30 @@ tools.register("file_ops", file_tool);
 
 The `Plan` model:
 - `Plan`:
-  - `name: String` — Plan title (top-level H1 in Markdown).
-  - `description: Option<String>` — optional plan description.
-  - `steps: Vec<PlanStep>` — sequence of steps describing the plan.
+ - `name: String` — Plan title (top-level H1 in Markdown).
+ - `description: Option<String>` — optional plan description.
+ - `steps: Vec<PlanStep>` — sequence of steps describing the plan.
 - `PlanStep`:
-  - `name: String` — step title (H2 in Markdown).
-  - `action: String` — textual action to perform (used as command or description).
-  - `context: Option<String>` — multiline context (e.g., a code block or command).
+ - `name: String` — step title (H2 in Markdown).
+ - `action: String` — textual action to perform (used as command or description).
+ - `context: Option<String>` — multiline context (e.g., a code block or command).
 
 Parsing:
 - `from_yaml` and `from_json` use `serde_yaml::from_str` and `serde_json::from_str`, returning `Plan`.
 - `from_markdown` uses a simple, robust parser:
-  - First `#` heading => plan `name`.
-  - The first paragraph after the title => `description` (optional).
-  - Each `##` heading => new `PlanStep`.
-  - The first non-empty line under the `##` heading => step `action`.
-  - Code block content between triple backticks (```) is aggregated and stored as `context`.
-  - Lines with `action:`, `command:`, or `context:` under a step are parsed as structured fields.
+ - First `#` heading => plan `name`.
+ - The first paragraph after the title => `description` (optional).
+ - Each `##` heading => new `PlanStep`.
+ - The first non-empty line under the `##` heading => step `action`.
+ - Code block content between triple backticks (```) is aggregated and stored as `context`.
+ - Lines with `action:`, `command:`, or `context:` under a step are parsed as structured fields.
 - `from_file` uses the file extension to dispatch to the appropriate parser (`.yaml/.yml`, `.json`, `.md`).
 
 Verification:
 - `PlanParser::validate` ensures:
-  - `name` is non-empty.
-  - at least one `step` exists.
-  - each step has a non-empty `name` and a non-empty `action`.
+ - `name` is non-empty.
+ - at least one `step` exists.
+ - each step has a non-empty `name` and a non-empty `action`.
 
 This parser translates human-authored Markdown plans into a structured `Plan` and is resilient to minor formatting variations.
 
@@ -120,16 +120,16 @@ name: Setup Project
 description: Initialize a new Rust project
 
 steps:
-  - name: Create project
-    action: Run cargo init command
-    context: cargo init --bin my-project
+ - name: Create project
+  action: Run cargo init command
+  context: cargo init --bin my-project
 
-  - name: Add dependencies
-    action: Update Cargo.toml with required dependencies
-    context: |
-      [dependencies]
-      tokio = { version = "1", features = ["full"] }
-      serde = { version = "1", features = ["derive"] }
+ - name: Add dependencies
+  action: Update Cargo.toml with required dependencies
+  context: |
+   [dependencies]
+   tokio = { version = "1", features = ["full"] }
+   serde = { version = "1", features = ["derive"] }
 ```
 
 Markdown plan example (convention supported by `PlanParser::from_markdown`):
@@ -159,22 +159,22 @@ serde = { version = "1", features = ["derive"] }
 The following unit tests were added (and are located inline in the respective modules):
 
 - `src/tools/file_ops.rs` tests:
-  - `test_read_file_success` — ensures reading contents works.
-  - `test_write_file_success` — ensures writing creates directories and writes bytes.
-  - `test_list_files_recursive_and_non_recursive` — confirms list behavior and recursion.
-  - `test_search_files_regex_and_substring` — confirms regex and substring search.
-  - `test_generate_diff_basic` — ensures diff output shows + and - lines correctly.
-  - `test_fileops_tool_read_write_delete_and_diff` — end-to-end test for write/read/diff/delete.
-  - `test_fileops_tool_list_and_pattern` — verifies regex-based list filtering.
-  - `test_validate_path_outside` — ensures path validation rejects escapes.
+ - `test_read_file_success` — ensures reading contents works.
+ - `test_write_file_success` — ensures writing creates directories and writes bytes.
+ - `test_list_files_recursive_and_non_recursive` — confirms list behavior and recursion.
+ - `test_search_files_regex_and_substring` — confirms regex and substring search.
+ - `test_generate_diff_basic` — ensures diff output shows + and - lines correctly.
+ - `test_fileops_tool_read_write_delete_and_diff` — end-to-end test for write/read/diff/delete.
+ - `test_fileops_tool_list_and_pattern` — verifies regex-based list filtering.
+ - `test_validate_path_outside` — ensures path validation rejects escapes.
 
 - `src/tools/plan.rs` tests:
-  - `test_from_yaml` — parse YAML and assert fields.
-  - `test_from_json` — parse JSON and assert fields.
-  - `test_from_markdown` — parse Markdown and assert names, actions, contexts.
-  - `test_from_file_yaml` — parse plan from a file and assert correctness.
-  - `test_validate_errors` — ensure validation errors for missing fields.
-  - `test_parse_plan_and_load_plan` — ensures `parse_plan` and `load_plan` behave as expected.
+ - `test_from_yaml` — parse YAML and assert fields.
+ - `test_from_json` — parse JSON and assert fields.
+ - `test_from_markdown` — parse Markdown and assert names, actions, contexts.
+ - `test_from_file_yaml` — parse plan from a file and assert correctness.
+ - `test_validate_errors` — ensure validation errors for missing fields.
+ - `test_parse_plan_and_load_plan` — ensures `parse_plan` and `load_plan` behave as expected.
 
 Validation results observed (local test environment):
 - `cargo fmt --all` — passed and code formatted
@@ -201,8 +201,8 @@ registry.register("file_ops", file_tool);
 // Execute from an agent-like context (simplified)
 let executor = registry.get("file_ops").unwrap();
 let params = serde_json::json!({
-    "operation": "read",
-    "path": "README.md"
+  "operation": "read",
+  "path": "README.md"
 });
 let result = executor.execute(params).await.unwrap();
 println!("Tool output: {}", result.to_message());
@@ -216,8 +216,8 @@ use xzatoma::tools::PlanParser;
 let yaml = r#"
 name: Build Project
 steps:
-  - name: Build
-    action: cargo build
+ - name: Build
+  action: cargo build
 "#;
 
 let plan = PlanParser::from_yaml(yaml).unwrap();
@@ -242,36 +242,36 @@ Limitations & Future work:
 ## Integration & Example Workflow
 
 - Register `FileOpsTool` in your agent's tool registry at startup:
-  - The tool should be provided with a configured working directory (the agent's workspace).
-  - The `Agent` will send tool calls as JSON to the tools via `ToolRegistry.get(...)`, where the tool performs the required operation and returns a `ToolResult`.
+ - The tool should be provided with a configured working directory (the agent's workspace).
+ - The `Agent` will send tool calls as JSON to the tools via `ToolRegistry.get(...)`, where the tool performs the required operation and returns a `ToolResult`.
 
 - Plan execution:
-  - `PlanParser::from_file` is used to load a plan from YAML/JSON/Markdown.
-  - `PlanParser::validate` ensures the plan is well-formed before execution.
-  - The Agent or a `run_plan` command translates each step into tool calls: read a file, run commands using terminal tool, write files etc.
-  - For a small example, a plan step that uses `context` could be translated into a `terminal` or `file_ops` call depending on the action.
+ - `PlanParser::from_file` is used to load a plan from YAML/JSON/Markdown.
+ - `PlanParser::validate` ensures the plan is well-formed before execution.
+ - The Agent or a `run_plan` command translates each step into tool calls: read a file, run commands using terminal tool, write files etc.
+ - For a small example, a plan step that uses `context` could be translated into a `terminal` or `file_ops` call depending on the action.
 
 ## References
 
 - Code:
-  - `src/tools/file_ops.rs` – FileOps tool implementation (primary)
-  - `src/tools/plan.rs` – Plan parser and associated tests
-  - `src/tools/mod.rs` – Re-exports and ToolRegistry integration
+ - `src/tools/file_ops.rs` – FileOps tool implementation (primary)
+ - `src/tools/plan.rs` – Plan parser and associated tests
+ - `src/tools/mod.rs` – Re-exports and ToolRegistry integration
 - Tests:
-  - Unit tests included inline inside the modules.
+ - Unit tests included inline inside the modules.
 - Tools & Libraries:
-  - `walkdir` for directory traversal
-  - `regex` for pattern matching
-  - `similar` for diffs
-  - `tokio::fs` for async file operations
+ - `walkdir` for directory traversal
+ - `regex` for pattern matching
+ - `similar` for diffs
+ - `tokio::fs` for async file operations
 
 ---
 
 ## Next Steps
 
 - Phase 6 (CLI Integration and Plan Runner):
-  - Integrate `PlanParser` with the CLI and implement `run_plan` to translate plan steps into a series of provider and tool calls.
-  - Wire confirmation flows to fully support `confirm=true` requirements and user approval in `Interactive` mode.
+ - Integrate `PlanParser` with the CLI and implement `run_plan` to translate plan steps into a series of provider and tool calls.
+ - Wire confirmation flows to fully support `confirm=true` requirements and user approval in `Interactive` mode.
 - Run a targeted `tarpaulin` coverage report in CI to validate test coverage >80%.
 - Add integration tests that exercise the full end-to-end flow: parse plan → register tools → agent executes steps using `file_ops` and `terminal`.
 

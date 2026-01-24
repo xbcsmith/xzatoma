@@ -29,31 +29,31 @@ This document summarizes the critical fixes applied to `docs/reference/architect
 
 ```rust
 pub struct Agent {
-    provider: Arc<dyn Provider>,
-    conversation: Conversation,
-    tools: Vec<Tool>,
-    max_iterations: usize,  // NEW
+  provider: Arc<dyn Provider>,
+  conversation: Conversation,
+  tools: Vec<Tool>,
+  max_iterations: usize, // NEW
 }
 
 impl Agent {
-    pub async fn execute(&mut self, instruction: String) -> Result<String> {
-        self.conversation.add_user_message(instruction);
+  pub async fn execute(&mut self, instruction: String) -> Result<String> {
+    self.conversation.add_user_message(instruction);
 
-        let mut iterations = 0;  // NEW
+    let mut iterations = 0; // NEW
 
-        loop {
-            // NEW: Enforce iteration limit
-            if iterations >= self.max_iterations {
-                return Err(XzatomaError::MaxIterationsExceeded {
-                    limit: self.max_iterations,
-                    message: "Agent exceeded maximum iteration limit".to_string(),
-                });
-            }
-            iterations += 1;
+    loop {
+      // NEW: Enforce iteration limit
+      if iterations >= self.max_iterations {
+        return Err(XzatomaError::MaxIterationsExceeded {
+          limit: self.max_iterations,
+          message: "Agent exceeded maximum iteration limit".to_string(),
+        });
+      }
+      iterations += 1;
 
-            // ... rest of loop
-        }
+      // ... rest of loop
     }
+  }
 }
 ```
 
@@ -122,12 +122,12 @@ impl Agent {
 
 **Token Limits Documented**:
 
-| Provider | Model       | Context Window | Safe Limit (80%) |
+| Provider | Model    | Context Window | Safe Limit (80%) |
 | -------- | ----------- | -------------- | ---------------- |
-| Copilot  | gpt-5-mini  | 128,000        | 102,400          |
-| Copilot  | gpt-4o-mini | 128,000        | 102,400          |
-| Ollama   | qwen3       | 32,768         | 26,214           |
-| Ollama   | llama3      | 8,192          | 6,553            |
+| Copilot | gpt-5-mini | 128,000    | 102,400     |
+| Copilot | gpt-4o-mini | 128,000    | 102,400     |
+| Ollama  | qwen3    | 32,768     | 26,214      |
+| Ollama  | llama3   | 8,192     | 6,553      |
 
 **Pruning Strategy Documented**:
 
@@ -162,11 +162,11 @@ impl Agent {
 
 1. Changed `ToolExecutor::execute()` return type from `String` to `ToolResult`
 2. Added `ToolResult` struct with:
-   - `success: bool` - Execution status
-   - `output: String` - Tool output
-   - `error: Option<String>` - Error message
-   - `truncated: bool` - Size limit indicator
-   - `metadata: HashMap<String, String>` - Additional info
+  - `success: bool` - Execution status
+  - `output: String` - Tool output
+  - `error: Option<String>` - Error message
+  - `truncated: bool` - Size limit indicator
+  - `metadata: HashMap<String, String>` - Additional info
 3. Added helper methods: `success()`, `error()`, `truncate_if_needed()`, `to_message()`
 
 **Impact**: Better error handling, size limits, structured results
@@ -260,43 +260,43 @@ Expanded configuration with new sections:
 
 ```yaml
 agent:
-  max_turns: 100
-  conversation:
-    max_tokens: 100000
-    min_retain_turns: 5
-    prune_threshold: 0.8
-  tools:
-    max_output_size: 1048576
-    max_file_read_size: 10485760
-  terminal:
-    default_mode: restricted_autonomous
-    timeout_seconds: 30
-    max_stdout_bytes: 10485760
-    max_stderr_bytes: 1048576
+ max_turns: 100
+ conversation:
+  max_tokens: 100000
+  min_retain_turns: 5
+  prune_threshold: 0.8
+ tools:
+  max_output_size: 1048576
+  max_file_read_size: 10485760
+ terminal:
+  default_mode: restricted_autonomous
+  timeout_seconds: 30
+  max_stdout_bytes: 10485760
+  max_stderr_bytes: 1048576
 ```
 
 ## Validation Results
 
 ### Before Fixes
 
-- ❌ Infinite loop risk
-- ❌ Terminal security gaps
-- ❌ Token management missing
-- ⚠️ Provider trait too simple
-- ⚠️ Tool results unstructured
-- ⚠️ Plan execution unclear
+- Infinite loop risk
+- Terminal security gaps
+- Token management missing
+- WARNING: Provider trait too simple
+- WARNING: Tool results unstructured
+- WARNING: Plan execution unclear
 
 ### After Fixes
 
-- ✅ Iteration limits enforced
-- ✅ Comprehensive terminal security model
-- ✅ Complete token management strategy
-- ✅ Extended provider trait (for future)
-- ✅ Structured tool results
-- ✅ Clear plan execution strategy
-- ✅ Configuration precedence documented
-- ✅ Module responsibilities clarified
-- ✅ Security details expanded
+- Iteration limits enforced
+- Comprehensive terminal security model
+- Complete token management strategy
+- Extended provider trait (for future)
+- Structured tool results
+- Clear plan execution strategy
+- Configuration precedence documented
+- Module responsibilities clarified
+- Security details expanded
 
 ## Implementation Readiness
 
@@ -337,7 +337,7 @@ The architecture is now **READY FOR IMPLEMENTATION** with all critical safety an
 
 ## Next Steps
 
-1. ✅ Architecture validated and fixed
+1. Architecture validated and fixed
 2. ➡️ Create phased implementation plan
 3. ➡️ Begin Phase 1: Foundation (error types, config, basic structure)
 4. ➡️ Implement critical security measures

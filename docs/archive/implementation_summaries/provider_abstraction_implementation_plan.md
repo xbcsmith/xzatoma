@@ -48,15 +48,15 @@ Create the core provider trait/interface with minimal required methods:
 
 ```
 interface Provider {
-    // Required methods
-    async complete(messages: Message[], tools: Tool[]) -> Result<Response>
-    get_model_config() -> ModelConfig
-    get_name() -> string
+  // Required methods
+  async complete(messages: Message[], tools: Tool[]) -> Result<Response>
+  get_model_config() -> ModelConfig
+  get_name() -> string
 
-    // Optional methods with default implementations
-    async complete_fast(messages: Message[], tools: Tool[]) -> Result<Response>
-    supports_streaming() -> bool
-    supports_embeddings() -> bool
+  // Optional methods with default implementations
+  async complete_fast(messages: Message[], tools: Tool[]) -> Result<Response>
+  supports_streaming() -> bool
+  supports_embeddings() -> bool
 }
 ```
 
@@ -98,14 +98,14 @@ Create configuration structure for provider settings:
 
 ```
 struct ProviderConfig {
-    provider_type: string  // "openai", "anthropic", "copilot", "ollama"
-    model: string
-    fast_model: string (optional)
-    api_key: string (optional, from env/config)
-    base_url: string (optional, custom endpoints)
-    timeout_seconds: int (default: 600)
-    max_retries: int (default: 3)
-    custom_headers: map<string, string> (optional)
+  provider_type: string // "openai", "anthropic", "copilot", "ollama"
+  model: string
+  fast_model: string (optional)
+  api_key: string (optional, from env/config)
+  base_url: string (optional, custom endpoints)
+  timeout_seconds: int (default: 600)
+  max_retries: int (default: 3)
+  custom_headers: map<string, string> (optional)
 }
 ```
 
@@ -149,25 +149,25 @@ Build HTTP client with authentication and header management:
 
 ```
 struct ApiClient {
-    base_url: string
-    auth_method: AuthMethod
-    headers: map<string, string>
-    timeout: duration
-    http_client: HttpClient
+  base_url: string
+  auth_method: AuthMethod
+  headers: map<string, string>
+  timeout: duration
+  http_client: HttpClient
 }
 
 enum AuthMethod {
-    BearerToken(string)
-    ApiKey { header_name: string, key: string }
-    OAuth { token: string, refresh_token: string }
-    None
+  BearerToken(string)
+  ApiKey { header_name: string, key: string }
+  OAuth { token: string, refresh_token: string }
+  None
 }
 
 impl ApiClient {
-    async request(method: HttpMethod, path: string, body: json) -> Result<ApiResponse>
-    async post(path: string, body: json) -> Result<ApiResponse>
-    async get(path: string) -> Result<ApiResponse>
-    with_header(key: string, value: string) -> Self
+  async request(method: HttpMethod, path: string, body: json) -> Result<ApiResponse>
+  async post(path: string, body: json) -> Result<ApiResponse>
+  async get(path: string) -> Result<ApiResponse>
+  with_header(key: string, value: string) -> Self
 }
 ```
 
@@ -190,15 +190,15 @@ Add retry mechanism with exponential backoff:
 
 ```
 struct RetryConfig {
-    max_retries: int (default: 3)
-    initial_delay_ms: int (default: 1000)
-    max_delay_ms: int (default: 60000)
-    backoff_multiplier: float (default: 2.0)
-    retry_on_status: set<int> (default: [429, 500, 502, 503, 504])
+  max_retries: int (default: 3)
+  initial_delay_ms: int (default: 1000)
+  max_delay_ms: int (default: 60000)
+  backoff_multiplier: float (default: 2.0)
+  retry_on_status: set<int> (default: [429, 500, 502, 503, 504])
 }
 
 interface Retryable {
-    async execute_with_retry<T>(operation: async () -> Result<T>) -> Result<T>
+  async execute_with_retry<T>(operation: async () -> Result<T>) -> Result<T>
 }
 ```
 
@@ -275,26 +275,26 @@ Implement each provider using the abstractions.
 
 ```json
 {
-  "model": "gpt-4o",
-  "messages": [
-    { "role": "system", "content": "..." },
-    { "role": "user", "content": "..." }
-  ],
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "tool_name",
-        "description": "...",
-        "parameters": {
-          /* JSON schema */
-        }
-      }
+ "model": "gpt-4o",
+ "messages": [
+  { "role": "system", "content": "..." },
+  { "role": "user", "content": "..." }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "tool_name",
+    "description": "...",
+    "parameters": {
+     /* JSON schema */
     }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096,
-  "stream": false
+   }
+  }
+ ],
+ "temperature": 0.7,
+ "max_tokens": 4096,
+ "stream": false
 }
 ```
 
@@ -302,26 +302,26 @@ Implement each provider using the abstractions.
 
 ```json
 {
-  "id": "chatcmpl-...",
-  "object": "chat.completion",
-  "model": "gpt-4o",
-  "choices": [
-    {
-      "message": {
-        "role": "assistant",
-        "content": "...",
-        "tool_calls": [
-          /* if tools used */
-        ]
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 100,
-    "completion_tokens": 50,
-    "total_tokens": 150
+ "id": "chatcmpl-...",
+ "object": "chat.completion",
+ "model": "gpt-4o",
+ "choices": [
+  {
+   "message": {
+    "role": "assistant",
+    "content": "...",
+    "tool_calls": [
+     /* if tools used */
+    ]
+   },
+   "finish_reason": "stop"
   }
+ ],
+ "usage": {
+  "prompt_tokens": 100,
+  "completion_tokens": 50,
+  "total_tokens": 150
+ }
 }
 ```
 
@@ -352,23 +352,23 @@ Implement each provider using the abstractions.
 
 ```json
 {
-  "model": "claude-sonnet-4-0",
-  "system": "System prompt here",
-  "messages": [
-    { "role": "user", "content": "..." },
-    { "role": "assistant", "content": "..." }
-  ],
-  "tools": [
-    {
-      "name": "tool_name",
-      "description": "...",
-      "input_schema": {
-        /* JSON schema */
-      }
-    }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096
+ "model": "claude-sonnet-4-0",
+ "system": "System prompt here",
+ "messages": [
+  { "role": "user", "content": "..." },
+  { "role": "assistant", "content": "..." }
+ ],
+ "tools": [
+  {
+   "name": "tool_name",
+   "description": "...",
+   "input_schema": {
+    /* JSON schema */
+   }
+  }
+ ],
+ "temperature": 0.7,
+ "max_tokens": 4096
 }
 ```
 
@@ -376,28 +376,28 @@ Implement each provider using the abstractions.
 
 ```json
 {
-  "id": "msg_...",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "..."
-    },
-    {
-      "type": "tool_use",
-      "id": "toolu_...",
-      "name": "tool_name",
-      "input": {
-        /* tool arguments */
-      }
-    }
-  ],
-  "model": "claude-sonnet-4-0",
-  "usage": {
-    "input_tokens": 100,
-    "output_tokens": 50
+ "id": "msg_...",
+ "type": "message",
+ "role": "assistant",
+ "content": [
+  {
+   "type": "text",
+   "text": "..."
+  },
+  {
+   "type": "tool_use",
+   "id": "toolu_...",
+   "name": "tool_name",
+   "input": {
+    /* tool arguments */
+   }
   }
+ ],
+ "model": "claude-sonnet-4-0",
+ "usage": {
+  "input_tokens": 100,
+  "output_tokens": 50
+ }
 }
 ```
 
@@ -464,15 +464,15 @@ Implement each provider using the abstractions.
 
 ```json
 {
-  "model": "qwen3",
-  "messages": [
-    { "role": "system", "content": "..." },
-    { "role": "user", "content": "..." }
-  ],
-  "tools": [
-    /* OpenAI format */
-  ],
-  "stream": false
+ "model": "qwen3",
+ "messages": [
+  { "role": "system", "content": "..." },
+  { "role": "user", "content": "..." }
+ ],
+ "tools": [
+  /* OpenAI format */
+ ],
+ "stream": false
 }
 ```
 
@@ -528,21 +528,21 @@ Add streaming response support for real-time output.
 
 ```
 struct ResponseChunk {
-    delta: string (incremental content)
-    tool_call_delta: ToolCallDelta (optional)
-    finish_reason: string (optional, "stop", "tool_calls", etc.)
-    usage: Usage (optional, only in final chunk)
+  delta: string (incremental content)
+  tool_call_delta: ToolCallDelta (optional)
+  finish_reason: string (optional, "stop", "tool_calls", etc.)
+  usage: Usage (optional, only in final chunk)
 }
 
 struct ToolCallDelta {
-    index: int
-    id: string (optional)
-    name: string (optional)
-    arguments_delta: string (partial JSON)
+  index: int
+  id: string (optional)
+  name: string (optional)
+  arguments_delta: string (partial JSON)
 }
 
 interface StreamingProvider extends Provider {
-    async stream(messages: Message[], tools: Tool[]) -> Stream<ResponseChunk>
+  async stream(messages: Message[], tools: Tool[]) -> Stream<ResponseChunk>
 }
 ```
 
@@ -643,29 +643,29 @@ Create factory pattern for provider instantiation.
 
 ```
 struct ProviderFactory {
-    registered_providers: map<string, ProviderConstructor>
+  registered_providers: map<string, ProviderConstructor>
 }
 
 impl ProviderFactory {
-    register(name: string, constructor: ProviderConstructor)
-    create(config: ProviderConfig) -> Result<Box<Provider>>
-    list_providers() -> vec<ProviderMetadata>
+  register(name: string, constructor: ProviderConstructor)
+  create(config: ProviderConfig) -> Result<Box<Provider>>
+  list_providers() -> vec<ProviderMetadata>
 }
 
 struct ProviderMetadata {
-    name: string
-    display_name: string
-    description: string
-    default_model: string
-    known_models: vec<ModelInfo>
-    config_keys: vec<ConfigKey>
+  name: string
+  display_name: string
+  description: string
+  default_model: string
+  known_models: vec<ModelInfo>
+  config_keys: vec<ConfigKey>
 }
 
 struct ConfigKey {
-    name: string (env var name)
-    required: bool
-    secret: bool (store securely)
-    default: string (optional)
+  name: string (env var name)
+  required: bool
+  secret: bool (store securely)
+  default: string (optional)
 }
 ```
 
@@ -723,16 +723,16 @@ Additional features for production use.
 
 ```
 struct ProviderUsage {
-    model: string
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    estimated_cost: float (optional)
-    currency: string (default: "USD")
+  model: string
+  input_tokens: int
+  output_tokens: int
+  total_tokens: int
+  estimated_cost: float (optional)
+  currency: string (default: "USD")
 }
 
 interface CostEstimator {
-    estimate_cost(usage: ProviderUsage) -> float
+  estimate_cost(usage: ProviderUsage) -> float
 }
 ```
 

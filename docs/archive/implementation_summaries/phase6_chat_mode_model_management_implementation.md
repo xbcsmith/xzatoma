@@ -65,9 +65,9 @@ ShowContextInfo,
 **Updated help text:**
 ```
 MODEL MANAGEMENT:
-  /models list    - Show available models from current provider
-  /model <name>   - Switch to a different model
-  /context        - Show context window and token usage information
+ /models list  - Show available models from current provider
+ /model <name>  - Switch to a different model
+ /context    - Show context window and token usage information
 ```
 
 **Tests added** (8 tests):
@@ -94,10 +94,10 @@ Features:
 - Calls `agent.provider().list_models()` to retrieve available models
 - Formats output using `prettytable-rs` library for consistent formatting
 - Displays table columns:
-  - Model Name (highlighted in green if currently active)
-  - Display Name (user-friendly description)
-  - Context Window (in tokens)
-  - Capabilities (comma-separated feature list)
+ - Model Name (highlighted in green if currently active)
+ - Display Name (user-friendly description)
+ - Context Window (in tokens)
+ - Capabilities (comma-separated feature list)
 - Current model is highlighted in green for easy identification
 - Shows informative message if no models available
 - Error handling with colored error messages (red)
@@ -107,11 +107,11 @@ Example interactive usage:
 >> /models list
 
 +------------------------+-------------------------------------+------------------+------------------------+
-| Model Name             | Display Name                        | Context Window   | Capabilities           |
+| Model Name       | Display Name            | Context Window  | Capabilities      |
 +------------------------+-------------------------------------+------------------+------------------------+
-| gpt-4-turbo            | GPT-4 Turbo                         | 128000 tokens    | tool_use, vision       |
-| gpt-4o                 | GPT-4o                              | 128000 tokens    | tool_use, vision       |
-| claude-3-opus          | Claude 3 Opus                       | 200000 tokens    | tool_use, vision       |
+| gpt-4-turbo      | GPT-4 Turbo             | 128000 tokens  | tool_use, vision    |
+| gpt-4o         | GPT-4o               | 128000 tokens  | tool_use, vision    |
+| claude-3-opus     | Claude 3 Opus            | 200000 tokens  | tool_use, vision    |
 +------------------------+-------------------------------------+------------------+------------------------+
 
 Note: Current model is highlighted in green
@@ -125,46 +125,46 @@ Implemented `handle_switch_model()` async function in `src/commands/mod.rs`:
 
 ```rust
 async fn handle_switch_model(
-    agent: &mut Agent,
-    model_name: &str,
-    _rl: &mut rustyline::DefaultEditor,
-    config: &Config,
-    _working_dir: &std::path::Path,
-    provider_type: &str,
+  agent: &mut Agent,
+  model_name: &str,
+  _rl: &mut rustyline::DefaultEditor,
+  config: &Config,
+  _working_dir: &std::path::Path,
+  provider_type: &str,
 ) -> Result<()>
 ```
 
 Features:
 
 1. **Model Validation**
-   - Retrieves available models from provider
-   - Case-insensitive model name matching
-   - Provides helpful error if model not found
+  - Retrieves available models from provider
+  - Case-insensitive model name matching
+  - Provides helpful error if model not found
 
 2. **Context Window Check** (Decision from Question 2)
-   - Gets current conversation token count
-   - Compares against new model's context window
-   - If conversation exceeds new context:
-     - Displays warning with specific token counts
-     - Shows that messages will be pruned
-     - Note: Current MVP shows warning without interactive confirmation
-     - Future enhancement: Add interactive Y/N prompt
+  - Gets current conversation token count
+  - Compares against new model's context window
+  - If conversation exceeds new context:
+   - Displays warning with specific token counts
+   - Shows that messages will be pruned
+   - Note: Current MVP shows warning without interactive confirmation
+   - Future enhancement: Add interactive Y/N prompt
 
 3. **Model Switching Process**
-   - Creates new provider instance
-   - Calls `provider.set_model(model_name)` to configure provider
-   - Fetches updated model context window
-   - Preserves conversation history (clones conversation)
-   - Updates conversation max tokens to new context window
-   - Preserves tool registry (clones it)
-   - Creates new Agent with updated provider, tools, and conversation
-   - Replaces current agent in-place
+  - Creates new provider instance
+  - Calls `provider.set_model(model_name)` to configure provider
+  - Fetches updated model context window
+  - Preserves conversation history (clones conversation)
+  - Updates conversation max tokens to new context window
+  - Preserves tool registry (clones it)
+  - Creates new Agent with updated provider, tools, and conversation
+  - Replaces current agent in-place
 
 4. **User Feedback**
-   - Displays success message with new model name and context window
-   - Shows warnings in yellow when context exceeds
-   - Shows confirmation in green when switch completes
-   - Error messages in red with helpful suggestions
+  - Displays success message with new model name and context window
+  - Shows warnings in yellow when context exceeds
+  - Shows confirmation in green when switch completes
+  - Error messages in red with helpful suggestions
 
 Example interactive usage:
 ```
@@ -200,11 +200,11 @@ Features:
 - Retrieves model context window via `provider.get_model_info(model_name)`
 - Calls `agent.get_context_info(context_window)` for token usage calculation
 - Displays formatted information box with:
-  - Current Model name
-  - Context Window size (in tokens)
-  - Tokens Used (current conversation)
-  - Remaining tokens available
-  - Usage percentage
+ - Current Model name
+ - Context Window size (in tokens)
+ - Tokens Used (current conversation)
+ - Remaining tokens available
+ - Usage percentage
 
 **Color coding** (Decision from Question 5):
 - Green: < 60% used (safe operating range)
@@ -216,22 +216,22 @@ Example interactive usage:
 >> /context
 
 ╔════════════════════════════════════╗
-║     Context Window Information      ║
+║   Context Window Information   ║
 ╚════════════════════════════════════╝
 
-Current Model:     gpt-4-turbo
-Context Window:    128000 tokens
-Tokens Used:       45230 tokens
-Remaining:         82770 tokens
-Usage:             35.3%
+Current Model:   gpt-4-turbo
+Context Window:  128000 tokens
+Tokens Used:    45230 tokens
+Remaining:     82770 tokens
+Usage:       35.3%
 
-Usage Level:       35.3%
+Usage Level:    35.3%
 ```
 
 With high usage (red):
 ```
-Usage:             92.5%
-Usage Level:       92.5%  (displayed in red)
+Usage:       92.5%
+Usage Level:    92.5% (displayed in red)
 ```
 
 ### Task 6.5: Update Chat Prompt Display
@@ -282,71 +282,71 @@ test result: ok. 62 passed; 0 failed; 13 ignored
 
 **Code Changes:**
 1. `src/commands/special_commands.rs` (200 lines)
-   - Extended `SpecialCommand` enum
-   - Updated `parse_special_command()` logic
-   - Enhanced help text
-   - 8 new unit tests
+  - Extended `SpecialCommand` enum
+  - Updated `parse_special_command()` logic
+  - Enhanced help text
+  - 8 new unit tests
 
 2. `src/commands/mod.rs` (280 lines added)
-   - `handle_list_models()` - List available models with formatting
-   - `handle_switch_model()` - Switch models with validation and confirmation
-   - `handle_show_context_info()` - Display context window information
-   - Integration into chat loop (3 new match arms)
+  - `handle_list_models()` - List available models with formatting
+  - `handle_switch_model()` - Switch models with validation and confirmation
+  - `handle_show_context_info()` - Display context window information
+  - Integration into chat loop (3 new match arms)
 
 3. `src/agent/core.rs` (30 lines added)
-   - `pub fn provider()` - Expose provider for model operations
-   - `pub fn tools()` - Expose tool registry for agent reconstruction
+  - `pub fn provider()` - Expose provider for model operations
+  - `pub fn tools()` - Expose tool registry for agent reconstruction
 
 4. `src/agent/conversation.rs` (25 lines added)
-   - `pub fn set_max_tokens()` - Update context window on model switch
+  - `pub fn set_max_tokens()` - Update context window on model switch
 
 5. `src/tools/mod.rs` (15 lines added)
-   - `impl Clone for ToolRegistry` - Enable tool registry cloning
+  - `impl Clone for ToolRegistry` - Enable tool registry cloning
 
 6. Documentation and tests: ~60 lines
 
 **Quality Assurance:**
-- ✅ All tests passing (62 tests)
-- ✅ `cargo fmt --all` - Code formatted
-- ✅ `cargo check --all-targets --all-features` - Compiles cleanly
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ No unsafe code introduced
-- ✅ All public functions documented with doc comments
+- All tests passing (62 tests)
+- `cargo fmt --all` - Code formatted
+- `cargo check --all-targets --all-features` - Compiles cleanly
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- No unsafe code introduced
+- All public functions documented with doc comments
 
 ### Task 6.8: Success Criteria
 
 **Status**: ALL CRITERIA MET
 
-- ✅ `/models list` shows available models in chat
-  - Displays formatted table with model details
-  - Highlights current model in green
-  - Handles empty model lists gracefully
+- `/models list` shows available models in chat
+ - Displays formatted table with model details
+ - Highlights current model in green
+ - Handles empty model lists gracefully
 
-- ✅ `/model <name>` successfully switches models
-  - Validates model exists
-  - Updates provider with new model
-  - Preserves conversation history
-  - Updates context window
-  - Displays confirmation message
+- `/model <name>` successfully switches models
+ - Validates model exists
+ - Updates provider with new model
+ - Preserves conversation history
+ - Updates context window
+ - Displays confirmation message
 
-- ✅ `/context` displays accurate context window information
-  - Shows current model name
-  - Displays context window size
-  - Reports current token usage
-  - Shows remaining tokens
-  - Calculates usage percentage
-  - Color-codes based on usage level
+- `/context` displays accurate context window information
+ - Shows current model name
+ - Displays context window size
+ - Reports current token usage
+ - Shows remaining tokens
+ - Calculates usage percentage
+ - Color-codes based on usage level
 
-- ✅ Chat prompt remains consistent
-  - Format: `[MODE][SAFETY] >> `
-  - No breaking changes to existing behavior
-  - `/context` command provides detailed info when needed
+- Chat prompt remains consistent
+ - Format: `[MODE][SAFETY] >> `
+ - No breaking changes to existing behavior
+ - `/context` command provides detailed info when needed
 
-- ✅ Switching models doesn't lose conversation history
-  - Conversation is cloned and preserved
-  - Token counts are updated for new context
-  - Messages remain in history
-  - Conversation state maintained across provider change
+- Switching models doesn't lose conversation history
+ - Conversation is cloned and preserved
+ - Token counts are updated for new context
+ - Messages remain in history
+ - Conversation state maintained across provider change
 
 ## Architecture Decisions
 
@@ -372,10 +372,10 @@ new_provider.set_model(model_name).await?;
 
 ```rust
 let new_agent = Agent::with_conversation(
-    new_provider,
-    tools,
-    config.agent.clone(),
-    conversation,
+  new_provider,
+  tools,
+  config.agent.clone(),
+  conversation,
 )?;
 *agent = new_agent;
 ```
@@ -436,37 +436,37 @@ conversation.set_max_tokens(new_context);
 
 ### Current Limitations
 1. **No Interactive Confirmation**: Model switch warning shown but no Y/N prompt
-   - Solution: Add async readline-based confirmation in Phase 7
+  - Solution: Add async readline-based confirmation in Phase 7
 
 2. **No Token Estimation**: Context warning based on actual tokens, not estimated
-   - Enhancement: Could add estimation before switch
+  - Enhancement: Could add estimation before switch
 
 3. **No Model Caching**: Models listed fresh each time
-   - Enhancement: Could cache model list with refresh option
+  - Enhancement: Could cache model list with refresh option
 
 4. **Limited Filtering**: Cannot filter model list by capability
-   - Enhancement: Add `--capability` flag to `/models list`
+  - Enhancement: Add `--capability` flag to `/models list`
 
 ### Potential Future Enhancements
 1. **Context Indicator in Prompt**
-   - Add configurable context display to prompt format
-   - Color-coded based on usage percentage
+  - Add configurable context display to prompt format
+  - Color-coded based on usage percentage
 
 2. **Interactive Model Confirmation**
-   - Prompt user when model switch would truncate conversation
-   - Allow user to cancel or proceed with warning
+  - Prompt user when model switch would truncate conversation
+  - Allow user to cancel or proceed with warning
 
 3. **Model Comparison Tool**
-   - New `/model compare <name1> <name2>` command
-   - Show differences in context window, capabilities, etc.
+  - New `/model compare <name1> <name2>` command
+  - Show differences in context window, capabilities, etc.
 
 4. **Model History and Tracking**
-   - Track which models were used in conversation
-   - Log model switches with timestamps
+  - Track which models were used in conversation
+  - Log model switches with timestamps
 
 5. **Cost Estimation**
-   - Calculate estimated cost based on token usage and model pricing
-   - Show cost impact of model switching
+  - Calculate estimated cost based on token usage and model pricing
+  - Show cost impact of model switching
 
 ## Integration with Existing Systems
 

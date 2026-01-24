@@ -14,25 +14,25 @@ This document specifies the exact changes needed to docs/reference/architecture.
 
 ```rust
 impl Agent {
-    pub async fn execute(&mut self, instruction: String) -> Result<String> {
-        self.conversation.add_user_message(instruction);
+  pub async fn execute(&mut self, instruction: String) -> Result<String> {
+    self.conversation.add_user_message(instruction);
 
-        loop {
-            let response = self.provider.complete(
-                &self.conversation.messages(),
-                &self.tools
-            ).await?;
+    loop {
+      let response = self.provider.complete(
+        &self.conversation.messages(),
+        &self.tools
+      ).await?;
 
-            if let Some(tool_calls) = response.tool_calls {
-                for call in tool_calls {
-                    let result = self.execute_tool(&call).await?;
-                    self.conversation.add_tool_result(result);
-                }
-            } else {
-                return Ok(response.content);
-            }
+      if let Some(tool_calls) = response.tool_calls {
+        for call in tool_calls {
+          let result = self.execute_tool(&call).await?;
+          self.conversation.add_tool_result(result);
         }
+      } else {
+        return Ok(response.content);
+      }
     }
+  }
 }
 ```
 
@@ -40,42 +40,42 @@ impl Agent {
 
 ```rust
 pub struct Agent {
-    provider: Arc<dyn Provider>,
-    conversation: Conversation,
-    tools: Vec<Tool>,
-    max_iterations: usize,
+  provider: Arc<dyn Provider>,
+  conversation: Conversation,
+  tools: Vec<Tool>,
+  max_iterations: usize,
 }
 
 impl Agent {
-    pub async fn execute(&mut self, instruction: String) -> Result<String> {
-        self.conversation.add_user_message(instruction);
+  pub async fn execute(&mut self, instruction: String) -> Result<String> {
+    self.conversation.add_user_message(instruction);
 
-        let mut iterations = 0;
+    let mut iterations = 0;
 
-        loop {
-            if iterations >= self.max_iterations {
-                return Err(XzatomaError::MaxIterationsExceeded {
-                    limit: self.max_iterations,
-                    message: "Agent exceeded maximum iteration limit".to_string(),
-                });
-            }
-            iterations += 1;
+    loop {
+      if iterations >= self.max_iterations {
+        return Err(XzatomaError::MaxIterationsExceeded {
+          limit: self.max_iterations,
+          message: "Agent exceeded maximum iteration limit".to_string(),
+        });
+      }
+      iterations += 1;
 
-            let response = self.provider.complete(
-                &self.conversation.messages(),
-                &self.tools
-            ).await?;
+      let response = self.provider.complete(
+        &self.conversation.messages(),
+        &self.tools
+      ).await?;
 
-            if let Some(tool_calls) = response.tool_calls {
-                for call in tool_calls {
-                    let result = self.execute_tool(&call).await?;
-                    self.conversation.add_tool_result(result);
-                }
-            } else {
-                return Ok(response.content);
-            }
+      if let Some(tool_calls) = response.tool_calls {
+        for call in tool_calls {
+          let result = self.execute_tool(&call).await?;
+          self.conversation.add_tool_result(result);
         }
+      } else {
+        return Ok(response.content);
+      }
     }
+  }
 }
 ```
 
@@ -84,20 +84,20 @@ impl Agent {
 ```rust
 #[derive(Debug, thiserror::Error)]
 pub enum XzatomaError {
-    #[error("Configuration error: {0}")]
-    Config(String),
+  #[error("Configuration error: {0}")]
+  Config(String),
 
-    #[error("Provider error: {0}")]
-    Provider(String),
+  #[error("Provider error: {0}")]
+  Provider(String),
 
-    #[error("Tool execution error: {0}")]
-    Tool(String),
+  #[error("Tool execution error: {0}")]
+  Tool(String),
 
-    #[error("Agent exceeded maximum iterations: {limit} (reason: {message})")]
-    MaxIterationsExceeded { limit: usize, message: String },
+  #[error("Agent exceeded maximum iterations: {limit} (reason: {message})")]
+  MaxIterationsExceeded { limit: usize, message: String },
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+  #[error("IO error: {0}")]
+  Io(#[from] std::io::Error),
 }
 ```
 
@@ -126,20 +126,20 @@ pub enum XzatomaError {
 
 1. **Interactive Mode** (default for `xzatoma chat`)
 
-   - Requires user confirmation before executing each command
-   - Shows full command to user
-   - User can approve, modify, or reject
+  - Requires user confirmation before executing each command
+  - Shows full command to user
+  - User can approve, modify, or reject
 
 2. **Restricted Autonomous Mode** (default for `xzatoma run`)
 
-   - Only safe read-only commands allowed without confirmation
-   - Allowlist: `ls`, `cat`, `head`, `tail`, `grep`, `find`, `echo`, `pwd`, `which`, `type`
-   - Other commands require confirmation
+  - Only safe read-only commands allowed without confirmation
+  - Allowlist: `ls`, `cat`, `head`, `tail`, `grep`, `find`, `echo`, `pwd`, `which`, `type`
+  - Other commands require confirmation
 
 3. **Full Autonomous Mode** (requires `--allow-dangerous` flag)
-   - All commands allowed without confirmation
-   - Denylist applied for catastrophic commands
-   - User must explicitly opt-in with flag
+  - All commands allowed without confirmation
+  - Denylist applied for catastrophic commands
+  - User must explicitly opt-in with flag
 
 #### Command Validation
 
@@ -163,49 +163,49 @@ pub enum XzatomaError {
 
 ```rust
 pub struct CommandValidator {
-    mode: ExecutionMode,
-    working_dir: PathBuf,
-    allowlist: HashSet<String>,
-    denylist: Vec<Regex>,
+  mode: ExecutionMode,
+  working_dir: PathBuf,
+  allowlist: HashSet<String>,
+  denylist: Vec<Regex>,
 }
 
 impl CommandValidator {
-    pub fn validate(&self, command: &str) -> Result<ValidatedCommand> {
-        // 1. Check against denylist patterns
-        for pattern in &self.denylist {
-            if pattern.is_match(command) {
-                return Err(XzatomaError::DangerousCommand(command.to_string()));
-            }
-        }
-
-        // 2. Parse command and arguments
-        let parsed = self.parse_command(command)?;
-
-        // 3. Check mode-specific rules
-        match self.mode {
-            ExecutionMode::Interactive => Ok(parsed), // Always requires confirmation
-            ExecutionMode::RestrictedAutonomous => {
-                if self.allowlist.contains(&parsed.program) {
-                    Ok(parsed)
-                } else {
-                    Err(XzatomaError::CommandRequiresConfirmation(command.to_string()))
-                }
-            }
-            ExecutionMode::FullAutonomous => Ok(parsed),
-        }
+  pub fn validate(&self, command: &str) -> Result<ValidatedCommand> {
+    // 1. Check against denylist patterns
+    for pattern in &self.denylist {
+      if pattern.is_match(command) {
+        return Err(XzatomaError::DangerousCommand(command.to_string()));
+      }
     }
 
-    fn validate_paths(&self, command: &ParsedCommand) -> Result<()> {
-        for path in &command.paths {
-            let canonical = path.canonicalize()?;
-            if !canonical.starts_with(&self.working_dir) {
-                return Err(XzatomaError::PathOutsideWorkingDirectory(
-                    path.to_string_lossy().to_string()
-                ));
-            }
+    // 2. Parse command and arguments
+    let parsed = self.parse_command(command)?;
+
+    // 3. Check mode-specific rules
+    match self.mode {
+      ExecutionMode::Interactive => Ok(parsed), // Always requires confirmation
+      ExecutionMode::RestrictedAutonomous => {
+        if self.allowlist.contains(&parsed.program) {
+          Ok(parsed)
+        } else {
+          Err(XzatomaError::CommandRequiresConfirmation(command.to_string()))
         }
-        Ok(())
+      }
+      ExecutionMode::FullAutonomous => Ok(parsed),
     }
+  }
+
+  fn validate_paths(&self, command: &ParsedCommand) -> Result<()> {
+    for path in &command.paths {
+      let canonical = path.canonicalize()?;
+      if !canonical.starts_with(&self.working_dir) {
+        return Err(XzatomaError::PathOutsideWorkingDirectory(
+          path.to_string_lossy().to_string()
+        ));
+      }
+    }
+    Ok(())
+  }
 }
 ```
 ````
@@ -240,19 +240,19 @@ impl CommandValidator {
 
 ```yaml
 agent:
-  terminal:
-    default_mode: restricted_autonomous # interactive | restricted_autonomous | full_autonomous
-    timeout_seconds: 30
-    max_stdout_bytes: 10485760 # 10 MB
-    max_stderr_bytes: 1048576 # 1 MB
-    allowlist:
-      - ls
-      - cat
-      - grep
-      - find
-    custom_denylist:
-      - "rm -rf"
-      - "sudo"
+ terminal:
+  default_mode: restricted_autonomous # interactive | restricted_autonomous | full_autonomous
+  timeout_seconds: 30
+  max_stdout_bytes: 10485760 # 10 MB
+  max_stderr_bytes: 1048576 # 1 MB
+  allowlist:
+   - ls
+   - cat
+   - grep
+   - find
+  custom_denylist:
+   - "rm -rf"
+   - "sudo"
 ```
 
 ````
@@ -283,24 +283,24 @@ agent:
 
 | Provider | Model | Context Window | Safe Limit (80%) |
 |----------|-------|----------------|------------------|
-| Copilot  | gpt-5-mini | 128,000 tokens | 102,400 tokens |
-| Copilot  | gpt-4o-mini | 128,000 tokens | 102,400 tokens |
-| Ollama   | qwen3 | 32,768 tokens | 26,214 tokens |
-| Ollama   | llama3 | 8,192 tokens | 6,553 tokens |
+| Copilot | gpt-5-mini | 128,000 tokens | 102,400 tokens |
+| Copilot | gpt-4o-mini | 128,000 tokens | 102,400 tokens |
+| Ollama  | qwen3 | 32,768 tokens | 26,214 tokens |
+| Ollama  | llama3 | 8,192 tokens | 6,553 tokens |
 
 **Pruning Strategy**:
 
 When conversation approaches token limit:
 
 1. **Always Retain**:
-   - System message (tool definitions)
-   - Original user instruction
-   - Last 5 turns of conversation
+  - System message (tool definitions)
+  - Original user instruction
+  - Last 5 turns of conversation
 
 2. **Prune in Order**:
-   - Oldest tool call/result pairs first
-   - Keep most recent tool results (more relevant)
-   - Summarize pruned content in special message
+  - Oldest tool call/result pairs first
+  - Keep most recent tool results (more relevant)
+  - Summarize pruned content in special message
 
 3. **Pruning Example**:
 ````
@@ -321,80 +321,80 @@ pub struct Conversation {
 
 impl Conversation {
  pub fn add_user_message(&mut self, content: String) {
-     let message = Message::user(content);
-     self.messages.push(message);
-     self.update_token_count();
-     self.prune_if_needed();
+   let message = Message::user(content);
+   self.messages.push(message);
+   self.update_token_count();
+   self.prune_if_needed();
  }
 
  pub fn add_assistant_message(&mut self, content: String, tool_calls: Option<Vec<ToolCall>>) {
-     let message = Message::assistant(content, tool_calls);
-     self.messages.push(message);
-     self.update_token_count();
-     self.prune_if_needed();
+   let message = Message::assistant(content, tool_calls);
+   self.messages.push(message);
+   self.update_token_count();
+   self.prune_if_needed();
  }
 
  pub fn add_tool_result(&mut self, tool_call_id: String, result: String) {
-     let message = Message::tool_result(tool_call_id, result);
-     self.messages.push(message);
-     self.update_token_count();
-     self.prune_if_needed();
+   let message = Message::tool_result(tool_call_id, result);
+   self.messages.push(message);
+   self.update_token_count();
+   self.prune_if_needed();
  }
 
  fn update_token_count(&mut self) {
-     // Approximate: 1 token ≈ 4 characters
-     self.token_count = self.messages.iter()
-         .map(|m| m.content.len() / 4)
-         .sum();
+   // Approximate: 1 token ≈ 4 characters
+   self.token_count = self.messages.iter()
+     .map(|m| m.content.len() / 4)
+     .sum();
  }
 
  fn prune_if_needed(&mut self) {
-     if self.token_count <= self.max_tokens {
-         return;
-     }
+   if self.token_count <= self.max_tokens {
+     return;
+   }
 
-     // Find pruneable range (between system message and last N turns)
-     let system_end = 1; // First message is system
-     let recent_start = self.messages.len().saturating_sub(self.min_retain_turns * 2);
+   // Find pruneable range (between system message and last N turns)
+   let system_end = 1; // First message is system
+   let recent_start = self.messages.len().saturating_sub(self.min_retain_turns * 2);
 
-     if recent_start <= system_end {
-         // Can't prune enough - return error to user
-         return;
-     }
+   if recent_start <= system_end {
+     // Can't prune enough - return error to user
+     return;
+   }
 
-     // Create summary of pruned section
-     let pruned = &self.messages[system_end..recent_start];
-     let summary = self.create_summary(pruned);
+   // Create summary of pruned section
+   let pruned = &self.messages[system_end..recent_start];
+   let summary = self.create_summary(pruned);
 
-     // Remove pruned messages and add summary
-     self.messages.drain(system_end..recent_start);
-     self.messages.insert(system_end, Message::system(format!(
-         "[CONTEXT PRUNED: {}]", summary
-     )));
+   // Remove pruned messages and add summary
+   self.messages.drain(system_end..recent_start);
+   self.messages.insert(system_end, Message::system(format!(
+     "[CONTEXT PRUNED: {}]", summary
+   )));
 
-     self.update_token_count();
+   self.update_token_count();
  }
 
  fn create_summary(&self, messages: &[Message]) -> String {
-     let tool_calls: Vec<_> = messages.iter()
-         .filter_map(|m| m.tool_call.as_ref())
-         .map(|tc| tc.function.name.as_str())
-         .collect();
+   let tool_calls: Vec<_> = messages.iter()
+     .filter_map(|m| m.tool_call.as_ref())
+     .map(|tc| tc.function.name.as_str())
+     .collect();
 
-     format!(
-         "{} turns with {} tool calls: {}",
-         messages.len(),
-         tool_calls.len(),
-         tool_calls.join(", ")
-     )
+   format!(
+     "{} turns with {} tool calls: {}",
+     messages.len(),
+     tool_calls.len(),
+     tool_calls.join(", ")
+   )
  }
 
  pub fn messages(&self) -> &[Message] {
-     &self.messages
+   &self.messages
  }
 
  pub fn token_count(&self) -> usize {
-     self.token_count
+   self.token_count
  }
 }
 ````
@@ -403,10 +403,10 @@ impl Conversation {
 
 ```yaml
 agent:
-  conversation:
-    max_tokens: 100000 # Provider-specific limit
-    min_retain_turns: 5 # Always keep last N turns
-    prune_threshold: 0.8 # Prune when 80% of max_tokens
+ conversation:
+  max_tokens: 100000 # Provider-specific limit
+  min_retain_turns: 5 # Always keep last N turns
+  prune_threshold: 0.8 # Prune when 80% of max_tokens
 ```
 
 ````
@@ -425,43 +425,43 @@ agent:
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Non-streaming completion (required)
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[Tool],
-    ) -> Result<Response>;
+  /// Non-streaming completion (required)
+  async fn complete(
+    &self,
+    messages: &[Message],
+    tools: &[Tool],
+  ) -> Result<Response>;
 
-    /// Streaming completion (optional - not all providers support)
-    async fn complete_stream(
-        &self,
-        messages: &[Message],
-        tools: &[Tool],
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ResponseChunk>> + Send>>> {
-        Err(XzatomaError::StreamingNotSupported)
-    }
+  /// Streaming completion (optional - not all providers support)
+  async fn complete_stream(
+    &self,
+    messages: &[Message],
+    tools: &[Tool],
+  ) -> Result<Pin<Box<dyn Stream<Item = Result<ResponseChunk>> + Send>>> {
+    Err(XzatomaError::StreamingNotSupported)
+  }
 
-    /// Get provider capabilities
-    fn capabilities(&self) -> ProviderCapabilities;
+  /// Get provider capabilities
+  fn capabilities(&self) -> ProviderCapabilities;
 
-    /// Authenticate with provider
-    async fn authenticate(&mut self) -> Result<()>;
+  /// Authenticate with provider
+  async fn authenticate(&mut self) -> Result<()>;
 
-    /// Check if authenticated
-    fn is_authenticated(&self) -> bool;
+  /// Check if authenticated
+  fn is_authenticated(&self) -> bool;
 }
 
 pub struct ProviderCapabilities {
-    pub max_tokens: usize,
-    pub supports_tool_calls: bool,
-    pub supports_streaming: bool,
-    pub model_name: String,
+  pub max_tokens: usize,
+  pub supports_tool_calls: bool,
+  pub supports_streaming: bool,
+  pub model_name: String,
 }
 
 pub struct ResponseChunk {
-    pub delta: String,
-    pub tool_call_delta: Option<ToolCallDelta>,
-    pub finish_reason: Option<String>,
+  pub delta: String,
+  pub tool_call_delta: Option<ToolCallDelta>,
+  pub finish_reason: Option<String>,
 }
 ````
 
@@ -480,70 +480,70 @@ pub struct ResponseChunk {
 
 ```rust
 pub struct ToolResult {
-    /// Whether tool executed successfully
-    pub success: bool,
+  /// Whether tool executed successfully
+  pub success: bool,
 
-    /// Tool output (stdout or return value)
-    pub output: String,
+  /// Tool output (stdout or return value)
+  pub output: String,
 
-    /// Error message if success=false
-    pub error: Option<String>,
+  /// Error message if success=false
+  pub error: Option<String>,
 
-    /// Whether output was truncated due to size
-    pub truncated: bool,
+  /// Whether output was truncated due to size
+  pub truncated: bool,
 
-    /// Additional metadata (execution time, file size, etc.)
-    pub metadata: HashMap<String, String>,
+  /// Additional metadata (execution time, file size, etc.)
+  pub metadata: HashMap<String, String>,
 }
 
 impl ToolResult {
-    pub fn success(output: String) -> Self {
-        Self {
-            success: true,
-            output,
-            error: None,
-            truncated: false,
-            metadata: HashMap::new(),
-        }
+  pub fn success(output: String) -> Self {
+    Self {
+      success: true,
+      output,
+      error: None,
+      truncated: false,
+      metadata: HashMap::new(),
     }
+  }
 
-    pub fn error(error: String) -> Self {
-        Self {
-            success: false,
-            output: String::new(),
-            error: Some(error),
-            truncated: false,
-            metadata: HashMap::new(),
-        }
+  pub fn error(error: String) -> Self {
+    Self {
+      success: false,
+      output: String::new(),
+      error: Some(error),
+      truncated: false,
+      metadata: HashMap::new(),
     }
+  }
 
-    pub fn truncate_if_needed(&mut self, max_size: usize) {
-        if self.output.len() > max_size {
-            self.output.truncate(max_size);
-            self.output.push_str("\n\n... (output truncated)");
-            self.truncated = true;
-            self.metadata.insert(
-                "original_size".to_string(),
-                self.output.len().to_string()
-            );
-        }
+  pub fn truncate_if_needed(&mut self, max_size: usize) {
+    if self.output.len() > max_size {
+      self.output.truncate(max_size);
+      self.output.push_str("\n\n... (output truncated)");
+      self.truncated = true;
+      self.metadata.insert(
+        "original_size".to_string(),
+        self.output.len().to_string()
+      );
     }
+  }
 
-    /// Format for AI consumption
-    pub fn to_message(&self) -> String {
-        if self.success {
-            let mut msg = self.output.clone();
-            if self.truncated {
-                msg.push_str(&format!(
-                    "\n[Note: Output truncated at {} bytes]",
-                    self.metadata.get("original_size").unwrap_or(&"unknown".to_string())
-                ));
-            }
-            msg
-        } else {
-            format!("Error: {}", self.error.as_ref().unwrap())
-        }
+  /// Format for AI consumption
+  pub fn to_message(&self) -> String {
+    if self.success {
+      let mut msg = self.output.clone();
+      if self.truncated {
+        msg.push_str(&format!(
+          "\n[Note: Output truncated at {} bytes]",
+          self.metadata.get("original_size").unwrap_or(&"unknown".to_string())
+        ));
+      }
+      msg
+    } else {
+      format!("Error: {}", self.error.as_ref().unwrap())
     }
+  }
 }
 ````
 
@@ -551,9 +551,9 @@ impl ToolResult {
 
 ```yaml
 agent:
-  tools:
-    max_output_size: 1048576 # 1 MB per tool result
-    max_file_read_size: 10485760 # 10 MB for read_file
+ tools:
+  max_output_size: 1048576 # 1 MB per tool result
+  max_file_read_size: 10485760 # 10 MB for read_file
 ```
 
 ````
@@ -587,11 +587,11 @@ Plans provide structured guidance to the agent but don't strictly constrain its 
 ```yaml
 goal: "Generate API documentation"
 context:
-  directory: "src/api/"
+ directory: "src/api/"
 instructions:
-  - List all API endpoint files
-  - Extract function signatures
-  - Create OpenAPI spec
+ - List all API endpoint files
+ - Extract function signatures
+ - Create OpenAPI spec
 ````
 
 **Translated to Agent Prompt**:
@@ -614,12 +614,12 @@ Use the available tools to accomplish this goal. You may adapt your approach as 
 
 ### Plan vs Interactive Mode
 
-| Aspect   | Plan Mode                      | Interactive Mode        |
+| Aspect  | Plan Mode           | Interactive Mode    |
 | -------- | ------------------------------ | ----------------------- |
-| Input    | Structured file                | Natural language prompt |
-| Guidance | Explicit instructions          | Open-ended              |
-| Tracking | Can track instruction progress | Free-form conversation  |
-| Use Case | Repeatable tasks               | Exploratory tasks       |
+| Input  | Structured file        | Natural language prompt |
+| Guidance | Explicit instructions     | Open-ended       |
+| Tracking | Can track instruction progress | Free-form conversation |
+| Use Case | Repeatable tasks        | Exploratory tasks    |
 
 ### Plan Instruction Tracking
 
@@ -627,22 +627,22 @@ Use the available tools to accomplish this goal. You may adapt your approach as 
 
 ```rust
 pub struct PlanExecution {
-    plan: Plan,
-    completed_instructions: HashSet<usize>,
+  plan: Plan,
+  completed_instructions: HashSet<usize>,
 }
 
 impl PlanExecution {
-    pub fn mark_instruction_complete(&mut self, index: usize) {
-        self.completed_instructions.insert(index);
-    }
+  pub fn mark_instruction_complete(&mut self, index: usize) {
+    self.completed_instructions.insert(index);
+  }
 
-    pub fn progress_summary(&self) -> String {
-        format!(
-            "Completed {}/{} instructions",
-            self.completed_instructions.len(),
-            self.plan.instructions.len()
-        )
-    }
+  pub fn progress_summary(&self) -> String {
+    format!(
+      "Completed {}/{} instructions",
+      self.completed_instructions.len(),
+      self.plan.instructions.len()
+    )
+  }
 }
 ```
 
@@ -672,23 +672,23 @@ Completed 2/4 instructions:
 Configuration is merged from multiple sources with the following precedence (highest to lowest):
 
 1. **Command-line arguments** - Highest priority
-   - Example: `xzatoma --provider ollama`
+  - Example: `xzatoma --provider ollama`
 
 2. **Environment variables** - Override config file
-   - Example: `XZATOMA_PROVIDER=ollama`
+  - Example: `XZATOMA_PROVIDER=ollama`
 
 3. **Configuration file** - `~/.config/xzatoma/config.yaml`
-   - Loaded if present
+  - Loaded if present
 
 4. **Default values** - Built-in defaults
-   - Example: `provider: copilot`, `max_turns: 100`
+  - Example: `provider: copilot`, `max_turns: 100`
 
 **Example Priority Resolution**:
 
 ```yaml
 # config.yaml
 provider:
-  type: copilot
+ type: copilot
 ````
 
 ```bash
@@ -696,7 +696,7 @@ provider:
 export XZATOMA_PROVIDER=ollama
 
 # Command-line overrides both
-xzatoma --provider copilot  # Uses copilot (CLI wins)
+xzatoma --provider copilot # Uses copilot (CLI wins)
 ```
 
 ````
@@ -752,42 +752,42 @@ This keeps each module under 300 lines and focused on a single responsibility.
 
 - `list_files` - List files in directory
 
-  - Parameters: `path` (string), `pattern` (optional glob), `recursive` (bool)
-  - Pattern syntax: Standard glob (`*.rs`, `**/*.md`, `src/**/*.{rs,toml}`)
-  - Returns: JSON array of file paths
-  - Example: `["src/main.rs", "src/lib.rs"]`
+ - Parameters: `path` (string), `pattern` (optional glob), `recursive` (bool)
+ - Pattern syntax: Standard glob (`*.rs`, `**/*.md`, `src/**/*.{rs,toml}`)
+ - Returns: JSON array of file paths
+ - Example: `["src/main.rs", "src/lib.rs"]`
 
 - `read_file` - Read file content
 
-  - Parameters: `path` (string)
-  - Returns: File contents as string
-  - Limit: 10 MB (configurable)
-  - Large files truncated with warning
+ - Parameters: `path` (string)
+ - Returns: File contents as string
+ - Limit: 10 MB (configurable)
+ - Large files truncated with warning
 
 - `write_file` - Create or overwrite file
 
-  - Parameters: `path` (string), `content` (string)
-  - Creates parent directories if needed
-  - Returns: Success message with file size
-  - Safety: Requires confirmation in interactive mode
+ - Parameters: `path` (string), `content` (string)
+ - Creates parent directories if needed
+ - Returns: Success message with file size
+ - Safety: Requires confirmation in interactive mode
 
 - `create_directory` - Create directory
 
-  - Parameters: `path` (string)
-  - Creates parent directories (like `mkdir -p`)
-  - Returns: Success message
+ - Parameters: `path` (string)
+ - Creates parent directories (like `mkdir -p`)
+ - Returns: Success message
 
 - `delete_path` - Delete file or directory
 
-  - Parameters: `path` (string), `recursive` (bool)
-  - Safety: Always requires confirmation in interactive mode
-  - Safety: Rejected if path outside working directory
-  - Returns: Success message with deleted item count
+ - Parameters: `path` (string), `recursive` (bool)
+ - Safety: Always requires confirmation in interactive mode
+ - Safety: Rejected if path outside working directory
+ - Returns: Success message with deleted item count
 
 - `diff_files` - Show diff between two files
-  - Parameters: `path1` (string), `path2` (string), `context_lines` (int, default 3)
-  - Returns: Unified diff format
-  - Uses `similar` crate for diff generation
+ - Parameters: `path1` (string), `path2` (string), `context_lines` (int, default 3)
+ - Returns: Unified diff format
+ - Uses `similar` crate for diff generation
 ```
 
 ### Update 10: Add Credential Storage Details
@@ -801,11 +801,11 @@ This keeps each module under 300 lines and focused on a single responsibility.
 
 **Storage Backends by Platform**:
 
-| Platform | Backend            | Keyring Implementation            |
+| Platform | Backend      | Keyring Implementation      |
 | -------- | ------------------ | --------------------------------- |
-| macOS    | Keychain           | System Keychain                   |
-| Linux    | Secret Service     | gnome-keyring, kwallet, keepassxc |
-| Windows  | Credential Manager | Windows Credential Manager        |
+| macOS  | Keychain      | System Keychain          |
+| Linux  | Secret Service   | gnome-keyring, kwallet, keepassxc |
+| Windows | Credential Manager | Windows Credential Manager    |
 
 **Storage Strategy**:
 
@@ -839,36 +839,36 @@ export OLLAMA_API_KEY="..."
 
 ```rust
 pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
-    // 1. Check environment variables
-    if let Ok(token) = env::var("GITHUB_TOKEN") {
-        return Ok(Credentials::new(token));
+  // 1. Check environment variables
+  if let Ok(token) = env::var("GITHUB_TOKEN") {
+    return Ok(Credentials::new(token));
+  }
+
+  // 2. Try keyring
+  match keyring::Entry::new("xzatoma", provider) {
+    Ok(entry) => {
+      if let Ok(password) = entry.get_password() {
+        return Ok(Credentials::new(password));
+      }
+    }
+    Err(e) => {
+      tracing::warn!("Keyring unavailable: {}", e);
+    }
+  }
+
+  // 3. Prompt user (interactive mode only)
+  if is_interactive() {
+    let token = prompt_for_token(provider)?;
+
+    // Try to save for next time
+    if let Ok(entry) = keyring::Entry::new("xzatoma", provider) {
+      let _ = entry.set_password(&token); // Ignore errors
     }
 
-    // 2. Try keyring
-    match keyring::Entry::new("xzatoma", provider) {
-        Ok(entry) => {
-            if let Ok(password) = entry.get_password() {
-                return Ok(Credentials::new(password));
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Keyring unavailable: {}", e);
-        }
-    }
+    return Ok(Credentials::new(token));
+  }
 
-    // 3. Prompt user (interactive mode only)
-    if is_interactive() {
-        let token = prompt_for_token(provider)?;
-
-        // Try to save for next time
-        if let Ok(entry) = keyring::Entry::new("xzatoma", provider) {
-            let _ = entry.set_password(&token); // Ignore errors
-        }
-
-        return Ok(Credentials::new(token));
-    }
-
-    Err(XzatomaError::MissingCredentials(provider.to_string()))
+  Err(XzatomaError::MissingCredentials(provider.to_string()))
 }
 ```
 
@@ -877,20 +877,20 @@ pub async fn get_provider_credentials(provider: &str) -> Result<Credentials> {
 ## Summary of Required Changes
 
 ### Critical (Must Have Before Phase 1)
-1. ✅ Add iteration limits to Agent example
-2. ✅ Add comprehensive terminal security section
-3. ✅ Add conversation management section
+1. Add iteration limits to Agent example
+2. Add comprehensive terminal security section
+3. Add conversation management section
 
 ### Important (Should Have Before Phase 2)
-4. ✅ Expand Provider trait for future features
-5. ✅ Define structured ToolResult format
-6. ✅ Add plan execution strategy section
+4. Expand Provider trait for future features
+5. Define structured ToolResult format
+6. Add plan execution strategy section
 
 ### Nice to Have (During Implementation)
-7. ✅ Document configuration precedence
-8. ✅ Clarify agent module responsibilities
-9. ✅ Expand file operations details
-10. ✅ Add credential storage details
+7. Document configuration precedence
+8. Clarify agent module responsibilities
+9. Expand file operations details
+10. Add credential storage details
 
 ## Implementation Note
 

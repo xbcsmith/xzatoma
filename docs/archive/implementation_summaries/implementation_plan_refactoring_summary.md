@@ -36,10 +36,10 @@ The implementation plan has been comprehensively refactored to address **critica
 
 ```rust
 pub struct CommandValidator {
-    mode: ExecutionMode,
-    working_dir: PathBuf,
-    allowlist: Vec<String>,
-    denylist: Vec<Regex>,
+  mode: ExecutionMode,
+  working_dir: PathBuf,
+  allowlist: Vec<String>,
+  denylist: Vec<Regex>,
 }
 ```
 
@@ -51,8 +51,8 @@ pub struct CommandValidator {
 
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    max_turns: u32,  // Wrong field name, wrong type
+  messages: Vec<Message>,
+  max_turns: u32, // Wrong field name, wrong type
 }
 ```
 
@@ -60,10 +60,10 @@ pub struct Conversation {
 
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    token_count: usize,           // ADDED
-    max_tokens: usize,             // ADDED
-    min_retain_turns: usize,       // ADDED
+  messages: Vec<Message>,
+  token_count: usize,      // ADDED
+  max_tokens: usize,       // ADDED
+  min_retain_turns: usize,    // ADDED
 }
 ```
 
@@ -85,10 +85,10 @@ pub struct Conversation {
 
 ```rust
 if iterations >= self.config.max_turns {
-    return Err(XzatomaError::MaxIterationsExceeded {
-        limit: self.config.max_turns,
-        message: format!("Agent exceeded maximum iterations..."),
-    });
+  return Err(XzatomaError::MaxIterationsExceeded {
+    limit: self.config.max_turns,
+    message: format!("Agent exceeded maximum iterations..."),
+  });
 }
 ```
 
@@ -125,11 +125,11 @@ if iterations >= self.config.max_turns {
 
 ```rust
 pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-    pub truncated: bool,           // ADDED
-    pub metadata: HashMap<String, String>,  // ADDED
+  pub success: bool,
+  pub output: String,
+  pub error: Option<String>,
+  pub truncated: bool,      // ADDED
+  pub metadata: HashMap<String, String>, // ADDED
 }
 ```
 
@@ -164,15 +164,15 @@ With methods:
 
 Original plan was vague about code size. Refactored plan includes detailed estimates per task:
 
-| Phase                 | Production LOC | Test LOC  | Total LOC |
+| Phase         | Production LOC | Test LOC | Total LOC |
 | --------------------- | -------------- | --------- | --------- |
-| Phase 1: Foundation   | 500            | 300       | 800       |
-| Phase 2: Agent Core   | 650            | 350       | 1,000     |
-| Phase 3: Security     | 450            | 250       | 700       |
-| Phase 4: Providers    | 600            | 300       | 900       |
-| Phase 5: File Tools   | 550            | 250       | 800       |
-| Phase 6: CLI + Polish | 400            | 200       | 600       |
-| **Total**             | **3,150**      | **1,650** | **4,800** |
+| Phase 1: Foundation  | 500      | 300    | 800    |
+| Phase 2: Agent Core  | 650      | 350    | 1,000   |
+| Phase 3: Security   | 450      | 250    | 700    |
+| Phase 4: Providers  | 600      | 300    | 900    |
+| Phase 5: File Tools  | 550      | 250    | 800    |
+| Phase 6: CLI + Polish | 400      | 200    | 600    |
+| **Total**       | **3,150**   | **1,650** | **4,800** |
 
 Target aligns with 3,000-5,000 LOC requirement from `notes_for_implementation_planning.md`.
 
@@ -208,15 +208,15 @@ Every data structure now matches `docs/reference/architecture.md` exactly:
 
 ### Verified Structures
 
-- ✅ `XzatomaError` - All 14 variants
-- ✅ `Config` - All configuration structures
-- ✅ `ExecutionMode` - All 3 modes
-- ✅ `Conversation` - With token management
-- ✅ `Agent` - With iteration limits
-- ✅ `ToolResult` - Complete structure
-- ✅ `CommandValidator` - Full security model
-- ✅ `Provider` trait - Correct signature
-- ✅ `ToolExecutor` trait - Correct signature
+- `XzatomaError` - All 14 variants
+- `Config` - All configuration structures
+- `ExecutionMode` - All 3 modes
+- `Conversation` - With token management
+- `Agent` - With iteration limits
+- `ToolResult` - Complete structure
+- `CommandValidator` - Full security model
+- `Provider` trait - Correct signature
+- `ToolExecutor` trait - Correct signature
 
 ## Documentation Requirements Added
 
@@ -270,17 +270,17 @@ The refactored plan includes complete specifications for:
 
 ```rust
 // Destructive operations
-r"rm\s+-rf\s+/\s*$"           // rm -rf /
-r"mkfs\."                      // Format filesystem
+r"rm\s+-rf\s+/\s*$"      // rm -rf /
+r"mkfs\."           // Format filesystem
 
 // Fork bombs
-r":\(\)\{:\|:&\};:"           // Bash fork bomb
+r":\(\)\{:\|:&\};:"      // Bash fork bomb
 
 // Remote code execution
-r"curl\s+.*\|\s*sh"           // curl | sh
+r"curl\s+.*\|\s*sh"      // curl | sh
 
 // Privilege escalation
-r"\bsudo\s+"                  // sudo commands
+r"\bsudo\s+"         // sudo commands
 
 // Many more...
 ```
@@ -357,40 +357,40 @@ The refactored plan is **1,905 lines** and covers:
 
 ### AGENTS.md Rules
 
-- ✅ File extensions: `.yaml` specified everywhere
-- ✅ Markdown naming: `lowercase_with_underscores.md`
-- ✅ No emojis in plan documentation
-- ✅ Quality gates defined per phase
-- ✅ Test coverage >80% mandated
-- ✅ Documentation requirements specified
+- File extensions: `.yaml` specified everywhere
+- Markdown naming: `lowercase_with_underscores.md`
+- No emojis in plan documentation
+- Quality gates defined per phase
+- Test coverage >80% mandated
+- Documentation requirements specified
 
 ### PLAN.md Format
 
-- ✅ Phase-based structure
-- ✅ Tasks with clear actions
-- ✅ Files to create listed
-- ✅ Dependencies specified
-- ✅ Testing requirements per task
-- ✅ Deliverables per phase
-- ✅ Success criteria per phase
+- Phase-based structure
+- Tasks with clear actions
+- Files to create listed
+- Dependencies specified
+- Testing requirements per task
+- Deliverables per phase
+- Success criteria per phase
 
 ### architecture.md Alignment
 
-- ✅ All data structures match
-- ✅ Security model fully specified
-- ✅ Token management included
-- ✅ Iteration limits enforced
-- ✅ Configuration complete
-- ✅ Tool result structure correct
+- All data structures match
+- Security model fully specified
+- Token management included
+- Iteration limits enforced
+- Configuration complete
+- Tool result structure correct
 
 ### notes_for_implementation_planning.md
 
-- ✅ 3,000-5,000 LOC target (estimated 4,800)
-- ✅ Security first approach
-- ✅ Phase structure follows recommendations
-- ✅ Testing from start
-- ✅ LOC estimates per task
-- ✅ Mock provider for testing
+- 3,000-5,000 LOC target (estimated 4,800)
+- Security first approach
+- Phase structure follows recommendations
+- Testing from start
+- LOC estimates per task
+- Mock provider for testing
 
 ## Critical Next Steps
 

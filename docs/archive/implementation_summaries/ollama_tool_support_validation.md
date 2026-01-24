@@ -28,10 +28,10 @@ The `add_model_capabilities()` function unconditionally added `FunctionCalling` 
 ```rust
 // INCORRECT - Old implementation
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
-    // Most Ollama models support function calling
-    model.add_capability(ModelCapability::FunctionCalling);  // WRONG!
+  // Most Ollama models support function calling
+  model.add_capability(ModelCapability::FunctionCalling); // WRONG!
 
-    // ... other capabilities
+  // ... other capabilities
 }
 ```
 
@@ -45,7 +45,7 @@ Changed default from `llama3:latest` to `llama3.2:latest`:
 
 ```rust
 fn default_ollama_model() -> String {
-    "llama3.2:latest".to_string()
+  "llama3.2:latest".to_string()
 }
 ```
 
@@ -57,30 +57,30 @@ Rewrote `add_model_capabilities()` to only mark models that actually support too
 
 ```rust
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
-    // Only specific Ollama models support function calling (tool use)
-    // Based on Ollama documentation and testing
-    match family.to_lowercase().as_str() {
-        // Models that support tool calling
-        "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
-        | "command-r" | "command-r-plus" => {
-            model.add_capability(ModelCapability::FunctionCalling);
-        }
-        _ => {
-            // Most other models do NOT support tool calling
-            // Including: llama3, llama2, gemma, qwen, codellama, etc.
-        }
+  // Only specific Ollama models support function calling (tool use)
+  // Based on Ollama documentation and testing
+  match family.to_lowercase().as_str() {
+    // Models that support tool calling
+    "llama3.2" | "llama3.3" | "mistral" | "mistral-nemo" | "firefunction"
+    | "command-r" | "command-r-plus" => {
+      model.add_capability(ModelCapability::FunctionCalling);
     }
+    _ => {
+      // Most other models do NOT support tool calling
+      // Including: llama3, llama2, gemma, qwen, codellama, etc.
+    }
+  }
 
-    // Add other capabilities based on model family
-    match family.to_lowercase().as_str() {
-        "mistral" | "mistral-nemo" | "neural-chat" => {
-            model.add_capability(ModelCapability::LongContext);
-        }
-        "llava" => {
-            model.add_capability(ModelCapability::Vision);
-        }
-        _ => {}
+  // Add other capabilities based on model family
+  match family.to_lowercase().as_str() {
+    "mistral" | "mistral-nemo" | "neural-chat" => {
+      model.add_capability(ModelCapability::LongContext);
     }
+    "llava" => {
+      model.add_capability(ModelCapability::Vision);
+    }
+    _ => {}
+  }
 }
 ```
 
@@ -107,38 +107,38 @@ Added validation in `set_model()` to reject models without tool support:
 
 ```rust
 async fn set_model(&mut self, model_name: String) -> Result<()> {
-    // Validate that the model exists by fetching the list
-    let models = self.list_models().await?;
+  // Validate that the model exists by fetching the list
+  let models = self.list_models().await?;
 
-    let model_info = models.iter().find(|m| m.name == model_name);
+  let model_info = models.iter().find(|m| m.name == model_name);
 
-    if model_info.is_none() {
-        return Err(XzatomaError::Provider(
-            format!("Model not found: {}", model_name)
-        ).into());
-    }
+  if model_info.is_none() {
+    return Err(XzatomaError::Provider(
+      format!("Model not found: {}", model_name)
+    ).into());
+  }
 
-    // Check if the model supports tool calling (required for XZatoma)
-    let model = model_info.unwrap();
-    if !model.supports_capability(ModelCapability::FunctionCalling) {
-        return Err(XzatomaError::Provider(format!(
-            "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
-            model_name
-        )).into());
-    }
+  // Check if the model supports tool calling (required for XZatoma)
+  let model = model_info.unwrap();
+  if !model.supports_capability(ModelCapability::FunctionCalling) {
+    return Err(XzatomaError::Provider(format!(
+      "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
+      model_name
+    )).into());
+  }
 
-    // Update the model in the config
-    let mut config = self.config.write().map_err(|_| {
-        XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-    })?;
-    config.model = model_name.clone();
-    drop(config);
+  // Update the model in the config
+  let mut config = self.config.write().map_err(|_| {
+    XzatomaError::Provider("Failed to acquire write lock on config".to_string())
+  })?;
+  config.model = model_name.clone();
+  drop(config);
 
-    // Invalidate cache to ensure fresh model list next time
-    self.invalidate_cache();
+  // Invalidate cache to ensure fresh model list next time
+  self.invalidate_cache();
 
-    tracing::info!("Switched Ollama model to: {}", model_name);
-    Ok(())
+  tracing::info!("Switched Ollama model to: {}", model_name);
+  Ok(())
 }
 ```
 
@@ -157,12 +157,12 @@ The existing model listing commands already display capabilities, so users can n
 /models list
 
 +------------------+----------------------+-----------------+--------------------+
-| Model Name       | Display Name         | Context Window  | Capabilities       |
+| Model Name    | Display Name     | Context Window | Capabilities    |
 +------------------+----------------------+-----------------+--------------------+
-| llama3.2:latest  | llama3.2 (4.7GB)     | 4096 tokens     | FunctionCalling    |
-| llama3:latest    | llama3 (4.7GB)       | 4096 tokens     |                    |
-| mistral:latest   | mistral (4.1GB)      | 8192 tokens     | FunctionCalling,   |
-|                  |                      |                 | LongContext        |
+| llama3.2:latest | llama3.2 (4.7GB)   | 4096 tokens   | FunctionCalling  |
+| llama3:latest  | llama3 (4.7GB)    | 4096 tokens   |          |
+| mistral:latest  | mistral (4.1GB)   | 8192 tokens   | FunctionCalling,  |
+|         |           |         | LongContext    |
 +------------------+----------------------+-----------------+--------------------+
 ```
 
@@ -173,9 +173,9 @@ Models without `FunctionCalling` capability cannot be used with XZatoma.
 ### Code Changes
 
 - `src/providers/ollama.rs` (3 functions modified, 3 tests updated)
-  - `add_model_capabilities()` - Accurate tool support detection
-  - `set_model()` - Validation before allowing switch
-  - Tests updated to reflect new behavior
+ - `add_model_capabilities()` - Accurate tool support detection
+ - `set_model()` - Validation before allowing switch
+ - Tests updated to reflect new behavior
 
 ### Configuration Changes
 
@@ -197,15 +197,15 @@ Three test functions were updated to reflect the new capability logic:
 ```rust
 #[test]
 fn test_add_model_capabilities_function_calling() {
-    // Test model that supports function calling
-    let mut model = ModelInfo::new("llama3.2", "Llama 3.2", 4096);
-    add_model_capabilities(&mut model, "llama3.2");
-    assert!(model.supports_capability(ModelCapability::FunctionCalling));
+  // Test model that supports function calling
+  let mut model = ModelInfo::new("llama3.2", "Llama 3.2", 4096);
+  add_model_capabilities(&mut model, "llama3.2");
+  assert!(model.supports_capability(ModelCapability::FunctionCalling));
 
-    // Test model that does NOT support function calling
-    let mut model_no_tools = ModelInfo::new("llama3", "Llama 3", 4096);
-    add_model_capabilities(&mut model_no_tools, "llama3");
-    assert!(!model_no_tools.supports_capability(ModelCapability::FunctionCalling));
+  // Test model that does NOT support function calling
+  let mut model_no_tools = ModelInfo::new("llama3", "Llama 3", 4096);
+  add_model_capabilities(&mut model_no_tools, "llama3");
+  assert!(!model_no_tools.supports_capability(ModelCapability::FunctionCalling));
 }
 ```
 
@@ -230,21 +230,21 @@ cargo test --lib providers::ollama::tests
 ```bash
 /model llama3.2:latest
 # Expected: Success - model supports tools
-# Result: ✅ Switched to llama3.2:latest
+# Result: Switched to llama3.2:latest
 ```
 
 #### Scenario 2: Invalid Model Switch
 ```bash
 /model llama3:latest
 # Expected: Error with helpful message
-# Result: ✅ Error: Model 'llama3:latest' does not support tool calling...
+# Result: Error: Model 'llama3:latest' does not support tool calling...
 ```
 
 #### Scenario 3: List Models Shows Capabilities
 ```bash
 /models list
 # Expected: FunctionCalling shown for supported models only
-# Result: ✅ Capabilities column accurately reflects support
+# Result: Capabilities column accurately reflects support
 ```
 
 ## User Impact
@@ -267,20 +267,20 @@ If you have `llama3:latest` in your config:
 ```yaml
 # Old (will not work)
 provider:
-  ollama:
-    model: llama3:latest
+ ollama:
+  model: llama3:latest
 
 # New (recommended)
 provider:
-  ollama:
-    model: llama3.2:latest  # Default choice
+ ollama:
+  model: llama3.2:latest # Default choice
 ```
 
 Other supported alternatives:
 ```yaml
-model: llama3.3:latest     # Newer version
-model: mistral:latest      # Supports long context too
-model: command-r:latest    # Cohere's function-calling model
+model: llama3.3:latest   # Newer version
+model: mistral:latest   # Supports long context too
+model: command-r:latest  # Cohere's function-calling model
 ```
 
 ## Error Handling
@@ -342,13 +342,13 @@ Allowing models without tool support would result in a broken, non-functional ag
 
 ## Validation Results
 
-- ✅ `cargo fmt --all` passed with no changes needed
-- ✅ `cargo check --all-targets --all-features` passed with zero errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
-- ✅ `cargo test --all-features` passed with 476 tests (0 failures)
-- ✅ All file extensions correct (`.rs`, `.yaml`, `.md`)
-- ✅ Documentation filename follows lowercase_with_underscores convention
-- ✅ No emojis in documentation
+- `cargo fmt --all` passed with no changes needed
+- `cargo check --all-targets --all-features` passed with zero errors
+- `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
+- `cargo test --all-features` passed with 476 tests (0 failures)
+- All file extensions correct (`.rs`, `.yaml`, `.md`)
+- Documentation filename follows lowercase_with_underscores convention
+- No emojis in documentation
 
 ## Future Enhancements
 

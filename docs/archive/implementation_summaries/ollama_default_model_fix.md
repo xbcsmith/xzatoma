@@ -18,7 +18,7 @@ Example error:
 
 ```text
 /models llama3.2:latest
-2026-01-22T21:19:04.105040Z  INFO xzatoma::agent::core: Starting agent execution
+2026-01-22T21:19:04.105040Z INFO xzatoma::agent::core: Starting agent execution
 2026-01-22T21:19:04.109755Z ERROR xzatoma::providers::ollama: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 Error: Provider error: Ollama returned error 404 Not Found: {"error":"model 'qwen2.5-coder' not found"}
 ```
@@ -55,7 +55,7 @@ Changed the default model from `qwen2.5-coder` to `llama3.2:latest` (final; `lla
 
 ```rust
 fn default_ollama_model() -> String {
-    "llama3.2:latest".to_string() // Final default chosen for tool support
+  "llama3.2:latest".to_string() // Final default chosen for tool support
 }
 ```
 
@@ -65,9 +65,9 @@ Updated the default configuration and documentation:
 
 ```yaml
 ollama:
-  host: http://localhost:11434
-  # Model to use (e.g., llama3.2:latest, llama3.3:latest, gemma3:latest)
-  model: llama3.2:latest
+ host: http://localhost:11434
+ # Model to use (e.g., llama3.2:latest, llama3.3:latest, gemma3:latest)
+ model: llama3.2:latest
 ```
 
 ### Test Updates
@@ -76,8 +76,8 @@ All test cases were updated to use `llama3.2:latest` instead of `qwen2.5-coder`:
 
 ```rust
 let config = OllamaConfig {
-    host: "http://localhost:11434".to_string(),
-    model: "llama3.2:latest".to_string(),
+  host: "http://localhost:11434".to_string(),
+  model: "llama3.2:latest".to_string(),
 };
 ```
 
@@ -87,8 +87,8 @@ Updated all doc comment examples to reference standard Ollama models:
 
 ```rust
 /// let config = OllamaConfig {
-///     host: "http://localhost:11434".to_string(),
-///     model: "llama3.2:latest".to_string(),
+///   host: "http://localhost:11434".to_string(),
+///   model: "llama3.2:latest".to_string(),
 /// };
 ```
 
@@ -156,28 +156,28 @@ If you have an existing `config/config.yaml` with `qwen2.5-coder`:
 ```yaml
 # Old configuration
 provider:
-  ollama:
-    model: qwen2.5-coder
+ ollama:
+  model: qwen2.5-coder
 
 # New configuration (choose one)
 provider:
-  ollama:
-    model: llama3.2:latest      # Recommended default
-    # OR
-    model: llama3.2:latest    # Alternative
-    # OR
-    model: gemma3:latest      # Google's model
+ ollama:
+  model: llama3.2:latest   # Recommended default
+  # OR
+  model: llama3.2:latest  # Alternative
+  # OR
+  model: gemma3:latest   # Google's model
 ```
 
 ## Validation Results
 
-- ✅ `cargo fmt --all` passed with no changes needed
-- ✅ `cargo check --all-targets --all-features` passed with zero errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
-- ✅ `cargo test --all-features` passed with 476 tests (0 failures)
-- ✅ All file extensions correct (`.rs`, `.yaml`, `.md`)
-- ✅ Documentation filename follows lowercase_with_underscores convention
-- ✅ No emojis in documentation
+- `cargo fmt --all` passed with no changes needed
+- `cargo check --all-targets --all-features` passed with zero errors
+- `cargo clippy --all-targets --all-features -- -D warnings` passed with zero warnings
+- `cargo test --all-features` passed with 476 tests (0 failures)
+- All file extensions correct (`.rs`, `.yaml`, `.md`)
+- Documentation filename follows lowercase_with_underscores convention
+- No emojis in documentation
 
 ## References
 

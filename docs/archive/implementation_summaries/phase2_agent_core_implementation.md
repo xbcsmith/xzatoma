@@ -37,11 +37,11 @@ The `Conversation` struct provides intelligent conversation history management:
 
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    token_count: usize,
-    max_tokens: usize,
-    min_retain_turns: usize,
-    prune_threshold: f64,
+  messages: Vec<Message>,
+  token_count: usize,
+  max_tokens: usize,
+  min_retain_turns: usize,
+  prune_threshold: f64,
 }
 ```
 
@@ -64,7 +64,7 @@ pub struct Conversation {
 
 ```rust
 fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() + 3) / 4
+  (text.chars().count() + 3) / 4
 }
 ```
 
@@ -76,10 +76,10 @@ The `Agent` struct orchestrates the autonomous execution cycle:
 
 ```rust
 pub struct Agent {
-    provider: Arc<dyn Provider>,
-    conversation: Conversation,
-    tools: ToolRegistry,
-    config: AgentConfig,
+  provider: Arc<dyn Provider>,
+  conversation: Conversation,
+  tools: ToolRegistry,
+  config: AgentConfig,
 }
 ```
 
@@ -87,12 +87,12 @@ pub struct Agent {
 
 1. Add user prompt to conversation
 2. Loop until completion or limits exceeded:
-   - Check iteration limit
-   - Check timeout
-   - Call provider for completion
-   - Handle tool calls if present
-   - Add results to conversation
-   - Break if final response received
+  - Check iteration limit
+  - Check timeout
+  - Call provider for completion
+  - Handle tool calls if present
+  - Add results to conversation
+  - Break if final response received
 3. Return final assistant response
 
 **Safety Limits:**
@@ -121,8 +121,8 @@ The `ToolExecutor` trait provides a uniform interface for tool implementations:
 ```rust
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    fn tool_definition(&self) -> serde_json::Value;
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>;
+  fn tool_definition(&self) -> serde_json::Value;
+  async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>;
 }
 ```
 
@@ -138,7 +138,7 @@ The registry now stores `Arc<dyn ToolExecutor>` instead of static `Tool` definit
 
 ```rust
 pub struct ToolRegistry {
-    tools: HashMap<String, Arc<dyn ToolExecutor>>,
+  tools: HashMap<String, Arc<dyn ToolExecutor>>,
 }
 ```
 
@@ -156,14 +156,14 @@ Updated the `Provider` trait for simpler message handling:
 
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[Tool])
-    -> Result<CompletionResponse>;
+  -> Result<CompletionResponse>;
 ```
 
 **New Signature:**
 
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[serde_json::Value])
-    -> Result<Message>;
+  -> Result<Message>;
 ```
 
 **Changes:**
@@ -178,10 +178,10 @@ async fn complete(&self, messages: &[Message], tools: &[serde_json::Value])
 
 ```rust
 pub struct Message {
-    pub role: String,
-    pub content: Option<String>,
-    pub tool_calls: Option<Vec<ToolCall>>,
-    pub tool_call_id: Option<String>,
+  pub role: String,
+  pub content: Option<String>,
+  pub tool_calls: Option<Vec<ToolCall>>,
+  pub tool_call_id: Option<String>,
 }
 ```
 
@@ -222,8 +222,8 @@ Implemented a test-only `MockProvider` that returns predefined responses:
 
 ```rust
 struct MockProvider {
-    responses: Vec<Message>,
-    call_count: Arc<Mutex<usize>>,
+  responses: Vec<Message>,
+  call_count: Arc<Mutex<usize>>,
 }
 ```
 
@@ -273,14 +273,14 @@ Phase 2 respects all `AgentConfig` settings:
 
 ```yaml
 agent:
-  max_turns: 50
-  timeout_seconds: 300
-  conversation:
-    max_tokens: 8000
-    min_retain_turns: 10
-    prune_threshold: 0.8
-  tools:
-    max_output_size: 50000
+ max_turns: 50
+ timeout_seconds: 300
+ conversation:
+  max_tokens: 8000
+  min_retain_turns: 10
+  prune_threshold: 0.8
+ tools:
+  max_output_size: 50000
 ```
 
 **Conversation Settings:**
@@ -342,13 +342,13 @@ use xzatoma::config::AgentConfig;
 use xzatoma::tools::ToolRegistry;
 
 async fn run_agent(provider: impl Provider) -> Result<String> {
-    let tools = ToolRegistry::new();
-    let config = AgentConfig::default();
+  let tools = ToolRegistry::new();
+  let config = AgentConfig::default();
 
-    let agent = Agent::new(provider, tools, config)?;
-    let result = agent.execute("Write a hello world program").await?;
+  let agent = Agent::new(provider, tools, config)?;
+  let result = agent.execute("Write a hello world program").await?;
 
-    Ok(result)
+  Ok(result)
 }
 ```
 
@@ -358,17 +358,17 @@ async fn run_agent(provider: impl Provider) -> Result<String> {
 use xzatoma::agent::Conversation;
 
 let mut conversation = Conversation::new(
-    8000,  // max_tokens
-    10,    // min_retain_turns
-    0.8    // prune_threshold
+  8000, // max_tokens
+  10,  // min_retain_turns
+  0.8  // prune_threshold
 );
 
 conversation.add_user_message("Hello!");
 conversation.add_assistant_message("Hi there!");
 
 println!("Tokens used: {}/{}",
-    conversation.token_count(),
-    conversation.max_tokens()
+  conversation.token_count(),
+  conversation.max_tokens()
 );
 ```
 
@@ -382,23 +382,23 @@ struct MyTool;
 
 #[async_trait]
 impl ToolExecutor for MyTool {
-    fn tool_definition(&self) -> serde_json::Value {
-        serde_json::json!({
-            "name": "my_tool",
-            "description": "Does something useful",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string"}
-                }
-            }
-        })
-    }
+  fn tool_definition(&self) -> serde_json::Value {
+    serde_json::json!({
+      "name": "my_tool",
+      "description": "Does something useful",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {"type": "string"}
+        }
+      }
+    })
+  }
 
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let input = args["input"].as_str().unwrap_or("");
-        Ok(ToolResult::success(format!("Processed: {}", input)))
-    }
+  async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+    let input = args["input"].as_str().unwrap_or("");
+    Ok(ToolResult::success(format!("Processed: {}", input)))
+  }
 }
 
 let mut registry = ToolRegistry::new();
@@ -409,10 +409,10 @@ registry.register("my_tool", Arc::new(MyTool));
 
 ### Quality Gates
 
-- ✅ `cargo fmt --all` - All code formatted
-- ✅ `cargo check --all-targets --all-features` - Compiles without errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ `cargo test --all-features` - 123 tests passing (0 failures)
+- `cargo fmt --all` - All code formatted
+- `cargo check --all-targets --all-features` - Compiles without errors
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- `cargo test --all-features` - 123 tests passing (0 failures)
 
 ### Test Coverage
 
@@ -434,10 +434,10 @@ registry.register("my_tool", Arc::new(MyTool));
 
 ### Phase 1 Dependencies
 
-- ✅ `error.rs` - Uses XzatomaError types
-- ✅ `config.rs` - Reads AgentConfig settings
-- ✅ `providers/base.rs` - Implements Provider trait
-- ✅ `tools/mod.rs` - Uses ToolRegistry
+- `error.rs` - Uses XzatomaError types
+- `config.rs` - Reads AgentConfig settings
+- `providers/base.rs` - Implements Provider trait
+- `tools/mod.rs` - Uses ToolRegistry
 
 ### Phase 3 Preparation
 

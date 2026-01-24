@@ -35,31 +35,31 @@ Compact Examples
 Command validator sketch:
 ```rust
 pub struct CommandValidator {
-    mode: ExecutionMode,
-    working_dir: PathBuf,
-    allowlist: Vec<String>,
-    denylist: Vec<Regex>,
+  mode: ExecutionMode,
+  working_dir: PathBuf,
+  allowlist: Vec<String>,
+  denylist: Vec<Regex>,
 }
 ```
 
 Conversation sketch:
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    token_count: usize,
-    max_tokens: usize,
-    min_retain_turns: usize,
+  messages: Vec<Message>,
+  token_count: usize,
+  max_tokens: usize,
+  min_retain_turns: usize,
 }
 ```
 
 Tool result sketch:
 ```rust
 pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-    pub truncated: bool,
-    pub metadata: HashMap<String, String>,
+  pub success: bool,
+  pub output: String,
+  pub error: Option<String>,
+  pub truncated: bool,
+  pub metadata: HashMap<String, String>,
 }
 ```
 

@@ -38,20 +38,20 @@ This plan adds two distinct chat modes to XZatoma's interactive chat: **Planning
 ```rust
 // ChatMode enum with Planning and Write variants
 pub enum ChatMode {
-    Planning,  // Read-only, creates plans
-    Write,     // Read/write, executes plans
+  Planning, // Read-only, creates plans
+  Write,   // Read/write, executes plans
 }
 
 // SafetyMode enum for confirmation behavior
 pub enum SafetyMode {
-    AlwaysConfirm,  // Confirm dangerous operations
-    NeverConfirm,   // YOLO mode - never confirm
+  AlwaysConfirm, // Confirm dangerous operations
+  NeverConfirm,  // YOLO mode - never confirm
 }
 
 // ChatModeState to track current session state
 pub struct ChatModeState {
-    chat_mode: ChatMode,
-    safety_mode: SafetyMode,
+  chat_mode: ChatMode,
+  safety_mode: SafetyMode,
 }
 ```
 
@@ -71,11 +71,11 @@ pub struct ChatModeState {
 
 ```rust
 Chat {
-    provider: Option<String>,
-    #[arg(short, long, default_value = "planning")]
-    mode: Option<String>,  // "planning" or "write"
-    #[arg(short = 's', long)]
-    safe: bool,  // If true, use AlwaysConfirm; else NeverConfirm
+  provider: Option<String>,
+  #[arg(short, long, default_value = "planning")]
+  mode: Option<String>, // "planning" or "write"
+  #[arg(short = 's', long)]
+  safe: bool, // If true, use AlwaysConfirm; else NeverConfirm
 }
 ```
 
@@ -97,19 +97,19 @@ Chat {
 
 ```yaml
 agent:
-  chat:
-    default_mode: "planning" # planning or write
-    default_safety: "confirm" # confirm or yolo
-    allow_mode_switching: true
+ chat:
+  default_mode: "planning" # planning or write
+  default_safety: "confirm" # confirm or yolo
+  allow_mode_switching: true
 ```
 
 **Rust Structure:**
 
 ```rust
 pub struct ChatConfig {
-    pub default_mode: String,
-    pub default_safety: String,
-    pub allow_mode_switching: bool,
+  pub default_mode: String,
+  pub default_safety: String,
+  pub allow_mode_switching: bool,
 }
 ```
 
@@ -148,26 +148,26 @@ pub struct ChatConfig {
 
 ```rust
 pub struct ToolRegistryBuilder {
-    mode: ChatMode,
-    safety_mode: SafetyMode,
-    working_dir: PathBuf,
-    config: ToolsConfig,
+  mode: ChatMode,
+  safety_mode: SafetyMode,
+  working_dir: PathBuf,
+  config: ToolsConfig,
 }
 
 impl ToolRegistryBuilder {
-    pub fn new(mode: ChatMode, safety_mode: SafetyMode) -> Self { ... }
+  pub fn new(mode: ChatMode, safety_mode: SafetyMode) -> Self { ... }
 
-    pub fn build_for_planning(&self) -> ToolRegistry {
-        // Register only read-only tools
-        // - file_ops: read_file, list_files, search_files
-        // - NO write_file, NO terminal execution
-    }
+  pub fn build_for_planning(&self) -> ToolRegistry {
+    // Register only read-only tools
+    // - file_ops: read_file, list_files, search_files
+    // - NO write_file, NO terminal execution
+  }
 
-    pub fn build_for_write(&self) -> ToolRegistry {
-        // Register all tools
-        // - file_ops: all operations
-        // - terminal: with safety_mode consideration
-    }
+  pub fn build_for_write(&self) -> ToolRegistry {
+    // Register all tools
+    // - file_ops: all operations
+    // - terminal: with safety_mode consideration
+  }
 }
 ```
 
@@ -181,9 +181,9 @@ impl ToolRegistryBuilder {
 
 - Clone existing `FileOpsTool`
 - Create `FileOpsReadOnlyTool` that only exposes:
-  - `read_file(path: string) -> string`
-  - `list_files(directory: string) -> array`
-  - `search_files(pattern: string, directory: string) -> array`
+ - `read_file(path: string) -> string`
+ - `list_files(directory: string) -> array`
+ - `search_files(pattern: string, directory: string) -> array`
 - Remove write operations from tool definition
 
 **Alternative Approach:**
@@ -202,36 +202,36 @@ impl ToolRegistryBuilder {
 
 ```rust
 pub async fn run_chat(
-    config: Config,
-    provider_name: Option<String>,
-    initial_mode: ChatMode,
-    initial_safety: SafetyMode,
+  config: Config,
+  provider_name: Option<String>,
+  initial_mode: ChatMode,
+  initial_safety: SafetyMode,
 ) -> Result<()> {
-    let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
+  let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
 
-    // Build tools based on current mode
-    let tools = build_tools_for_mode(&mode_state, &config);
+  // Build tools based on current mode
+  let tools = build_tools_for_mode(&mode_state, &config);
 
-    // Create agent with initial tools
-    let mut agent = create_agent(provider_name, tools, &config)?;
+  // Create agent with initial tools
+  let mut agent = create_agent(provider_name, tools, &config)?;
 
-    // Interactive loop with mode switching support
-    ...
+  // Interactive loop with mode switching support
+  ...
 }
 
 fn build_tools_for_mode(
-    mode_state: &ChatModeState,
-    config: &Config,
+  mode_state: &ChatModeState,
+  config: &Config,
 ) -> ToolRegistry {
-    let builder = ToolRegistryBuilder::new(
-        mode_state.chat_mode.clone(),
-        mode_state.safety_mode.clone(),
-    );
+  let builder = ToolRegistryBuilder::new(
+    mode_state.chat_mode.clone(),
+    mode_state.safety_mode.clone(),
+  );
 
-    match mode_state.chat_mode {
-        ChatMode::Planning => builder.build_for_planning(),
-        ChatMode::Write => builder.build_for_write(),
-    }
+  match mode_state.chat_mode {
+    ChatMode::Planning => builder.build_for_planning(),
+    ChatMode::Write => builder.build_for_write(),
+  }
 }
 ```
 
@@ -270,25 +270,25 @@ fn build_tools_for_mode(
 
 ```rust
 pub enum SpecialCommand {
-    SwitchMode(ChatMode),
-    SwitchSafety(SafetyMode),
-    ShowStatus,
-    Help,
-    Exit,
-    None,  // Not a special command
+  SwitchMode(ChatMode),
+  SwitchSafety(SafetyMode),
+  ShowStatus,
+  Help,
+  Exit,
+  None, // Not a special command
 }
 
 pub fn parse_special_command(input: &str) -> SpecialCommand {
-    match input.trim() {
-        "/mode planning" | "/planning" => SpecialCommand::SwitchMode(ChatMode::Planning),
-        "/mode write" | "/write" => SpecialCommand::SwitchMode(ChatMode::Write),
-        "/safe" | "/safety on" => SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm),
-        "/yolo" | "/safety off" => SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm),
-        "/status" => SpecialCommand::ShowStatus,
-        "/help" => SpecialCommand::Help,
-        "exit" | "quit" => SpecialCommand::Exit,
-        _ => SpecialCommand::None,
-    }
+  match input.trim() {
+    "/mode planning" | "/planning" => SpecialCommand::SwitchMode(ChatMode::Planning),
+    "/mode write" | "/write" => SpecialCommand::SwitchMode(ChatMode::Write),
+    "/safe" | "/safety on" => SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm),
+    "/yolo" | "/safety off" => SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm),
+    "/status" => SpecialCommand::ShowStatus,
+    "/help" => SpecialCommand::Help,
+    "exit" | "quit" => SpecialCommand::Exit,
+    _ => SpecialCommand::None,
+  }
 }
 ```
 
@@ -302,40 +302,40 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
 
 ```rust
 loop {
-    // Build dynamic prompt based on current mode
-    let prompt = format_prompt(&mode_state);  // e.g., "[PLANNING][SAFE] >>> "
+  // Build dynamic prompt based on current mode
+  let prompt = format_prompt(&mode_state); // e.g., "[PLANNING][SAFE] >>> "
 
-    match rl.readline(&prompt) {
-        Ok(line) => {
-            let trimmed = line.trim();
+  match rl.readline(&prompt) {
+    Ok(line) => {
+      let trimmed = line.trim();
 
-            // Check for special commands first
-            match parse_special_command(trimmed) {
-                SpecialCommand::SwitchMode(new_mode) => {
-                    handle_mode_switch(&mut agent, &mut mode_state, new_mode, &config)?;
-                    continue;
-                }
-                SpecialCommand::SwitchSafety(new_safety) => {
-                    handle_safety_switch(&mut mode_state, new_safety);
-                    continue;
-                }
-                SpecialCommand::ShowStatus => {
-                    print_status(&mode_state, &agent);
-                    continue;
-                }
-                SpecialCommand::Help => {
-                    print_help();
-                    continue;
-                }
-                SpecialCommand::Exit => break,
-                SpecialCommand::None => {
-                    // Regular agent execution
-                    agent.execute(trimmed.to_string()).await?;
-                }
-            }
+      // Check for special commands first
+      match parse_special_command(trimmed) {
+        SpecialCommand::SwitchMode(new_mode) => {
+          handle_mode_switch(&mut agent, &mut mode_state, new_mode, &config)?;
+          continue;
         }
-        ...
+        SpecialCommand::SwitchSafety(new_safety) => {
+          handle_safety_switch(&mut mode_state, new_safety);
+          continue;
+        }
+        SpecialCommand::ShowStatus => {
+          print_status(&mode_state, &agent);
+          continue;
+        }
+        SpecialCommand::Help => {
+          print_help();
+          continue;
+        }
+        SpecialCommand::Exit => break,
+        SpecialCommand::None => {
+          // Regular agent execution
+          agent.execute(trimmed.to_string()).await?;
+        }
+      }
     }
+    ...
+  }
 }
 ```
 
@@ -345,39 +345,39 @@ loop {
 
 ```rust
 fn handle_mode_switch(
-    agent: &mut Agent,
-    mode_state: &mut ChatModeState,
-    new_mode: ChatMode,
-    config: &Config,
+  agent: &mut Agent,
+  mode_state: &mut ChatModeState,
+  new_mode: ChatMode,
+  config: &Config,
 ) -> Result<()> {
-    // Show warning when switching to Write mode
-    if matches!(new_mode, ChatMode::Write) {
-        println!("⚠️  Switching to WRITE mode - agent can now modify files and execute commands!");
-        println!("   Type '/safe' to enable confirmations, or '/yolo' to disable.");
-    }
+  // Show warning when switching to Write mode
+  if matches!(new_mode, ChatMode::Write) {
+    println!("WARNING: Switching to WRITE mode - agent can now modify files and execute commands!");
+    println!("  Type '/safe' to enable confirmations, or '/yolo' to disable.");
+  }
 
-    // Update mode state
-    let old_mode = mode_state.chat_mode.clone();
-    mode_state.chat_mode = new_mode;
+  // Update mode state
+  let old_mode = mode_state.chat_mode.clone();
+  mode_state.chat_mode = new_mode;
 
-    // Rebuild tools for new mode
-    let new_tools = build_tools_for_mode(mode_state, config);
+  // Rebuild tools for new mode
+  let new_tools = build_tools_for_mode(mode_state, config);
 
-    // Preserve conversation history
-    let conversation = agent.conversation().clone();
+  // Preserve conversation history
+  let conversation = agent.conversation().clone();
 
-    // Create new agent with new tools but same conversation
-    let provider = create_provider(&config)?;
-    let mut new_agent = Agent::new(provider, new_tools, config.agent.clone())?;
+  // Create new agent with new tools but same conversation
+  let provider = create_provider(&config)?;
+  let mut new_agent = Agent::new(provider, new_tools, config.agent.clone())?;
 
-    // Restore conversation history
-    new_agent.restore_conversation(conversation)?;
+  // Restore conversation history
+  new_agent.restore_conversation(conversation)?;
 
-    // Replace agent
-    *agent = new_agent;
+  // Replace agent
+  *agent = new_agent;
 
-    println!("✓ Switched from {:?} to {:?} mode", old_mode, mode_state.chat_mode);
-    Ok(())
+  println!("✓ Switched from {:?} to {:?} mode", old_mode, mode_state.chat_mode);
+  Ok(())
 }
 ```
 
@@ -470,21 +470,21 @@ Your goal is to execute the plan or task using the available tools effectively.
 
 ```rust
 impl Agent {
-    pub fn new_with_mode(
-        provider: impl Provider + 'static,
-        tools: ToolRegistry,
-        config: AgentConfig,
-        mode: ChatMode,
-        safety: SafetyMode,
-    ) -> Result<Self> {
-        let mut agent = Self::new(provider, tools, config)?;
+  pub fn new_with_mode(
+    provider: impl Provider + 'static,
+    tools: ToolRegistry,
+    config: AgentConfig,
+    mode: ChatMode,
+    safety: SafetyMode,
+  ) -> Result<Self> {
+    let mut agent = Self::new(provider, tools, config)?;
 
-        // Add mode-specific system prompt
-        let system_prompt = build_system_prompt(mode, safety);
-        agent.conversation.add_system_message(system_prompt);
+    // Add mode-specific system prompt
+    let system_prompt = build_system_prompt(mode, safety);
+    agent.conversation.add_system_message(system_prompt);
 
-        Ok(agent)
-    }
+    Ok(agent)
+  }
 }
 ```
 
@@ -498,28 +498,28 @@ impl Agent {
 
 ```rust
 pub enum PlanFormat {
-    Yaml,
-    Markdown,
-    MarkdownWithFrontmatter,
+  Yaml,
+  Markdown,
+  MarkdownWithFrontmatter,
 }
 
 pub fn detect_plan_format(content: &str) -> PlanFormat {
-    if content.trim_start().starts_with("---") {
-        PlanFormat::MarkdownWithFrontmatter
-    } else if content.trim_start().starts_with("# ") || content.contains("## ") {
-        PlanFormat::Markdown
-    } else {
-        PlanFormat::Yaml
-    }
+  if content.trim_start().starts_with("---") {
+    PlanFormat::MarkdownWithFrontmatter
+  } else if content.trim_start().starts_with("# ") || content.contains("## ") {
+    PlanFormat::Markdown
+  } else {
+    PlanFormat::Yaml
+  }
 }
 
 pub fn validate_plan(content: &str) -> Result<ValidatedPlan> {
-    let format = detect_plan_format(content);
-    match format {
-        PlanFormat::Yaml => validate_yaml_plan(content),
-        PlanFormat::Markdown => validate_markdown_plan(content),
-        PlanFormat::MarkdownWithFrontmatter => validate_frontmatter_plan(content),
-    }
+  let format = detect_plan_format(content);
+  match format {
+    PlanFormat::Yaml => validate_yaml_plan(content),
+    PlanFormat::Markdown => validate_markdown_plan(content),
+    PlanFormat::MarkdownWithFrontmatter => validate_frontmatter_plan(content),
+  }
 }
 ```
 
@@ -561,40 +561,40 @@ pub fn validate_plan(content: &str) -> Result<ValidatedPlan> {
 
 ```rust
 fn print_status(mode_state: &ChatModeState, agent: &Agent) {
-    println!("\n=== XZatoma Status ===");
-    println!("Mode: {:?}", mode_state.chat_mode);
-    println!("Safety: {:?}", mode_state.safety_mode);
-    println!("Tools: {}", agent.num_tools());
-    println!("Conversation turns: {}", agent.conversation().len());
-    println!("====================\n");
+  println!("\n=== XZatoma Status ===");
+  println!("Mode: {:?}", mode_state.chat_mode);
+  println!("Safety: {:?}", mode_state.safety_mode);
+  println!("Tools: {}", agent.num_tools());
+  println!("Conversation turns: {}", agent.conversation().len());
+  println!("====================\n");
 }
 
 fn print_help() {
-    println!("\n=== XZatoma Help ===");
-    println!("Special Commands:");
-    println!("  /mode planning, /planning  - Switch to Planning mode (read-only)");
-    println!("  /mode write, /write        - Switch to Write mode (read/write)");
-    println!("  /safe, /safety on          - Enable safety confirmations");
-    println!("  /yolo, /safety off         - Disable safety confirmations (YOLO mode)");
-    println!("  /status                    - Show current status");
-    println!("  /help                      - Show this help");
-    println!("  exit, quit                 - Exit chat");
-    println!("\nModes:");
-    println!("  Planning - Read files and create plans (safe, no modifications)");
-    println!("  Write    - Execute plans, modify files, run commands");
-    println!("====================\n");
+  println!("\n=== XZatoma Help ===");
+  println!("Special Commands:");
+  println!(" /mode planning, /planning - Switch to Planning mode (read-only)");
+  println!(" /mode write, /write    - Switch to Write mode (read/write)");
+  println!(" /safe, /safety on     - Enable safety confirmations");
+  println!(" /yolo, /safety off     - Disable safety confirmations (YOLO mode)");
+  println!(" /status          - Show current status");
+  println!(" /help           - Show this help");
+  println!(" exit, quit         - Exit chat");
+  println!("\nModes:");
+  println!(" Planning - Read files and create plans (safe, no modifications)");
+  println!(" Write  - Execute plans, modify files, run commands");
+  println!("====================\n");
 }
 
 fn format_prompt(mode_state: &ChatModeState) -> String {
-    let mode_indicator = match mode_state.chat_mode {
-        ChatMode::Planning => "[PLANNING]",
-        ChatMode::Write => "[WRITE]",
-    };
-    let safety_indicator = match mode_state.safety_mode {
-        SafetyMode::AlwaysConfirm => "[SAFE]",
-        SafetyMode::NeverConfirm => "[YOLO]",
-    };
-    format!("{}{} >> ", mode_indicator, safety_indicator)
+  let mode_indicator = match mode_state.chat_mode {
+    ChatMode::Planning => "[PLANNING]",
+    ChatMode::Write => "[WRITE]",
+  };
+  let safety_indicator = match mode_state.safety_mode {
+    SafetyMode::AlwaysConfirm => "[SAFE]",
+    SafetyMode::NeverConfirm => "[YOLO]",
+  };
+  format!("{}{} >> ", mode_indicator, safety_indicator)
 }
 ```
 
@@ -604,14 +604,14 @@ fn format_prompt(mode_state: &ChatModeState) -> String {
 
 ```rust
 fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
-    println!("\n╔════════════════════════════════════════╗");
-    println!("║     XZatoma Interactive Chat Mode      ║");
-    println!("╚════════════════════════════════════════╝");
-    println!();
-    println!("Starting in {:?} mode with {:?} safety", mode, safety);
-    println!();
-    println!("Type '/help' for commands, 'exit' to quit");
-    println!();
+  println!("\n╔════════════════════════════════════════╗");
+  println!("║   XZatoma Interactive Chat Mode   ║");
+  println!("╚════════════════════════════════════════╝");
+  println!();
+  println!("Starting in {:?} mode with {:?} safety", mode, safety);
+  println!();
+  println!("Type '/help' for commands, 'exit' to quit");
+  println!();
 }
 ```
 
@@ -707,18 +707,18 @@ fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
 
 ```yaml
 agent:
-  max_iterations: 10
+ max_iterations: 10
 ```
 
 **After:**
 
 ```yaml
 agent:
-  max_iterations: 10
-  chat:
-    default_mode: "planning"
-    default_safety: "confirm"
-    allow_mode_switching: true
+ max_iterations: 10
+ chat:
+  default_mode: "planning"
+  default_safety: "confirm"
+  allow_mode_switching: true
 ```
 
 ## Dependencies

@@ -12,16 +12,16 @@ This document describes recent changes to how the Copilot provider handles authe
 
 - Code:
 
-  - `src/providers/copilot.rs` — added helper to map API error responses, added best-effort cache invalidation on authentication failures, and updated request error handling to return authentication-specific errors for 401 responses.
-  - `src/error.rs` — added `XzatomaError::Authentication(String)` error variant to represent authentication failures explicitly.
+ - `src/providers/copilot.rs` — added helper to map API error responses, added best-effort cache invalidation on authentication failures, and updated request error handling to return authentication-specific errors for 401 responses.
+ - `src/error.rs` — added `XzatomaError::Authentication(String)` error variant to represent authentication failures explicitly.
 
 - Tests:
 
-  - Unit tests validating the API-error → `XzatomaError::Authentication` mapping (`test_format_copilot_api_error_unauthorized`).
-  - Display test for the new `Authentication` error (`test_authentication_error_display`).
+ - Unit tests validating the API-error → `XzatomaError::Authentication` mapping (`test_format_copilot_api_error_unauthorized`).
+ - Display test for the new `Authentication` error (`test_authentication_error_display`).
 
 - Docs:
-  - This document: `copilot_authentication_handling.md`
+ - This document: `copilot_authentication_handling.md`
 
 ## Implementation details
 
@@ -35,30 +35,30 @@ Copilot can return function/tool-call style responses without a `content` field,
 
 - Introduced an explicit error variant for authentication issues:
 
-  - `XzatomaError::Authentication(String)`
+ - `XzatomaError::Authentication(String)`
 
-  This makes handling and logging of auth failures clearer across the codebase and enables CLI UX improvements (e.g., special-purpose messaging or retry strategies in the future).
+ This makes handling and logging of auth failures clearer across the codebase and enables CLI UX improvements (e.g., special-purpose messaging or retry strategies in the future).
 
 2. API error formatting helper
 
 - A small helper was added to centralize the mapping of HTTP response status + body into a meaningful `XzatomaError`. Behavior:
 
-  - 401 → `XzatomaError::Authentication` with an actionable message that suggests re-authenticating:
-    - "Copilot returned error 401 Unauthorized: ... Token may have expired. Please run `xzatoma auth --provider copilot` to re-authenticate."
-  - Other statuses → `XzatomaError::Provider` (preserves the status and body in the message).
+ - 401 → `XzatomaError::Authentication` with an actionable message that suggests re-authenticating:
+  - "Copilot returned error 401 Unauthorized: ... Token may have expired. Please run `xzatoma auth --provider copilot` to re-authenticate."
+ - Other statuses → `XzatomaError::Provider` (preserves the status and body in the message).
 
 - Example implementation (refer to provider implementation for the exact source):
 
 ```xzatoma/src/providers/copilot.rs#L230-247
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        XzatomaError::Authentication(format!(
-            "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
-            status, body
-        ))
-    } else {
-        XzatomaError::Provider(format!("Copilot returned error {}: {}", status, body))
-    }
+  if status == reqwest::StatusCode::UNAUTHORIZED {
+    XzatomaError::Authentication(format!(
+      "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
+      status, body
+    ))
+  } else {
+    XzatomaError::Provider(format!("Copilot returned error {}: {}", status, body))
+  }
 }
 ```
 
@@ -70,28 +70,28 @@ fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaE
 
 ```xzatoma/src/providers/copilot.rs#L489-511
 fn clear_cached_token(&self) -> Result<()> {
-    match keyring::Entry::new(&self.keyring_service, &self.keyring_user) {
-        Ok(entry) => {
-            if let Err(e) = entry.set_password("") {
-                tracing::warn!("Failed to clear cached Copilot token: {}", e);
-            } else {
-                tracing::info!("Cleared cached Copilot token (set empty password) in keyring");
-            }
-        }
-        Err(e) => {
-            tracing::warn!("Keyring not available while clearing cached token: {}", e);
-        }
+  match keyring::Entry::new(&self.keyring_service, &self.keyring_user) {
+    Ok(entry) => {
+      if let Err(e) = entry.set_password("") {
+        tracing::warn!("Failed to clear cached Copilot token: {}", e);
+      } else {
+        tracing::info!("Cleared cached Copilot token (set empty password) in keyring");
+      }
     }
-    Ok(())
+    Err(e) => {
+      tracing::warn!("Keyring not available while clearing cached token: {}", e);
+    }
+  }
+  Ok(())
 }
 ```
 
 4. Updated request error handling
 
 - Both `fetch_copilot_models()` and the main completion path now:
-  - Detect non-success HTTP responses.
-  - If 401, attempt cache invalidation (best-effort) and return `XzatomaError::Authentication` with an actionable message.
-  - Otherwise, return a `XzatomaError::Provider` with status + body.
+ - Detect non-success HTTP responses.
+ - If 401, attempt cache invalidation (best-effort) and return `XzatomaError::Authentication` with an actionable message.
+ - Otherwise, return a `XzatomaError::Provider` with status + body.
 
 ### Rationale and trade-offs
 
@@ -103,15 +103,15 @@ fn clear_cached_token(&self) -> Result<()> {
 
 - Unit tests added:
 
-  - `test_format_copilot_api_error_unauthorized`: ensures 401 maps to `XzatomaError::Authentication`.
-  - `test_format_copilot_api_error_other`: ensures non-401 errors map to `XzatomaError::Provider`.
-  - `test_authentication_error_display` (in `src/error.rs`): validates the `Authentication` display string.
+ - `test_format_copilot_api_error_unauthorized`: ensures 401 maps to `XzatomaError::Authentication`.
+ - `test_format_copilot_api_error_other`: ensures non-401 errors map to `XzatomaError::Provider`.
+ - `test_authentication_error_display` (in `src/error.rs`): validates the `Authentication` display string.
 
 - Manual verification:
-  - Simulated 401 response yields an error message containing "token expired" and clear instruction to run:
-    ```
-    Copilot returned error 401 Unauthorized: unauthorized: token expired. Token may have expired. Please run `xzatoma auth --provider copilot` to re-authenticate.
-    ```
+ - Simulated 401 response yields an error message containing "token expired" and clear instruction to run:
+  ```
+  Copilot returned error 401 Unauthorized: unauthorized: token expired. Token may have expired. Please run `xzatoma auth --provider copilot` to re-authenticate.
+  ```
 
 ## Usage examples
 
@@ -123,9 +123,9 @@ Copilot returned error 401 Unauthorized: unauthorized: token expired. Token may 
 
 - To recover:
 
-  - Run: `xzatoma auth --provider copilot`
-  - Follow the device-flow instructions printed by the CLI (visit verification URL and enter code).
-  - Re-run your model/list or completion command.
+ - Run: `xzatoma auth --provider copilot`
+ - Follow the device-flow instructions printed by the CLI (visit verification URL and enter code).
+ - Re-run your model/list or completion command.
 
 ## Validation results
 
@@ -144,8 +144,8 @@ Copilot returned error 401 Unauthorized: unauthorized: token expired. Token may 
 ## References
 
 - Source changes:
-  - `src/providers/copilot.rs` — API error mapping & cache invalidation additions
-  - `src/error.rs` — new `XzatomaError::Authentication` variant
+ - `src/providers/copilot.rs` — API error mapping & cache invalidation additions
+ - `src/error.rs` — new `XzatomaError::Authentication` variant
 - Related docs:
-  - `copilot_dynamic_model_fetching.md` (model management)
-  - This file: `copilot_authentication_handling.md`
+ - `copilot_dynamic_model_fetching.md` (model management)
+ - This file: `copilot_authentication_handling.md`

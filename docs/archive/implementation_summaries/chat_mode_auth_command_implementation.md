@@ -26,34 +26,34 @@ Reference (parsing snippet):
 ```xzatoma/src/commands/special_commands.rs#L120-152
 "/auth" => SpecialCommand::Auth(None),
 input if input.starts_with("/auth ") => {
-    let rest = input[6..].trim();
-    if !rest.is_empty() {
-        SpecialCommand::Auth(Some(rest.to_string()))
-    } else {
-        SpecialCommand::None
-    }
+  let rest = input[6..].trim();
+  if !rest.is_empty() {
+    SpecialCommand::Auth(Some(rest.to_string()))
+  } else {
+    SpecialCommand::None
+  }
 }
 ```
 
 Chat-mode execution
 - When `/auth` is entered in chat mode, the interactive loop performs:
-  - Resolve which provider to authenticate: explicit argument or current session provider.
-  - Print a short, clear message that the authentication flow is starting.
-  - Call the existing auth helper (`auth::authenticate(config.clone(), provider)`) which:
-    - For `copilot` executes the OAuth device flow (prints verification URI + code and polls until success).
-    - For `ollama` prints instructions since it typically uses a local server.
-  - The chat loop catches and prints errors but does not exit the session on failure.
+ - Resolve which provider to authenticate: explicit argument or current session provider.
+ - Print a short, clear message that the authentication flow is starting.
+ - Call the existing auth helper (`auth::authenticate(config.clone(), provider)`) which:
+  - For `copilot` executes the OAuth device flow (prints verification URI + code and polls until success).
+  - For `ollama` prints instructions since it typically uses a local server.
+ - The chat loop catches and prints errors but does not exit the session on failure.
 
 Reference (chat loop handling snippet):
 ```xzatoma/src/commands/mod.rs#L161-188
 SpecialCommand::Auth(provider_opt) => {
-    let provider_to_auth = provider_opt.unwrap_or_else(|| provider_type.to_string());
-    println!("Starting authentication for provider: {}", provider_to_auth);
-    match auth::authenticate(config.clone(), provider_to_auth).await {
-        Ok(_) => println!("Authentication completed."),
-        Err(e) => eprintln!("Authentication failed: {}", e),
-    }
-    continue;
+  let provider_to_auth = provider_opt.unwrap_or_else(|| provider_type.to_string());
+  println!("Starting authentication for provider: {}", provider_to_auth);
+  match auth::authenticate(config.clone(), provider_to_auth).await {
+    Ok(_) => println!("Authentication completed."),
+    Err(e) => eprintln!("Authentication failed: {}", e),
+  }
+  continue;
 }
 ```
 
@@ -66,17 +66,17 @@ Notes:
 
 Unit tests
 - Parser tests added for:
-  - `/auth` → `SpecialCommand::Auth(None)`
-  - `/auth copilot` → `SpecialCommand::Auth(Some("copilot"))`
+ - `/auth` → `SpecialCommand::Auth(None)`
+ - `/auth copilot` → `SpecialCommand::Auth(Some("copilot"))`
 
 Manual validation
 1. Start interactive chat mode:
-   - `xzatoma chat` (or whatever your normal entrypoint is)
+  - `xzatoma chat` (or whatever your normal entrypoint is)
 2. Run `/auth`
-   - The CLI prints an instruction message indicating the provider that will be authenticated.
+  - The CLI prints an instruction message indicating the provider that will be authenticated.
 3. For Copilot, follow the device flow:
-   - Visit the printed verification URI and enter the user code.
-   - Authentication should succeed and the keyring entry will be updated.
+  - Visit the printed verification URI and enter the user code.
+  - Authentication should succeed and the keyring entry will be updated.
 4. Confirm the chat session remains active and usable after authentication.
 
 Automated tests
@@ -91,7 +91,7 @@ Starting authentication for provider: copilot (this may prompt you to visit a UR
 Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)...
 (...) follow the device flow steps in your browser ...
 Authentication completed.
->  # (Chat prompt continues)
+> # (Chat prompt continues)
 ```
 
 Auth a specific provider from chat

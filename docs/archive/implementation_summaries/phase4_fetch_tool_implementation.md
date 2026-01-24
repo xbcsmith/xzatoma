@@ -27,43 +27,43 @@ The implementation builds on Phase 3's grep tool foundation and integrates seaml
 
 **Security Components**
 - `SsrfValidator` (180 lines) - Comprehensive SSRF prevention
-  - Blocks dangerous URL schemes (file://, ftp://)
-  - Blocks private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8)
-  - Blocks link-local addresses (169.254.0.0/16)
-  - Blocks broadcast addresses
-  - Supports IPv4 and IPv6 validation
-  - Testing mode to allow private IPs for local development
+ - Blocks dangerous URL schemes (file://, ftp://)
+ - Blocks private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8)
+ - Blocks link-local addresses (169.254.0.0/16)
+ - Blocks broadcast addresses
+ - Supports IPv4 and IPv6 validation
+ - Testing mode to allow private IPs for local development
 
 - `RateLimiter` (70 lines) - Token-bucket rate limiting
-  - Tracks request timestamps
-  - Enforces max requests per minute
-  - Automatic cleanup of old requests outside time window
+ - Tracks request timestamps
+ - Enforces max requests per minute
+ - Automatic cleanup of old requests outside time window
 
 **Content Handling**
 - `FetchedContent` (50 lines) - Fetched content with metadata
-  - Content, URL, content-type, size tracking
-  - Truncation detection
-  - HTTP status code preservation
-  - Formatted output with headers and metadata
+ - Content, URL, content-type, size tracking
+ - Truncation detection
+ - HTTP status code preservation
+ - Formatted output with headers and metadata
 
 **HTML Conversion**
 - `html_to_markdown()` method (100 lines)
-  - Removes script and style tags
-  - Converts headers (h1-h6) to Markdown
-  - Converts paragraphs, links, bold, italic
-  - Converts line breaks
-  - Removes remaining HTML tags
-  - Cleans up excess whitespace
-  - Handles JSON pretty-printing
-  - Binary content detection via NUL byte checking
+ - Removes script and style tags
+ - Converts headers (h1-h6) to Markdown
+ - Converts paragraphs, links, bold, italic
+ - Converts line breaks
+ - Removes remaining HTML tags
+ - Cleans up excess whitespace
+ - Handles JSON pretty-printing
+ - Binary content detection via NUL byte checking
 
 #### Configuration (`src/config.rs`)
 
 Added to `ToolsConfig`:
 ```rust
-pub fetch_timeout_seconds: u64,              // Default: 30s
-pub max_fetch_size_bytes: usize,             // Default: 5 MB
-pub max_fetches_per_minute: u32,             // Default: 10
+pub fetch_timeout_seconds: u64,       // Default: 30s
+pub max_fetch_size_bytes: usize,       // Default: 5 MB
+pub max_fetches_per_minute: u32,       // Default: 10
 pub fetch_allowed_domains: Option<Vec<String>>, // Optional allowlist
 pub fetch_blocked_domains: Option<Vec<String>>, // Optional blocklist
 ```
@@ -104,17 +104,17 @@ pub fetch_blocked_domains: Option<Vec<String>>, // Optional blocklist
 **Security Flow**
 ```
 User Input
-    ↓
+  ↓
 URL Parse (check format)
-    ↓
+  ↓
 Scheme Validate (http/https only)
-    ↓
+  ↓
 Host Validate (not localhost)
-    ↓
+  ↓
 IP Validate (not private/reserved)
-    ↓
+  ↓
 Rate Limit Check (max 10/min)
-    ↓
+  ↓
 HTTP Fetch
 ```
 
@@ -255,43 +255,43 @@ The system will:
 **Blocked Examples**
 ```rust
 // File protocol blocked
-tool.fetch("file:///etc/passwd").await  // Error
+tool.fetch("file:///etc/passwd").await // Error
 
 // Localhost blocked
-tool.fetch("http://localhost:8080").await  // Error
+tool.fetch("http://localhost:8080").await // Error
 
 // Private IPs blocked
-tool.fetch("http://192.168.1.1").await  // Error
+tool.fetch("http://192.168.1.1").await // Error
 
 // Loopback blocked
-tool.fetch("http://127.0.0.1").await  // Error
+tool.fetch("http://127.0.0.1").await // Error
 ```
 
 **Allowed Examples**
 ```rust
 // Public HTTPS
-tool.fetch("https://example.com").await  // OK
+tool.fetch("https://example.com").await // OK
 
 // Public HTTP
-tool.fetch("http://example.com:8000").await  // OK
+tool.fetch("http://example.com:8000").await // OK
 
 // With path and query
-tool.fetch("https://docs.rs/tokio/latest/tokio").await  // OK
+tool.fetch("https://docs.rs/tokio/latest/tokio").await // OK
 ```
 
 ### Configuration Examples
 
 ```yaml
 tools:
-  fetch_timeout_seconds: 30
-  max_fetch_size_bytes: 5242880  # 5 MB
-  max_fetches_per_minute: 10
-  fetch_allowed_domains:
-    - "*.example.com"
-    - "docs.rs"
-    - "github.com"
-  fetch_blocked_domains:
-    - "internal.example.com"
+ fetch_timeout_seconds: 30
+ max_fetch_size_bytes: 5242880 # 5 MB
+ max_fetches_per_minute: 10
+ fetch_allowed_domains:
+  - "*.example.com"
+  - "docs.rs"
+  - "github.com"
+ fetch_blocked_domains:
+  - "internal.example.com"
 ```
 
 ## Dependencies
@@ -312,10 +312,10 @@ tools:
 
 ### Code Quality Checks
 
-- ✅ `cargo fmt --all` - All code properly formatted
-- ✅ `cargo check --all-targets --all-features` - Compiles without errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ `cargo test --all-features` - 369 tests passed
+- `cargo fmt --all` - All code properly formatted
+- `cargo check --all-targets --all-features` - Compiles without errors
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- `cargo test --all-features` - 369 tests passed
 
 ### Test Coverage
 

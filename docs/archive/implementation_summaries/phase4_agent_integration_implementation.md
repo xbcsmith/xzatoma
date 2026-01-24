@@ -30,10 +30,10 @@ Phase 4 implements token usage tracking and context window awareness at the Agen
 
 ### 3. ContextInfo Type (src/agent/conversation.rs) - ~65 lines
 - New `ContextInfo` struct with fields:
-  - `max_tokens: usize` - context window maximum
-  - `used_tokens: usize` - tokens used so far
-  - `remaining_tokens: usize` - tokens available before hitting limit
-  - `percentage_used: f64` - percentage of context consumed (0.0-100.0)
+ - `max_tokens: usize` - context window maximum
+ - `used_tokens: usize` - tokens used so far
+ - `remaining_tokens: usize` - tokens available before hitting limit
+ - `percentage_used: f64` - percentage of context consumed (0.0-100.0)
 - `ContextInfo::new(max_tokens, used_tokens)` constructor with overflow protection
 - Calculates remaining tokens and percentage automatically
 - Handles edge cases (zero context window, used tokens exceeding maximum)
@@ -48,26 +48,26 @@ Phase 4 implements token usage tracking and context window awareness at the Agen
 The agent uses a two-level tracking approach:
 
 1. **Agent-level (Arc<Mutex<Option<TokenUsage>>>)**:
-   - Accumulates across multiple `execute()` calls on the same agent instance
-   - Thread-safe via Mutex for interior mutability with immutable reference
-   - Accessed via `get_token_usage()` for total session usage
+  - Accumulates across multiple `execute()` calls on the same agent instance
+  - Thread-safe via Mutex for interior mutability with immutable reference
+  - Accessed via `get_token_usage()` for total session usage
 
 2. **Conversation-level (Option<TokenUsage>)**:
-   - Tracks provider usage within a single conversation
-   - Cloned when `execute()` begins, accumulates during execution
-   - Allows per-conversation token tracking alongside agent-level accumulation
+  - Tracks provider usage within a single conversation
+  - Cloned when `execute()` begins, accumulates during execution
+  - Allows per-conversation token tracking alongside agent-level accumulation
 
 ### Token Usage Update Flow
 
 ```
 Provider.complete() -> CompletionResponse {message, usage}
-    ↓
+  ↓
 execute() method receives CompletionResponse
-    ↓
+  ↓
 If usage.is_some():
-  - conversation.update_from_provider_usage(usage)
-  - agent.accumulated_usage lock and accumulate
-    ↓
+ - conversation.update_from_provider_usage(usage)
+ - agent.accumulated_usage lock and accumulate
+  ↓
 Agent maintains cumulative totals across executions
 ```
 
@@ -90,22 +90,22 @@ This ensures:
 
 ```rust
 pub struct Agent {
-    // ... other fields
-    accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
+  // ... other fields
+  accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
 }
 
 // In execute() - accumulate on each completion
 if let Some(usage) = completion_response.usage {
-    let mut accumulated = self.accumulated_usage.lock().unwrap();
-    if let Some(existing) = *accumulated {
-        *accumulated = Some(TokenUsage::new(
-            existing.prompt_tokens + usage.prompt_tokens,
-            existing.completion_tokens + usage.completion_tokens,
-        ));
-    } else {
-        *accumulated = Some(usage);
-    }
-    drop(accumulated); // Explicit drop to release lock
+  let mut accumulated = self.accumulated_usage.lock().unwrap();
+  if let Some(existing) = *accumulated {
+    *accumulated = Some(TokenUsage::new(
+      existing.prompt_tokens + usage.prompt_tokens,
+      existing.completion_tokens + usage.completion_tokens,
+    ));
+  } else {
+    *accumulated = Some(usage);
+  }
+  drop(accumulated); // Explicit drop to release lock
 }
 ```
 
@@ -113,14 +113,14 @@ if let Some(usage) = completion_response.usage {
 
 ```rust
 pub fn new(max_tokens: usize, used_tokens: usize) -> Self {
-    let used_tokens = used_tokens.min(max_tokens);  // Clamp to max
-    let remaining_tokens = max_tokens - used_tokens; // Safe subtraction
-    let percentage_used = if max_tokens == 0 {
-        0.0
-    } else {
-        (used_tokens as f64 / max_tokens as f64) * 100.0
-    };
-    // ...
+  let used_tokens = used_tokens.min(max_tokens); // Clamp to max
+  let remaining_tokens = max_tokens - used_tokens; // Safe subtraction
+  let percentage_used = if max_tokens == 0 {
+    0.0
+  } else {
+    (used_tokens as f64 / max_tokens as f64) * 100.0
+  };
+  // ...
 }
 ```
 
@@ -216,8 +216,8 @@ let result = agent.execute("Write a poem").await?;
 
 // Get accumulated token usage
 if let Some(usage) = agent.get_token_usage() {
-    println!("Session used {} prompt tokens and {} completion tokens",
-             usage.prompt_tokens, usage.completion_tokens);
+  println!("Session used {} prompt tokens and {} completion tokens",
+       usage.prompt_tokens, usage.completion_tokens);
 }
 ```
 
@@ -229,12 +229,12 @@ let _ = agent.execute("Complex task").await?;
 
 let context = agent.get_context_info(8192); // 8k context window
 println!("Context: {}/{} tokens ({:.1}% used)",
-         context.used_tokens,
-         context.max_tokens,
-         context.percentage_used);
+     context.used_tokens,
+     context.max_tokens,
+     context.percentage_used);
 
 if context.percentage_used > 80.0 {
-    println!("Warning: Approaching context limit!");
+  println!("Warning: Approaching context limit!");
 }
 ```
 
@@ -253,33 +253,33 @@ println!("Conversation: {}/{} tokens", context.used_tokens, context.max_tokens);
 
 ## Backward Compatibility
 
-- ✅ Existing agent code works unchanged
-- ✅ execute() signature unchanged (still takes `&self`)
-- ✅ Provider trait unchanged (usage is optional)
-- ✅ All existing tests pass
-- ✅ No breaking changes to public API
+- Existing agent code works unchanged
+- execute() signature unchanged (still takes `&self`)
+- Provider trait unchanged (usage is optional)
+- All existing tests pass
+- No breaking changes to public API
 
 ## Future Enhancements
 
 1. **Context Window Prediction**
-   - Estimate when context limit will be reached based on current burn rate
-   - Suggest pruning or summarization before hitting limits
+  - Estimate when context limit will be reached based on current burn rate
+  - Suggest pruning or summarization before hitting limits
 
 2. **Token-Based Routing**
-   - Route expensive operations to models with larger context windows
-   - Automatically select appropriate model based on conversation size
+  - Route expensive operations to models with larger context windows
+  - Automatically select appropriate model based on conversation size
 
 3. **Cost Tracking**
-   - Combine token usage with provider pricing
-   - Estimate execution cost before running expensive tasks
+  - Combine token usage with provider pricing
+  - Estimate execution cost before running expensive tasks
 
 4. **Adaptive Pruning**
-   - Use provider token counts to make more accurate pruning decisions
-   - Trigger pruning based on actual token usage rather than character heuristic
+  - Use provider token counts to make more accurate pruning decisions
+  - Trigger pruning based on actual token usage rather than character heuristic
 
 5. **Multi-Provider Cost Comparison**
-   - Use token metrics to compare cost-performance across providers
-   - Optimize provider selection based on task characteristics
+  - Use token metrics to compare cost-performance across providers
+  - Optimize provider selection based on task characteristics
 
 ## Files Modified
 
@@ -303,22 +303,22 @@ println!("Conversation: {}/{} tokens", context.used_tokens, context.max_tokens);
 ## Validation Results
 
 ### Code Quality
-- ✅ `cargo fmt --all` applied successfully
-- ✅ `cargo check --all-targets --all-features` passes with zero errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
-- ✅ `cargo test --all-features` passes with 932 tests (455 lib + 419 bin + 58 doc)
+- `cargo fmt --all` applied successfully
+- `cargo check --all-targets --all-features` passes with zero errors
+- `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- `cargo test --all-features` passes with 932 tests (455 lib + 419 bin + 58 doc)
 
 ### Test Coverage
-- ✅ Token usage accumulation: 2 async tests
-- ✅ Context info calculation: 6 sync tests
-- ✅ Conversation integration: 3 async + 2 sync tests
-- ✅ Edge cases: overflow protection, fallback behavior
-- ✅ Integration with existing tests: no regressions
+- Token usage accumulation: 2 async tests
+- Context info calculation: 6 sync tests
+- Conversation integration: 3 async + 2 sync tests
+- Edge cases: overflow protection, fallback behavior
+- Integration with existing tests: no regressions
 
 ### Performance
-- ✅ Mutex contention minimal (lock held briefly during accumulation)
-- ✅ No additional allocations per execute() call
-- ✅ ContextInfo calculation O(1) time complexity
+- Mutex contention minimal (lock held briefly during accumulation)
+- No additional allocations per execute() call
+- ContextInfo calculation O(1) time complexity
 
 ## References
 

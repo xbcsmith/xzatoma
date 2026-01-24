@@ -12,11 +12,11 @@ Represents detailed information about an AI model.
 
 ```rust
 pub struct ModelInfo {
-    pub name: String,
-    pub display_name: String,
-    pub context_window: usize,
-    pub capabilities: Vec<ModelCapability>,
-    pub provider_specific: HashMap<String, String>,
+  pub name: String,
+  pub display_name: String,
+  pub context_window: usize,
+  pub capabilities: Vec<ModelCapability>,
+  pub provider_specific: HashMap<String, String>,
 }
 ```
 
@@ -32,9 +32,9 @@ pub struct ModelInfo {
 
 ```rust
 pub fn new(
-    name: impl Into<String>,
-    display_name: impl Into<String>,
-    context_window: usize,
+  name: impl Into<String>,
+  display_name: impl Into<String>,
+  context_window: usize,
 ) -> Self
 
 pub fn add_capability(&mut self, capability: ModelCapability)
@@ -50,11 +50,11 @@ Enumeration of model capabilities.
 
 ```rust
 pub enum ModelCapability {
-    LongContext,
-    FunctionCalling,
-    Vision,
-    Streaming,
-    JsonMode,
+  LongContext,
+  FunctionCalling,
+  Vision,
+  Streaming,
+  JsonMode,
 }
 ```
 
@@ -72,9 +72,9 @@ Tracks token consumption for a request or session.
 
 ```rust
 pub struct TokenUsage {
-    pub prompt_tokens: usize,
-    pub completion_tokens: usize,
-    pub total_tokens: usize,
+  pub prompt_tokens: usize,
+  pub completion_tokens: usize,
+  pub total_tokens: usize,
 }
 ```
 
@@ -96,10 +96,10 @@ Provides context window utilization metrics.
 
 ```rust
 pub struct ContextInfo {
-    pub max_tokens: usize,
-    pub used_tokens: usize,
-    pub remaining_tokens: usize,
-    pub percentage_used: f64,
+  pub max_tokens: usize,
+  pub used_tokens: usize,
+  pub remaining_tokens: usize,
+  pub percentage_used: f64,
 }
 ```
 
@@ -126,11 +126,11 @@ Describes what model management features a provider supports.
 
 ```rust
 pub struct ProviderCapabilities {
-    pub supports_model_listing: bool,
-    pub supports_model_details: bool,
-    pub supports_model_switching: bool,
-    pub supports_token_counts: bool,
-    pub supports_streaming: bool,
+  pub supports_model_listing: bool,
+  pub supports_model_details: bool,
+  pub supports_model_switching: bool,
+  pub supports_token_counts: bool,
+  pub supports_streaming: bool,
 }
 ```
 
@@ -162,7 +162,7 @@ async fn list_models(&self) -> Result<Vec<ModelInfo>>
 ```rust
 let models = provider.list_models().await?;
 for model in models {
-    println!("{}: {} tokens", model.display_name, model.context_window);
+  println!("{}: {} tokens", model.display_name, model.context_window);
 }
 ```
 
@@ -271,7 +271,7 @@ A `ProviderCapabilities` struct describing supported features.
 ```rust
 let caps = provider.get_provider_capabilities();
 if caps.supports_model_switching {
-    provider.set_model("new-model".to_string()).await?;
+  provider.set_model("new-model".to_string()).await?;
 }
 ```
 
@@ -298,7 +298,7 @@ pub fn get_token_usage(&self) -> Option<TokenUsage>
 
 ```rust
 if let Some(usage) = agent.get_token_usage() {
-    println!("Total tokens used: {}", usage.total_tokens);
+  println!("Total tokens used: {}", usage.total_tokens);
 }
 ```
 
@@ -325,7 +325,7 @@ let context = agent.get_context_info(8192);
 println!("{:.1}% of context used", context.percentage_used);
 
 if context.percentage_used > 80.0 {
-    println!("Warning: Approaching context limit!");
+  println!("Warning: Approaching context limit!");
 }
 ```
 
@@ -479,9 +479,9 @@ Shows current model, context window size, tokens used, remaining tokens, usage p
 
 ```yaml
 provider:
-  provider_type: copilot
-  copilot:
-    model: gpt-4o
+ provider_type: copilot
+ copilot:
+  model: gpt-4o
 ```
 
 ### Ollama
@@ -502,10 +502,10 @@ All models available on the local Ollama instance.
 
 ```yaml
 provider:
-  provider_type: ollama
-  ollama:
-    host: http://localhost:11434
-    model: qwen2.5-coder:7b
+ provider_type: ollama
+ ollama:
+  host: http://localhost:11434
+  model: qwen2.5-coder:7b
 ```
 
 **Dynamic Discovery:**
@@ -558,8 +558,8 @@ Monitor context window usage:
 let context = agent.get_context_info(model_context_window);
 
 if context.percentage_used > 80.0 {
-    // Consider switching to a model with larger context
-    // Or prune conversation history
+  // Consider switching to a model with larger context
+  // Or prune conversation history
 }
 ```
 
@@ -569,12 +569,12 @@ Use provider-reported tokens when available:
 
 ```rust
 if let Some(usage) = agent.get_token_usage() {
-    // Accurate counts from provider
-    println!("Exact tokens: {}", usage.total_tokens);
+  // Accurate counts from provider
+  println!("Exact tokens: {}", usage.total_tokens);
 } else {
-    // Fall back to heuristic
-    let context = agent.get_context_info(max_tokens);
-    println!("Estimated tokens: {}", context.used_tokens);
+  // Fall back to heuristic
+  let context = agent.get_context_info(max_tokens);
+  println!("Estimated tokens: {}", context.used_tokens);
 }
 ```
 
@@ -601,7 +601,7 @@ let mut provider = create_provider("ollama", &config.provider)?;
 // List available models
 let models = provider.list_models().await?;
 for model in models {
-    println!("{}: {} tokens", model.name, model.context_window);
+  println!("{}: {} tokens", model.name, model.context_window);
 }
 
 // Get current model
@@ -624,15 +624,15 @@ use xzatoma::agent::Agent;
 let agent = Agent::new(provider, tools, config)?;
 
 loop {
-    let result = agent.execute(&prompt).await?;
+  let result = agent.execute(&prompt).await?;
 
-    let context = agent.get_context_info(8192);
-    println!("Context usage: {:.1}%", context.percentage_used);
+  let context = agent.get_context_info(8192);
+  println!("Context usage: {:.1}%", context.percentage_used);
 
-    if context.percentage_used > 90.0 {
-        eprintln!("Warning: Context nearly full!");
-        break;
-    }
+  if context.percentage_used > 90.0 {
+    eprintln!("Warning: Context nearly full!");
+    break;
+  }
 }
 ```
 

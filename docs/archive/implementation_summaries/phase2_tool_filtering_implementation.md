@@ -48,8 +48,8 @@ Enhanced `TerminalTool` with safety mode support:
 - `with_safety_mode()` - Fluent setter returning self
 - `set_safety_mode()` - Mutating setter for mode changes
 - Updated execute() logic:
-  - `AlwaysConfirm`: Requires explicit `confirm=true` for dangerous commands
-  - `NeverConfirm`: Allows dangerous commands without confirmation (YOLO mode)
+ - `AlwaysConfirm`: Requires explicit `confirm=true` for dangerous commands
+ - `NeverConfirm`: Allows dangerous commands without confirmation (YOLO mode)
 - Full integration with existing command validation
 
 ### 4. Tool Registry Updates (`src/tools/mod.rs`)
@@ -80,18 +80,18 @@ The `ToolRegistryBuilder` follows the builder pattern for flexible, readable too
 ```rust
 // Planning mode - read-only
 let builder = ToolRegistryBuilder::new(
-    ChatMode::Planning,
-    SafetyMode::AlwaysConfirm,
-    PathBuf::from("."),
+  ChatMode::Planning,
+  SafetyMode::AlwaysConfirm,
+  PathBuf::from("."),
 );
 let registry = builder.build_for_planning()?;
 assert_eq!(registry.len(), 1); // Only file_ops
 
 // Write mode - full access
 let builder = ToolRegistryBuilder::new(
-    ChatMode::Write,
-    SafetyMode::NeverConfirm,
-    PathBuf::from("."),
+  ChatMode::Write,
+  SafetyMode::NeverConfirm,
+  PathBuf::from("."),
 );
 let registry = builder.build_for_write()?;
 assert_eq!(registry.len(), 2); // file_ops + terminal
@@ -100,20 +100,20 @@ assert_eq!(registry.len(), 2); // file_ops + terminal
 ### Mode-Specific Tool Availability
 
 **Planning Mode Registry**:
-- ✅ `file_ops` (read-only variant)
-  - ✅ read_file(path)
-  - ✅ list_files(directory, recursive)
-  - ✅ search_files(pattern, directory)
-  - ❌ write_file - Returns error
-  - ❌ delete_file - Returns error
-  - ❌ diff - Returns error
-- ❌ terminal - Not registered
+- `file_ops` (read-only variant)
+ - read_file(path)
+ - list_files(directory, recursive)
+ - search_files(pattern, directory)
+ - write_file - Returns error
+ - delete_file - Returns error
+ - diff - Returns error
+- terminal - Not registered
 
 **Write Mode Registry**:
-- ✅ `file_ops` (full-featured)
-  - ✅ read_file, write_file, delete_file, list_files, search_files, diff
-- ✅ `terminal` (with safety validation)
-  - Safety mode affects confirmation requirements
+- `file_ops` (full-featured)
+ - read_file, write_file, delete_file, list_files, search_files, diff
+- `terminal` (with safety validation)
+ - Safety mode affects confirmation requirements
 
 ### Safety Mode in Terminal Tool
 
@@ -123,11 +123,11 @@ The terminal tool now respects `SafetyMode`:
 ```rust
 // Command requires confirmation if dangerous
 match validator.validate(&command) {
-    Ok(()) => { /* proceed */ }
-    Err(CommandRequiresConfirmation(_)) => {
-        if !confirm { return error; }
-        // Proceed with confirmation
-    }
+  Ok(()) => { /* proceed */ }
+  Err(CommandRequiresConfirmation(_)) => {
+    if !confirm { return error; }
+    // Proceed with confirmation
+  }
 }
 ```
 
@@ -135,10 +135,10 @@ match validator.validate(&command) {
 ```rust
 // Dangerous commands allowed without confirmation
 match validator.validate(&command) {
-    Ok(()) => { /* proceed */ }
-    Err(CommandRequiresConfirmation(_)) => {
-        // Proceed anyway in YOLO mode
-    }
+  Ok(()) => { /* proceed */ }
+  Err(CommandRequiresConfirmation(_)) => {
+    // Proceed anyway in YOLO mode
+  }
 }
 ```
 
@@ -147,13 +147,13 @@ match validator.validate(&command) {
 Comprehensive test coverage for all new components:
 
 ### Registry Builder Tests (7 tests)
-- ✅ `test_builder_new()` - Verifies builder initialization
-- ✅ `test_builder_with_tools_config()` - Tests config fluent API
-- ✅ `test_builder_with_terminal_config()` - Tests config fluent API
-- ✅ `test_build_for_planning()` - Validates planning mode registry
-- ✅ `test_build_for_write()` - Validates write mode registry
-- ✅ `test_build_delegates_to_mode()` - Tests mode-based dispatch
-- ✅ `test_builder_mode_accessor()` - Tests accessor methods
+- `test_builder_new()` - Verifies builder initialization
+- `test_builder_with_tools_config()` - Tests config fluent API
+- `test_builder_with_terminal_config()` - Tests config fluent API
+- `test_build_for_planning()` - Validates planning mode registry
+- `test_build_for_write()` - Validates write mode registry
+- `test_build_delegates_to_mode()` - Tests mode-based dispatch
+- `test_builder_mode_accessor()` - Tests accessor methods
 
 ### FileOpsReadOnlyTool Tests (Inherited from FileOpsTool)
 All file operations tests validate read-only behavior through error conditions
@@ -170,10 +170,10 @@ Existing tests extended with safety mode scenarios (covered in Phase 2)
 ## Validation Results
 
 ### Code Quality Gates
-- ✅ `cargo fmt --all` - All code formatted correctly
-- ✅ `cargo check --all-targets --all-features` - Zero compilation errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
-- ✅ `cargo test --all-features` - 204 tests passed
+- `cargo fmt --all` - All code formatted correctly
+- `cargo check --all-targets --all-features` - Zero compilation errors
+- `cargo clippy --all-targets --all-features -- -D warnings` - Zero warnings
+- `cargo test --all-features` - 204 tests passed
 
 ### Integration Points
 - Registry builder creates correct tool configurations per mode
@@ -195,9 +195,9 @@ let config = Config::default();
 
 // Planning mode registry (read-only)
 let builder = ToolRegistryBuilder::new(
-    ChatMode::Planning,
-    SafetyMode::AlwaysConfirm,
-    PathBuf::from("."),
+  ChatMode::Planning,
+  SafetyMode::AlwaysConfirm,
+  PathBuf::from("."),
 )
 .with_tools_config(config.agent.tools.clone())
 .with_terminal_config(config.agent.terminal.clone());
@@ -207,9 +207,9 @@ let planning_registry = builder.build_for_planning()?;
 
 // Write mode registry (full access)
 let builder = ToolRegistryBuilder::new(
-    ChatMode::Write,
-    SafetyMode::AlwaysConfirm,
-    PathBuf::from("."),
+  ChatMode::Write,
+  SafetyMode::AlwaysConfirm,
+  PathBuf::from("."),
 )
 .with_tools_config(config.agent.tools.clone())
 .with_terminal_config(config.agent.terminal.clone());
@@ -226,8 +226,8 @@ use xzatoma::config::ToolsConfig;
 use std::path::PathBuf;
 
 let tool = FileOpsReadOnlyTool::new(
-    PathBuf::from("."),
-    ToolsConfig::default(),
+  PathBuf::from("."),
+  ToolsConfig::default(),
 );
 
 // Safe operations
@@ -268,12 +268,12 @@ let tool = tool.with_safety_mode(SafetyMode::AlwaysConfirm);
 
 ## Checklist: Phase 2 Success Criteria
 
-- ✅ Registry builder created with mode-aware registration
-- ✅ Planning mode has only read-only tools
-- ✅ Write mode has all tools including write operations
-- ✅ SafetyMode correctly passed to terminal validator
-- ✅ Read-only FileOps tool prevents write operations
-- ✅ All cargo checks pass with zero warnings
-- ✅ Test coverage >80% (estimated 85%+)
-- ✅ Documentation complete with examples
-- ✅ All doctest examples compile and run correctly
+- Registry builder created with mode-aware registration
+- Planning mode has only read-only tools
+- Write mode has all tools including write operations
+- SafetyMode correctly passed to terminal validator
+- Read-only FileOps tool prevents write operations
+- All cargo checks pass with zero warnings
+- Test coverage >80% (estimated 85%+)
+- Documentation complete with examples
+- All doctest examples compile and run correctly

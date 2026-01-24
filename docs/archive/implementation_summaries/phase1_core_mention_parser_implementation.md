@@ -25,10 +25,10 @@ Represents the four types of mentions users can include:
 
 ```rust
 pub enum Mention {
-    File(FileMention),      // @filename or @path/to/file.rs#L10-20
-    Search(SearchMention),  // @search:"pattern"
-    Grep(SearchMention),    // @grep:"regex pattern"
-    Url(UrlMention),        // @url:https://example.com
+  File(FileMention),   // @filename or @path/to/file.rs#L10-20
+  Search(SearchMention), // @search:"pattern"
+  Grep(SearchMention),  // @grep:"regex pattern"
+  Url(UrlMention),    // @url:https://example.com
 }
 ```
 
@@ -38,9 +38,9 @@ Represents file references with optional line ranges:
 
 ```rust
 pub struct FileMention {
-    pub path: String,              // Relative file path
-    pub start_line: Option<usize>, // 1-based line number
-    pub end_line: Option<usize>,   // End line (inclusive)
+  pub path: String,       // Relative file path
+  pub start_line: Option<usize>, // 1-based line number
+  pub end_line: Option<usize>,  // End line (inclusive)
 }
 ```
 
@@ -52,11 +52,11 @@ Simple structs holding the pattern or URL string:
 
 ```rust
 pub struct SearchMention {
-    pub pattern: String,  // Search query or regex
+  pub pattern: String, // Search query or regex
 }
 
 pub struct UrlMention {
-    pub url: String,      // Full URL
+  pub url: String,   // Full URL
 }
 ```
 
@@ -65,21 +65,21 @@ pub struct UrlMention {
 The parser supports four mention syntaxes:
 
 1. **File Mentions**: `@config.yaml`, `@src/main.rs`, `@file.rs#L10-20`, `@file.rs#L42`
-   - Line ranges use format: `#L<start>` or `#L<start>-<end>`
-   - Both single lines and ranges are supported
-   - Validates against directory traversal and absolute paths
+  - Line ranges use format: `#L<start>` or `#L<start>-<end>`
+  - Both single lines and ranges are supported
+  - Validates against directory traversal and absolute paths
 
 2. **Search Mentions**: `@search:"pattern text"`
-   - Pattern is extracted from between double quotes
-   - Supports any characters except quotes
+  - Pattern is extracted from between double quotes
+  - Supports any characters except quotes
 
 3. **Grep Mentions**: `@grep:"regex pattern"`
-   - Regex patterns for advanced searching
-   - Allows regex special characters like `^`, `\w`, etc.
+  - Regex patterns for advanced searching
+  - Allows regex special characters like `^`, `\w`, etc.
 
 4. **URL Mentions**: `@url:https://example.com`
-   - Must start with `http://` or `https://`
-   - Stops at whitespace or special characters
+  - Must start with `http://` or `https://`
+  - Stops at whitespace or special characters
 
 ### Core Functions
 
@@ -123,18 +123,18 @@ Resolves relative mention paths to absolute paths with security validation.
 The implementation includes multiple layers of security:
 
 1. **Path Validation**: `is_valid_file_path(path: &str) -> bool`
-   - Rejects absolute paths (starts with `/`)
-   - Rejects directory traversal (`..`)
-   - Allows only: alphanumeric, `/`, `.`, `_`, `-`
+  - Rejects absolute paths (starts with `/`)
+  - Rejects directory traversal (`..`)
+  - Allows only: alphanumeric, `/`, `.`, `_`, `-`
 
 2. **URL Validation**: `is_valid_url(url: &str) -> bool`
-   - Requires `http://` or `https://` prefix
-   - Rejects malformed URLs
+  - Requires `http://` or `https://` prefix
+  - Rejects malformed URLs
 
 3. **Line Range Parsing**: `parse_line_range(range_str: &str) -> Option<(Option<usize>, Option<usize>)>`
-   - Validates line numbers are > 0
-   - Rejects reversed ranges (end < start)
-   - Handles single-line format (`L42`) and ranges (`L10-20`)
+  - Validates line numbers are > 0
+  - Rejects reversed ranges (end < start)
+  - Handles single-line format (`L42`) and ranges (`L10-20`)
 
 ### Chat Loop Integration
 
@@ -143,19 +143,19 @@ Integrated into `src/commands/mod.rs` chat loop:
 ```rust
 // Parse mentions from input
 let (_mentions, _cleaned_text) = match mention_parser::parse_mentions(trimmed) {
-    Ok((m, c)) => {
-        if !m.is_empty() {
-            tracing::info!("Detected {} mentions in input", m.len());
-            for mention in &m {
-                tracing::debug!("Mention: {:?}", mention);
-            }
-        }
-        (m, c)
+  Ok((m, c)) => {
+    if !m.is_empty() {
+      tracing::info!("Detected {} mentions in input", m.len());
+      for mention in &m {
+        tracing::debug!("Mention: {:?}", mention);
+      }
     }
-    Err(e) => {
-        tracing::warn!("Failed to parse mentions: {}", e);
-        (Vec::new(), trimmed.to_string())
-    }
+    (m, c)
+  }
+  Err(e) => {
+    tracing::warn!("Failed to parse mentions: {}", e);
+    (Vec::new(), trimmed.to_string())
+  }
 };
 ```
 
@@ -226,13 +226,13 @@ Key test results:
 
 All AGENTS.md quality gates pass:
 
-- ✅ `cargo fmt --all` passed - All code properly formatted
-- ✅ `cargo check --all-targets --all-features` passed - Zero compilation errors
-- ✅ `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
-- ✅ `cargo test --all-features` passed with 301 tests, >80% coverage
-- ✅ Documentation complete with API docs and examples
-- ✅ No unsafe code or unwrap() calls without justification
-- ✅ All public functions documented with examples
+- `cargo fmt --all` passed - All code properly formatted
+- `cargo check --all-targets --all-features` passed - Zero compilation errors
+- `cargo clippy --all-targets --all-features -- -D warnings` shows zero warnings
+- `cargo test --all-features` passed with 301 tests, >80% coverage
+- Documentation complete with API docs and examples
+- No unsafe code or unwrap() calls without justification
+- All public functions documented with examples
 
 ## Architecture Integration
 
@@ -249,13 +249,13 @@ The mention parser is designed to integrate seamlessly into the XZatoma agent pi
 
 ```
 User Input (chat loop)
-    ↓
+  ↓
 parse_mentions() extracts @mentions
-    ↓
+  ↓
 Vec<Mention> returned to chat loop
-    ↓
+  ↓
 Phase 2: Content injection loads file contents
-    ↓
+  ↓
 Agent receives augmented context with file contents
 ```
 
@@ -286,12 +286,12 @@ let input = "Review the error handling in @src/error.rs#L50-100";
 let (mentions, _) = parse_mentions(input)?;
 
 match &mentions[0] {
-    Mention::File(fm) => {
-        assert_eq!(fm.path, "src/error.rs");
-        assert_eq!(fm.start_line, Some(50));
-        assert_eq!(fm.end_line, Some(100));
-    }
-    _ => panic!("Expected file mention"),
+  Mention::File(fm) => {
+    assert_eq!(fm.path, "src/error.rs");
+    assert_eq!(fm.start_line, Some(50));
+    assert_eq!(fm.end_line, Some(100));
+  }
+  _ => panic!("Expected file mention"),
 }
 ```
 
@@ -339,27 +339,27 @@ assert_eq!(mentions.len(), 4);
 
 All Phase 1 success criteria from the implementation plan are satisfied:
 
-1. ✅ Parser correctly extracts @ mentions from various input patterns
-   - File mentions with and without line ranges
-   - Search and grep patterns
-   - URLs
-   - Multiple mentions in single input
+1. Parser correctly extracts @ mentions from various input patterns
+  - File mentions with and without line ranges
+  - Search and grep patterns
+  - URLs
+  - Multiple mentions in single input
 
-2. ✅ Path validation prevents directory traversal and absolute paths
-   - Rejects `../` patterns
-   - Rejects `/` absolute paths
-   - Validates against working directory escapes
+2. Path validation prevents directory traversal and absolute paths
+  - Rejects `../` patterns
+  - Rejects `/` absolute paths
+  - Validates against working directory escapes
 
-3. ✅ Tests pass with 80%+ coverage
-   - 47 dedicated mention_parser tests
-   - 301 total tests in project
-   - All edge cases covered
+3. Tests pass with 80%+ coverage
+  - 47 dedicated mention_parser tests
+  - 301 total tests in project
+  - All edge cases covered
 
-4. ✅ Code quality gates all pass
-   - `cargo fmt` compliance
-   - `cargo clippy` zero warnings
-   - `cargo check` zero errors
-   - `cargo test` all passing
+4. Code quality gates all pass
+  - `cargo fmt` compliance
+  - `cargo clippy` zero warnings
+  - `cargo check` zero errors
+  - `cargo test` all passing
 
 ## Phase 1 Summary
 

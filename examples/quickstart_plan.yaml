@@ -1,0 +1,38 @@
+# Quickstart plan for XZatoma
+# Usage:
+#   cargo run -- run --plan examples/quickstart_plan.yaml
+#   OR (if installed)
+#   xzatoma run --plan examples/quickstart_plan.yaml
+#
+# Notes:
+# - Plan format supports YAML, JSON, or Markdown.
+# - Each step requires `name` and `action`. `context` is optional and may include
+#   additional instructions or command snippets for the agent.
+
+name: Quickstart Tutorial
+description: >
+  Minimal example plan used by the quickstart tutorial. It demonstrates
+  plan parsing and a mixture of simple shell commands and a documentation
+  generation task that the agent may interpret and execute.
+
+steps:
+  - name: Print greeting
+    action: Print a greeting to verify execution
+    context: echo "Hello from XZatoma"
+
+  - name: List top-level files
+    action: Inspect repository contents
+    context: |
+      # List files in repository (Unix)
+      ls -la
+
+  - name: Generate documentation outline
+    action: Generate a short documentation outline and save it to docs/generated/outline.md
+    context: |
+      repository: .
+      output_file: docs/generated/outline.md
+      sections:
+        - Overview
+        - Installation
+        - Usage
+        - API

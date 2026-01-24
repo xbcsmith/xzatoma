@@ -6,19 +6,19 @@ This document provides a detailed comparison of API specifications for OpenAI, A
 
 ## Quick Comparison Matrix
 
-| Feature                   | OpenAI               | Anthropic                     | GitHub Copilot        | Ollama            |
+| Feature          | OpenAI        | Anthropic           | GitHub Copilot    | Ollama      |
 | ------------------------- | -------------------- | ----------------------------- | --------------------- | ----------------- |
-| **Authentication**        | Bearer Token         | API Key Header                | OAuth Device Flow     | None              |
-| **Base URL**              | api.openai.com       | api.anthropic.com             | api.githubcopilot.com | localhost:11434   |
-| **API Path**              | /v1/chat/completions | /v1/messages                  | /chat/completions     | /api/chat         |
-| **System Prompt**         | First message        | Separate field                | First message         | First message     |
-| **Tool Call Location**    | Separate field       | Content array                 | Separate field        | Separate field    |
-| **Tool Result Format**    | Tool role message    | User message with tool_result | Tool role message     | Tool role message |
-| **Streaming Format**      | SSE                  | SSE                           | SSE                   | JSON Lines        |
-| **Streaming Done Marker** | `[DONE]`             | `event: message_stop`         | `[DONE]`              | `"done": true`    |
-| **Usage Tokens**          | All three            | Input + Output only           | All three             | Token count only  |
-| **Max Context**           | 128K-200K            | 200K                          | 128K                  | Model-dependent   |
-| **Image Support**         | Yes (base64/URL)     | Yes (base64)                  | Yes                   | Limited           |
+| **Authentication**    | Bearer Token     | API Key Header        | OAuth Device Flow   | None       |
+| **Base URL**       | api.openai.com    | api.anthropic.com       | api.githubcopilot.com | localhost:11434  |
+| **API Path**       | /v1/chat/completions | /v1/messages         | /chat/completions   | /api/chat     |
+| **System Prompt**     | First message    | Separate field        | First message     | First message   |
+| **Tool Call Location**  | Separate field    | Content array         | Separate field    | Separate field  |
+| **Tool Result Format**  | Tool role message  | User message with tool_result | Tool role message   | Tool role message |
+| **Streaming Format**   | SSE         | SSE              | SSE          | JSON Lines    |
+| **Streaming Done Marker** | `[DONE]`       | `event: message_stop`     | `[DONE]`       | `"done": true`  |
+| **Usage Tokens**     | All three      | Input + Output only      | All three       | Token count only |
+| **Max Context**      | 128K-200K      | 200K             | 128K         | Model-dependent  |
+| **Image Support**     | Yes (base64/URL)   | Yes (base64)         | Yes          | Limited      |
 
 ## Authentication
 
@@ -94,47 +94,47 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "gpt-4o",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant."
-    },
-    {
-      "role": "user",
-      "content": "Hello!"
-    },
-    {
-      "role": "assistant",
-      "content": "Hi there!"
-    },
-    {
-      "role": "user",
-      "content": "What's the weather?"
-    }
-  ],
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "get_weather",
-        "description": "Get current weather for a location",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "location": {
-              "type": "string",
-              "description": "City name"
-            }
-          },
-          "required": ["location"]
-        }
+ "model": "gpt-4o",
+ "messages": [
+  {
+   "role": "system",
+   "content": "You are a helpful assistant."
+  },
+  {
+   "role": "user",
+   "content": "Hello!"
+  },
+  {
+   "role": "assistant",
+   "content": "Hi there!"
+  },
+  {
+   "role": "user",
+   "content": "What's the weather?"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_weather",
+    "description": "Get current weather for a location",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "location": {
+       "type": "string",
+       "description": "City name"
       }
+     },
+     "required": ["location"]
     }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096,
-  "stream": false
+   }
+  }
+ ],
+ "temperature": 0.7,
+ "max_tokens": 4096,
+ "stream": false
 }
 ```
 
@@ -148,40 +148,40 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "claude-sonnet-4-0",
-  "system": "You are a helpful assistant.",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Hello!"
+ "model": "claude-sonnet-4-0",
+ "system": "You are a helpful assistant.",
+ "messages": [
+  {
+   "role": "user",
+   "content": "Hello!"
+  },
+  {
+   "role": "assistant",
+   "content": "Hi there!"
+  },
+  {
+   "role": "user",
+   "content": "What's the weather?"
+  }
+ ],
+ "tools": [
+  {
+   "name": "get_weather",
+   "description": "Get current weather for a location",
+   "input_schema": {
+    "type": "object",
+    "properties": {
+     "location": {
+      "type": "string",
+      "description": "City name"
+     }
     },
-    {
-      "role": "assistant",
-      "content": "Hi there!"
-    },
-    {
-      "role": "user",
-      "content": "What's the weather?"
-    }
-  ],
-  "tools": [
-    {
-      "name": "get_weather",
-      "description": "Get current weather for a location",
-      "input_schema": {
-        "type": "object",
-        "properties": {
-          "location": {
-            "type": "string",
-            "description": "City name"
-          }
-        },
-        "required": ["location"]
-      }
-    }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096
+    "required": ["location"]
+   }
+  }
+ ],
+ "temperature": 0.7,
+ "max_tokens": 4096
 }
 ```
 
@@ -196,36 +196,36 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "gpt-5-mini",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant."
-    },
-    {
-      "role": "user",
-      "content": "Hello!"
+ "model": "gpt-5-mini",
+ "messages": [
+  {
+   "role": "system",
+   "content": "You are a helpful assistant."
+  },
+  {
+   "role": "user",
+   "content": "Hello!"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_weather",
+    "description": "Get current weather",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "location": { "type": "string" }
+     },
+     "required": ["location"]
     }
-  ],
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "get_weather",
-        "description": "Get current weather",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "location": { "type": "string" }
-          },
-          "required": ["location"]
-        }
-      }
-    }
-  ],
-  "temperature": 0.7,
-  "max_tokens": 4096,
-  "stream": false
+   }
+  }
+ ],
+ "temperature": 0.7,
+ "max_tokens": 4096,
+ "stream": false
 }
 ```
 
@@ -238,34 +238,34 @@ Content-Type: application/json
 
 ```json
 {
-  "model": "qwen3",
-  "messages": [
-    {
-      "role": "system",
-      "content": "You are a helpful assistant."
-    },
-    {
-      "role": "user",
-      "content": "Hello!"
+ "model": "qwen3",
+ "messages": [
+  {
+   "role": "system",
+   "content": "You are a helpful assistant."
+  },
+  {
+   "role": "user",
+   "content": "Hello!"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "get_weather",
+    "description": "Get current weather",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "location": { "type": "string" }
+     },
+     "required": ["location"]
     }
-  ],
-  "tools": [
-    {
-      "type": "function",
-      "function": {
-        "name": "get_weather",
-        "description": "Get current weather",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "location": { "type": "string" }
-          },
-          "required": ["location"]
-        }
-      }
-    }
-  ],
-  "stream": false
+   }
+  }
+ ],
+ "stream": false
 }
 ```
 
@@ -282,26 +282,26 @@ Content-Type: application/json
 
 ```json
 {
-  "id": "chatcmpl-abc123",
-  "object": "chat.completion",
-  "created": 1677858242,
-  "model": "gpt-4o-2024-08-06",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "The weather is sunny!",
-        "tool_calls": null
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 56,
-    "completion_tokens": 31,
-    "total_tokens": 87
+ "id": "chatcmpl-abc123",
+ "object": "chat.completion",
+ "created": 1677858242,
+ "model": "gpt-4o-2024-08-06",
+ "choices": [
+  {
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": "The weather is sunny!",
+    "tool_calls": null
+   },
+   "finish_reason": "stop"
   }
+ ],
+ "usage": {
+  "prompt_tokens": 56,
+  "completion_tokens": 31,
+  "total_tokens": 87
+ }
 }
 ```
 
@@ -309,30 +309,30 @@ Content-Type: application/json
 
 ```json
 {
-  "choices": [
-    {
-      "message": {
-        "role": "assistant",
-        "content": null,
-        "tool_calls": [
-          {
-            "id": "call_abc123",
-            "type": "function",
-            "function": {
-              "name": "get_weather",
-              "arguments": "{\"location\":\"San Francisco\"}"
-            }
-          }
-        ]
-      },
-      "finish_reason": "tool_calls"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 82,
-    "completion_tokens": 18,
-    "total_tokens": 100
+ "choices": [
+  {
+   "message": {
+    "role": "assistant",
+    "content": null,
+    "tool_calls": [
+     {
+      "id": "call_abc123",
+      "type": "function",
+      "function": {
+       "name": "get_weather",
+       "arguments": "{\"location\":\"San Francisco\"}"
+      }
+     }
+    ]
+   },
+   "finish_reason": "tool_calls"
   }
+ ],
+ "usage": {
+  "prompt_tokens": 82,
+  "completion_tokens": 18,
+  "total_tokens": 100
+ }
 }
 ```
 
@@ -346,21 +346,21 @@ Content-Type: application/json
 
 ```json
 {
-  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "The weather is sunny!"
-    }
-  ],
-  "model": "claude-sonnet-4-0",
-  "stop_reason": "end_turn",
-  "usage": {
-    "input_tokens": 56,
-    "output_tokens": 31
+ "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+ "type": "message",
+ "role": "assistant",
+ "content": [
+  {
+   "type": "text",
+   "text": "The weather is sunny!"
   }
+ ],
+ "model": "claude-sonnet-4-0",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 56,
+  "output_tokens": 31
+ }
 }
 ```
 
@@ -368,28 +368,28 @@ Content-Type: application/json
 
 ```json
 {
-  "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
-  "type": "message",
-  "role": "assistant",
-  "content": [
-    {
-      "type": "text",
-      "text": "I'll check the weather for you."
-    },
-    {
-      "type": "tool_use",
-      "id": "toolu_01A09q90qw90lq917835lq9",
-      "name": "get_weather",
-      "input": {
-        "location": "San Francisco"
-      }
-    }
-  ],
-  "stop_reason": "tool_use",
-  "usage": {
-    "input_tokens": 82,
-    "output_tokens": 18
+ "id": "msg_01XFDUDYJgAACzvnptvVoYEL",
+ "type": "message",
+ "role": "assistant",
+ "content": [
+  {
+   "type": "text",
+   "text": "I'll check the weather for you."
+  },
+  {
+   "type": "tool_use",
+   "id": "toolu_01A09q90qw90lq917835lq9",
+   "name": "get_weather",
+   "input": {
+    "location": "San Francisco"
+   }
   }
+ ],
+ "stop_reason": "tool_use",
+ "usage": {
+  "input_tokens": 82,
+  "output_tokens": 18
+ }
 }
 ```
 
@@ -409,19 +409,19 @@ Identical to OpenAI response format.
 
 ```json
 {
-  "model": "qwen3",
-  "created_at": "2024-01-01T12:00:00Z",
-  "message": {
-    "role": "assistant",
-    "content": "The weather is sunny!"
-  },
-  "done": true,
-  "total_duration": 5000000000,
-  "load_duration": 1000000000,
-  "prompt_eval_count": 56,
-  "prompt_eval_duration": 2000000000,
-  "eval_count": 31,
-  "eval_duration": 2000000000
+ "model": "qwen3",
+ "created_at": "2024-01-01T12:00:00Z",
+ "message": {
+  "role": "assistant",
+  "content": "The weather is sunny!"
+ },
+ "done": true,
+ "total_duration": 5000000000,
+ "load_duration": 1000000000,
+ "prompt_eval_count": 56,
+ "prompt_eval_duration": 2000000000,
+ "eval_count": 31,
+ "eval_duration": 2000000000
 }
 ```
 
@@ -440,9 +440,9 @@ Identical to OpenAI response format.
 
 ```json
 {
-  "role": "tool",
-  "tool_call_id": "call_abc123",
-  "content": "Temperature: 72°F, Sunny"
+ "role": "tool",
+ "tool_call_id": "call_abc123",
+ "content": "Temperature: 72°F, Sunny"
 }
 ```
 
@@ -452,14 +452,14 @@ Identical to OpenAI response format.
 
 ```json
 {
-  "role": "user",
-  "content": [
-    {
-      "type": "tool_result",
-      "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
-      "content": "Temperature: 72°F, Sunny"
-    }
-  ]
+ "role": "user",
+ "content": [
+  {
+   "type": "tool_result",
+   "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
+   "content": "Temperature: 72°F, Sunny"
+  }
+ ]
 }
 ```
 
@@ -467,15 +467,15 @@ Identical to OpenAI response format.
 
 ```json
 {
-  "role": "user",
-  "content": [
-    {
-      "type": "tool_result",
-      "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
-      "content": "Error: Location not found",
-      "is_error": true
-    }
-  ]
+ "role": "user",
+ "content": [
+  {
+   "type": "tool_result",
+   "tool_use_id": "toolu_01A09q90qw90lq917835lq9",
+   "content": "Error: Location not found",
+   "is_error": true
+  }
+ ]
 }
 ```
 
@@ -585,12 +585,12 @@ Same as OpenAI streaming (SSE with `data:` prefix, `[DONE]` marker).
 
 ```json
 {
-  "error": {
-    "message": "Incorrect API key provided",
-    "type": "invalid_request_error",
-    "param": null,
-    "code": "invalid_api_key"
-  }
+ "error": {
+  "message": "Incorrect API key provided",
+  "type": "invalid_request_error",
+  "param": null,
+  "code": "invalid_api_key"
+ }
 }
 ```
 
@@ -605,11 +605,11 @@ Same as OpenAI streaming (SSE with `data:` prefix, `[DONE]` marker).
 
 ```json
 {
-  "type": "error",
-  "error": {
-    "type": "invalid_request_error",
-    "message": "Your credit balance is too low to access the Claude API"
-  }
+ "type": "error",
+ "error": {
+  "type": "invalid_request_error",
+  "message": "Your credit balance is too low to access the Claude API"
+ }
 }
 ```
 
@@ -628,7 +628,7 @@ Similar to OpenAI error format.
 
 ```json
 {
-  "error": "model 'qwen3' not found, try pulling it first"
+ "error": "model 'qwen3' not found, try pulling it first"
 }
 ```
 
@@ -646,19 +646,19 @@ Similar to OpenAI error format.
 
 ```json
 {
-  "role": "user",
-  "content": [
-    {
-      "type": "text",
-      "text": "What's in this image?"
-    },
-    {
-      "type": "image_url",
-      "image_url": {
-        "url": "https://example.com/image.jpg"
-      }
-    }
-  ]
+ "role": "user",
+ "content": [
+  {
+   "type": "text",
+   "text": "What's in this image?"
+  },
+  {
+   "type": "image_url",
+   "image_url": {
+    "url": "https://example.com/image.jpg"
+   }
+  }
+ ]
 }
 ```
 
@@ -666,10 +666,10 @@ Similar to OpenAI error format.
 
 ```json
 {
-  "type": "image_url",
-  "image_url": {
-    "url": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
-  }
+ "type": "image_url",
+ "image_url": {
+  "url": "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+ }
 }
 ```
 
@@ -679,21 +679,21 @@ Similar to OpenAI error format.
 
 ```json
 {
-  "role": "user",
-  "content": [
-    {
-      "type": "text",
-      "text": "What's in this image?"
-    },
-    {
-      "type": "image",
-      "source": {
-        "type": "base64",
-        "media_type": "image/jpeg",
-        "data": "/9j/4AAQSkZJRg..."
-      }
-    }
-  ]
+ "role": "user",
+ "content": [
+  {
+   "type": "text",
+   "text": "What's in this image?"
+  },
+  {
+   "type": "image",
+   "source": {
+    "type": "base64",
+    "media_type": "image/jpeg",
+    "data": "/9j/4AAQSkZJRg..."
+   }
+  }
+ ]
 }
 ```
 
@@ -713,12 +713,12 @@ Limited support, depends on model (e.g., llava models).
 
 ## Rate Limits
 
-| Provider  | Rate Limit               | Header                                   |
+| Provider | Rate Limit        | Header                  |
 | --------- | ------------------------ | ---------------------------------------- |
-| OpenAI    | Varies by tier           | `x-ratelimit-remaining-requests`         |
-| Anthropic | Varies by tier           | `anthropic-ratelimit-requests-remaining` |
-| Copilot   | Included in subscription | N/A                                      |
-| Ollama    | No limits (local)        | N/A                                      |
+| OpenAI  | Varies by tier      | `x-ratelimit-remaining-requests`     |
+| Anthropic | Varies by tier      | `anthropic-ratelimit-requests-remaining` |
+| Copilot  | Included in subscription | N/A                   |
+| Ollama  | No limits (local)    | N/A                   |
 
 **Retry-After**: Both OpenAI and Anthropic return `retry-after` header on 429 errors.
 

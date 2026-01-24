@@ -32,34 +32,34 @@ What changed (high-level)
 Before (positional provider)
 
 ```xzatoma/src/cli.rs#L48-58
-    /// Authenticate with a provider
-    Auth {
-        /// Provider to authenticate with (copilot, ollama)
-        provider: String,
-    },
+  /// Authenticate with a provider
+  Auth {
+    /// Provider to authenticate with (copilot, ollama)
+    provider: String,
+  },
 ```
 
 After (flag-style, optional)
 
 ```xzatoma/src/cli.rs#L48-62
-    /// Authenticate with a provider
-    Auth {
-        /// Provider to authenticate with (copilot, ollama)
-        ///
-        /// Optional: when omitted the configured/default provider will be used.
-        #[arg(short, long)]
-        provider: Option<String>,
-    },
+  /// Authenticate with a provider
+  Auth {
+    /// Provider to authenticate with (copilot, ollama)
+    ///
+    /// Optional: when omitted the configured/default provider will be used.
+    #[arg(short, long)]
+    provider: Option<String>,
+  },
 ```
 
 Runtime fallback (use configured provider when flag omitted)
 
 ```xzatoma/src/main.rs#L86-96
 Commands::Auth { provider } => {
-    let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
-    tracing::info!("Starting authentication for provider: {}", provider);
-    commands::auth::authenticate(config, provider).await?;
-    Ok(())
+  let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
+  tracing::info!("Starting authentication for provider: {}", provider);
+  commands::auth::authenticate(config, provider).await?;
+  Ok(())
 }
 ```
 
@@ -68,14 +68,14 @@ Testing change example (unit test updated to use `--provider`)
 ```xzatoma/src/cli.rs#L180-196
 #[test]
 fn test_cli_parse_auth() {
-    let cli = Cli::try_parse_from(["xzatoma", "auth", "--provider", "copilot"]);
-    assert!(cli.is_ok());
-    let cli = cli.unwrap();
-    if let Commands::Auth { provider } = cli.command {
-        assert_eq!(provider, Some("copilot".to_string()));
-    } else {
-        panic!("Expected Auth command");
-    }
+  let cli = Cli::try_parse_from(["xzatoma", "auth", "--provider", "copilot"]);
+  assert!(cli.is_ok());
+  let cli = cli.unwrap();
+  if let Commands::Auth { provider } = cli.command {
+    assert_eq!(provider, Some("copilot".to_string()));
+  } else {
+    panic!("Expected Auth command");
+  }
 }
 ```
 
@@ -83,13 +83,13 @@ fn test_cli_parse_auth() {
 
 - Updated: `src/cli.rs`
 
-  - `test_cli_parse_auth` — now asserts `--provider` parsing
-  - `test_cli_default` — asserts default CLI uses `auth` with provider `Some("copilot")`
-  - `test_cli_parse_chat_with_provider` — unchanged pattern, preserved consistency
-  - Added: `test_cli_parse_auth_without_provider` — verifies parsing succeeds when `--provider` omitted (provider == None)
+ - `test_cli_parse_auth` — now asserts `--provider` parsing
+ - `test_cli_default` — asserts default CLI uses `auth` with provider `Some("copilot")`
+ - `test_cli_parse_chat_with_provider` — unchanged pattern, preserved consistency
+ - Added: `test_cli_parse_auth_without_provider` — verifies parsing succeeds when `--provider` omitted (provider == None)
 
 - Updated: `src/config.rs`
-  - `test_load_nonexistent_file_uses_defaults` — constructs `Cli` with `Auth { provider: Some("copilot") }` for the config-loading path.
+ - `test_load_nonexistent_file_uses_defaults` — constructs `Cli` with `Auth { provider: Some("copilot") }` for the config-loading path.
 
 Why these tests:
 

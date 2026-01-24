@@ -196,7 +196,7 @@ Approach: Phased, reversible changes. Start with conservative move-only PRs that
 - Phase 3 (create missing docs): 8–16 hours
 - Phase 4 (index update): 1–2 hours
 - Phase 5 (validation & CI): 2–6 hours
-  Estimated total: 1–3 days (single contributor, part-time), subject to review time.
+ Estimated total: 1–3 days (single contributor, part-time), subject to review time.
 
 ## Risks & Decisions
 

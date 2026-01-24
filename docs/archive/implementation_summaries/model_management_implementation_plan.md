@@ -112,27 +112,27 @@ Modify or create response types in `src/providers/base.rs`:
 
 1. Add API endpoint constant:
 
-   ```rust
-   const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
-   ```
+  ```rust
+  const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+  ```
 
 2. Create API response structures (see Lesson 0 for complete structure):
 
-   - `CopilotModelsResponse` with `data: Vec<CopilotModelData>`
-   - `CopilotModelData` with `id`, `name`, `capabilities`, `policy`
-   - `CopilotModelCapabilities` with `limits` and `supports`
-   - All fields optional with `#[serde(default)]`
+  - `CopilotModelsResponse` with `data: Vec<CopilotModelData>`
+  - `CopilotModelData` with `id`, `name`, `capabilities`, `policy`
+  - `CopilotModelCapabilities` with `limits` and `supports`
+  - All fields optional with `#[serde(default)]`
 
 3. Implement `fetch_copilot_models()` async method:
 
-   - Authenticate with `self.authenticate().await?`
-   - GET request to `COPILOT_MODELS_URL` with Bearer token
-   - Filter to models with `policy.state == "enabled"`
-   - Extract context window from `limits.max_context_window_tokens`
-   - Add FunctionCalling capability if `supports.tool_calls == true`
-   - Add Vision capability if `supports.vision == true`
-   - Add LongContext if context_window > 32000
-   - Return `Vec<ModelInfo>`
+  - Authenticate with `self.authenticate().await?`
+  - GET request to `COPILOT_MODELS_URL` with Bearer token
+  - Filter to models with `policy.state == "enabled"`
+  - Extract context window from `limits.max_context_window_tokens`
+  - Add FunctionCalling capability if `supports.tool_calls == true`
+  - Add Vision capability if `supports.vision == true`
+  - Add LongContext if context_window > 32000
+  - Return `Vec<ModelInfo>`
 
 4. Update `list_models()` to call `fetch_copilot_models().await`
 
@@ -145,9 +145,9 @@ Modify or create response types in `src/providers/base.rs`:
 
 **DO NOT**:
 
-- ❌ Create hardcoded `Vec<ModelInfo>` with static model list
-- ❌ Assume models like `gpt-4`, `gpt-3.5-turbo` still exist
-- ❌ Hardcode context windows or capabilities
+- Create hardcoded `Vec<ModelInfo>` with static model list
+- Assume models like `gpt-4`, `gpt-3.5-turbo` still exist
+- Hardcode context windows or capabilities
 
 #### Task 2.2: Implement Model Listing for Copilot (LEGACY - SEE 2.1)
 
@@ -174,12 +174,12 @@ Modify `complete()` in `src/providers/copilot.rs`:
 
 1. Update `set_model()` to be async and fetch current models:
 
-   ```rust
-   async fn set_model(&mut self, model_name: String) -> Result<()> {
-       let models = self.fetch_copilot_models().await?;
-       // Validate and check capabilities
-   }
-   ```
+  ```rust
+  async fn set_model(&mut self, model_name: String) -> Result<()> {
+    let models = self.fetch_copilot_models().await?;
+    // Validate and check capabilities
+  }
+  ```
 
 2. Find requested model in fetched list
 3. If not found, return error with list of available models
@@ -229,14 +229,14 @@ Add to `CopilotProvider`:
 
 #### Task 2.7: Success Criteria
 
-- ✅ No hardcoded model lists in Copilot provider
-- ✅ Models fetched from API at runtime
-- ✅ Only enabled models shown to users
-- ✅ Capabilities extracted from API metadata
-- ✅ Model switching validates against current API data
-- ✅ Tool calling requirement enforced
-- ✅ All tests pass without hardcoded model names
-- ✅ `/models` command shows actual available models
+- No hardcoded model lists in Copilot provider
+- Models fetched from API at runtime
+- Only enabled models shown to users
+- Capabilities extracted from API metadata
+- Model switching validates against current API data
+- Tool calling requirement enforced
+- All tests pass without hardcoded model names
+- `/models` command shows actual available models
 
 - `CopilotProvider` implements all new trait methods
 - Token usage accurately extracted from API responses
@@ -303,25 +303,25 @@ Modify `complete()` in `src/providers/ollama.rs`:
 
 ```rust
 struct OllamaMessage {
-    role: String,
-    #[serde(default)]  // May be empty for tool-only responses
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OllamaToolCall>>,
+  role: String,
+  #[serde(default)] // May be empty for tool-only responses
+  content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 struct OllamaToolCall {
-    #[serde(default)]  // May be empty, generate if needed
-    id: String,
-    #[serde(default = "default_tool_type")]  // May be missing
-    r#type: String,
-    function: OllamaFunctionCall,
+  #[serde(default)] // May be empty, generate if needed
+  id: String,
+  #[serde(default = "default_tool_type")] // May be missing
+  r#type: String,
+  function: OllamaFunctionCall,
 }
 
 struct OllamaFunctionCall {
-    name: String,  // Required field
-    #[serde(default)]  // May be empty for parameterless functions
-    arguments: serde_json::Value,
+  name: String, // Required field
+  #[serde(default)] // May be empty for parameterless functions
+  arguments: serde_json::Value,
 }
 ```
 
@@ -343,22 +343,22 @@ Add to `OllamaProvider`:
 
 ```rust
 async fn set_model(&mut self, model_name: String) -> Result<()> {
-    let models = self.list_models().await?;
-    let model_info = models.iter().find(|m| m.name == model_name);
+  let models = self.list_models().await?;
+  let model_info = models.iter().find(|m| m.name == model_name);
 
-    if model_info.is_none() {
-        return Err(Error::ModelNotFound(model_name));
-    }
+  if model_info.is_none() {
+    return Err(Error::ModelNotFound(model_name));
+  }
 
-    // CRITICAL: Check tool support
-    if !model_info.unwrap().supports_capability(ModelCapability::FunctionCalling) {
-        return Err(Error::ModelLacksToolSupport {
-            model: model_name,
-            suggestion: "llama3.2:latest, llama3.3:latest, or mistral:latest"
-        });
-    }
+  // CRITICAL: Check tool support
+  if !model_info.unwrap().supports_capability(ModelCapability::FunctionCalling) {
+    return Err(Error::ModelLacksToolSupport {
+      model: model_name,
+      suggestion: "llama3.2:latest, llama3.3:latest, or mistral:latest"
+    });
+  }
 
-    // Proceed with switch...
+  // Proceed with switch...
 }
 ```
 
@@ -602,10 +602,10 @@ Update `src/config.rs`:
 
 ```yaml
 provider:
-  ollama:
-    host: http://localhost:11434
-    # MUST use llama3.2:latest or newer for tool support
-    model: llama3.2:latest
+ ollama:
+  host: http://localhost:11434
+  # MUST use llama3.2:latest or newer for tool support
+  model: llama3.2:latest
 ```
 
 #### Task 7.2: Create Reference Documentation
@@ -737,44 +737,44 @@ const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 ```rust
 #[derive(Debug, Deserialize)]
 struct CopilotModelsResponse {
-    data: Vec<CopilotModelData>,
+  data: Vec<CopilotModelData>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelData {
-    id: String,
-    name: String,
-    #[serde(default)]
-    capabilities: Option<CopilotModelCapabilities>,
-    #[serde(default)]
-    policy: Option<CopilotModelPolicy>,
+  id: String,
+  name: String,
+  #[serde(default)]
+  capabilities: Option<CopilotModelCapabilities>,
+  #[serde(default)]
+  policy: Option<CopilotModelPolicy>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelPolicy {
-    state: String,  // "enabled" or other
+  state: String, // "enabled" or other
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelCapabilities {
-    #[serde(default)]
-    limits: Option<CopilotModelLimits>,
-    #[serde(default)]
-    supports: Option<CopilotModelSupports>,
+  #[serde(default)]
+  limits: Option<CopilotModelLimits>,
+  #[serde(default)]
+  supports: Option<CopilotModelSupports>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelLimits {
-    #[serde(default)]
-    max_context_window_tokens: Option<usize>,
+  #[serde(default)]
+  max_context_window_tokens: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CopilotModelSupports {
-    #[serde(default)]
-    tool_calls: Option<bool>,
-    #[serde(default)]
-    vision: Option<bool>,
+  #[serde(default)]
+  tool_calls: Option<bool>,
+  #[serde(default)]
+  vision: Option<bool>,
 }
 ```
 
@@ -782,93 +782,93 @@ struct CopilotModelSupports {
 
 ```rust
 async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-    let token = self.authenticate().await?;
+  let token = self.authenticate().await?;
 
-    let response = self
-        .client
-        .get(COPILOT_MODELS_URL)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Editor-Version", "vscode/1.85.0")
-        .send()
-        .await?;
+  let response = self
+    .client
+    .get(COPILOT_MODELS_URL)
+    .header("Authorization", format!("Bearer {}", token))
+    .header("Editor-Version", "vscode/1.85.0")
+    .send()
+    .await?;
 
-    let models_response: CopilotModelsResponse = response.json().await?;
+  let models_response: CopilotModelsResponse = response.json().await?;
 
-    let mut models = Vec::new();
-    for model_data in models_response.data {
-        // Only include enabled models
-        if let Some(policy) = &model_data.policy {
-            if policy.state != "enabled" {
-                continue;
-            }
-        }
-
-        // Extract context window (default 128k if missing)
-        let context_window = model_data
-            .capabilities
-            .as_ref()
-            .and_then(|c| c.limits.as_ref())
-            .and_then(|l| l.max_context_window_tokens)
-            .unwrap_or(128000);
-
-        let mut model_info = ModelInfo::new(
-            &model_data.id,
-            &model_data.name,
-            context_window
-        );
-
-        // Add capabilities from API metadata
-        if let Some(caps) = &model_data.capabilities {
-            if let Some(supports) = &caps.supports {
-                if supports.tool_calls.unwrap_or(false) {
-                    model_info.add_capability(ModelCapability::FunctionCalling);
-                }
-                if supports.vision.unwrap_or(false) {
-                    model_info.add_capability(ModelCapability::Vision);
-                }
-            }
-        }
-
-        // Infer LongContext for models >32k
-        if context_window > 32000 {
-            model_info.add_capability(ModelCapability::LongContext);
-        }
-
-        models.push(model_info);
+  let mut models = Vec::new();
+  for model_data in models_response.data {
+    // Only include enabled models
+    if let Some(policy) = &model_data.policy {
+      if policy.state != "enabled" {
+        continue;
+      }
     }
 
-    Ok(models)
+    // Extract context window (default 128k if missing)
+    let context_window = model_data
+      .capabilities
+      .as_ref()
+      .and_then(|c| c.limits.as_ref())
+      .and_then(|l| l.max_context_window_tokens)
+      .unwrap_or(128000);
+
+    let mut model_info = ModelInfo::new(
+      &model_data.id,
+      &model_data.name,
+      context_window
+    );
+
+    // Add capabilities from API metadata
+    if let Some(caps) = &model_data.capabilities {
+      if let Some(supports) = &caps.supports {
+        if supports.tool_calls.unwrap_or(false) {
+          model_info.add_capability(ModelCapability::FunctionCalling);
+        }
+        if supports.vision.unwrap_or(false) {
+          model_info.add_capability(ModelCapability::Vision);
+        }
+      }
+    }
+
+    // Infer LongContext for models >32k
+    if context_window > 32000 {
+      model_info.add_capability(ModelCapability::LongContext);
+    }
+
+    models.push(model_info);
+  }
+
+  Ok(models)
 }
 
 async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-    self.fetch_copilot_models().await
+  self.fetch_copilot_models().await
 }
 
 async fn set_model(&mut self, model_name: String) -> Result<()> {
-    let models = self.fetch_copilot_models().await?;
+  let models = self.fetch_copilot_models().await?;
 
-    let model_info = models
-        .iter()
-        .find(|m| m.name == model_name)
-        .ok_or_else(|| {
-            let available: Vec<String> =
-                models.iter().map(|m| m.name.clone()).collect();
-            XzatomaError::Provider(format!(
-                "Model '{}' not found. Available models: {}",
-                model_name,
-                available.join(", ")
-            ))
-        })?;
+  let model_info = models
+    .iter()
+    .find(|m| m.name == model_name)
+    .ok_or_else(|| {
+      let available: Vec<String> =
+        models.iter().map(|m| m.name.clone()).collect();
+      XzatomaError::Provider(format!(
+        "Model '{}' not found. Available models: {}",
+        model_name,
+        available.join(", ")
+      ))
+    })?;
 
-    if !model_info.supports_capability(ModelCapability::FunctionCalling) {
-        return Err(XzatomaError::Provider(format!(
-            "Model '{}' does not support tool calling",
-            model_name
-        )));
-    }
+  if !model_info.supports_capability(ModelCapability::FunctionCalling) {
+    return Err(XzatomaError::Provider(format!(
+      "Model '{}' does not support tool calling",
+      model_name
+    )));
+  }
 
-    self.config.write()?.model = model_name;
-    Ok(())
+  self.config.write()?.model = model_name;
+  Ok(())
 }
 ```
 
@@ -891,8 +891,8 @@ To prevent repeated mistakes the Copilot provider implementation was changed to 
 - Map capabilities into explicit `ModelCapability` flags (FunctionCalling, Vision, LongContext for >32k tokens) and use those flags to validate `set_model()` requests.
 - Make deserialization resilient: use `#[serde(default)]` and optional fields so missing fields (e.g., `content` on function/tool call responses) do not cause hard failures.
 - On authentication failures (HTTP 401):
-  - First attempt a non-interactive refresh by exchanging any cached GitHub token for a new Copilot token and retry the request.
-  - If refresh fails or no cached GitHub token exists, perform a best-effort cache invalidation (so `authenticate()` won't reuse stale tokens) and return an actionable `Authentication` error telling the user how to re-auth (e.g. `xzatoma auth --provider copilot`).
+ - First attempt a non-interactive refresh by exchanging any cached GitHub token for a new Copilot token and retry the request.
+ - If refresh fails or no cached GitHub token exists, perform a best-effort cache invalidation (so `authenticate()` won't reuse stale tokens) and return an actionable `Authentication` error telling the user how to re-auth (e.g. `xzatoma auth --provider copilot`).
 - Do not make UI/CLI behavior assumptions in provider internals — surface clear, actionable errors and leave interactive re-auth to an explicit command or user action.
 
 ## Guardrails / PR Checklist (MUST PASS before merging provider changes)
@@ -900,23 +900,23 @@ To prevent repeated mistakes the Copilot provider implementation was changed to 
 When making changes to providers or model management, PRs must include:
 
 1. No hardcoded provider model lists.
-   - Any list of models must come from a runtime-discovered source or a well-documented local cache with TTL.
+  - Any list of models must come from a runtime-discovered source or a well-documented local cache with TTL.
 2. Robust parsing tests
-   - Add a fixture to `testdata/` (e.g., `testdata/models.json`) using a real API response shape and include unit tests that parse it.
-   - Add parsing tests for edge cases: missing `content`, missing `id`, omitted `arguments`, and alternate shapes.
+  - Add a fixture to `testdata/` (e.g., `testdata/models.json`) using a real API response shape and include unit tests that parse it.
+  - Add parsing tests for edge cases: missing `content`, missing `id`, omitted `arguments`, and alternate shapes.
 3. Auth resiliency tests
-   - Unit tests for 401→Authentication mapping.
-   - Integration tests (mocked) for 401 → non-interactive refresh → retry → success, and 401 → refresh fails → cache invalidation + actionable error.
+  - Unit tests for 401→Authentication mapping.
+  - Integration tests (mocked) for 401 → non-interactive refresh → retry → success, and 401 → refresh fails → cache invalidation + actionable error.
 4. Integration/mocked tests
-   - Use a mock server (wiremock or similar) and ensure the code supports an overridable base URL (env var or config) for testing, so CI can test provider flows without hitting production endpoints.
+  - Use a mock server (wiremock or similar) and ensure the code supports an overridable base URL (env var or config) for testing, so CI can test provider flows without hitting production endpoints.
 5. Documentation
-   - Update `docs/explanation/` with a short note about the provider’s model discovery behaviour and auth handling so future implementers don't reintroduce brittle assumptions.
+  - Update `docs/explanation/` with a short note about the provider’s model discovery behaviour and auth handling so future implementers don't reintroduce brittle assumptions.
 6. Telemetry / Logging
-   - Add logs (and optionally telemetry hooks) to count or surface repeated parsing failures and authentication failures so we can detect regressions.
+  - Add logs (and optionally telemetry hooks) to count or surface repeated parsing failures and authentication failures so we can detect regressions.
 7. Code comments / TODOs
-   - Add an inline comment at the `COPILOT_MODELS_URL` constant reminding contributors to prefer discovery over static lists.
+  - Add an inline comment at the `COPILOT_MODELS_URL` constant reminding contributors to prefer discovery over static lists.
 8. Validation
-   - The PR must run and pass: `cargo fmt --all`, `cargo check --all-targets --all-features`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`.
+  - The PR must run and pass: `cargo fmt --all`, `cargo check --all-targets --all-features`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features`.
 
 Adhering to these guardrails will prevent reintroducing hardcoded model lists or brittle parsing and will ensure auth failures are recoverable and actionable.
 
@@ -979,7 +979,7 @@ Adhering to these guardrails will prevent reintroducing hardcoded model lists or
 - `gemma` - Google Gemma
 - `codellama` - Code-focused
 - `llava` - Vision-focused
-  Most other models unless verified
+ Most other models unless verified
 
 **Reference**: `ollama_tool_support_validation.md`
 
@@ -1003,13 +1003,13 @@ Adhering to these guardrails will prevent reintroducing hardcoded model lists or
 ```rust
 #[derive(Debug, Serialize, Deserialize)]
 struct CopilotMessage {
-    role: String,
-    #[serde(default)]  // May be missing when tool calls present
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<CopilotToolCall>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<String>,
+  role: String,
+  #[serde(default)] // May be missing when tool calls present
+  content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<CopilotToolCall>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_call_id: Option<String>,
 }
 ```
 
@@ -1039,29 +1039,29 @@ struct CopilotMessage {
 
 ```rust
 struct OllamaMessage {
-    role: String,
-    #[serde(default)]  // May be empty for tool-only responses
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OllamaToolCall>>,
+  role: String,
+  #[serde(default)] // May be empty for tool-only responses
+  content: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  tool_calls: Option<Vec<OllamaToolCall>>,
 }
 
 struct OllamaToolCall {
-    #[serde(default)]  // May be empty, generate if needed
-    id: String,
-    #[serde(default = "default_tool_type")]  // May be missing
-    r#type: String,
-    function: OllamaFunctionCall,
+  #[serde(default)] // May be empty, generate if needed
+  id: String,
+  #[serde(default = "default_tool_type")] // May be missing
+  r#type: String,
+  function: OllamaFunctionCall,
 }
 
 struct OllamaFunctionCall {
-    name: String,  // Required - must have function name
-    #[serde(default)]  // May be empty for parameterless functions
-    arguments: serde_json::Value,
+  name: String, // Required - must have function name
+  #[serde(default)] // May be empty for parameterless functions
+  arguments: serde_json::Value,
 }
 
 fn default_tool_type() -> String {
-    "function".to_string()
+  "function".to_string()
 }
 ```
 
@@ -1086,15 +1086,15 @@ fn default_tool_type() -> String {
 
 **Correct Examples**:
 
-- `docs/how-to/manage_models.md` ✅
-- `docs/how-to/switch_models.md` ✅
-- `docs/reference/model_management.md` ✅
+- `docs/how-to/manage_models.md` 
+- `docs/how-to/switch_models.md` 
+- `docs/reference/model_management.md` 
 
 **Wrong Examples**:
 
-- `docs/how-to/manage-models.md` ❌ (kebab-case)
-- `docs/how-to/ManageModels.md` ❌ (CamelCase)
-- `docs/how-to/manage_models_🚀.md` ❌ (emoji)
+- `docs/how-to/manage-models.md` (kebab-case)
+- `docs/how-to/ManageModels.md` (CamelCase)
+- `docs/how-to/manage_models_.md` (emoji)
 
 **Reference**: `AGENTS.md` - Rule 2: Markdown File Naming
 
@@ -1120,15 +1120,15 @@ fn default_tool_type() -> String {
 
 ```rust
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
-    match family.to_lowercase().as_str() {
-        // Whitelist: verified to support tools
-        "llama3.2" | "llama3.3" | "mistral" | "granite4" => {
-            model.add_capability(ModelCapability::FunctionCalling);
-        }
-        _ => {
-            // Default: assume NO tool support unless explicitly verified
-        }
+  match family.to_lowercase().as_str() {
+    // Whitelist: verified to support tools
+    "llama3.2" | "llama3.3" | "mistral" | "granite4" => {
+      model.add_capability(ModelCapability::FunctionCalling);
     }
+    _ => {
+      // Default: assume NO tool support unless explicitly verified
+    }
+  }
 }
 ```
 
@@ -1201,7 +1201,7 @@ When implementing model management features, verify:
 
 ## Open Questions
 
-### Question 1: Token Counting Strategy ✅ RESOLVED
+### Question 1: Token Counting Strategy RESOLVED
 
 Should we implement provider-specific tokenizers or continue with heuristic fallback?
 
@@ -1218,7 +1218,7 @@ Should we implement provider-specific tokenizers or continue with heuristic fall
 - Phase 4 (Agent): Update `Conversation::update_from_provider_usage()` to prefer provider counts
 - Keep chars/4 heuristic for providers that don't report or when unavailable
 
-### Question 2: Model Switching Behavior ✅ RESOLVED
+### Question 2: Model Switching Behavior RESOLVED
 
 What happens to conversation history when switching models with different context windows?
 
@@ -1236,7 +1236,7 @@ What happens to conversation history when switching models with different contex
 - On confirmation, update conversation `max_tokens` and trigger immediate pruning
 - Preserve conversation if user declines
 
-### Question 3: Provider Mutability ✅ RESOLVED
+### Question 3: Provider Mutability RESOLVED
 
 How should we handle provider state mutation for model switching?
 
@@ -1254,7 +1254,7 @@ How should we handle provider state mutation for model switching?
 - Thread-safe model switching without breaking existing Agent/Provider API
 - Agent maintains `Arc<dyn Provider>` without changes
 
-### Question 4: Model Discovery Caching ✅ RESOLVED
+### Question 4: Model Discovery Caching RESOLVED
 
 Should we cache model lists to reduce API calls?
 
@@ -1273,7 +1273,7 @@ Should we cache model lists to reduce API calls?
 - Cache invalidation on `set_model()` success (confirms Ollama is reachable)
 - Graceful fallback to cached data if Ollama unreachable and cache exists
 
-### Question 5: Context Display Format ✅ RESOLVED
+### Question 5: Context Display Format RESOLVED
 
 What's the best way to display context usage in chat prompt?
 

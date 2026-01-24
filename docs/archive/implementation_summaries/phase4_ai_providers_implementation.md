@@ -29,11 +29,11 @@ The `Provider` trait defines a common interface for all AI providers:
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[serde_json::Value]
-    ) -> Result<Message>;
+  async fn complete(
+    &self,
+    messages: &[Message],
+    tools: &[serde_json::Value]
+  ) -> Result<Message>;
 }
 ```
 
@@ -43,10 +43,10 @@ The provider system uses a unified message structure:
 
 ```rust
 pub struct Message {
-    pub role: String,
-    pub content: Option<String>,
-    pub tool_calls: Option<Vec<ToolCall>>,
-    pub tool_call_id: Option<String>,
+  pub role: String,
+  pub content: Option<String>,
+  pub tool_calls: Option<Vec<ToolCall>>,
+  pub tool_call_id: Option<String>,
 }
 ```
 
@@ -64,13 +64,13 @@ Tool calls use a standardized format:
 
 ```rust
 pub struct ToolCall {
-    pub id: String,
-    pub function: FunctionCall,
+  pub id: String,
+  pub function: FunctionCall,
 }
 
 pub struct FunctionCall {
-    pub name: String,
-    pub arguments: String,  // JSON string
+  pub name: String,
+  pub arguments: String, // JSON string
 }
 ```
 
@@ -82,48 +82,48 @@ The Ollama provider connects to local or remote Ollama servers via HTTP.
 
 1. **HTTP Client Configuration**
 
-   - 120 second timeout
-   - Custom user agent
-   - JSON request/response handling
+  - 120 second timeout
+  - Custom user agent
+  - JSON request/response handling
 
 2. **Message Format Conversion**
 
-   - Converts XZatoma messages to Ollama format
-   - Filters messages without content
-   - Preserves tool call information
+  - Converts XZatoma messages to Ollama format
+  - Filters messages without content
+  - Preserves tool call information
 
 3. **Tool Schema Conversion**
 
-   - Extracts name, description, and parameters from JSON schemas
-   - Wraps in Ollama function format
+  - Extracts name, description, and parameters from JSON schemas
+  - Wraps in Ollama function format
 
 4. **Response Handling**
-   - Parses Ollama chat completions
-   - Extracts token usage statistics
-   - Converts back to XZatoma message format
+  - Parses Ollama chat completions
+  - Extracts token usage statistics
+  - Converts back to XZatoma message format
 
 #### Implementation Highlights
 
 ```rust
 impl OllamaProvider {
-    pub fn new(config: OllamaConfig) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(120))
-            .user_agent("xzatoma/0.1.0")
-            .build()?;
-        Ok(Self { client, config })
-    }
+  pub fn new(config: OllamaConfig) -> Result<Self> {
+    let client = Client::builder()
+      .timeout(Duration::from_secs(120))
+      .user_agent("xzatoma/0.1.0")
+      .build()?;
+    Ok(Self { client, config })
+  }
 
-    async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
-        let url = format!("{}/api/chat", self.config.host);
-        let request = OllamaRequest {
-            model: self.config.model.clone(),
-            messages: self.convert_messages(messages),
-            tools: self.convert_tools(tools),
-            stream: false,
-        };
-        // Send request and parse response
-    }
+  async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
+    let url = format!("{}/api/chat", self.config.host);
+    let request = OllamaRequest {
+      model: self.config.model.clone(),
+      messages: self.convert_messages(messages),
+      tools: self.convert_tools(tools),
+      stream: false,
+    };
+    // Send request and parse response
+  }
 }
 ```
 
@@ -135,53 +135,53 @@ The Copilot provider implements OAuth device flow for authentication and exchang
 
 1. **OAuth Device Flow Authentication**
 
-   - Requests device code from GitHub
-   - Displays user verification URL and code
-   - Polls for authorization completion
-   - Maximum 60 attempts with 5 second intervals
+  - Requests device code from GitHub
+  - Displays user verification URL and code
+  - Polls for authorization completion
+  - Maximum 60 attempts with 5 second intervals
 
 2. **Token Management**
 
-   - Caches tokens in system keyring
-   - Checks expiration before each request
-   - Auto-refreshes expired tokens
-   - Stores GitHub and Copilot tokens together
+  - Caches tokens in system keyring
+  - Checks expiration before each request
+  - Auto-refreshes expired tokens
+  - Stores GitHub and Copilot tokens together
 
 3. **Copilot API Integration**
-   - Uses GitHub Copilot chat completions endpoint
-   - Sends Editor-Version header for compatibility
-   - Handles multi-choice responses
-   - Supports tool calling
+  - Uses GitHub Copilot chat completions endpoint
+  - Sends Editor-Version header for compatibility
+  - Handles multi-choice responses
+  - Supports tool calling
 
 #### OAuth Device Flow Process
 
 ```rust
 async fn device_flow(&self) -> Result<String> {
-    // 1. Request device code
-    let device_response = self.client
-        .post(GITHUB_DEVICE_CODE_URL)
-        .json(&DeviceCodeRequest {
-            client_id: GITHUB_CLIENT_ID,
-            scope: "read:user",
-        })
-        .send()
-        .await?
-        .json()
-        .await?;
+  // 1. Request device code
+  let device_response = self.client
+    .post(GITHUB_DEVICE_CODE_URL)
+    .json(&DeviceCodeRequest {
+      client_id: GITHUB_CLIENT_ID,
+      scope: "read:user",
+    })
+    .send()
+    .await?
+    .json()
+    .await?;
 
-    // 2. Display to user
-    println!("Visit: {}", device_response.verification_uri);
-    println!("Enter code: {}", device_response.user_code);
+  // 2. Display to user
+  println!("Visit: {}", device_response.verification_uri);
+  println!("Enter code: {}", device_response.user_code);
 
-    // 3. Poll for token
-    for _ in 0..max_attempts {
-        tokio::time::sleep(interval).await;
-        if let Ok(token) = self.poll_for_token(&device_response.device_code).await {
-            return Ok(token);
-        }
+  // 3. Poll for token
+  for _ in 0..max_attempts {
+    tokio::time::sleep(interval).await;
+    if let Ok(token) = self.poll_for_token(&device_response.device_code).await {
+      return Ok(token);
     }
+  }
 
-    Err(XzatomaError::Provider("Timeout".to_string()))
+  Err(XzatomaError::Provider("Timeout".to_string()))
 }
 ```
 
@@ -191,9 +191,9 @@ Tokens are cached in the system keyring with the following structure:
 
 ```rust
 struct CachedToken {
-    github_token: String,
-    copilot_token: String,
-    expires_at: u64,  // Unix timestamp
+  github_token: String,
+  copilot_token: String,
+  expires_at: u64, // Unix timestamp
 }
 ```
 
@@ -207,18 +207,18 @@ The provider checks the cache before each request:
 
 ```rust
 async fn complete(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<Message> {
-    let token = self.authenticate().await?;
+  let token = self.authenticate().await?;
 
-    let response = self.client
-        .post(COPILOT_COMPLETIONS_URL)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Editor-Version", "vscode/1.85.0")
-        .json(&copilot_request)
-        .send()
-        .await?;
+  let response = self.client
+    .post(COPILOT_COMPLETIONS_URL)
+    .header("Authorization", format!("Bearer {}", token))
+    .header("Editor-Version", "vscode/1.85.0")
+    .json(&copilot_request)
+    .send()
+    .await?;
 
-    let copilot_response: CopilotResponse = response.json().await?;
-    Ok(self.convert_response_message(copilot_response.choices[0].message))
+  let copilot_response: CopilotResponse = response.json().await?;
+  Ok(self.convert_response_message(copilot_response.choices[0].message))
 }
 ```
 
@@ -228,14 +228,14 @@ The module exports a factory function for creating providers:
 
 ```rust
 pub fn create_provider(
-    provider_type: &str,
-    config: &ProviderConfig,
+  provider_type: &str,
+  config: &ProviderConfig,
 ) -> Result<Box<dyn Provider>> {
-    match provider_type {
-        "copilot" => Ok(Box::new(CopilotProvider::new(config.copilot)?)),
-        "ollama" => Ok(Box::new(OllamaProvider::new(config.ollama)?)),
-        _ => Err(XzatomaError::Provider(format!("Unknown provider: {}", provider_type))),
-    }
+  match provider_type {
+    "copilot" => Ok(Box::new(CopilotProvider::new(config.copilot)?)),
+    "ollama" => Ok(Box::new(OllamaProvider::new(config.ollama)?)),
+    _ => Err(XzatomaError::Provider(format!("Unknown provider: {}", provider_type))),
+  }
 }
 ```
 
@@ -292,25 +292,25 @@ All providers use proper error handling patterns:
 
 1. **HTTP Client Errors**
 
-   - Network failures converted to `XzatomaError::Provider`
-   - Status codes checked and reported
-   - Response parsing errors caught
+  - Network failures converted to `XzatomaError::Provider`
+  - Status codes checked and reported
+  - Response parsing errors caught
 
 2. **Keyring Errors**
 
-   - Keyring access failures use `XzatomaError::Keyring` (auto-converted)
-   - Missing tokens trigger re-authentication
-   - Cache failures logged as warnings
+  - Keyring access failures use `XzatomaError::Keyring` (auto-converted)
+  - Missing tokens trigger re-authentication
+  - Cache failures logged as warnings
 
 3. **Serialization Errors**
 
-   - JSON parsing errors use `XzatomaError::Serialization` (auto-converted)
-   - Malformed responses reported with context
+  - JSON parsing errors use `XzatomaError::Serialization` (auto-converted)
+  - Malformed responses reported with context
 
 4. **Authentication Errors**
-   - OAuth timeouts reported clearly
-   - Token exchange failures include HTTP status
-   - Retry logic for transient failures
+  - OAuth timeouts reported clearly
+  - Token exchange failures include HTTP status
+  - Retry logic for transient failures
 
 ## Usage Examples
 
@@ -321,24 +321,24 @@ use xzatoma::config::OllamaConfig;
 use xzatoma::providers::{OllamaProvider, Provider, Message};
 
 async fn example() -> Result<()> {
-    let config = OllamaConfig {
-        host: "http://localhost:11434".to_string(),
-        model: "llama3.2:latest".to_string(),
-    };
+  let config = OllamaConfig {
+    host: "http://localhost:11434".to_string(),
+    model: "llama3.2:latest".to_string(),
+  };
 
-    let provider = OllamaProvider::new(config)?;
+  let provider = OllamaProvider::new(config)?;
 
-    let messages = vec![
-        Message::system("You are a helpful coding assistant"),
-        Message::user("Write a hello world function in Rust"),
-    ];
+  let messages = vec![
+    Message::system("You are a helpful coding assistant"),
+    Message::user("Write a hello world function in Rust"),
+  ];
 
-    let tools = vec![]; // No tools for this example
+  let tools = vec![]; // No tools for this example
 
-    let response = provider.complete(&messages, &tools).await?;
-    println!("Response: {:?}", response.content);
+  let response = provider.complete(&messages, &tools).await?;
+  println!("Response: {:?}", response.content);
 
-    Ok(())
+  Ok(())
 }
 ```
 
@@ -349,25 +349,25 @@ use xzatoma::config::CopilotConfig;
 use xzatoma::providers::{CopilotProvider, Provider, Message};
 
 async fn example() -> Result<()> {
-    let config = CopilotConfig {
-        model: "gpt-5-mini".to_string(),
-    };
+  let config = CopilotConfig {
+    model: "gpt-5-mini".to_string(),
+  };
 
-    let provider = CopilotProvider::new(config)?;
+  let provider = CopilotProvider::new(config)?;
 
-    // First call will trigger OAuth device flow
-    let messages = vec![Message::user("Hello!")];
-    let response = provider.complete(&messages, &[]).await?;
+  // First call will trigger OAuth device flow
+  let messages = vec![Message::user("Hello!")];
+  let response = provider.complete(&messages, &[]).await?;
 
-    // Subsequent calls use cached token
-    let messages2 = vec![
-        Message::user("Hello!"),
-        Message::assistant(response.content.unwrap()),
-        Message::user("How are you?"),
-    ];
-    let response2 = provider.complete(&messages2, &[]).await?;
+  // Subsequent calls use cached token
+  let messages2 = vec![
+    Message::user("Hello!"),
+    Message::assistant(response.content.unwrap()),
+    Message::user("How are you?"),
+  ];
+  let response2 = provider.complete(&messages2, &[]).await?;
 
-    Ok(())
+  Ok(())
 }
 ```
 
@@ -378,12 +378,12 @@ use xzatoma::config::ProviderConfig;
 use xzatoma::providers::{create_provider, Message};
 
 async fn example(config: ProviderConfig) -> Result<()> {
-    let provider = create_provider(&config.provider_type, &config)?;
+  let provider = create_provider(&config.provider_type, &config)?;
 
-    let messages = vec![Message::user("Hello!")];
-    let response = provider.complete(&messages, &[]).await?;
+  let messages = vec![Message::user("Hello!")];
+  let response = provider.complete(&messages, &[]).await?;
 
-    Ok(())
+  Ok(())
 }
 ```
 
@@ -393,10 +393,10 @@ async fn example(config: ProviderConfig) -> Result<()> {
 
 ```yaml
 provider:
-  type: ollama
-  ollama:
-    host: http://localhost:11434
-    model: llama3.2:latest
+ type: ollama
+ ollama:
+  host: http://localhost:11434
+  model: llama3.2:latest
 ```
 
 Environment variables:
@@ -409,9 +409,9 @@ Environment variables:
 
 ```yaml
 provider:
-  type: copilot
-  copilot:
-    model: gpt-5-mini
+ type: copilot
+ copilot:
+  model: gpt-5-mini
 ```
 
 Environment variables:
@@ -502,26 +502,26 @@ All dependencies are already specified in `Cargo.toml` from Phase 1.
 
 1. **Ollama Tool Calling**
 
-   - Not all Ollama models support tool calling
-   - Tool call format may vary by model
-   - Current implementation uses standard OpenAI-compatible format
+  - Not all Ollama models support tool calling
+  - Tool call format may vary by model
+  - Current implementation uses standard OpenAI-compatible format
 
 2. **Copilot Authentication**
 
-   - Requires manual user interaction for initial auth
-   - Token refresh requires re-authentication
-   - No support for PAT (Personal Access Token) authentication
+  - Requires manual user interaction for initial auth
+  - Token refresh requires re-authentication
+  - No support for PAT (Personal Access Token) authentication
 
 3. **Streaming**
 
-   - Neither provider currently supports streaming responses
-   - `stream: false` hardcoded in requests
-   - Future enhancement opportunity
+  - Neither provider currently supports streaming responses
+  - `stream: false` hardcoded in requests
+  - Future enhancement opportunity
 
 4. **Error Retry Logic**
-   - No automatic retry for transient network failures
-   - Rate limiting not handled
-   - Client-side backoff not implemented
+  - No automatic retry for transient network failures
+  - Rate limiting not handled
+  - Client-side backoff not implemented
 
 ## Future Enhancements
 
@@ -529,32 +529,32 @@ Potential improvements for Phase 4:
 
 1. **Additional Providers**
 
-   - OpenAI API support
-   - Anthropic Claude support
-   - Azure OpenAI support
+  - OpenAI API support
+  - Anthropic Claude support
+  - Azure OpenAI support
 
 2. **Streaming Support**
 
-   - Implement streaming for Ollama
-   - Implement streaming for Copilot
-   - Add progress callbacks
+  - Implement streaming for Ollama
+  - Implement streaming for Copilot
+  - Add progress callbacks
 
 3. **Advanced Error Handling**
 
-   - Exponential backoff for retries
-   - Rate limit detection and handling
-   - Circuit breaker pattern
+  - Exponential backoff for retries
+  - Rate limit detection and handling
+  - Circuit breaker pattern
 
 4. **Token Management**
 
-   - Automatic token refresh for Copilot
-   - Multiple provider authentication
-   - Token rotation
+  - Automatic token refresh for Copilot
+  - Multiple provider authentication
+  - Token rotation
 
 5. **Testing**
-   - Integration tests with live Ollama
-   - Mock server tests for HTTP interactions
-   - Property-based testing for message conversion
+  - Integration tests with live Ollama
+  - Mock server tests for HTTP interactions
+  - Property-based testing for message conversion
 
 ## References
 

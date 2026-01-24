@@ -74,10 +74,10 @@ When you start a chat session, you'll see:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║         XZatoma Interactive Chat Mode - Welcome!             ║
+║     XZatoma Interactive Chat Mode - Welcome!       ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Mode:   PLANNING (Read-only mode for creating plans)
+Mode:  PLANNING (Read-only mode for creating plans)
 Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
@@ -103,7 +103,7 @@ Example (plain):
 Example (colored):
 
 ```text
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>   (Provider is white, model is green)
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>  (Provider is white, model is green)
 ```
 
 Notes and behavior:
@@ -182,15 +182,15 @@ Display all available commands:
 
 ### Command Reference
 
-| Command          | Aliases                  | Purpose                                           |
+| Command     | Aliases         | Purpose                      |
 | ---------------- | ------------------------ | ------------------------------------------------- |
-| `/mode planning` | `/planning`              | Switch to Planning mode (read-only)               |
-| `/mode write`    | `/write`                 | Switch to Write mode (read/write)                 |
-| `/safe`          | `/safety on`             | Enable safety mode (confirm dangerous operations) |
-| `/yolo`          | `/safety off`            | Disable safety mode (YOLO mode)                   |
-| `/status`        | -                        | Show current mode and safety setting              |
-| `/help`          | `/?`                     | Display all available commands                    |
-| `exit`           | `quit`, `/exit`, `/quit` | Exit the chat session                             |
+| `/mode planning` | `/planning`       | Switch to Planning mode (read-only)        |
+| `/mode write`  | `/write`         | Switch to Write mode (read/write)         |
+| `/safe`     | `/safety on`       | Enable safety mode (confirm dangerous operations) |
+| `/yolo`     | `/safety off`      | Disable safety mode (YOLO mode)          |
+| `/status`    | -            | Show current mode and safety setting       |
+| `/help`     | `/?`           | Display all available commands          |
+| `exit`      | `quit`, `/exit`, `/quit` | Exit the chat session               |
 
 ### Regular Commands
 
@@ -208,14 +208,14 @@ Check your current session status at any time:
 [WRITE][SAFE] >> /status
 
 ╔══════════════════════════════════════════════════════════════╗
-║                     XZatoma Session Status                   ║
+║           XZatoma Session Status          ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Chat Mode:         WRITE (Read/write mode for executing tasks)
-Safety Mode:       SAFE (Confirm dangerous operations)
-Available Tools:   5
+Chat Mode:     WRITE (Read/write mode for executing tasks)
+Safety Mode:    SAFE (Confirm dangerous operations)
+Available Tools:  5
 Conversation Size: 12 messages
-Prompt Format:     [WRITE][SAFE] >>
+Prompt Format:   [WRITE][SAFE] >>
 
 ```
 

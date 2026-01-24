@@ -54,9 +54,9 @@ This document provides a comprehensive validation of the XZatoma architecture de
 ```rust
 #[derive(Debug, thiserror::Error)]
 pub enum XzatomaError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    // ...
+  #[error("Configuration error: {0}")]
+  Config(String),
+  // ...
 }
 ```
 
@@ -106,8 +106,8 @@ src/
 
 ```rust
 loop {
-    let response = self.provider.complete(...).await?;
-    // No iteration limit check
+  let response = self.provider.complete(...).await?;
+  // No iteration limit check
 }
 ```
 
@@ -119,31 +119,31 @@ loop {
 
 ```rust
 pub async fn execute(&mut self, instruction: String) -> Result<String> {
-    self.conversation.add_user_message(instruction);
+  self.conversation.add_user_message(instruction);
 
-    let mut iterations = 0;
-    let max_iterations = self.config.agent.max_turns;
+  let mut iterations = 0;
+  let max_iterations = self.config.agent.max_turns;
 
-    loop {
-        if iterations >= max_iterations {
-            return Err(XzatomaError::MaxIterationsExceeded(iterations));
-        }
-        iterations += 1;
-
-        let response = self.provider.complete(
-            &self.conversation.messages(),
-            &self.tools
-        ).await?;
-
-        if let Some(tool_calls) = response.tool_calls {
-            for call in tool_calls {
-                let result = self.execute_tool(&call).await?;
-                self.conversation.add_tool_result(result);
-            }
-        } else {
-            return Ok(response.content);
-        }
+  loop {
+    if iterations >= max_iterations {
+      return Err(XzatomaError::MaxIterationsExceeded(iterations));
     }
+    iterations += 1;
+
+    let response = self.provider.complete(
+      &self.conversation.messages(),
+      &self.tools
+    ).await?;
+
+    if let Some(tool_calls) = response.tool_calls {
+      for call in tool_calls {
+        let result = self.execute_tool(&call).await?;
+        self.conversation.add_tool_result(result);
+      }
+    } else {
+      return Ok(response.content);
+    }
+  }
 }
 ```
 
@@ -214,19 +214,19 @@ pub async fn execute(&mut self, instruction: String) -> Result<String> {
 **Implementation**:
 ```rust
 pub struct Conversation {
-    messages: Vec<Message>,
-    token_count: usize,
-    max_tokens: usize,
+  messages: Vec<Message>,
+  token_count: usize,
+  max_tokens: usize,
 }
 
 impl Conversation {
-    fn add_message(&mut self, message: Message) {
-        self.messages.push(message);
-        self.update_token_count();
-        if self.token_count > self.max_tokens {
-            self.prune_old_messages();
-        }
+  fn add_message(&mut self, message: Message) {
+    self.messages.push(message);
+    self.update_token_count();
+    if self.token_count > self.max_tokens {
+      self.prune_old_messages();
     }
+  }
 }
 ```
 ```
@@ -248,11 +248,11 @@ impl Conversation {
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[Tool],
-    ) -> Result<Response>;
+  async fn complete(
+    &self,
+    messages: &[Message],
+    tools: &[Tool],
+  ) -> Result<Response>;
 }
 ```
 
@@ -267,38 +267,38 @@ pub trait Provider: Send + Sync {
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Non-streaming completion
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[Tool],
-    ) -> Result<Response>;
+  /// Non-streaming completion
+  async fn complete(
+    &self,
+    messages: &[Message],
+    tools: &[Tool],
+  ) -> Result<Response>;
 
-    /// Streaming completion (optional)
-    async fn complete_stream(
-        &self,
-        messages: &[Message],
-        tools: &[Tool],
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ResponseChunk>> + Send>>>;
+  /// Streaming completion (optional)
+  async fn complete_stream(
+    &self,
+    messages: &[Message],
+    tools: &[Tool],
+  ) -> Result<Pin<Box<dyn Stream<Item = Result<ResponseChunk>> + Send>>>;
 
-    /// Check if provider supports streaming
-    fn supports_streaming(&self) -> bool;
+  /// Check if provider supports streaming
+  fn supports_streaming(&self) -> bool;
 
-    /// Get provider-specific capabilities
-    fn capabilities(&self) -> ProviderCapabilities;
+  /// Get provider-specific capabilities
+  fn capabilities(&self) -> ProviderCapabilities;
 
-    /// Authenticate (if needed)
-    async fn authenticate(&mut self) -> Result<()>;
+  /// Authenticate (if needed)
+  async fn authenticate(&mut self) -> Result<()>;
 
-    /// Check authentication status
-    fn is_authenticated(&self) -> bool;
+  /// Check authentication status
+  fn is_authenticated(&self) -> bool;
 }
 
 pub struct ProviderCapabilities {
-    pub max_tokens: usize,
-    pub supports_tool_calls: bool,
-    pub supports_streaming: bool,
-    pub retry_config: RetryConfig,
+  pub max_tokens: usize,
+  pub supports_tool_calls: bool,
+  pub supports_streaming: bool,
+  pub retry_config: RetryConfig,
 }
 ```
 
@@ -318,21 +318,21 @@ pub struct ProviderCapabilities {
 
 ```rust
 pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-    pub truncated: bool,
-    pub metadata: HashMap<String, String>,
+  pub success: bool,
+  pub output: String,
+  pub error: Option<String>,
+  pub truncated: bool,
+  pub metadata: HashMap<String, String>,
 }
 
 impl ToolResult {
-    fn truncate_if_needed(&mut self, max_size: usize) {
-        if self.output.len() > max_size {
-            self.output.truncate(max_size);
-            self.output.push_str("\n... (truncated)");
-            self.truncated = true;
-        }
+  fn truncate_if_needed(&mut self, max_size: usize) {
+    if self.output.len() > max_size {
+      self.output.truncate(max_size);
+      self.output.push_str("\n... (truncated)");
+      self.truncated = true;
     }
+  }
 }
 ```
 
@@ -522,21 +522,21 @@ Example: If `--provider copilot` is passed, it overrides `XZATOMA_PROVIDER` env 
 pub struct ReadFileTool;
 
 impl ToolExecutor for ReadFileTool {
-    fn schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "path": { "type": "string" },
-            },
-            "required": ["path"]
-        })
-    }
+  fn schema(&self) -> serde_json::Value {
+    json!({
+      "type": "object",
+      "properties": {
+        "path": { "type": "string" },
+      },
+      "required": ["path"]
+    })
+  }
 
-    async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
-        // jsonschema validation already done by agent
-        let path: String = serde_json::from_value(params["path"].clone())?;
-        // ... execute
-    }
+  async fn execute(&self, params: serde_json::Value) -> Result<ToolResult> {
+    // jsonschema validation already done by agent
+    let path: String = serde_json::from_value(params["path"].clone())?;
+    // ... execute
+  }
 }
 ```
 ```
@@ -570,23 +570,23 @@ impl ToolExecutor for ReadFileTool {
 
 | Requirement | Status | Notes |
 |------------|--------|-------|
-| Simple modular design | ✅ PASS | Clear layer separation |
-| Separation of concerns | ✅ PASS | CLI, agent, providers, tools |
-| Avoid unnecessary abstraction | ✅ PASS | Generic tools philosophy |
-| Clear module structure | ✅ PASS | Well-organized src/ layout |
-| Proper error handling | ✅ PASS | Uses thiserror, Result types |
-| Component boundaries | ⚠️ PARTIAL | agent/executor overlap unclear |
-| No unwrap without justification | ⚠️ PARTIAL | Mock provider example uses unwrap |
-| Testing strategy | ✅ PASS | Unit, integration tests planned |
+| Simple modular design | PASS | Clear layer separation |
+| Separation of concerns | PASS | CLI, agent, providers, tools |
+| Avoid unnecessary abstraction | PASS | Generic tools philosophy |
+| Clear module structure | PASS | Well-organized src/ layout |
+| Proper error handling | PASS | Uses thiserror, Result types |
+| Component boundaries | WARNING: PARTIAL | agent/executor overlap unclear |
+| No unwrap without justification | WARNING: PARTIAL | Mock provider example uses unwrap |
+| Testing strategy | PASS | Unit, integration tests planned |
 
 ### PLAN.md Alignment
 
 | Requirement | Status | Notes |
 |------------|--------|-------|
-| Test coverage >80% | ✅ PASS | Explicitly stated |
-| Configuration: env/file/CLI | ✅ PASS | All three supported |
-| Unit tests required | ✅ PASS | Mentioned in testing strategy |
-| Diataxis documentation | ✅ PASS | Already following structure |
+| Test coverage >80% | PASS | Explicitly stated |
+| Configuration: env/file/CLI | PASS | All three supported |
+| Unit tests required | PASS | Mentioned in testing strategy |
+| Diataxis documentation | PASS | Already following structure |
 | RFC-3339 timestamps | N/A | Not applicable for CLI tool |
 | API versioning | N/A | Not applicable for CLI tool |
 | OpenAPI docs | N/A | Not applicable for CLI tool |
@@ -680,6 +680,6 @@ The architecture can evolve during implementation, but these critical gaps must 
 3. Begin Phase 1: Foundation (error types, config, basic structure)
 4. Iterate on provider design during Phase 2
 
-**APPROVAL STATUS**: ✅ APPROVED WITH REQUIRED MODIFICATIONS
+**APPROVAL STATUS**: APPROVED WITH REQUIRED MODIFICATIONS
 
 The architecture is approved for implementation after incorporating the critical issues (1-3) into the architecture document. Medium and low priority items can be addressed during implementation phases.
