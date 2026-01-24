@@ -101,20 +101,18 @@ This document summarizes Phase 1 (Core Implementation) of the documentation clea
 
 1.  Planned docs that are intentionally not yet created (placeholders in `docs/README.md`), including examples such as:
 
-
-     - `docs/tutorials/quickstart.md`
-     - `docs/reference/cli.md`
-     - `docs/reference/configuration.md`
-     - `docs/reference/workflow_format.md`
-     - `docs/reference/api.md`
-     - `docs/explanation/implementation_plan.md`
+    - `docs/tutorials/quickstart.md`
+    - `docs/reference/cli.md`
+    - `docs/reference/configuration.md`
+    - `docs/reference/workflow_format.md`
+    - `docs/reference/api.md`
+    - `docs/explanation/implementation_plan.md`
       These are expected and scheduled for future phases (Phase 3+).
 
 2.  Local-relative link mismatches introduced by moves or by literal markdown link examples in documentation (for example, examples shown in `docs/archive/README.md` that used link syntax and resolved incorrectly from the README location). These were addressed by:
 
-
-     - Converting literal example links in README into explicit textual "Link text / Path" examples to avoid false-positive link checks.
-     - Correcting relative paths in archived summaries (examples: `../how-to/use_chat_modes.md` → `../../how-to/use_chat_modes.md`, and ensuring links within the archive use either `implementation_summaries/<file>.md` from `docs/archive/` or local filenames when linking from inside `docs/archive/implementation_summaries/`).
+    - Converting literal example links in README into explicit textual "Link text / Path" examples to avoid false-positive link checks.
+    - Correcting relative paths in archived summaries (examples: `../how-to/use_chat_modes.md` → `../../how-to/use_chat_modes.md`, and ensuring links within the archive use either `implementation_summaries/<file>.md` from `docs/archive/` or local filenames when linking from inside `docs/archive/implementation_summaries/`).
 
 - All archive-related link issues that were introduced during the move have been fixed; current remaining missing links are intentional placeholders for future content.
 - Filename checks
@@ -269,6 +267,45 @@ Phase 3 focused on authoring and publishing high-impact, user-facing documentati
 - Phase 4 (Index update & Documentation Conventions) remains planned: create `docs/explanation/documentation_conventions.md` and finalize index language if maintainers want additional stylistic constraints recorded.
 - Phase 5 (Docs CI) is recommended: add a lightweight docs CI job that runs internal link checks and the emoji scan on docs-only PRs to prevent regressions.
 - Suggested PR strategy: prefer small, focused content PRs with a reviewer checklist that includes link checks, filename conventions, and the emoji scan.
+
+## Phase 4: Index update & Documentation Conventions — Summary
+
+### Overview
+
+Phase 4 implemented index updates and formalized contributor-facing documentation conventions. The goal was to make the top-level index accurate and navigable for users and contributors, and to provide a single, concise conventions document that captures naming, formatting, and PR expectations.
+
+### Components Delivered
+
+- `docs/explanation/documentation_conventions.md` — Contributor-facing conventions and PR checklist.
+- Updated `docs/README.md` — Index updates linking to the conventions doc and a short Roadmap & Deferred Items section (Phase 4 completed; Phase 5 planned).
+- This `docs/explanation/documentation_cleanup_summary.md` — updated to record Phase 4 deliverables.
+
+### Implementation Notes
+
+- The conventions file follows repository rules: filename is `lowercase_with_underscores.md`, no emojis, and fenced code blocks include language tags.
+- `docs/README.md` now references the conventions doc and surfaces the current roadmap and deferred items, making it easier for contributors to discover requirements and outstanding work.
+- Changes were applied conservatively: index and navigation updates, the conventions doc, and small fixes (e.g., adding missing code-fence language tags to examples) where necessary.
+
+### Validation & Tests Performed
+
+- Internal link validation: validated internal links across `docs/` and confirmed the newly added links resolve.
+- Emoji scan: performed an emoji scan and confirmed no emoji characters exist in `docs/`.
+- Code-fence language tags: inspected code fences and added language tags where missing in examples.
+- Rust quality gates (per AGENTS.md): `cargo fmt --all`, `cargo check --all-targets --all-features`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-features` were run locally as part of validation and reported OK.
+
+### Success Criteria Achieved
+
+- `docs/explanation/documentation_conventions.md` exists and documents contributor expectations.
+- `docs/README.md` accurately reflects the current docs structure and links to the conventions doc.
+- No unresolved internal links in `docs/`.
+- No emoji characters present in `docs/`.
+- Contributors have a PR checklist and guidance for local validation before opening PRs.
+
+### Notes & Next Steps
+
+- Phase 5 (Docs CI) remains planned: add automated checks (filename validation, link checking, emoji scan, code-fence language enforcement) to run on docs-only PRs.
+- Consider adding simple helper scripts and a GitHub Actions workflow to enforce conventions (Phase 5 deliverable).
+- If maintainers want additional stylistic rules (tone, templates, example patterns), add them to `docs/explanation/documentation_conventions.md` through a focused content PR.
 
 ## Appendix A — Moved files (short audit + reason)
 
