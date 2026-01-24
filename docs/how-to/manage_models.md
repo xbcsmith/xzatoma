@@ -26,11 +26,11 @@ Example output:
 Available models from ollama:
 
 +-------------------+-------------------+----------------+-------------------+
-| Model Name        | Display Name      | Context Window | Capabilities      |
+| Model Name    | Display Name   | Context Window | Capabilities   |
 +-------------------+-------------------+----------------+-------------------+
-| llama3.2:13b      | Llama 3.2 13B     | 8192 tokens    | FunctionCalling   |
-| llama3.2:3b       | Llama 3.2 3B      | 8192 tokens    | FunctionCalling   |
-| gemma2:9b         | Gemma 2 9B        | 8192 tokens    | FunctionCalling   |
+| llama3.2:13b   | Llama 3.2 13B   | 8192 tokens  | FunctionCalling  |
+| llama3.2:3b    | Llama 3.2 3B   | 8192 tokens  | FunctionCalling  |
+| gemma2:9b     | Gemma 2 9B    | 8192 tokens  | FunctionCalling  |
 +-------------------+-------------------+----------------+-------------------+
 ```
 
@@ -69,10 +69,10 @@ Example output:
 ```
 Model Information (GPT-4o)
 
-Name:            gpt-4o
-Display Name:    GPT-4o
-Context Window:  128000 tokens
-Capabilities:    FunctionCalling, LongContext
+Name:      gpt-4o
+Display Name:  GPT-4o
+Context Window: 128000 tokens
+Capabilities:  FunctionCalling, LongContext
 ```
 
 ### For Ollama Models
@@ -88,15 +88,15 @@ Example output:
 ```
 Model Information (Llama 3.2 13B)
 
-Name:            llama3.2:13b
-Display Name:    Llama 3.2 13B
-Context Window:  8192 tokens
-Capabilities:    FunctionCalling
+Name:      llama3.2:13b
+Display Name:  Llama 3.2 13B
+Context Window: 8192 tokens
+Capabilities:  FunctionCalling
 
 Provider-Specific Metadata:
-  family: llama3.2
-  parameter_size: 13B
-  quantization: Q4_0
+ family: llama3.2
+ parameter_size: 13B
+ quantization: Q4_0
 ```
 
 ## Checking the Current Model
@@ -114,8 +114,8 @@ Example output:
 ```
 Current Model Information
 
-Provider:       ollama
-Active Model:   llama3.2:13b
+Provider:    ollama
+Active Model:  llama3.2:13b
 ```
 
 ### With Provider Override
@@ -136,16 +136,16 @@ Example output:
 
 ```
 ╔════════════════════════════════════╗
-║     Context Window Information      ║
+║   Context Window Information   ║
 ╚════════════════════════════════════╝
 
-Current Model:     llama3.2:13b
-Context Window:    32768 tokens
-Tokens Used:       2450 tokens
-Remaining:         30318 tokens
-Usage:             7.5%
+Current Model:   llama3.2:13b
+Context Window:  32768 tokens
+Tokens Used:    2450 tokens
+Remaining:     30318 tokens
+Usage:       7.5%
 
-Usage Level:       7.5%
+Usage Level:    7.5%
 ```
 
 ## Understanding Model Capabilities
@@ -237,36 +237,36 @@ ollama pull llama3.2:3b
 
 1. Check if Ollama is running:
 
-   ```bash
-   curl http://localhost:11434/api/tags
-   ```
+  ```bash
+  curl http://localhost:11434/api/tags
+  ```
 
 2. Install a model if none are available:
 
-   ```bash
-   ollama pull llama3.2:13b
-   ```
+  ```bash
+  ollama pull llama3.2:13b
+  ```
 
 3. Check Ollama host in config:
-   ```yaml
-   provider:
-     ollama:
-       host: http://localhost:11434
-   ```
+  ```yaml
+  provider:
+   ollama:
+    host: http://localhost:11434
+  ```
 
 **For Copilot**:
 
 1. Verify authentication:
 
-   ```bash
-   xzatoma auth --provider copilot
-   ```
+  ```bash
+  xzatoma auth --provider copilot
+  ```
 
 2. Check provider configuration:
-   ```yaml
-   provider:
-     provider_type: copilot
-   ```
+  ```yaml
+  provider:
+   provider_type: copilot
+  ```
 
 ### Model Not Found
 
@@ -276,9 +276,9 @@ ollama pull llama3.2:3b
 
 1. List available models first:
 
-   ```bash
-   xzatoma models list
-   ```
+  ```bash
+  xzatoma models list
+  ```
 
 2. Use exact model name from the list
 3. Model names are case-sensitive
@@ -291,15 +291,15 @@ ollama pull llama3.2:3b
 
 1. Ensure Ollama is running:
 
-   ```bash
-   ollama list
-   ```
+  ```bash
+  ollama list
+  ```
 
 2. Start Ollama if needed:
 
-   ```bash
-   ollama serve
-   ```
+  ```bash
+  ollama serve
+  ```
 
 3. Check firewall settings if using custom host
 
@@ -308,9 +308,9 @@ ollama pull llama3.2:3b
 1. Check internet connection
 2. Verify authentication token is valid
 3. Re-authenticate if needed:
-   ```bash
-   xzatoma auth --provider copilot
-   ```
+  ```bash
+  xzatoma auth --provider copilot
+  ```
 
 ## Configuration
 
@@ -320,10 +320,10 @@ Edit your `config/config.yaml`:
 
 ```yaml
 provider:
-  provider_type: ollama
-  ollama:
-    host: http://localhost:11434
-    model: llama3.2:latest # Default model
+ provider_type: ollama
+ ollama:
+  host: http://localhost:11434
+  model: llama3.2:latest # Default model
 ```
 
 ### Multiple Providers
@@ -332,14 +332,14 @@ You can configure multiple providers and switch between them:
 
 ```yaml
 provider:
-  provider_type: ollama # Active provider
+ provider_type: ollama # Active provider
 
-  copilot:
-    model: gpt-4o
+ copilot:
+  model: gpt-4o
 
-  ollama:
-    host: http://localhost:11434
-    model: llama3.2:latest
+ ollama:
+  host: http://localhost:11434
+  model: llama3.2:latest
 ```
 
 Use `--provider` flag to override:

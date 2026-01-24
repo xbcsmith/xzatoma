@@ -267,7 +267,7 @@ cargo tarpaulin --out Html
    - Learning-oriented, step-by-step guides
    - Example: Quickstart tutorial
 
-2. **How-To Guides** (`docs/how_to/`)
+2. **How-To Guides** (`docs/how-to/`)
    - Task-oriented, problem-solving guides
    - Example: Configuring providers
 

@@ -25,6 +25,7 @@ Use Planning mode when you want the agent to:
 - Search for specific patterns or TODOs
 
 **Example workflow:**
+
 ```
 $ xzatoma chat --mode planning
 [PLANNING][SAFE] >> Analyze the src/ directory and tell me about the main modules
@@ -43,6 +44,7 @@ Use Write mode when you want the agent to:
 **Warning:** Write mode is powerful but dangerous. Always review changes before committing.
 
 **Example workflow:**
+
 ```
 $ xzatoma chat --mode write --safe
 [WRITE][SAFE] >> Refactor all function names in src/ from snake_case to camelCase
@@ -72,10 +74,10 @@ When you start a chat session, you'll see:
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║         XZatoma Interactive Chat Mode - Welcome!             ║
+║     XZatoma Interactive Chat Mode - Welcome!       ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Mode:   PLANNING (Read-only mode for creating plans)
+Mode:  PLANNING (Read-only mode for creating plans)
 Safety: SAFE (Confirm dangerous operations)
 
 Type '/help' for available commands, 'exit' to quit
@@ -84,8 +86,37 @@ Type '/help' for available commands, 'exit' to quit
 ```
 
 The prompt shows your current mode and safety setting:
+
 - `[PLANNING]` or `[WRITE]` - current chat mode
 - `[SAFE]` or `[YOLO]` - current safety mode
+
+### Provider & Model Display
+
+When a configured provider exposes a current model, the interactive prompt will also include a provider:model label after the mode/safety tags. The label is concise and intended to give immediate context about which provider and model are active.
+
+Example (plain):
+
+```text
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>
+```
+
+Example (colored):
+
+```text
+[PLANNING][SAFE][Copilot: gpt-5-mini] >>>  (Provider is white, model is green)
+```
+
+Notes and behavior:
+
+- The prompt queries the provider for its current model each time it renders and will update immediately when the active model changes (for example, after `/switch_model`).
+- If the provider does not expose a current model or the query fails, the prompt falls back to the base prompt (no provider/model label), preserving prior behavior.
+- The label is capitalized for the provider name and shows the model identifier as provided by the provider.
+
+Quick validation steps:
+
+1. Configure or authenticate the provider (see `docs/how-to/configure_providers.md`).
+2. Start an interactive chat (`xzatoma chat --mode planning`) and confirm the provider/model label appears in the prompt.
+3. Switch models (e.g., `/switch_model`) and verify the prompt updates on the next render.
 
 ## Switching Modes During Chat
 
@@ -151,15 +182,15 @@ Display all available commands:
 
 ### Command Reference
 
-| Command | Aliases | Purpose |
-|---------|---------|---------|
-| `/mode planning` | `/planning` | Switch to Planning mode (read-only) |
-| `/mode write` | `/write` | Switch to Write mode (read/write) |
-| `/safe` | `/safety on` | Enable safety mode (confirm dangerous operations) |
-| `/yolo` | `/safety off` | Disable safety mode (YOLO mode) |
-| `/status` | - | Show current mode and safety setting |
-| `/help` | `/?` | Display all available commands |
-| `exit` | `quit`, `/exit`, `/quit` | Exit the chat session |
+| Command     | Aliases         | Purpose                      |
+| ---------------- | ------------------------ | ------------------------------------------------- |
+| `/mode planning` | `/planning`       | Switch to Planning mode (read-only)        |
+| `/mode write`  | `/write`         | Switch to Write mode (read/write)         |
+| `/safe`     | `/safety on`       | Enable safety mode (confirm dangerous operations) |
+| `/yolo`     | `/safety off`      | Disable safety mode (YOLO mode)          |
+| `/status`    | -            | Show current mode and safety setting       |
+| `/help`     | `/?`           | Display all available commands          |
+| `exit`      | `quit`, `/exit`, `/quit` | Exit the chat session               |
 
 ### Regular Commands
 
@@ -177,14 +208,14 @@ Check your current session status at any time:
 [WRITE][SAFE] >> /status
 
 ╔══════════════════════════════════════════════════════════════╗
-║                     XZatoma Session Status                   ║
+║           XZatoma Session Status          ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Chat Mode:         WRITE (Read/write mode for executing tasks)
-Safety Mode:       SAFE (Confirm dangerous operations)
-Available Tools:   5
+Chat Mode:     WRITE (Read/write mode for executing tasks)
+Safety Mode:    SAFE (Confirm dangerous operations)
+Available Tools:  5
 Conversation Size: 12 messages
-Prompt Format:     [WRITE][SAFE] >>
+Prompt Format:   [WRITE][SAFE] >>
 
 ```
 
@@ -357,7 +388,7 @@ Use this to your advantage by establishing context in Planning mode before switc
 ## Related Topics
 
 - [Chat Modes Architecture](../explanation/chat_modes_architecture.md) - How chat modes work internally
-- [System Prompts Reference](../explanation/phase4_system_prompts_and_plan_format_implementation.md) - How system prompts guide agent behavior
+- [System Prompts Reference](../archive/implementation_summaries/phase4_system_prompts_and_plan_format_implementation.md) - How system prompts guide agent behavior
 - [CLI Reference](../reference/cli.md) - Complete command-line options
 
 ## Getting Help
@@ -365,6 +396,8 @@ Use this to your advantage by establishing context in Planning mode before switc
 - Type `/help` in any chat session to see available commands
 - Check `/status` to verify your current mode and settings
 - Read the [Architecture Documentation](../explanation/chat_modes_architecture.md) for technical details
+
 ```
 
 Now let me create the architecture explanation document:
+```

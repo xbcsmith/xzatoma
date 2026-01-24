@@ -17,47 +17,47 @@ Context mentions are a core feature of XZatoma that allow users to inject releva
 
 ```
 User Input with @mentions
-         |
-         v
-    Parse Mentions
-    (extract @file, @search, @grep, @url)
-         |
-         +---> File Mention
-         |        |
-         |        +---> Path Resolution
-         |        +---> Load File Content
-         |        +---> Apply Line Range
-         |
-         +---> Search Mention
-         |        |
-         |        +---> File System Scan
-         |        +---> Pattern Matching
-         |        +---> Format Results
-         |
-         +---> Grep Mention
-         |        |
-         |        +---> Regex Compilation
-         |        +---> Content Scan
-         |        +---> Format Results
-         |
-         +---> URL Mention
-         |        |
-         |        +---> Validate URL (SSRF check)
-         |        +---> HTTP Fetch (with timeout/size limits)
-         |        +---> Convert HTML to Text
-         |        +---> Cache Result
-         |
-         v
-    Augment Prompt
-    (inject content into conversation)
-         |
-         v
-    Send to AI Provider
-    (with augmented context)
-         |
-         v
-    Agent Response
-    (now has needed context)
+     |
+     v
+  Parse Mentions
+  (extract @file, @search, @grep, @url)
+     |
+     +---> File Mention
+     |    |
+     |    +---> Path Resolution
+     |    +---> Load File Content
+     |    +---> Apply Line Range
+     |
+     +---> Search Mention
+     |    |
+     |    +---> File System Scan
+     |    +---> Pattern Matching
+     |    +---> Format Results
+     |
+     +---> Grep Mention
+     |    |
+     |    +---> Regex Compilation
+     |    +---> Content Scan
+     |    +---> Format Results
+     |
+     +---> URL Mention
+     |    |
+     |    +---> Validate URL (SSRF check)
+     |    +---> HTTP Fetch (with timeout/size limits)
+     |    +---> Convert HTML to Text
+     |    +---> Cache Result
+     |
+     v
+  Augment Prompt
+  (inject content into conversation)
+     |
+     v
+  Send to AI Provider
+  (with augmented context)
+     |
+     v
+  Agent Response
+  (now has needed context)
 ```
 
 ## Module Structure
@@ -76,17 +76,17 @@ Key types:
 
 ```rust
 pub enum Mention {
-    File(FileMention),      // @file.rs#L10-20
-    Search(SearchMention),  // @search:"pattern"
-    Grep(SearchMention),    // @grep:"regex"
-    Url(UrlMention),       // @url:https://example.com
+  File(FileMention),   // @file.rs#L10-20
+  Search(SearchMention), // @search:"pattern"
+  Grep(SearchMention),  // @grep:"regex"
+  Url(UrlMention),    // @url:https://example.com
 }
 
 pub struct LoadError {
-    pub kind: LoadErrorKind,      // Structured error type
-    pub source: String,            // File/URL that failed
-    pub message: String,           // Human-readable message
-    pub suggestion: Option<String>, // How to fix it
+  pub kind: LoadErrorKind,   // Structured error type
+  pub source: String,      // File/URL that failed
+  pub message: String,      // Human-readable message
+  pub suggestion: Option<String>, // How to fix it
 }
 ```
 
@@ -131,16 +131,16 @@ Structured error handling:
 
 ```rust
 pub enum LoadErrorKind {
-    FileNotFound,
-    FileTooLarge,
-    FileBinary,
-    UrlInvalid,
-    UrlSsrf,
-    UrlRateLimited,
-    UrlHttpError(u16),
-    UrlTimeout,
-    ParseError,
-    Unknown,
+  FileNotFound,
+  FileTooLarge,
+  FileBinary,
+  UrlInvalid,
+  UrlSsrf,
+  UrlRateLimited,
+  UrlHttpError(u16),
+  UrlTimeout,
+  ParseError,
+  Unknown,
 }
 ```
 
@@ -151,10 +151,10 @@ pub enum LoadErrorKind {
 When user input contains `@` symbols, the parser extracts mentions:
 
 ```
-Input:  "Review @config.yaml and search for @search:\"error\""
+Input: "Review @config.yaml and search for @search:\"error\""
 Output: [
-    Mention::File(FileMention { path: "config.yaml", ... }),
-    Mention::Search(SearchMention { pattern: "error" }),
+  Mention::File(FileMention { path: "config.yaml", ... }),
+  Mention::Search(SearchMention { pattern: "error" }),
 ]
 ```
 
@@ -212,7 +212,7 @@ For each mention, appropriate content loader is called:
 When all mentions are loaded, content is injected into the augmented prompt:
 
 ```
-Original:  "Review @config.yaml"
+Original: "Review @config.yaml"
 
 Augmented: "Review this file:
 
@@ -234,9 +234,9 @@ File mention resolution uses file operations:
 
 ```
 parse_mentions()
-  -> load_file_content()
-    -> file_ops::read_file()
-    -> file_ops::get_file_metadata()
+ -> load_file_content()
+  -> file_ops::read_file()
+  -> file_ops::get_file_metadata()
 ```
 
 ### Parser → Fetch Tool
@@ -245,9 +245,9 @@ URL mention loading uses fetch tool:
 
 ```
 parse_mentions()
-  -> load_url_content()
-    -> fetch_tool::fetch()
-    -> convert_html_to_text()
+ -> load_url_content()
+  -> fetch_tool::fetch()
+  -> convert_html_to_text()
 ```
 
 ### Agent → Augmentation
@@ -256,10 +256,10 @@ Agent calls augmentation before sending to provider:
 
 ```
 agent::chat()
-  -> augment_prompt_with_mentions()
-    -> parse_mentions()
-    -> load_content()
-    -> provider::send_message(augmented_prompt)
+ -> augment_prompt_with_mentions()
+  -> parse_mentions()
+  -> load_content()
+  -> provider::send_message(augmented_prompt)
 ```
 
 ## Caching Strategy
@@ -332,9 +332,9 @@ CLI displays structured error information:
 ```
 Mention Loading Summary
 =======================
-Loaded:  config.yaml, src/main.rs
-Failed:  @nonexistent.rs (File not found)
-         @url:https://localhost:8080 (SSRF blocked)
+Loaded: config.yaml, src/main.rs
+Failed: @nonexistent.rs (File not found)
+     @url:https://localhost:8080 (SSRF blocked)
 
 Suggestions:
 - For nonexistent.rs: Check if file exists with 'ls'
@@ -367,7 +367,7 @@ File paths validated to prevent traversal:
 ```rust
 // Block attempts to escape project directory
 if path.contains("..") || path.starts_with("/") {
-    return Err(LoadError::new(FileNotFound, ...));
+  return Err(LoadError::new(FileNotFound, ...));
 }
 ```
 
@@ -450,7 +450,7 @@ Invalidate cache when file is detected to have changed:
 
 ```rust
 if file.mtime > cache.cached_at {
-    reload_file_content()
+  reload_file_content()
 }
 ```
 
@@ -531,8 +531,8 @@ Agent calls `augment_prompt_with_mentions()` before sending message to provider:
 
 ```rust
 let (augmented_prompt, errors) = augment_prompt_with_mentions(
-    user_message,
-    &project_root,
+  user_message,
+  &project_root,
 ).await;
 
 // Errors are collected and reported
@@ -546,15 +546,15 @@ Chat loop captures user input, passes to augmentation:
 
 ```rust
 loop {
-    let input = read_user_input();
+  let input = read_user_input();
 
-    if input.contains("@") {
-        let (prompt, errors) = augment_prompt_with_mentions(&input, ...);
-        display_mention_errors(&errors);
-        send_to_agent(&prompt);
-    } else {
-        send_to_agent(&input);
-    }
+  if input.contains("@") {
+    let (prompt, errors) = augment_prompt_with_mentions(&input, ...);
+    display_mention_errors(&errors);
+    send_to_agent(&prompt);
+  } else {
+    send_to_agent(&input);
+  }
 }
 ```
 
@@ -563,8 +563,8 @@ loop {
 Mention help is available via special commands:
 
 ```
-/help       - General help including mentions syntax
-/mentions   - Detailed mention help and examples
+/help    - General help including mentions syntax
+/mentions  - Detailed mention help and examples
 ```
 
 ## Testing Strategy

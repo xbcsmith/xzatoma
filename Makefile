@@ -58,6 +58,13 @@ check: ; $(info $(M) running cargo check...) @ ## Runs a cargo check
 lint: ; $(info $(M) running cargo clippy...) @ ## Runs a cargo clippy
 	$Q $(CARGO) clippy --all-targets --all-features -- -D warnings
 
+# Docs validation (link checks, emoji scan, filename and code-fence checks)
+docs-check: ; $(info $(M) running docs validation scripts...) @ ## Runs documentation validation scripts
+	$Q python3 scripts/doc_link_check.py
+	$Q python3 scripts/emoji_check.py
+	$Q python3 scripts/code_fence_check.py
+	$Q python3 scripts/docs_filename_check.py
+
 install: ; $(info $(M) running cargo install...) @ ## Runs a cargo install
 	$Q $(CARGO) install --path .
 
