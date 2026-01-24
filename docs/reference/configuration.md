@@ -100,26 +100,26 @@ A set of environment variables is supported to override configuration values. En
 
 Common environment variables:
 
-- `XZATOMA_PROVIDER` 
+- `XZATOMA_PROVIDER`
  Example: `export XZATOMA_PROVIDER=copilot`
 
-- `XZATOMA_COPILOT_MODEL` 
+- `XZATOMA_COPILOT_MODEL`
  Example: `export XZATOMA_COPILOT_MODEL=gpt-5-mini`
 
-- `XZATOMA_OLLAMA_HOST` 
+- `XZATOMA_OLLAMA_HOST`
  Example: `export XZATOMA_OLLAMA_HOST=localhost:11434`
 
-- `XZATOMA_OLLAMA_MODEL` 
+- `XZATOMA_OLLAMA_MODEL`
  Example: `export XZATOMA_OLLAMA_MODEL=qwen3`
 
-- `XZATOMA_MAX_TURNS` 
+- `XZATOMA_MAX_TURNS`
  Example: `export XZATOMA_MAX_TURNS=100`
 
-- `XZATOMA_TIMEOUT_SECONDS` 
+- `XZATOMA_TIMEOUT_SECONDS`
  Example: `export XZATOMA_TIMEOUT_SECONDS=900`
 
-- `XZATOMA_EXECUTION_MODE` 
- Example: `export XZATOMA_EXECUTION_MODE=restricted_autonomous` 
+- `XZATOMA_EXECUTION_MODE`
+ Example: `export XZATOMA_EXECUTION_MODE=restricted_autonomous`
  Supported values (case-insensitive):
  - `interactive`
  - `restricted_autonomous`

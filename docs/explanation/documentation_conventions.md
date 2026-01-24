@@ -116,7 +116,7 @@ Before submitting a docs PR:
 1. Run doc-specific validation (if helper scripts exist):
 
    - `python3 scripts/doc_link_check.py` — validate internal links (or run a link checker you prefer).
-   - `python3 scripts/emoji_check.py` — scan for emoji characters.
+   - `python3 scripts/emoji_check.py [--strict]` — scan for emoji characters. By default the checker uses a relaxed detection that avoids flagging box-drawing characters and simple dingbats (e.g., check marks); pass `--strict` to enable the legacy broader matching that will flag additional Unicode symbols.
    - `python3 scripts/code_fence_check.py` — ensure all fenced code blocks include a language/path tag.
    - `python3 scripts/docs_filename_check.py` — validate doc filenames and YAML extensions.
    - Alternatively, run the Makefile helper: `make docs-check` (recommended; runs the above checks).

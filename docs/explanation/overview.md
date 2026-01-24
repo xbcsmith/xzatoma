@@ -312,7 +312,7 @@ XZatoma is similar to Zed's agent chat but:
 
 ### For Users
 
-1. Read `docs/tutorials/quickstart.md` 
+1. Read `docs/tutorials/quickstart.md`
 2. Configure your AI provider
 3. Try interactive chat mode
 4. Create your first plan file

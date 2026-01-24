@@ -5,7 +5,10 @@ emoji_check.py
 Small helper script to scan Markdown documentation for emoji characters.
 
 Usage:
-    python3 emoji_check.py [--docs-root PATH] [--include-archive] [--verbose]
+    python3 emoji_check.py [--docs-root PATH] [--include-archive] [--verbose] [--strict]
+
+By default the scanner uses a relaxed emoji range (avoids flagging box-drawing and check marks).
+Set `--strict` to use the legacy, broader ranges.
 
 By default, the script scans the `docs/` directory that is a sibling of this
 script's parent directory (i.e., ../docs relative to this file). It searches
@@ -36,10 +39,25 @@ import re
 import sys
 from typing import Dict, List, Tuple
 
-# Broad (but not exhaustive) set of emoji-related Unicode ranges.
-# These ranges were chosen to capture the majority of emoji codepoints
-# commonly used in content. This is a pragmatic, maintainable approach.
-_EMOJI_RE = re.compile(
+# Two patterns are provided:
+#  - RELAXED (default): captures common emoji/pictograph ranges but avoids
+#    dingbats/technical ranges that commonly include box-drawing characters,
+#    check marks, and similar glyphs used for formatting.
+#  - STRICT (legacy): the original, broader set of ranges (use --strict to opt in).
+_EMOJI_RE_RELAXED = re.compile(
+    "["  # relaxed: common emoji/pictograph ranges only
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F680-\U0001F6FF"  # transport & map
+    "\U0001F1E0-\U0001F1FF"  # flags
+    "\U0001F900-\U0001F9FF"  # supplemental symbols & pictographs
+    "\U0001FA70-\U0001FAFF"  # Symbols & Pictographs Extended-A
+    "]+",
+    flags=re.UNICODE,
+)
+
+# Legacy, broader pattern (matches the previous behavior)
+_EMOJI_RE_STRICT = re.compile(
     "["  # begin char class
     "\U0001F300-\U0001F5FF"  # symbols & pictographs
     "\U0001F600-\U0001F64F"  # emoticons
@@ -56,20 +74,28 @@ _EMOJI_RE = re.compile(
 )
 
 
-def find_emoji_in_text(text: str) -> List[Tuple[int, str]]:
+def find_emoji_in_text(text: str, strict: bool = False) -> List[Tuple[int, str]]:
     """
     Return a list of (index, match_text) for emoji-like matches in `text`.
     Index is the Python string index (character offset).
+
+    If `strict` is True, the legacy broader pattern is used (includes dingbats
+    and technical symbol ranges). By default (strict=False) a relaxed pattern
+    is used to avoid flagging box-drawing and check marks.
     """
-    return [(m.start(), m.group(0)) for m in _EMOJI_RE.finditer(text)]
+    pattern = _EMOJI_RE_STRICT if strict else _EMOJI_RE_RELAXED
+    return [(m.start(), m.group(0)) for m in pattern.finditer(text)]
 
 
-def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",), include_archive: bool = False) -> Dict[str, List[Tuple[int, str, str]]]:
+def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",), include_archive: bool = False, strict: bool = False) -> Dict[str, List[Tuple[int, str, str]]]:
     """
     Scan files under `docs_root` for emoji characters.
 
     Returns a mapping:
         { filepath: [ (line_number, matched_characters, line_text), ... ] }
+
+    Args:
+        strict: If True, use the legacy, broader emoji ranges (same as --strict).
     """
     results: Dict[str, List[Tuple[int, str, str]]] = {}
 
@@ -90,7 +116,7 @@ def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",), 
             try:
                 with open(path, "r", encoding="utf-8") as fh:
                     for i, line in enumerate(fh, start=1):
-                        matches = find_emoji_in_text(line)
+                        matches = find_emoji_in_text(line, strict=strict)
                         if matches:
                             # Concatenate all matched emoji sequences on the line for reporting
                             matched_texts = [m[1] for m in matches]
@@ -131,6 +157,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--docs-root", default=default_docs, help=f"Path to docs/ directory (default: {default_docs})")
     p.add_argument("--extensions", default=".md", help="Comma-separated file extensions to scan (default: .md)")
     p.add_argument("--include-archive", action="store_true", help="Include files under docs/archive/ in the scan (defaults to False)")
+    p.add_argument("--strict", action="store_true", help="Use legacy strict emoji detection (includes dingbats and technical ranges). Default: relaxed detection to avoid flagging box-drawing and check marks.")
     p.add_argument("--verbose", "-v", action="store_true", help="Show matching line context for each occurrence")
     return p.parse_args(argv)
 
@@ -140,8 +167,14 @@ def main(argv: List[str]) -> int:
     docs_root = args.docs_root
     exts = tuple(e.strip().lower() for e in args.extensions.split(",") if e.strip())
 
+    if args.verbose:
+        if args.strict:
+            print("Using strict emoji detection (--strict): legacy broad ranges enabled.")
+        else:
+            print("Using relaxed emoji detection (default): avoids flagging box-drawing and check marks.")
+
     try:
-        found = scan_docs_for_emoji(docs_root, exts, include_archive=args.include_archive)
+        found = scan_docs_for_emoji(docs_root, exts, include_archive=args.include_archive, strict=args.strict)
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
