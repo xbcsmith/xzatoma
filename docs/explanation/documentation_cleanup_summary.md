@@ -265,7 +265,7 @@ Phase 3 focused on authoring and publishing high-impact, user-facing documentati
 ### Notes & Next Steps
 
 - Phase 4 (Index update & Documentation Conventions) remains planned: create `docs/explanation/documentation_conventions.md` and finalize index language if maintainers want additional stylistic constraints recorded.
-- Phase 5 (Docs CI) is recommended: add a lightweight docs CI job that runs internal link checks and the emoji scan on docs-only PRs to prevent regressions.
+- Phase 5 (Docs CI) — Completed: implemented a lightweight docs CI workflow and helper scripts to validate internal links, detect emoji usage, verify code-fence language tags, and enforce filename conventions on docs-only PRs. See Phase 5 summary below.
 - Suggested PR strategy: prefer small, focused content PRs with a reviewer checklist that includes link checks, filename conventions, and the emoji scan.
 
 ## Phase 4: Index update & Documentation Conventions — Summary
@@ -303,7 +303,55 @@ Phase 4 implemented index updates and formalized contributor-facing documentatio
 
 ### Notes & Next Steps
 
-- Phase 5 (Docs CI) remains planned: add automated checks (filename validation, link checking, emoji scan, code-fence language enforcement) to run on docs-only PRs.
+- Phase 5 (Docs CI) — Completed. See the summary below for details.
+
+## Phase 5: Validation & CI — Summary
+
+### Overview
+
+Phase 5 implemented a lightweight automated validation pipeline that runs on docs-only pull requests (and when `scripts/` changes). The goal is to prevent documentation regressions by enforcing repository documentation conventions and surfacing problems early in the PR workflow.
+
+### Components Delivered
+
+- `.github/workflows/docs_ci.yaml` — GitHub Actions workflow that runs the docs checks on docs-only PRs and on pushes to `main` that modify `docs/` or `scripts/`.
+- `scripts/doc_link_check.py` — internal Markdown link checker (existing helper).
+- `scripts/emoji_check.py` — emoji scan (existing helper).
+- `scripts/code_fence_check.py` — new script that verifies fenced code blocks include a language/path tag and detects unclosed code blocks.
+- `scripts/docs_filename_check.py` — new script that validates markdown filenames follow `lowercase_with_underscores.md` and ensures YAML files use `.yaml` (no `.yml`).
+- `Makefile` — added `docs-check` target to run the above scripts locally.
+- `docs/README.md` and `docs/explanation/documentation_conventions.md` — updated to document the checks and instructions for running them locally.
+
+### Implementation Notes
+
+- The validation scripts were intentionally kept dependency-free (pure Python) to minimize CI overhead and make local validation trivial.
+- The CI runs the same scripts as the local `make docs-check` target to ensure consistent behavior between local validation and the CI job.
+- The link checker is conservative (does not validate anchor names) to avoid false positives; anchor validation can be added in a future iteration.
+
+### Validation & Tests Performed
+
+- Ran `python3 scripts/doc_link_check.py --verbose` — No broken internal links found.
+- Ran `python3 scripts/emoji_check.py` — No emoji found in `docs/`.
+- Ran `python3 scripts/code_fence_check.py` — No code fences missing language/path tags; no unclosed blocks detected.
+- Ran `python3 scripts/docs_filename_check.py` — All markdown filenames and YAML extensions conform to the conventions.
+- Updated `docs/README.md` to mark Phase 5 completed and document how to run the checks locally.
+- Executed project quality gates (per AGENTS.md):
+  - `cargo fmt --all`
+  - `cargo check --all-targets --all-features`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `cargo test --all-features`
+    — all ran successfully locally.
+
+### Success Criteria Achieved
+
+- CI workflow prevents merges that violate doc conventions or introduce broken links/emoji.
+- Contributors can run `make docs-check` locally to validate changes before opening a PR.
+- Documentation and summary files updated to reflect Phase 5 completion.
+
+### Notes & Next Steps
+
+- Consider adding anchor/heading validation for more complete link checking.
+- Optionally add a pre-commit hook or integrate the docs checks into existing CI job matrices for additional coverage.
+- If maintainers prefer, the changes can be split into smaller PRs and I can draft PR descriptions and reviewer checklists upon request.
 - Consider adding simple helper scripts and a GitHub Actions workflow to enforce conventions (Phase 5 deliverable).
 - If maintainers want additional stylistic rules (tone, templates, example patterns), add them to `docs/explanation/documentation_conventions.md` through a focused content PR.
 

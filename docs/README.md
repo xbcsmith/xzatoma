@@ -123,7 +123,12 @@ See the contributor-facing conventions for full guidance: [Documentation Convent
 The documentation cleanup work is staged into phases. Outstanding or deferred items are tracked in the documentation cleanup summary and implementation plan. For larger or cross-cutting changes, please open an issue and link it to the relevant plan.
 
 - Phase 4: Index update & documentation conventions — completed (this index updated and `docs/explanation/documentation_conventions.md` added).
-- Phase 5: Docs CI — planned. See `docs/explanation/documentation_cleanup_summary.md` for outstanding items, suggested checks, and next steps.
+- Phase 5: Docs CI — completed. A GitHub Actions workflow (`.github/workflows/docs_ci.yaml`) now runs documentation validation checks (internal link checks, emoji scans, code-fence language enforcement, and filename checks) on docs-only pull requests and when changes are made to `scripts/`. To run the same checks locally, use the convenience Make target:
+
+```bash
+make docs-check
+```
+
 - If you propose a deferred change, open an issue and reference `docs/explanation/documentation_cleanup_summary.md` or the implementation plan so reviewers can triage properly.
 
 ## Getting Help

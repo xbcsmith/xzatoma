@@ -36,6 +36,7 @@ touch docs/how-to/Distributed-Tracing.md
 - Markdown files must use the `.md` extension.
 - YAML files must use the `.yaml` extension (NOT `.yml`).
   - Example to rename `.yml` → `.yaml`:
+
 ```bash
 find . -name "*.yml" -exec sh -c 'mv "$0" "${0%.yml}.yaml"' {} \;
 ```
@@ -57,23 +58,30 @@ Decision rule: If it is step-by-step and learning oriented → `tutorials/`. If 
 
 - No emojis anywhere in docs or code comments.
   - To find emoji usage (example):
+
 ```bash
 # May catch common emoji ranges
 grep -R --line-number -P "[\x{1F600}-\x{1F64F}]" docs/ || true
 ```
 
-- Fenced code blocks MUST include a language (or path) tag (e.g., ```rust, ```bash, ```json).
+- Fenced code blocks MUST include a language (or path) tag (e.g., `rust, `bash, ```json).
   - Good:
-```markdown
+
+````markdown
 ```rust
 fn main() { println!("hello"); }
 ```
-```
+````
+
+````
   - Bad:
 ```markdown
-```
+````
+
 fn main() { println!("hello"); }
+
 ```
+
 ```
 
 - Prefer relative links for internal docs (e.g., `../reference/cli.md`) and ensure links are updated after moves/renames.
@@ -81,7 +89,8 @@ fn main() { println!("hello"); }
 - Small, focused files are preferred. Avoid overly long developer logs in top-level docs — archive those under `docs/archive/implementation_summaries/`.
 
 - For Rust code, public functions, types, and modules MUST have `///` doc comments including runnable examples when appropriate (these are tested by `cargo test`):
-```rust
+
+````rust
 /// Computes factorial of `n`.
 ///
 /// # Examples
@@ -91,7 +100,7 @@ fn main() { println!("hello"); }
 /// assert_eq!(f, 120);
 /// ```
 pub fn factorial(n: u64) -> Result<u64, MathError> { /* ... */ }
-```
+````
 
 ### 4) Move / Reclassification Policy
 
@@ -105,12 +114,17 @@ pub fn factorial(n: u64) -> Result<u64, MathError> { /* ... */ }
 Before submitting a docs PR:
 
 1. Run doc-specific validation (if helper scripts exist):
+
    - `python3 scripts/doc_link_check.py` — validate internal links (or run a link checker you prefer).
    - `python3 scripts/emoji_check.py` — scan for emoji characters.
+   - `python3 scripts/code_fence_check.py` — ensure all fenced code blocks include a language/path tag.
+   - `python3 scripts/docs_filename_check.py` — validate doc filenames and YAML extensions.
+   - Alternatively, run the Makefile helper: `make docs-check` (recommended; runs the above checks).
 
 2. Verify code fence language usage and fix missing language tags.
 
 3. Run repository quality gates (these are mandatory for any change that touches source or docs per AGENTS.md):
+
 ```bash
 cargo fmt --all
 cargo check --all-targets --all-features
@@ -119,8 +133,13 @@ cargo test --all-features
 ```
 
 4. Run a final manual pass:
+
    - Read the doc as a new user and confirm steps/examples are reproducible.
    - Confirm the doc is discoverable via `docs/README.md` (update the index if you add or move top-level pages).
+
+5. CI & PR validation:
+   - A GitHub Actions workflow at `.github/workflows/docs_ci.yaml` runs these docs checks automatically on docs-only PRs (and when `scripts/` is changed).
+   - Ensure the CI job passes on your PR and address any failures before requesting review.
 
 ## PR Checklist (copy into your PR description)
 
@@ -138,28 +157,36 @@ cargo test --all-features
 
 Example template for a documentation page (recommended sections):
 
-```markdown
+````markdown
 # Feature Name Implementation
 
 ## Overview
+
 Short description of purpose.
 
 ## Components Delivered
+
 - `file.md` — One-line description
 
 ## Implementation Details
+
 Technical explanation, design notes, and any important caveats.
 
 ## Testing
+
 Commands you used to validate this (link checks, example runs).
 
 ## Usage Examples
+
 ```rust
 // Complete example that can be copy/pasted by users
 ```
+````
 
 ## References
+
 - Link to related docs or issues
+
 ```
 
 ## References
@@ -171,5 +198,6 @@ Commands you used to validate this (link checks, example runs).
 
 ---
 
-Last updated: 2026-01-24  
+Last updated: 2026-01-24
 Maintained by: XZatoma Documentation Team
+```

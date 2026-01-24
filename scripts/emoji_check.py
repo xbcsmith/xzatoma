@@ -5,11 +5,13 @@ emoji_check.py
 Small helper script to scan Markdown documentation for emoji characters.
 
 Usage:
-    python3 emoji_check.py [--docs-root PATH] [--verbose]
+    python3 emoji_check.py [--docs-root PATH] [--include-archive] [--verbose]
 
 By default, the script scans the `docs/` directory that is a sibling of this
 script's parent directory (i.e., ../docs relative to this file). It searches
-all `.md` files recursively and reports any emoji-like characters it finds.
+all `.md` files recursively but skips files under `docs/archive/` by default.
+Pass `--include-archive` to include archived documentation (developer notes)
+in the scan.
 
 Exit codes:
     0 - no emoji characters found
@@ -23,6 +25,7 @@ Notes:
 - It does not scan files outside the `docs/` tree by default. That allows
   AGENTS.md to retain its visual markers if necessary while keeping the
   rest of the documentation emoji-free.
+- By default the script also skips `docs/archive/` (historical implementation notes and logs). Use `--include-archive` to include archived files in the scan.
 """
 
 from __future__ import annotations
@@ -61,7 +64,7 @@ def find_emoji_in_text(text: str) -> List[Tuple[int, str]]:
     return [(m.start(), m.group(0)) for m in _EMOJI_RE.finditer(text)]
 
 
-def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",)) -> Dict[str, List[Tuple[int, str, str]]]:
+def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",), include_archive: bool = False) -> Dict[str, List[Tuple[int, str, str]]]:
     """
     Scan files under `docs_root` for emoji characters.
 
@@ -75,6 +78,11 @@ def scan_docs_for_emoji(docs_root: str, extensions: Tuple[str, ...] = (".md",)) 
         raise FileNotFoundError(f"docs root not found: {docs_root}")
 
     for dirpath, _, filenames in os.walk(docs_root):
+        # Optionally skip archived documentation to avoid noisy historical artifacts
+        rel_dir = os.path.relpath(dirpath, docs_root)
+        if not include_archive and (rel_dir == "archive" or rel_dir.startswith("archive" + os.sep)):
+            continue
+
         for fname in filenames:
             if not fname.lower().endswith(extensions):
                 continue
@@ -122,6 +130,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     default_docs = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "docs"))
     p.add_argument("--docs-root", default=default_docs, help=f"Path to docs/ directory (default: {default_docs})")
     p.add_argument("--extensions", default=".md", help="Comma-separated file extensions to scan (default: .md)")
+    p.add_argument("--include-archive", action="store_true", help="Include files under docs/archive/ in the scan (defaults to False)")
     p.add_argument("--verbose", "-v", action="store_true", help="Show matching line context for each occurrence")
     return p.parse_args(argv)
 
@@ -132,7 +141,7 @@ def main(argv: List[str]) -> int:
     exts = tuple(e.strip().lower() for e in args.extensions.split(",") if e.strip())
 
     try:
-        found = scan_docs_for_emoji(docs_root, exts)
+        found = scan_docs_for_emoji(docs_root, exts, include_archive=args.include_archive)
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
