@@ -12,9 +12,10 @@ use regex::Regex;
 ///
 /// Filters events based on configured criteria including event types,
 /// source patterns, platform ID, package name, API version, and success status.
+#[derive(Clone)]
 pub struct EventFilter {
     config: EventFilterConfig,
-    source_regex: Option<Regex>,
+    source_regex: Option<std::sync::Arc<Regex>>,
 }
 
 impl EventFilter {
@@ -48,7 +49,7 @@ impl EventFilter {
     /// ```
     pub fn new(config: EventFilterConfig) -> Result<Self> {
         let source_regex = if let Some(pattern) = &config.source_pattern {
-            Some(Regex::new(pattern)?)
+            Some(std::sync::Arc::new(Regex::new(pattern)?))
         } else {
             None
         };
@@ -205,7 +206,7 @@ mod tests {
         package: &str,
         api_version: &str,
     ) -> CloudEventMessage {
-        use crate::xzepr::CloudEventData;
+        use crate::xzepr::consumer::message::CloudEventData;
 
         CloudEventMessage {
             success,

@@ -16,6 +16,8 @@ mod mention_parser;
 mod prompts;
 mod providers;
 mod tools;
+mod watcher;
+mod xzepr;
 
 use crate::cli::{Cli, Commands, ModelCommand};
 
@@ -83,26 +85,20 @@ async fn main() -> Result<()> {
             event_types,
             filter_config,
             log_file,
-            json_logs: _,
+            json_logs,
             dry_run,
         } => {
             tracing::info!("Starting watcher mode");
-            if let Some(t) = &topic {
-                tracing::debug!("Overriding topic: {}", t);
-            }
-            if let Some(et) = &event_types {
-                tracing::debug!("Filtering event types: {}", et);
-            }
-            if let Some(fc) = &filter_config {
-                tracing::debug!("Using filter config: {}", fc.display());
-            }
-            if let Some(lf) = &log_file {
-                tracing::debug!("Writing logs to: {}", lf.display());
-            }
-            if dry_run {
-                tracing::warn!("Dry run mode enabled - plans will not be executed");
-            }
-            tracing::warn!("Watch command is not yet implemented");
+            commands::watch::run_watch(
+                config,
+                topic,
+                event_types,
+                filter_config,
+                log_file,
+                json_logs,
+                dry_run,
+            )
+            .await?;
             Ok(())
         }
         Commands::Auth { provider } => {

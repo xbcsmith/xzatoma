@@ -50,6 +50,10 @@ colored = "2.1"
 
 # Regex for validation
 regex = "1.10"
+
+# Streaming utilities for Kafka consumer
+tokio-stream = "0.1"
+
 url = "2.5.8"
 prettytable-rs = "0.10.0"
 

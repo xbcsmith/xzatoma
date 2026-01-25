@@ -31,6 +31,7 @@ pub enum PlanExtractionStrategy {
 /// Attempts multiple strategies to find and extract plans from CloudEvent payloads.
 /// The extractor tries strategies in priority order and returns the first successfully
 /// extracted plan.
+#[derive(Clone)]
 pub struct PlanExtractor {
     strategies: Vec<PlanExtractionStrategy>,
 }
@@ -155,11 +156,10 @@ impl Default for PlanExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xzepr::CloudEventData;
+    use crate::xzepr::consumer::message::{CloudEventData, EventEntity};
     use serde_json::json;
 
     fn create_test_event_with_payload(payload: serde_json::Value) -> CloudEventMessage {
-        use crate::xzepr::EventEntity;
         use chrono::Utc;
 
         CloudEventMessage {

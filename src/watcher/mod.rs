@@ -18,10 +18,14 @@
 //! - [`filter`]: Event filtering by type, source, platform, etc.
 //! - [`logging`]: Structured logging configuration
 //! - [`plan_extractor`]: Plan extraction from event payloads
+//! - [`watcher`]: Core watcher service implementation
 
 pub mod filter;
 pub mod logging;
 pub mod plan_extractor;
+#[allow(clippy::module_inception)]
+pub mod watcher;
 
 pub use filter::EventFilter;
-pub use plan_extractor::{PlanExtractionStrategy, PlanExtractor};
+pub use plan_extractor::PlanExtractor;
+pub use watcher::Watcher;

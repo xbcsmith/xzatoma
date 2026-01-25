@@ -284,7 +284,7 @@ Test Statistics:
 
 ### 1. Configuration Structure
 **Decision**: Separate config structs per concern (Kafka, Filters, Logging, Execution)
-**Rationale**: 
+**Rationale**:
 - Clear separation of concerns
 - Easier to test each component independently
 - Scales well for future additions
