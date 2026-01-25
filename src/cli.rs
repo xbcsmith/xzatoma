@@ -60,6 +60,33 @@ pub enum Commands {
         allow_dangerous: bool,
     },
 
+    /// Watch Kafka topic for events and execute plans
+    Watch {
+        /// Kafka topic to watch (overrides config)
+        #[arg(short, long)]
+        topic: Option<String>,
+
+        /// Event types to process (comma-separated)
+        #[arg(short = 'e', long)]
+        event_types: Option<String>,
+
+        /// Filter configuration file (YAML)
+        #[arg(short = 'f', long)]
+        filter_config: Option<PathBuf>,
+
+        /// Log output file (defaults to STDOUT only)
+        #[arg(short = 'l', long)]
+        log_file: Option<PathBuf>,
+
+        /// Enable JSON-formatted logging
+        #[arg(long, default_value = "true")]
+        json_logs: bool,
+
+        /// Dry run mode (parse but don't execute plans)
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Authenticate with a provider
     Auth {
         /// Provider to authenticate with (copilot, ollama)

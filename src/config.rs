@@ -17,6 +17,9 @@ pub struct Config {
     pub provider: ProviderConfig,
     /// Agent behavior configuration
     pub agent: AgentConfig,
+    /// Watcher configuration for Kafka event monitoring
+    #[serde(default)]
+    pub watcher: WatcherConfig,
 }
 
 /// Provider configuration
@@ -425,6 +428,7 @@ impl Config {
                 ollama: OllamaConfig::default(),
             },
             agent: AgentConfig::default(),
+            watcher: WatcherConfig::default(),
         }
     }
 
@@ -756,5 +760,172 @@ allow_mode_switching: false
         assert_eq!(config.chat.default_mode, "planning");
         assert_eq!(config.chat.default_safety, "confirm");
         assert!(config.chat.allow_mode_switching);
+    }
+}
+
+/// Watcher configuration for Kafka event monitoring
+///
+/// Configures the watcher service for monitoring Kafka topics,
+/// filtering events, logging, and executing plans extracted from events.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WatcherConfig {
+    /// Kafka consumer configuration
+    #[serde(default)]
+    pub kafka: Option<KafkaWatcherConfig>,
+
+    /// Event filtering configuration
+    #[serde(default)]
+    pub filters: EventFilterConfig,
+
+    /// Logging configuration
+    #[serde(default)]
+    pub logging: WatcherLoggingConfig,
+
+    /// Plan execution configuration
+    #[serde(default)]
+    pub execution: WatcherExecutionConfig,
+}
+
+/// Kafka consumer configuration for the watcher
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KafkaWatcherConfig {
+    /// Kafka brokers (comma-separated)
+    pub brokers: String,
+
+    /// Topic to consume from
+    pub topic: String,
+
+    /// Consumer group ID
+    #[serde(default = "default_watcher_group_id")]
+    pub group_id: String,
+
+    /// Security configuration
+    #[serde(default)]
+    pub security: Option<KafkaSecurityConfig>,
+}
+
+/// Kafka security configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KafkaSecurityConfig {
+    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+    pub protocol: String,
+
+    /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
+    pub sasl_mechanism: Option<String>,
+
+    /// SASL username
+    pub sasl_username: Option<String>,
+
+    /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
+    pub sasl_password: Option<String>,
+}
+
+/// Event filter configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EventFilterConfig {
+    /// Event types to process (if empty, process all)
+    #[serde(default)]
+    pub event_types: Vec<String>,
+
+    /// Source pattern filter (regex)
+    pub source_pattern: Option<String>,
+
+    /// Platform ID filter
+    pub platform_id: Option<String>,
+
+    /// Package name filter
+    pub package: Option<String>,
+
+    /// API version filter
+    pub api_version: Option<String>,
+
+    /// Only process successful events
+    #[serde(default = "default_success_only")]
+    pub success_only: bool,
+}
+
+/// Watcher logging configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherLoggingConfig {
+    /// Log level (trace, debug, info, warn, error)
+    #[serde(default = "default_log_level")]
+    pub level: String,
+
+    /// Enable JSON-formatted logs
+    #[serde(default = "default_json_logs")]
+    pub json_format: bool,
+
+    /// Log file path (if None, STDOUT only)
+    pub file_path: Option<std::path::PathBuf>,
+
+    /// Include full event payload in logs
+    #[serde(default)]
+    pub include_payload: bool,
+}
+
+/// Watcher execution configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatcherExecutionConfig {
+    /// Allow dangerous operations in executed plans
+    #[serde(default)]
+    pub allow_dangerous: bool,
+
+    /// Maximum concurrent plan executions
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent_executions: usize,
+
+    /// Execution timeout in seconds
+    #[serde(default = "default_execution_timeout")]
+    pub execution_timeout_secs: u64,
+}
+
+/// Default watcher consumer group ID
+fn default_watcher_group_id() -> String {
+    "xzatoma-watcher".to_string()
+}
+
+/// Default success_only value
+fn default_success_only() -> bool {
+    true
+}
+
+/// Default log level
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+/// Default JSON logs setting
+fn default_json_logs() -> bool {
+    true
+}
+
+/// Default max concurrent executions
+fn default_max_concurrent() -> usize {
+    1
+}
+
+/// Default execution timeout in seconds
+fn default_execution_timeout() -> u64 {
+    300
+}
+
+impl Default for WatcherLoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            json_format: default_json_logs(),
+            file_path: None,
+            include_payload: false,
+        }
+    }
+}
+
+impl Default for WatcherExecutionConfig {
+    fn default() -> Self {
+        Self {
+            allow_dangerous: false,
+            max_concurrent_executions: default_max_concurrent(),
+            execution_timeout_secs: default_execution_timeout(),
+        }
     }
 }

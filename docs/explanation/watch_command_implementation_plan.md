@@ -65,29 +65,29 @@ Add new command variant:
 #[derive(Subcommand, Debug, Clone)]
 pub enum Commands {
     // ... existing commands ...
-    
+
     /// Watch Kafka topic for events and execute plans
     Watch {
         /// Kafka topic to watch (overrides config)
         #[arg(short, long)]
         topic: Option<String>,
-        
+
         /// Event types to process (comma-separated)
         #[arg(short = 'e', long)]
         event_types: Option<String>,
-        
+
         /// Filter configuration file (YAML)
         #[arg(short = 'f', long)]
         filter_config: Option<PathBuf>,
-        
+
         /// Log output file (defaults to STDOUT only)
         #[arg(short = 'l', long)]
         log_file: Option<PathBuf>,
-        
+
         /// Enable JSON-formatted logging
         #[arg(long, default_value = "true")]
         json_logs: bool,
-        
+
         /// Dry run mode (parse but don't execute plans)
         #[arg(long)]
         dry_run: bool,
@@ -106,15 +106,15 @@ pub struct WatcherConfig {
     /// Kafka consumer configuration
     #[serde(default)]
     pub kafka: Option<KafkaWatcherConfig>,
-    
+
     /// Event filtering configuration
     #[serde(default)]
     pub filters: EventFilterConfig,
-    
+
     /// Logging configuration
     #[serde(default)]
     pub logging: WatcherLoggingConfig,
-    
+
     /// Plan execution configuration
     #[serde(default)]
     pub execution: WatcherExecutionConfig,
@@ -124,14 +124,14 @@ pub struct WatcherConfig {
 pub struct KafkaWatcherConfig {
     /// Kafka brokers (comma-separated)
     pub brokers: String,
-    
+
     /// Topic to consume from
     pub topic: String,
-    
+
     /// Consumer group ID
     #[serde(default = "default_watcher_group_id")]
     pub group_id: String,
-    
+
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
@@ -141,13 +141,13 @@ pub struct KafkaWatcherConfig {
 pub struct KafkaSecurityConfig {
     /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
     pub protocol: String,
-    
+
     /// SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)
     pub sasl_mechanism: Option<String>,
-    
+
     /// SASL username
     pub sasl_username: Option<String>,
-    
+
     /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
     pub sasl_password: Option<String>,
 }
@@ -157,19 +157,19 @@ pub struct EventFilterConfig {
     /// Event types to process (if empty, process all)
     #[serde(default)]
     pub event_types: Vec<String>,
-    
+
     /// Source pattern filter (regex)
     pub source_pattern: Option<String>,
-    
+
     /// Platform ID filter
     pub platform_id: Option<String>,
-    
+
     /// Package name filter
     pub package: Option<String>,
-    
+
     /// API version filter
     pub api_version: Option<String>,
-    
+
     /// Only process successful events
     #[serde(default = "default_success_only")]
     pub success_only: bool,
@@ -180,14 +180,14 @@ pub struct WatcherLoggingConfig {
     /// Log level (trace, debug, info, warn, error)
     #[serde(default = "default_log_level")]
     pub level: String,
-    
+
     /// Enable JSON-formatted logs
     #[serde(default = "default_json_logs")]
     pub json_format: bool,
-    
+
     /// Log file path (if None, STDOUT only)
     pub file_path: Option<PathBuf>,
-    
+
     /// Include full event payload in logs
     #[serde(default)]
     pub include_payload: bool,
@@ -198,11 +198,11 @@ pub struct WatcherExecutionConfig {
     /// Allow dangerous operations in executed plans
     #[serde(default)]
     pub allow_dangerous: bool,
-    
+
     /// Maximum concurrent plan executions
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_executions: usize,
-    
+
     /// Execution timeout in seconds
     #[serde(default = "default_execution_timeout")]
     pub execution_timeout_secs: u64,
@@ -239,7 +239,7 @@ Add `watcher` field to main `Config` struct:
 pub struct Config {
     pub provider: ProviderConfig,
     pub agent: AgentConfig,
-    
+
     /// Watcher configuration
     #[serde(default)]
     pub watcher: WatcherConfig,
@@ -283,77 +283,77 @@ impl EventFilter {
         } else {
             None
         };
-        
+
         Ok(Self {
             config,
             source_regex,
         })
     }
-    
+
     /// Check if an event should be processed based on filter criteria.
     pub fn should_process(&self, event: &CloudEventMessage) -> bool {
         // Filter by success flag
         if self.config.success_only && !event.success {
             return false;
         }
-        
+
         // Filter by event type
-        if !self.config.event_types.is_empty() 
+        if !self.config.event_types.is_empty()
             && !self.config.event_types.contains(&event.event_type) {
             return false;
         }
-        
+
         // Filter by source pattern
         if let Some(regex) = &self.source_regex {
             if !regex.is_match(&event.source) {
                 return false;
             }
         }
-        
+
         // Filter by platform_id
         if let Some(platform) = &self.config.platform_id {
             if &event.platform_id != platform {
                 return false;
             }
         }
-        
+
         // Filter by package
         if let Some(package) = &self.config.package {
             if &event.package != package {
                 return false;
             }
         }
-        
+
         // Filter by api_version
         if let Some(version) = &self.config.api_version {
             if &event.api_version != version {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     /// Get filter summary for logging.
     pub fn summary(&self) -> String {
         let mut parts = Vec::new();
-        
+
         if !self.config.event_types.is_empty() {
             parts.push(format!("types={}", self.config.event_types.join(",")));
         }
-        
+
         if let Some(pattern) = &self.config.source_pattern {
             parts.push(format!("source~{}", pattern));
         }
-        
+
         if let Some(platform) = &self.config.platform_id {
             parts.push(format!("platform={}", platform));
         }
-        
+
         if self.config.success_only {
             parts.push("success=true".to_string());
         }
-        
+
         if parts.is_empty() {
             "no filters (all events)".to_string()
         } else {
@@ -398,28 +398,28 @@ use tracing_subscriber::{
 pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(&config.level))?;
-    
+
     let registry = tracing_subscriber::registry().with(env_filter);
-    
+
     if config.json_format {
         // JSON formatting
         let stdout_layer = fmt::layer()
             .json()
             .with_current_span(true)
             .with_span_list(true);
-        
+
         if let Some(file_path) = &config.file_path {
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(file_path)?;
-            
+
             let file_layer = fmt::layer()
                 .json()
                 .with_current_span(true)
                 .with_span_list(true)
                 .with_writer(Arc::new(file));
-            
+
             registry
                 .with(stdout_layer)
                 .with(file_layer)
@@ -432,16 +432,16 @@ pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
         let stdout_layer = fmt::layer()
             .with_target(true)
             .with_thread_ids(true);
-        
+
         if let Some(file_path) = &config.file_path {
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(file_path)?;
-            
+
             let file_layer = fmt::layer()
                 .with_writer(Arc::new(file));
-            
+
             registry
                 .with(stdout_layer)
                 .with(file_layer)
@@ -450,7 +450,7 @@ pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
             registry.with(stdout_layer).init();
         }
     }
-    
+
     Ok(())
 }
 
@@ -500,13 +500,13 @@ use serde_json::Value as JsonValue;
 pub enum PlanExtractionStrategy {
     /// Plan is in data.events[0].payload field
     EventPayload,
-    
+
     /// Plan is in data.events[0].payload.plan field
     EventPayloadPlan,
-    
+
     /// Plan is the entire data field
     DataRoot,
-    
+
     /// Plan is in data.plan field
     DataPlan,
 }
@@ -528,7 +528,7 @@ impl PlanExtractor {
             ],
         }
     }
-    
+
     /// Extract plan from CloudEvent message.
     pub fn extract(&self, event: &CloudEventMessage) -> Result<Plan> {
         for strategy in &self.strategies {
@@ -540,13 +540,13 @@ impl PlanExtractor {
                 return Ok(plan);
             }
         }
-        
+
         Err(anyhow!(
             "Failed to extract plan from event {} using any strategy",
             event.id
         ))
     }
-    
+
     fn try_extract(
         &self,
         event: &CloudEventMessage,
@@ -562,7 +562,7 @@ impl PlanExtractor {
             PlanExtractionStrategy::EventPayloadPlan => {
                 let event_entity = event.data.events.first()
                     .ok_or_else(|| anyhow!("No events in data"))?;
-                
+
                 event_entity.payload
                     .get("plan")
                     .ok_or_else(|| anyhow!("No plan field in event payload"))?
@@ -578,32 +578,32 @@ impl PlanExtractor {
                     .clone()
             }
         };
-        
+
         self.parse_plan_from_json(&json_value)
     }
-    
+
     fn parse_plan_from_json(&self, value: &JsonValue) -> Result<Plan> {
         // Try parsing as YAML string first
         if let Some(plan_str) = value.as_str() {
             if let Ok(plan) = PlanParser::from_yaml(plan_str) {
                 return Ok(plan);
             }
-            
+
             if let Ok(plan) = PlanParser::from_json(plan_str) {
                 return Ok(plan);
             }
-            
+
             if let Ok(plan) = PlanParser::from_markdown(plan_str) {
                 return Ok(plan);
             }
         }
-        
+
         // Try parsing as JSON object
         let json_str = serde_json::to_string(value)?;
         if let Ok(plan) = PlanParser::from_json(&json_str) {
             return Ok(plan);
         }
-        
+
         Err(anyhow!("Could not parse plan from JSON value"))
     }
 }
@@ -688,16 +688,16 @@ use thiserror::Error;
 pub enum WatcherError {
     #[error("Configuration error: {0}")]
     Config(String),
-    
+
     #[error("Consumer error: {0}")]
     Consumer(String),
-    
+
     #[error("Filter error: {0}")]
     Filter(String),
-    
+
     #[error("Plan extraction error: {0}")]
     PlanExtraction(String),
-    
+
     #[error("Execution error: {0}")]
     Execution(String),
 }
@@ -716,14 +716,14 @@ impl Watcher {
     /// Create new watcher instance.
     pub fn new(config: Config) -> Result<Self> {
         let watcher_config = config.watcher.clone();
-        
+
         // Validate watcher configuration
         let kafka_config = watcher_config.kafka
             .as_ref()
             .ok_or_else(|| WatcherError::Config(
                 "Kafka configuration is required".to_string()
             ))?;
-        
+
         // Build Kafka consumer config
         let consumer_config = KafkaConsumerConfig::new(
             kafka_config.brokers.clone(),
@@ -731,30 +731,30 @@ impl Watcher {
             "xzatoma".to_string(),
         )
         .with_group_id(kafka_config.group_id.clone());
-        
+
         // Apply security settings if configured
         let consumer_config = if let Some(security) = &kafka_config.security {
             Self::apply_security_config(consumer_config, security)?
         } else {
             consumer_config
         };
-        
+
         // Create consumer
         let consumer = XzeprConsumer::new(consumer_config)
             .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-        
+
         // Create filter
         let filter = EventFilter::new(watcher_config.filters.clone())
             .map_err(|e| WatcherError::Filter(e.to_string()))?;
-        
+
         // Create plan extractor
         let extractor = PlanExtractor::new();
-        
+
         // Create execution semaphore for concurrency control
         let execution_semaphore = Arc::new(Semaphore::new(
             watcher_config.execution.max_concurrent_executions
         ));
-        
+
         Ok(Self {
             config: Arc::new(config),
             watcher_config,
@@ -764,7 +764,7 @@ impl Watcher {
             execution_semaphore,
         })
     }
-    
+
     /// Start watching for events.
     pub async fn start(&mut self) -> Result<()> {
         tracing::info!(
@@ -772,10 +772,10 @@ impl Watcher {
             filters = %self.filter.summary(),
             "Starting watcher"
         );
-        
+
         self.consumer.subscribe()
             .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-        
+
         let handler = WatcherMessageHandler {
             config: self.config.clone(),
             watcher_config: self.watcher_config.clone(),
@@ -783,13 +783,13 @@ impl Watcher {
             extractor: self.extractor.clone(),
             execution_semaphore: self.execution_semaphore.clone(),
         };
-        
+
         self.consumer.run(handler).await
             .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-        
+
         Ok(())
     }
-    
+
     fn apply_security_config(
         config: KafkaConsumerConfig,
         security: &KafkaSecurityConfig,
@@ -817,17 +817,17 @@ impl MessageHandler for WatcherMessageHandler {
             event_id = %message.id,
             event_type = %message.event_type,
         ).entered();
-        
+
         tracing::debug!("Received event");
-        
+
         // Apply filters
         if !self.filter.should_process(&message) {
             tracing::debug!("Event filtered out");
             return Ok(());
         }
-        
+
         tracing::info!("Event passed filters, extracting plan");
-        
+
         // Extract plan
         let plan = match self.extractor.extract(&message) {
             Ok(p) => p,
@@ -839,27 +839,27 @@ impl MessageHandler for WatcherMessageHandler {
                 return Err(e);
             }
         };
-        
+
         tracing::info!(
             plan_name = %plan.name,
             steps = plan.step_count(),
             "Extracted plan"
         );
-        
+
         // Check dry-run mode
         if self.watcher_config.execution.dry_run {
             tracing::info!("Dry-run mode: skipping execution");
             return Ok(());
         }
-        
+
         // Acquire semaphore for execution
         let permit = self.execution_semaphore.acquire().await
             .map_err(|e| anyhow!("Failed to acquire execution permit: {}", e))?;
-        
+
         // Execute plan
         let config = (*self.config).clone();
         let allow_dangerous = self.watcher_config.execution.allow_dangerous;
-        
+
         let result = tokio::spawn(async move {
             crate::commands::r#run::run_plan_with_options(
                 config,
@@ -868,9 +868,9 @@ impl MessageHandler for WatcherMessageHandler {
                 allow_dangerous,
             ).await
         }).await;
-        
+
         drop(permit);
-        
+
         match result {
             Ok(Ok(())) => {
                 tracing::info!("Plan executed successfully");
@@ -933,40 +933,40 @@ pub async fn run_watch(
             kafka.topic = topic_override;
         }
     }
-    
+
     if let Some(types) = event_types {
         config.watcher.filters.event_types = types
             .split(',')
             .map(|s| s.trim().to_string())
             .collect();
     }
-    
+
     if let Some(log_path) = log_file {
         config.watcher.logging.file_path = Some(log_path);
     }
-    
+
     config.watcher.logging.json_format = json_logs;
-    
+
     if dry_run {
         config.watcher.execution.dry_run = true;
     }
-    
+
     // Initialize logging
     init_watcher_logging(&config.watcher.logging)?;
-    
+
     tracing::info!("Initializing watcher");
-    
+
     // Create and start watcher
     let mut watcher = Watcher::new(config)?;
-    
+
     // Setup signal handlers for graceful shutdown
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    
+
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         tx.send(()).await.ok();
     });
-    
+
     // Start watcher
     tokio::select! {
         result = watcher.start() => {
@@ -991,7 +991,7 @@ Update `src/main.rs` to handle Watch command:
 ```rust
 match cli.command {
     // ... existing commands ...
-    
+
     Commands::Watch {
         topic,
         event_types,
@@ -1071,13 +1071,13 @@ fn test_event_filter_by_type() {
         event_types: vec!["deployment.success".to_string()],
         ..Default::default()
     };
-    
+
     let filter = EventFilter::new(config).unwrap();
-    
+
     let mut event = create_test_event();
     event.event_type = "deployment.success".to_string();
     assert!(filter.should_process(&event));
-    
+
     event.event_type = "deployment.failure".to_string();
     assert!(!filter.should_process(&event));
 }
@@ -1086,7 +1086,7 @@ fn test_event_filter_by_type() {
 fn test_plan_extraction_from_event_payload() {
     let extractor = PlanExtractor::new();
     let event = create_test_event_with_plan();
-    
+
     let plan = extractor.extract(&event).unwrap();
     assert_eq!(plan.name, "Test Plan");
     assert!(!plan.steps.is_empty());
@@ -1137,7 +1137,7 @@ watcher:
     group_id: "xzatoma-watcher"
     security:
       protocol: "PLAINTEXT"
-  
+
   filters:
     event_types:
       - "deployment.success"
@@ -1145,13 +1145,13 @@ watcher:
       - "ci.pipeline.completed"
     success_only: false
     platform_id: "kubernetes"
-  
+
   logging:
     level: "info"
     json_format: true
     file_path: "/var/log/xzatoma/watcher.log"
     include_payload: false
-  
+
   execution:
     allow_dangerous: false
     max_concurrent_executions: 5
@@ -1175,18 +1175,18 @@ watcher:
       sasl_mechanism: "SCRAM-SHA-256"
       sasl_username: "xzatoma-consumer"
       # Password from env: KAFKA_SASL_PASSWORD
-  
+
   filters:
     event_types:
       - "deployment.production.success"
     success_only: true
     source_pattern: "^xzepr\\.event\\.receiver\\.production\\."
-  
+
   logging:
     level: "warn"
     json_format: true
     file_path: "/var/log/xzatoma/watcher.json"
-  
+
   execution:
     allow_dangerous: false
     max_concurrent_executions: 10
@@ -1491,7 +1491,7 @@ This implementation plan delivers a production-ready `watch` command that enable
 ### Implementation Timeline
 
 - **Phase 1** (Core Infrastructure): 3-5 days
-- **Phase 2** (Watcher Implementation): 3-4 days  
+- **Phase 2** (Watcher Implementation): 3-4 days
 - **Phase 3** (Configuration and Docs): 2-3 days
 - **Phase 4** (Testing and Validation): 2-3 days
 

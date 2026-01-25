@@ -17,7 +17,7 @@ mod prompts;
 mod providers;
 mod tools;
 
-use cli::{Cli, Commands, ModelCommand};
+use crate::cli::{Cli, Commands, ModelCommand};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -76,6 +76,33 @@ async fn main() -> Result<()> {
             // Convert plan PathBuf to String before passing it to the command handler.
             let plan_str = plan.map(|p| p.to_string_lossy().to_string());
             commands::run::run_plan_with_options(config, plan_str, prompt, allow_dangerous).await?;
+            Ok(())
+        }
+        Commands::Watch {
+            topic,
+            event_types,
+            filter_config,
+            log_file,
+            json_logs: _,
+            dry_run,
+        } => {
+            tracing::info!("Starting watcher mode");
+            if let Some(t) = &topic {
+                tracing::debug!("Overriding topic: {}", t);
+            }
+            if let Some(et) = &event_types {
+                tracing::debug!("Filtering event types: {}", et);
+            }
+            if let Some(fc) = &filter_config {
+                tracing::debug!("Using filter config: {}", fc.display());
+            }
+            if let Some(lf) = &log_file {
+                tracing::debug!("Writing logs to: {}", lf.display());
+            }
+            if dry_run {
+                tracing::warn!("Dry run mode enabled - plans will not be executed");
+            }
+            tracing::warn!("Watch command is not yet implemented");
             Ok(())
         }
         Commands::Auth { provider } => {
