@@ -43,6 +43,10 @@ pub enum Commands {
         /// Enable safety mode (always confirm dangerous operations)
         #[arg(short = 's', long)]
         safe: bool,
+
+        /// Resume a specific conversation by ID
+        #[arg(long)]
+        resume: Option<String>,
     },
 
     /// Execute a plan or prompt
@@ -76,6 +80,13 @@ pub enum Commands {
         #[command(subcommand)]
         command: ModelCommand,
     },
+
+    /// Manage conversation history
+    History {
+        /// History management subcommand
+        #[command(subcommand)]
+        command: HistoryCommand,
+    },
 }
 
 /// Model management subcommands
@@ -104,6 +115,20 @@ pub enum ModelCommand {
         /// Filter by provider (copilot, ollama)
         #[arg(short, long)]
         provider: Option<String>,
+    },
+}
+
+/// History management subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum HistoryCommand {
+    /// List saved conversations
+    List,
+
+    /// Delete a saved conversation
+    Delete {
+        /// ID of the conversation to delete
+        #[arg(short, long)]
+        id: String,
     },
 }
 
@@ -165,11 +190,52 @@ mod tests {
             provider,
             mode: _,
             safe: _,
+            resume: _,
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));
         } else {
             panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_resume() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--resume", "abc123"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Chat { resume, .. } = cli.command {
+            assert_eq!(resume, Some("abc123".to_string()));
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_list() {
+        let cli = Cli::try_parse_from(["xzatoma", "history", "list"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::History { command } = cli.command {
+            assert!(matches!(command, HistoryCommand::List));
+        } else {
+            panic!("Expected History command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_delete() {
+        let cli = Cli::try_parse_from(["xzatoma", "history", "delete", "--id", "session123"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::History { command } = cli.command {
+            if let HistoryCommand::Delete { id } = command {
+                assert_eq!(id, "session123".to_string());
+            } else {
+                panic!("Expected Delete command");
+            }
+        } else {
+            panic!("Expected History command");
         }
     }
 
@@ -264,6 +330,7 @@ mod tests {
             provider,
             mode,
             safe,
+            resume: _,
         } = cli.command
         {
             assert_eq!(provider, None);
@@ -283,6 +350,7 @@ mod tests {
             provider: _,
             mode,
             safe: _,
+            resume: _,
         } = cli.command
         {
             assert_eq!(mode, Some("write".to_string()));
@@ -300,6 +368,7 @@ mod tests {
             provider: _,
             mode,
             safe,
+            resume: _,
         } = cli.command
         {
             assert!(safe);
@@ -351,6 +420,7 @@ mod tests {
             provider,
             mode,
             safe,
+            resume: _,
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));

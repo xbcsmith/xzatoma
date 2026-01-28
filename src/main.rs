@@ -6,18 +6,9 @@ use anyhow::Result;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-mod agent;
-mod chat_mode;
-mod cli;
-mod commands;
-mod config;
-mod error;
-mod mention_parser;
-mod prompts;
-mod providers;
-mod tools;
-
-use cli::{Cli, Commands, ModelCommand};
+use xzatoma::cli::{Cli, Commands, ModelCommand};
+use xzatoma::commands;
+use xzatoma::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,7 +20,7 @@ async fn main() -> Result<()> {
 
     // Load configuration
     let config_path = cli.config.as_deref().unwrap_or("config/config.yaml");
-    let config = config::Config::load(config_path, &cli)?;
+    let config = Config::load(config_path, &cli)?;
 
     // Validate configuration
     config.validate()?;
@@ -40,6 +31,7 @@ async fn main() -> Result<()> {
             provider,
             mode,
             safe,
+            resume,
         } => {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
@@ -51,10 +43,13 @@ async fn main() -> Result<()> {
             if safe {
                 tracing::debug!("Safety mode enabled");
             }
+            if let Some(r) = &resume {
+                tracing::debug!("Resuming conversation: {}", r);
+            }
 
             // Delegate to the chat command handler
             // Moves `config` into the handler (match arms are exclusive)
-            commands::chat::run_chat(config, provider, mode, safe).await?;
+            commands::chat::run_chat(config, provider, mode, safe, resume).await?;
             Ok(())
         }
         Commands::Run {
@@ -102,6 +97,11 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
             }
+        }
+        Commands::History { command } => {
+            tracing::info!("Starting history command");
+            commands::history::handle_history(command)?;
+            Ok(())
         }
     }
 }
