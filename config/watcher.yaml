@@ -1,0 +1,105 @@
+# XZatoma Watcher - Example configuration (development & production)
+#
+# This file provides example watcher configurations for common deployment
+# scenarios. Copy the appropriate section into your `config/` directory and
+# update values for your environment.
+#
+# Notes:
+# - Secrets (e.g., Kafka SASL password) SHOULD NOT be committed to disk.
+#   Use environment variables instead (see docs/reference/watcher_environment_variables.md).
+# - Kafka environment variables (used by XZepr consumer code) are prefixed with `XZEPR_`
+#   (for example: `XZEPR_KAFKA_BROKERS`, `XZEPR_KAFKA_SASL_PASSWORD`).
+#
+# Usage:
+#   xzatoma watch --config config/watcher.yaml
+#
+# ---------------------------------------------------------------------------
+# Development configuration
+# ---------------------------------------------------------------------------
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  # Limits how many agent turns are allowed during plan execution
+  max_turns: 10
+  # Overall timeout for agent execution (seconds)
+  timeout_seconds: 300
+
+watcher:
+  kafka:
+    # Comma-separated Kafka broker list
+    brokers: "localhost:9092"
+    # Topic to consume CloudEvents from
+    topic: "xzepr.events"
+    # Consumer group id (defaults to xzatoma-watcher if omitted)
+    group_id: "xzatoma-watcher"
+    # Plaintext is fine for local development
+    security:
+      protocol: "PLAINTEXT"
+
+  filters:
+    # Event types to process (empty list => process all)
+    event_types:
+      - "deployment.success"
+      - "deployment.failure"
+      - "ci.pipeline.completed"
+    # Whether to only process successful events (true/false)
+    success_only: false
+    # Optional platform identifier (e.g., "kubernetes")
+    platform_id: "kubernetes"
+
+  logging:
+    # Log level: trace, debug, info, warn, error
+    level: "info"
+    # JSON formatted logs (true/false)
+    json_format: true
+    # Optional file path for logs (when omitted, logs go to STDOUT)
+    file_path: "/var/log/xzatoma/watcher.log"
+    # Include full CloudEvent payload in logs (may increase log size)
+    include_payload: false
+
+  execution:
+    # Whether to allow potentially dangerous operations in plans
+    allow_dangerous: false
+    # Max concurrent plan executions
+    max_concurrent_executions: 5
+    # Per-execution timeout (seconds)
+    execution_timeout_secs: 600
+
+# ---------------------------------------------------------------------------
+# Production configuration (example)
+# ---------------------------------------------------------------------------
+# For production you can use SASL/SSL. Passwords should come from environment
+# variables (e.g., XZEPR_KAFKA_SASL_PASSWORD) and not be stored in this file.
+---
+provider:
+  type: copilot
+
+watcher:
+  kafka:
+    brokers: "kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093"
+    topic: "xzepr.production.events"
+    group_id: "xzatoma-watcher-prod"
+    security:
+      protocol: "SASL_SSL"
+      sasl_mechanism: "SCRAM-SHA-256"
+      sasl_username: "xzatoma-consumer"
+      # sasl_password: (provide via env var XZEPR_KAFKA_SASL_PASSWORD)
+
+  filters:
+    event_types:
+      - "deployment.production.success"
+    success_only: true
+    source_pattern: "^xzepr\\.event\\.receiver\\.production\\."
+
+  logging:
+    level: "warn"
+    json_format: true
+    file_path: "/var/log/xzatoma/watcher.json"
+
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 10
+    execution_timeout_secs: 1800

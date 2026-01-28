@@ -440,6 +440,7 @@ impl Config {
     }
 
     fn apply_env_vars(&mut self) {
+        // Provider overrides
         if let Ok(provider_type) = std::env::var("XZATOMA_PROVIDER") {
             self.provider.provider_type = provider_type;
         }
@@ -456,15 +457,20 @@ impl Config {
             self.provider.ollama.model = ollama_model;
         }
 
+        // Agent overrides
         if let Ok(max_turns) = std::env::var("XZATOMA_MAX_TURNS") {
             if let Ok(value) = max_turns.parse() {
                 self.agent.max_turns = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_MAX_TURNS: {}", max_turns);
             }
         }
 
         if let Ok(timeout) = std::env::var("XZATOMA_TIMEOUT_SECONDS") {
             if let Ok(value) = timeout.parse() {
                 self.agent.timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_TIMEOUT_SECONDS: {}", timeout);
             }
         }
 
@@ -478,6 +484,201 @@ impl Config {
                     ExecutionMode::default()
                 }
             };
+        }
+
+        // ---------------------------------------------------------------------
+        // Watcher-specific environment variable overrides
+        // Supports: XZATOMA_WATCHER_* for filters, logging, execution
+        // and XZEPR_KAFKA_* for Kafka connection overrides.
+        // ---------------------------------------------------------------------
+
+        // Filter overrides
+        if let Ok(event_types) = std::env::var("XZATOMA_WATCHER_EVENT_TYPES") {
+            let types_vec: Vec<String> = event_types
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !types_vec.is_empty() {
+                self.watcher.filters.event_types = types_vec.clone();
+                tracing::debug!(?types_vec, "Env override: XZATOMA_WATCHER_EVENT_TYPES");
+            }
+        }
+
+        if let Ok(source_pattern) = std::env::var("XZATOMA_WATCHER_SOURCE_PATTERN") {
+            self.watcher.filters.source_pattern = Some(source_pattern.clone());
+            tracing::debug!(source_pattern = %source_pattern, "Env override: XZATOMA_WATCHER_SOURCE_PATTERN");
+        }
+
+        if let Ok(platform_id) = std::env::var("XZATOMA_WATCHER_PLATFORM_ID") {
+            self.watcher.filters.platform_id = Some(platform_id.clone());
+            tracing::debug!(platform_id = %platform_id, "Env override: XZATOMA_WATCHER_PLATFORM_ID");
+        }
+
+        if let Ok(package) = std::env::var("XZATOMA_WATCHER_PACKAGE") {
+            self.watcher.filters.package = Some(package.clone());
+            tracing::debug!(package = %package, "Env override: XZATOMA_WATCHER_PACKAGE");
+        }
+
+        if let Ok(api_version) = std::env::var("XZATOMA_WATCHER_API_VERSION") {
+            self.watcher.filters.api_version = Some(api_version.clone());
+            tracing::debug!(api_version = %api_version, "Env override: XZATOMA_WATCHER_API_VERSION");
+        }
+
+        if let Ok(success_only) = std::env::var("XZATOMA_WATCHER_SUCCESS_ONLY") {
+            match success_only.parse::<bool>() {
+                Ok(v) => {
+                    self.watcher.filters.success_only = v;
+                    tracing::debug!(
+                        success_only = v,
+                        "Env override: XZATOMA_WATCHER_SUCCESS_ONLY"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_SUCCESS_ONLY: {}",
+                        success_only
+                    );
+                }
+            }
+        }
+
+        // Logging overrides
+        if let Ok(level) = std::env::var("XZATOMA_WATCHER_LOG_LEVEL") {
+            self.watcher.logging.level = level.clone();
+            tracing::debug!(level = %level, "Env override: XZATOMA_WATCHER_LOG_LEVEL");
+        }
+
+        if let Ok(json_logs) = std::env::var("XZATOMA_WATCHER_JSON_LOGS") {
+            match json_logs.parse::<bool>() {
+                Ok(v) => {
+                    self.watcher.logging.json_format = v;
+                    tracing::debug!(json_logs = v, "Env override: XZATOMA_WATCHER_JSON_LOGS");
+                }
+                Err(_) => {
+                    tracing::warn!("Invalid value for XZATOMA_WATCHER_JSON_LOGS: {}", json_logs);
+                }
+            }
+        }
+
+        if let Ok(log_file) = std::env::var("XZATOMA_WATCHER_LOG_FILE") {
+            self.watcher.logging.file_path = Some(std::path::PathBuf::from(log_file.clone()));
+            tracing::debug!(log_file = %log_file, "Env override: XZATOMA_WATCHER_LOG_FILE");
+        }
+
+        if let Ok(include_payload) = std::env::var("XZATOMA_WATCHER_INCLUDE_PAYLOAD") {
+            match include_payload.parse::<bool>() {
+                Ok(v) => {
+                    self.watcher.logging.include_payload = v;
+                    tracing::debug!(
+                        include_payload = v,
+                        "Env override: XZATOMA_WATCHER_INCLUDE_PAYLOAD"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_INCLUDE_PAYLOAD: {}",
+                        include_payload
+                    );
+                }
+            }
+        }
+
+        // Execution overrides
+        if let Ok(allow_dangerous) = std::env::var("XZATOMA_WATCHER_ALLOW_DANGEROUS") {
+            match allow_dangerous.parse::<bool>() {
+                Ok(v) => {
+                    self.watcher.execution.allow_dangerous = v;
+                    tracing::debug!(
+                        allow_dangerous = v,
+                        "Env override: XZATOMA_WATCHER_ALLOW_DANGEROUS"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_ALLOW_DANGEROUS: {}",
+                        allow_dangerous
+                    );
+                }
+            }
+        }
+
+        if let Ok(max_conc) = std::env::var("XZATOMA_WATCHER_MAX_CONCURRENT") {
+            match max_conc.parse::<usize>() {
+                Ok(v) => {
+                    self.watcher.execution.max_concurrent_executions = v;
+                    tracing::debug!(
+                        max_concurrent = v,
+                        "Env override: XZATOMA_WATCHER_MAX_CONCURRENT"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_MAX_CONCURRENT: {}",
+                        max_conc
+                    );
+                }
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("XZATOMA_WATCHER_EXECUTION_TIMEOUT") {
+            match timeout.parse::<u64>() {
+                Ok(v) => {
+                    self.watcher.execution.execution_timeout_secs = v;
+                    tracing::debug!(
+                        execution_timeout_secs = v,
+                        "Env override: XZATOMA_WATCHER_EXECUTION_TIMEOUT"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_EXECUTION_TIMEOUT: {}",
+                        timeout
+                    );
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Kafka overrides from XZEPR_KAFKA_* environment variables
+        // These can populate or override the watcher.kafka block.
+        // ---------------------------------------------------------------------
+        let brokers_env = std::env::var("XZEPR_KAFKA_BROKERS").ok();
+        let topic_env = std::env::var("XZEPR_KAFKA_TOPIC").ok();
+        let group_env = std::env::var("XZEPR_KAFKA_GROUP_ID").ok();
+        let protocol_env = std::env::var("XZEPR_KAFKA_SECURITY_PROTOCOL").ok();
+
+        if brokers_env.is_some()
+            || topic_env.is_some()
+            || group_env.is_some()
+            || protocol_env.is_some()
+        {
+            let brokers = brokers_env.unwrap_or_else(|| "localhost:9092".to_string());
+            let topic = topic_env.unwrap_or_else(|| "xzepr.dev.events".to_string());
+            let group_id = group_env.unwrap_or_else(default_watcher_group_id);
+
+            let security = protocol_env.map(|protocol| KafkaSecurityConfig {
+                protocol,
+                sasl_mechanism: std::env::var("XZEPR_KAFKA_SASL_MECHANISM").ok(),
+                sasl_username: std::env::var("XZEPR_KAFKA_SASL_USERNAME").ok(),
+                sasl_password: std::env::var("XZEPR_KAFKA_SASL_PASSWORD").ok(),
+            });
+
+            if let Some(ref mut kafka_cfg) = self.watcher.kafka {
+                kafka_cfg.brokers = brokers;
+                kafka_cfg.topic = topic;
+                kafka_cfg.group_id = group_id;
+                kafka_cfg.security = security;
+                tracing::debug!("Overrode watcher.kafka from XZEPR_KAFKA_* env vars");
+            } else {
+                self.watcher.kafka = Some(KafkaWatcherConfig {
+                    brokers,
+                    topic,
+                    group_id,
+                    security,
+                });
+                tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
+            }
         }
     }
 
@@ -760,6 +961,146 @@ allow_mode_switching: false
         assert_eq!(config.chat.default_mode, "planning");
         assert_eq!(config.chat.default_safety, "confirm");
         assert!(config.chat.allow_mode_switching);
+    }
+
+    #[test]
+    fn test_example_watcher_config_parses() {
+        // Ensure the example configuration file is valid YAML and maps to `Config`.
+        let contents = std::fs::read_to_string("config/watcher.yaml")
+            .expect("Failed to read example config/watcher.yaml");
+        // Use a YAML deserializer to parse only the first document.
+        let mut de = serde_yaml::Deserializer::from_str(&contents);
+        // Parse only the first YAML document in the file (the example contains
+        // multiple documents: development and production).
+        let first_doc = de
+            .next()
+            .expect("No YAML document found in config/watcher.yaml");
+        let cfg: Config = Config::deserialize(first_doc).expect("Failed to parse watcher config");
+
+        // Basic sanity checks for values present in the development example
+        assert!(cfg.watcher.kafka.is_some());
+        let kafka = cfg.watcher.kafka.unwrap();
+        assert_eq!(kafka.brokers, "localhost:9092");
+        assert_eq!(kafka.topic, "xzepr.events");
+        assert_eq!(cfg.watcher.filters.event_types.len(), 3);
+        assert_eq!(cfg.watcher.logging.level, "info");
+        assert!(cfg.watcher.logging.json_format);
+        assert_eq!(cfg.watcher.execution.max_concurrent_executions, 5);
+    }
+
+    #[test]
+    fn test_production_watcher_config_parses() {
+        // Ensure the production example configuration file parses correctly.
+        let contents = std::fs::read_to_string("config/watcher-production.yaml")
+            .expect("Failed to read example config/watcher-production.yaml");
+        let cfg: Config =
+            serde_yaml::from_str(&contents).expect("Failed to parse watcher-production.yaml");
+
+        // Sanity checks for production example values
+        assert!(cfg.watcher.kafka.is_some());
+        let kafka = cfg.watcher.kafka.unwrap();
+        assert_eq!(
+            kafka.brokers,
+            "kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093"
+        );
+        assert_eq!(kafka.topic, "xzepr.production.events");
+        assert_eq!(kafka.group_id, "xzatoma-watcher-prod");
+
+        // Security block
+        assert!(kafka.security.is_some());
+        let sec = kafka.security.unwrap();
+        assert_eq!(sec.protocol, "SASL_SSL");
+        assert_eq!(sec.sasl_mechanism.unwrap(), "SCRAM-SHA-256");
+        assert_eq!(sec.sasl_username.unwrap(), "xzatoma-consumer");
+
+        // Logging and execution
+        assert_eq!(cfg.watcher.logging.level, "warn");
+        assert!(cfg.watcher.logging.json_format);
+        assert_eq!(cfg.watcher.execution.max_concurrent_executions, 10);
+        assert_eq!(cfg.watcher.execution.execution_timeout_secs, 1800);
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_populates_kafka_from_xzepr_vars() {
+        // NOTE: This test mutates global environment variables. Run with:
+        // `cargo test -- --ignored --test-threads=1`
+        unsafe {
+            std::env::remove_var("XZEPR_KAFKA_BROKERS");
+            std::env::remove_var("XZEPR_KAFKA_TOPIC");
+            std::env::remove_var("XZEPR_KAFKA_GROUP_ID");
+            std::env::remove_var("XZEPR_KAFKA_SECURITY_PROTOCOL");
+            std::env::remove_var("XZEPR_KAFKA_SASL_USERNAME");
+            std::env::remove_var("XZEPR_KAFKA_SASL_PASSWORD");
+        }
+
+        std::env::set_var("XZEPR_KAFKA_BROKERS", "test-broker:9092");
+        std::env::set_var("XZEPR_KAFKA_TOPIC", "test-topic");
+        std::env::set_var("XZEPR_KAFKA_GROUP_ID", "test-group");
+        std::env::set_var("XZEPR_KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        std::env::set_var("XZEPR_KAFKA_SASL_USERNAME", "user");
+        std::env::set_var("XZEPR_KAFKA_SASL_PASSWORD", "pass");
+
+        let mut cfg = Config::default();
+        // apply_env_vars is private but accessible within the test module
+        cfg.apply_env_vars();
+
+        assert!(cfg.watcher.kafka.is_some());
+        let kafka = cfg.watcher.kafka.unwrap();
+        assert_eq!(kafka.brokers, "test-broker:9092");
+        assert_eq!(kafka.topic, "test-topic");
+        assert_eq!(kafka.group_id, "test-group");
+        assert!(kafka.security.is_some());
+        let sec = kafka.security.unwrap();
+        assert_eq!(sec.protocol, "SASL_SSL");
+        assert_eq!(sec.sasl_username.unwrap(), "user");
+        assert_eq!(sec.sasl_password.unwrap(), "pass");
+
+        // Cleanup environment
+        unsafe {
+            std::env::remove_var("XZEPR_KAFKA_BROKERS");
+            std::env::remove_var("XZEPR_KAFKA_TOPIC");
+            std::env::remove_var("XZEPR_KAFKA_GROUP_ID");
+            std::env::remove_var("XZEPR_KAFKA_SECURITY_PROTOCOL");
+            std::env::remove_var("XZEPR_KAFKA_SASL_USERNAME");
+            std::env::remove_var("XZEPR_KAFKA_SASL_PASSWORD");
+        }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_watcher_fields() {
+        // NOTE: This test mutates global environment variables. Run with:
+        // `cargo test -- --ignored --test-threads=1`
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_EVENT_TYPES");
+            std::env::remove_var("XZATOMA_WATCHER_LOG_LEVEL");
+            std::env::remove_var("XZATOMA_WATCHER_JSON_LOGS");
+            std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
+        }
+
+        std::env::set_var(
+            "XZATOMA_WATCHER_EVENT_TYPES",
+            "deployment.success,ci.pipeline.completed",
+        );
+        std::env::set_var("XZATOMA_WATCHER_LOG_LEVEL", "debug");
+        std::env::set_var("XZATOMA_WATCHER_JSON_LOGS", "false");
+        std::env::set_var("XZATOMA_WATCHER_MAX_CONCURRENT", "3");
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(cfg.watcher.filters.event_types.len(), 2);
+        assert_eq!(cfg.watcher.logging.level, "debug");
+        assert!(!cfg.watcher.logging.json_format);
+        assert_eq!(cfg.watcher.execution.max_concurrent_executions, 3);
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_EVENT_TYPES");
+            std::env::remove_var("XZATOMA_WATCHER_LOG_LEVEL");
+            std::env::remove_var("XZATOMA_WATCHER_JSON_LOGS");
+            std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
+        }
     }
 }
 
