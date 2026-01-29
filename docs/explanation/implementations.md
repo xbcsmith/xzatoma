@@ -18,14 +18,16 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 ### Implementation Documentation
 
+- **[conversation_persistence_implementation.md](conversation_persistence_implementation.md)** - Conversation persistence: SQLite-backed history, auto-save/resume, CLI history commands (list/resume/delete), unit & integration tests
+
 - **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 - **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** - Documentation completion for model management features (API reference, how-to guides for managing and switching models)
 - **[copilot_models_caching_and_tests.md](../archive/implementation_summaries/copilot_models_caching_and_tests.md)** - Copilot models caching and mocked integration tests
- - Note: Integration tests that write to the OS keyring (service: `xzatoma`, user: `github_copilot`) are marked `#[ignore = "requires system keyring"]` to avoid failures in CI/CD environments that don't expose an interactive system keyring. Run these locally when you have a keyring available with:
-  - `cargo test -- --ignored` (runs all ignored tests)
-  - or `cargo test --test copilot_integration -- --ignored` (runs the Copilot keyring tests only)
+- Note: Integration tests that write to the OS keyring (service: `xzatoma`, user: `github_copilot`) are marked `#[ignore = "requires system keyring"]` to avoid failures in CI/CD environments that don't expose an interactive system keyring. Run these locally when you have a keyring available with:
+- `cargo test -- --ignored` (runs all ignored tests)
+- or `cargo test --test copilot_integration -- --ignored` (runs the Copilot keyring tests only)
 - **[use_chat_modes.md](../how-to/use_chat_modes.md)** - Chat mode provider & model display (provider: white, model: green)
 - **[ollama_default_model_fix.md](../archive/implementation_summaries/ollama_default_model_fix.md)** - Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to standard `llama3.2:latest`, removed all Qwen model references
 - **[ollama_tool_support_validation.md](../archive/implementation_summaries/ollama_tool_support_validation.md)** - Bug fix: Implemented proper tool support detection and validation for Ollama models, changed default to `llama3.2:latest`, prevents switching to models without function calling capabilities
@@ -41,14 +43,14 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 ### Completed Planning
 
- **Architecture Design** - Complete and validated
+**Architecture Design** - Complete and validated
 
 - Core architecture documented in `docs/reference/architecture.md`
 - All critical issues resolved (iteration limits, security model, conversation management)
 - Validation score: 9/10
 - Ready for implementation
 
- **Provider Abstraction Planning** - Complete
+  **Provider Abstraction Planning** - Complete
 
 - Language-agnostic implementation plan created
 - Covers 4 providers: OpenAI, Anthropic, GitHub Copilot, Ollama
@@ -58,16 +60,16 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 ### Completed Implementation
 
- **Phase 3: Security and Terminal Validation** - Complete
+**Phase 3: Security and Terminal Validation** - Complete
 
 - CommandValidator with allowlist/denylist security
 - Three execution modes: Interactive, Restricted Autonomous, Full Autonomous
 - Path validation to prevent directory traversal
 - Comprehensive test suite (17 tests, 100% coverage)
- Documentation: `../archive/implementation_summaries/phase3_security_validation_implementation.md`
+  Documentation: `../archive/implementation_summaries/phase3_security_validation_implementation.md`
 - ~291 lines of code with full validation
 
- **Model Management Documentation** - Complete
+  **Model Management Documentation** - Complete
 
 - API reference documentation for all model management features
 - How-to guide for discovering and inspecting models
@@ -101,7 +103,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 - OpenAI provider (planned extension)
 - Anthropic provider (planned extension)
 
- **Phase 5: File Tools and Plan Parsing** - Complete
+  **Phase 5: File Tools and Plan Parsing** - Complete
 
 - File operations (list, read, write, create, delete, diff)
 - Terminal execution with security model
@@ -153,48 +155,49 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 1. **Phase 1: Core Abstractions** (~700 LOC)
 
-  - Provider interface/trait
-  - Message, Tool, Response types
-  - Error types and handling
-  - Configuration structures
+- Provider interface/trait
+- Message, Tool, Response types
+- Error types and handling
+- Configuration structures
 
 2. **Phase 2: HTTP Client** (~1,250 LOC)
 
-  - API client with authentication
-  - Retry logic with exponential backoff
-  - Request formatters for each provider
+- API client with authentication
+- Retry logic with exponential backoff
+- Request formatters for each provider
 
 3. **Phase 3: Provider Implementations** (~2,100 LOC)
 
-  - OpenAI provider
-  - Anthropic provider
-  - GitHub Copilot provider (with OAuth)
-  - Ollama provider
+- OpenAI provider
+- Anthropic provider
+- GitHub Copilot provider (with OAuth)
+- Ollama provider
 
 4. **Phase 4: Streaming Support** (~950 LOC)
 
-  - SSE parser (OpenAI/Anthropic/Copilot)
-  - JSON Lines parser (Ollama)
-  - Streaming interface implementation
+- SSE parser (OpenAI/Anthropic/Copilot)
+- JSON Lines parser (Ollama)
+- Streaming interface implementation
 
 5. **Phase 5: Factory & Registry** (~700 LOC)
 
-  - Provider factory pattern
-  - Provider metadata
-  - Configuration-based instantiation
+- Provider factory pattern
+- Provider metadata
+- Configuration-based instantiation
 
 6. **Phase 6: Advanced Features** (~650 LOC)
-  - Usage tracking and cost estimation
-  - Caching support (optional)
+
+- Usage tracking and cost estimation
+- Caching support (optional)
 
 ### Provider Comparison
 
-| Provider | Auth      | API Format     | Streaming | Tool Calls   |
+| Provider  | Auth           | API Format         | Streaming  | Tool Calls      |
 | --------- | -------------- | ------------------ | ---------- | --------------- |
-| OpenAI  | Bearer Token  | OpenAI-compatible | SSE    | Native     |
-| Anthropic | API Key Header | Anthropic-specific | SSE    | Tool Use Blocks |
-| Copilot  | OAuth Device  | OpenAI-compatible | SSE    | Native     |
-| Ollama  | None (local)  | OpenAI-compatible | JSON Lines | Limited     |
+| OpenAI    | Bearer Token   | OpenAI-compatible  | SSE        | Native          |
+| Anthropic | API Key Header | Anthropic-specific | SSE        | Tool Use Blocks |
+| Copilot   | OAuth Device   | OpenAI-compatible  | SSE        | Native          |
+| Ollama    | None (local)   | OpenAI-compatible  | JSON Lines | Limited         |
 
 ### Key Differences to Handle
 
@@ -210,16 +213,17 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 1. **Continue with Phase 1 Implementation** - Foundation work
 
-  - Create Cargo.toml and project structure
-  - Implement error types (`error.rs`)
-  - Implement configuration (`config.rs`)
-  - Implement CLI skeleton (`cli.rs`)
-  - Set up test infrastructure and CI
+- Create Cargo.toml and project structure
+- Implement error types (`error.rs`)
+- Implement configuration (`config.rs`)
+- Implement CLI skeleton (`cli.rs`)
+- Set up test infrastructure and CI
 
 2. **Phase 2 Implementation** - Core Agent
-  - Agent execution loop with iteration limits
-  - Conversation management with token tracking and pruning
-  - Tool executor framework
+
+- Agent execution loop with iteration limits
+- Conversation management with token tracking and pruning
+- Tool executor framework
 
 ### References
 
