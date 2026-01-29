@@ -1301,6 +1301,321 @@ pub mod auth {
     }
 }
 
+/// Watch command handler for monitoring Kafka topics and executing plans
+pub mod watch {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Run the watch command
+    ///
+    /// This function is the entry point for the `xzatoma watch` command.
+    /// It configures the watcher based on CLI arguments and configuration file,
+    /// sets up logging, and starts the event consumption loop with signal handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Global configuration (will be modified by CLI overrides)
+    /// * `topic` - Optional Kafka topic override from CLI
+    /// * `event_types` - Optional comma-separated event types filter from CLI
+    /// * `filter_config` - Optional path to filter configuration file (currently unused)
+    /// * `log_file` - Optional path to write log output
+    /// * `json_logs` - Whether to format logs as JSON
+    /// * `dry_run` - If true, parse plans but don't execute them
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on successful completion or graceful shutdown.
+    /// Returns `Err` if configuration is invalid or an error occurs.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Kafka configuration is missing
+    /// - Log initialization fails
+    /// - Watcher creation fails
+    /// - Message consumption fails
+    pub async fn run_watch(
+        mut config: Config,
+        topic: Option<String>,
+        event_types: Option<String>,
+        _filter_config: Option<PathBuf>,
+        log_file: Option<PathBuf>,
+        json_logs: bool,
+        dry_run: bool,
+    ) -> Result<()> {
+        // Apply CLI argument overrides to configuration
+        apply_cli_overrides(
+            &mut config,
+            topic,
+            event_types,
+            log_file,
+            json_logs,
+            dry_run,
+        )?;
+
+        // Initialize logging system
+        crate::watcher::logging::init_watcher_logging(&config.watcher.logging)?;
+
+        tracing::info!("Watch command started");
+        tracing::info!(
+            kafka_brokers = %config.watcher.kafka.as_ref().map(|k| &k.brokers).unwrap_or(&"not configured".to_string()),
+            kafka_topic = %config.watcher.kafka.as_ref().map(|k| &k.topic).unwrap_or(&"not configured".to_string()),
+            dry_run = dry_run,
+            "Initializing watcher service"
+        );
+
+        // Create watcher service
+        let mut watcher = crate::watcher::Watcher::new(config, dry_run)?;
+
+        // Set up signal handling for graceful shutdown
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+
+        // Spawn signal handler task
+        tokio::spawn(async move {
+            match tokio::signal::ctrl_c().await {
+                Ok(()) => {
+                    tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
+                    let _ = shutdown_tx.send(()).await;
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "Failed to set up signal handler");
+                }
+            }
+        });
+
+        // Start watcher, but allow graceful shutdown on signal
+        tokio::select! {
+            result = watcher.start() => {
+                result
+            }
+            _ = shutdown_rx.recv() => {
+                tracing::info!("Graceful shutdown completed");
+                Ok(())
+            }
+        }
+    }
+
+    /// Apply CLI argument overrides to the configuration
+    ///
+    /// Updates the configuration object with values provided via CLI arguments.
+    /// CLI arguments take precedence over configuration file values.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration to modify
+    /// * `topic` - Optional topic override
+    /// * `event_types` - Optional event types filter (comma-separated)
+    /// * `log_file` - Optional log file path
+    /// * `json_logs` - JSON logging flag
+    /// * `dry_run` - Dry run flag
+    ///
+    /// # Errors
+    ///
+    /// Returns error if configuration is invalid (e.g., no Kafka config).
+    fn apply_cli_overrides(
+        config: &mut Config,
+        topic: Option<String>,
+        event_types: Option<String>,
+        log_file: Option<PathBuf>,
+        json_logs: bool,
+        dry_run: bool,
+    ) -> Result<()> {
+        // Ensure Kafka configuration exists
+        if config.watcher.kafka.is_none() {
+            return Err(anyhow::anyhow!(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            ));
+        }
+
+        // Override topic if provided
+        if let Some(t) = topic {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.topic = t.clone();
+                tracing::debug!(topic = %t, "CLI override: Kafka topic");
+            }
+        }
+
+        // Override event types filter if provided
+        if let Some(types) = event_types {
+            let event_types_vec: Vec<String> = types
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            config.watcher.filters.event_types = event_types_vec.clone();
+            tracing::debug!(
+                event_types = ?event_types_vec,
+                "CLI override: Event type filters"
+            );
+        }
+
+        // Override log file if provided
+        if let Some(path) = log_file {
+            config.watcher.logging.file_path = Some(path.clone());
+            tracing::debug!(
+                log_file = %path.display(),
+                "CLI override: Log file path"
+            );
+        }
+
+        // Override JSON logging setting
+        if json_logs {
+            config.watcher.logging.json_format = true;
+            tracing::debug!("CLI override: JSON logging enabled");
+        }
+
+        // Note: dry_run is passed separately to Watcher::new() and not stored in config
+        if dry_run {
+            tracing::debug!("Dry-run mode will be enabled for execution");
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_apply_cli_overrides_with_no_kafka_config() {
+            let mut config = Config::default();
+            config.watcher.kafka = None;
+
+            let result = apply_cli_overrides(&mut config, None, None, None, false, false);
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Kafka configuration"));
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_topic() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "original.topic".to_string(),
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                Some("override.topic".to_string()),
+                None,
+                None,
+                false,
+                false,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.kafka.as_ref().unwrap().topic,
+                "override.topic"
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_event_types() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                None,
+                Some("deployment.success,deployment.failure".to_string()),
+                None,
+                false,
+                false,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(config.watcher.filters.event_types.len(), 2);
+            assert!(config
+                .watcher
+                .filters
+                .event_types
+                .contains(&"deployment.success".to_string()));
+            assert!(config
+                .watcher
+                .filters
+                .event_types
+                .contains(&"deployment.failure".to_string()));
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_json_logs() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+            config.watcher.logging.json_format = false;
+
+            let result = apply_cli_overrides(&mut config, None, None, None, true, false);
+
+            assert!(result.is_ok());
+            assert!(config.watcher.logging.json_format);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_multiple_settings() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "original".to_string(),
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                Some("override".to_string()),
+                Some("deployment.success".to_string()),
+                None,
+                true,
+                false,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(config.watcher.kafka.as_ref().unwrap().topic, "override");
+            assert_eq!(config.watcher.filters.event_types.len(), 1);
+            assert!(config.watcher.logging.json_format);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_event_types_with_whitespace() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                None,
+                Some("deployment.success , deployment.failure , build.complete".to_string()),
+                None,
+                false,
+                false,
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(config.watcher.filters.event_types.len(), 3);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

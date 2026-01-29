@@ -39,6 +39,7 @@ pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
 pub mod tools;
+pub mod watcher;
 pub mod xzepr;
 
 // Re-export commonly used types
