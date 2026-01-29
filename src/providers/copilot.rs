@@ -6,8 +6,8 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
-    ProviderCapabilities, TokenUsage, ToolCall,
+    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary,
+    Provider, ProviderCapabilities, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -29,6 +29,9 @@ const COPILOT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/comple
 const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 /// GitHub Copilot OAuth client ID
 const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
+/// Default context window size when not provided by API
+const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 
 /// GitHub Copilot provider
 ///
@@ -193,50 +196,50 @@ struct CopilotUsage {
 
 /// Response from Copilot models API
 #[derive(Debug, Deserialize)]
-struct CopilotModelsResponse {
-    data: Vec<CopilotModelData>,
+pub(crate) struct CopilotModelsResponse {
+    pub(crate) data: Vec<CopilotModelData>,
 }
 
 /// Model data from Copilot API
-#[derive(Debug, Deserialize)]
-struct CopilotModelData {
-    id: String,
-    name: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CopilotModelData {
+    pub(crate) id: String,
+    pub(crate) name: String,
     #[serde(default)]
-    capabilities: Option<CopilotModelCapabilities>,
+    pub(crate) capabilities: Option<CopilotModelCapabilities>,
     #[serde(default)]
-    policy: Option<CopilotModelPolicy>,
+    pub(crate) policy: Option<CopilotModelPolicy>,
 }
 
 /// Model policy information
-#[derive(Debug, Deserialize)]
-struct CopilotModelPolicy {
-    state: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CopilotModelPolicy {
+    pub(crate) state: String,
 }
 
 /// Model capabilities from Copilot API
-#[derive(Debug, Deserialize)]
-struct CopilotModelCapabilities {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CopilotModelCapabilities {
     #[serde(default)]
-    limits: Option<CopilotModelLimits>,
+    pub(crate) limits: Option<CopilotModelLimits>,
     #[serde(default)]
-    supports: Option<CopilotModelSupports>,
+    pub(crate) supports: Option<CopilotModelSupports>,
 }
 
 /// Model limits
-#[derive(Debug, Deserialize)]
-struct CopilotModelLimits {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CopilotModelLimits {
     #[serde(default)]
-    max_context_window_tokens: Option<usize>,
+    pub(crate) max_context_window_tokens: Option<usize>,
 }
 
 /// Model support flags
-#[derive(Debug, Deserialize)]
-struct CopilotModelSupports {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CopilotModelSupports {
     #[serde(default)]
-    tool_calls: Option<bool>,
+    pub(crate) tool_calls: Option<bool>,
     #[serde(default)]
-    vision: Option<bool>,
+    pub(crate) vision: Option<bool>,
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
@@ -891,6 +894,96 @@ impl CopilotProvider {
 
         Ok(models)
     }
+
+    /// Fetch raw Copilot model data without conversion
+    async fn fetch_copilot_models_raw(&self) -> Result<Vec<CopilotModelData>> {
+        // Note: We're caching ModelInfo, not raw data, so we fetch fresh for raw data
+        // This is acceptable since list_models_summary is not called as frequently
+
+        let token = self.authenticate().await?;
+        let models_url = self.api_endpoint("models");
+
+        let response = self
+            .client
+            .get(&models_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Editor-Version", "vscode/1.85.0")
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch Copilot models: {}", e);
+                XzatomaError::Provider(format!("Failed to fetch Copilot models: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "Copilot models API returned error {}: {}",
+                status,
+                error_text
+            );
+            return Err(format_copilot_api_error(status, &error_text).into());
+        }
+
+        let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
+            tracing::error!("Failed to parse Copilot models response: {}", e);
+            XzatomaError::Provider(format!("Failed to parse Copilot models response: {}", e))
+        })?;
+
+        Ok(models_response.data)
+    }
+
+    /// Convert CopilotModelData to ModelInfoSummary
+    fn convert_to_summary(&self, data: CopilotModelData) -> ModelInfoSummary {
+        let context_window = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.limits.as_ref())
+            .and_then(|l| l.max_context_window_tokens)
+            .unwrap_or(DEFAULT_CONTEXT_WINDOW);
+
+        let supports_tool_calls = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.supports.as_ref())
+            .and_then(|s| s.tool_calls);
+
+        let supports_vision = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.supports.as_ref())
+            .and_then(|s| s.vision);
+
+        let state = data.policy.as_ref().map(|p| p.state.clone());
+
+        // Build capabilities vector
+        let mut capabilities = Vec::new();
+        if supports_tool_calls == Some(true) {
+            capabilities.push(ModelCapability::FunctionCalling);
+        }
+        if supports_vision == Some(true) {
+            capabilities.push(ModelCapability::Vision);
+        }
+        if context_window > 32000 {
+            capabilities.push(ModelCapability::LongContext);
+        }
+
+        let info =
+            ModelInfo::new(&data.id, &data.name, context_window).with_capabilities(capabilities);
+
+        let raw_data = serde_json::to_value(&data).unwrap_or(serde_json::Value::Null);
+
+        ModelInfoSummary::new(
+            info,
+            state,
+            None, // max_prompt_tokens not in Copilot API
+            None, // max_completion_tokens not in Copilot API
+            supports_tool_calls,
+            supports_vision,
+            raw_data,
+        )
+    }
 }
 
 #[async_trait]
@@ -1112,6 +1205,30 @@ impl Provider for CopilotProvider {
             supports_token_counts: true,
             supports_streaming: false,
         }
+    }
+
+    async fn list_models_summary(&self) -> Result<Vec<ModelInfoSummary>> {
+        let models_data = self.fetch_copilot_models_raw().await?;
+        Ok(models_data
+            .into_iter()
+            .filter(|data| {
+                // Only include enabled models
+                data.policy
+                    .as_ref()
+                    .map(|p| p.state == "enabled")
+                    .unwrap_or(true)
+            })
+            .map(|data| self.convert_to_summary(data))
+            .collect())
+    }
+
+    async fn get_model_info_summary(&self, model_name: &str) -> Result<ModelInfoSummary> {
+        let models_data = self.fetch_copilot_models_raw().await?;
+        let data = models_data
+            .into_iter()
+            .find(|m| m.id == model_name || m.name == model_name)
+            .ok_or_else(|| XzatomaError::Provider(format!("Model '{}' not found", model_name)))?;
+        Ok(self.convert_to_summary(data))
     }
 
     async fn set_model(&mut self, model_name: String) -> Result<()> {
@@ -1590,5 +1707,128 @@ mod tests {
             format_copilot_api_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "internal error");
         assert!(matches!(err, XzatomaError::Provider(_)));
         assert!(err.to_string().contains("internal error"));
+    }
+
+    #[test]
+    fn test_convert_to_summary_full_data() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "gpt-4".to_string(),
+            name: "GPT-4".to_string(),
+            capabilities: Some(CopilotModelCapabilities {
+                limits: Some(CopilotModelLimits {
+                    max_context_window_tokens: Some(8192),
+                }),
+                supports: Some(CopilotModelSupports {
+                    tool_calls: Some(true),
+                    vision: Some(true),
+                }),
+            }),
+            policy: Some(CopilotModelPolicy {
+                state: "enabled".to_string(),
+            }),
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert_eq!(summary.info.name, "gpt-4");
+        assert_eq!(summary.info.display_name, "GPT-4");
+        assert_eq!(summary.info.context_window, 8192);
+        assert_eq!(summary.state, Some("enabled".to_string()));
+        assert_eq!(summary.supports_tool_calls, Some(true));
+        assert_eq!(summary.supports_vision, Some(true));
+        assert!(summary
+            .info
+            .capabilities
+            .contains(&ModelCapability::FunctionCalling));
+        assert!(summary.info.capabilities.contains(&ModelCapability::Vision));
+        assert!(summary.raw_data.is_object());
+    }
+
+    #[test]
+    fn test_convert_to_summary_minimal_data() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "gpt-3.5-turbo".to_string(),
+            name: "GPT-3.5 Turbo".to_string(),
+            capabilities: None,
+            policy: None,
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert_eq!(summary.info.name, "gpt-3.5-turbo");
+        assert_eq!(summary.info.display_name, "GPT-3.5 Turbo");
+        assert_eq!(summary.info.context_window, DEFAULT_CONTEXT_WINDOW);
+        assert!(summary.state.is_none());
+        assert!(summary.supports_tool_calls.is_none());
+        assert!(summary.supports_vision.is_none());
+        assert!(summary.info.capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_convert_to_summary_missing_capabilities() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "claude-3".to_string(),
+            name: "Claude 3".to_string(),
+            capabilities: Some(CopilotModelCapabilities {
+                limits: Some(CopilotModelLimits {
+                    max_context_window_tokens: Some(200000),
+                }),
+                supports: None,
+            }),
+            policy: Some(CopilotModelPolicy {
+                state: "enabled".to_string(),
+            }),
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert_eq!(summary.info.context_window, 200000);
+        assert!(summary.supports_tool_calls.is_none());
+        assert!(summary.supports_vision.is_none());
+        assert!(summary
+            .info
+            .capabilities
+            .contains(&ModelCapability::LongContext));
+    }
+
+    #[test]
+    fn test_convert_to_summary_missing_policy() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            capabilities: Some(CopilotModelCapabilities {
+                limits: Some(CopilotModelLimits {
+                    max_context_window_tokens: Some(4096),
+                }),
+                supports: Some(CopilotModelSupports {
+                    tool_calls: Some(false),
+                    vision: Some(false),
+                }),
+            }),
+            policy: None,
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert!(summary.state.is_none());
+        assert_eq!(summary.supports_tool_calls, Some(false));
+        assert_eq!(summary.supports_vision, Some(false));
+        assert!(!summary
+            .info
+            .capabilities
+            .contains(&ModelCapability::FunctionCalling));
+        assert!(!summary.info.capabilities.contains(&ModelCapability::Vision));
     }
 }

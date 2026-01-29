@@ -7,6 +7,7 @@
 use crate::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
 
 /// Message structure for conversation
@@ -204,6 +205,9 @@ impl std::fmt::Display for ModelCapability {
     }
 }
 
+/// Default context window size when not provided by API
+const DEFAULT_CONTEXT_WINDOW: usize = 4096;
+
 /// Token usage information from a completion
 ///
 /// Tracks the number of tokens used in prompts and completions,
@@ -356,8 +360,146 @@ impl ModelInfo {
     pub fn set_provider_metadata(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.provider_specific.insert(key.into(), value.into());
     }
+
+    /// Add capabilities and return self for builder pattern
+    ///
+    /// # Arguments
+    ///
+    /// * `capabilities` - Vector of capabilities to add
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ModelInfo, ModelCapability};
+    ///
+    /// let model = ModelInfo::new("gpt-4", "GPT-4", 8192)
+    ///     .with_capabilities(vec![
+    ///         ModelCapability::FunctionCalling,
+    ///         ModelCapability::Vision,
+    ///     ]);
+    /// assert_eq!(model.capabilities.len(), 2);
+    /// ```
+    pub fn with_capabilities(mut self, capabilities: Vec<ModelCapability>) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
 }
 
+/// Extended model information with full provider API data
+///
+/// This structure extends ModelInfo with additional fields from provider APIs
+/// that are useful for summary output and advanced tooling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfoSummary {
+    /// Core model information
+    pub info: ModelInfo,
+
+    /// Provider API state (e.g., "enabled", "disabled")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+
+    /// Maximum prompt tokens allowed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_prompt_tokens: Option<usize>,
+
+    /// Maximum completion tokens allowed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_completion_tokens: Option<usize>,
+
+    /// Whether the model supports tool calls
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_tool_calls: Option<bool>,
+
+    /// Whether the model supports vision/image input
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_vision: Option<bool>,
+
+    /// Raw provider-specific data (fallback for unknown fields)
+    pub raw_data: serde_json::Value,
+}
+
+impl ModelInfoSummary {
+    /// Create summary from core ModelInfo
+    ///
+    /// # Arguments
+    ///
+    /// * `info` - Core model information
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ModelInfo, ModelInfoSummary};
+    ///
+    /// let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    /// let summary = ModelInfoSummary::from_model_info(info);
+    /// assert_eq!(summary.info.name, "gpt-4");
+    /// assert!(summary.state.is_none());
+    /// ```
+    pub fn from_model_info(info: ModelInfo) -> Self {
+        Self {
+            info,
+            state: None,
+            max_prompt_tokens: None,
+            max_completion_tokens: None,
+            supports_tool_calls: None,
+            supports_vision: None,
+            raw_data: serde_json::Value::Null,
+        }
+    }
+
+    /// Create summary with full data
+    ///
+    /// # Arguments
+    ///
+    /// * `info` - Core model information
+    /// * `state` - Provider API state
+    /// * `max_prompt_tokens` - Maximum prompt tokens
+    /// * `max_completion_tokens` - Maximum completion tokens
+    /// * `supports_tool_calls` - Tool calling support flag
+    /// * `supports_vision` - Vision support flag
+    /// * `raw_data` - Raw provider-specific data
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ModelInfo, ModelInfoSummary};
+    /// use serde_json;
+    ///
+    /// let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    /// let summary = ModelInfoSummary::new(
+    ///     info,
+    ///     Some("enabled".to_string()),
+    ///     Some(6144),
+    ///     Some(2048),
+    ///     Some(true),
+    ///     Some(true),
+    ///     serde_json::json!({"version": "2024-01"}),
+    /// );
+    /// assert_eq!(summary.state, Some("enabled".to_string()));
+    /// assert_eq!(summary.supports_tool_calls, Some(true));
+    /// ```
+    pub fn new(
+        info: ModelInfo,
+        state: Option<String>,
+        max_prompt_tokens: Option<usize>,
+        max_completion_tokens: Option<usize>,
+        supports_tool_calls: Option<bool>,
+        supports_vision: Option<bool>,
+        raw_data: serde_json::Value,
+    ) -> Self {
+        Self {
+            info,
+            state,
+            max_prompt_tokens,
+            max_completion_tokens,
+            supports_tool_calls,
+            supports_vision,
+            raw_data,
+        }
+    }
+}
+
+/// Provider capabilities
 /// Provider-level capabilities and features
 ///
 /// Describes which features and operations a provider supports.
@@ -585,6 +727,53 @@ pub trait Provider: Send + Sync {
             "Model switching is not supported by this provider".to_string(),
         )
         .into())
+    }
+
+    /// List models with full summary data
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of models with extended summary information
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the provider doesn't support model listing
+    /// or if the API call fails
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation converts basic ModelInfo to ModelInfoSummary.
+    /// Providers can override this to provide additional summary fields.
+    async fn list_models_summary(&self) -> Result<Vec<ModelInfoSummary>> {
+        let models = self.list_models().await?;
+        Ok(models
+            .into_iter()
+            .map(ModelInfoSummary::from_model_info)
+            .collect())
+    }
+
+    /// Get model info with full summary data
+    ///
+    /// # Arguments
+    ///
+    /// * `model_name` - Name/identifier of the model
+    ///
+    /// # Returns
+    ///
+    /// Returns detailed model information with extended summary data
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the provider doesn't support detailed model info
+    /// or if the model is not found
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation converts basic ModelInfo to ModelInfoSummary.
+    /// Providers can override this to provide additional summary fields.
+    async fn get_model_info_summary(&self, model_name: &str) -> Result<ModelInfoSummary> {
+        let info = self.get_model_info(model_name).await?;
+        Ok(ModelInfoSummary::from_model_info(info))
     }
 }
 
@@ -944,5 +1133,104 @@ mod tests {
 
         caps.supports_model_switching = true;
         assert!(caps.supports_model_switching);
+    }
+
+    #[test]
+    fn test_model_info_with_capabilities() {
+        let model = ModelInfo::new("gpt-4", "GPT-4", 8192).with_capabilities(vec![
+            ModelCapability::FunctionCalling,
+            ModelCapability::Vision,
+        ]);
+
+        assert_eq!(model.capabilities.len(), 2);
+        assert!(model.supports_capability(ModelCapability::FunctionCalling));
+        assert!(model.supports_capability(ModelCapability::Vision));
+    }
+
+    #[test]
+    fn test_model_info_summary_from_model_info() {
+        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let summary = ModelInfoSummary::from_model_info(info);
+
+        assert_eq!(summary.info.name, "gpt-4");
+        assert_eq!(summary.info.display_name, "GPT-4");
+        assert_eq!(summary.info.context_window, 8192);
+        assert!(summary.state.is_none());
+        assert!(summary.max_prompt_tokens.is_none());
+        assert!(summary.max_completion_tokens.is_none());
+        assert!(summary.supports_tool_calls.is_none());
+        assert!(summary.supports_vision.is_none());
+        assert_eq!(summary.raw_data, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_model_info_summary_new() {
+        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let raw = serde_json::json!({"version": "2024-01"});
+        let summary = ModelInfoSummary::new(
+            info,
+            Some("enabled".to_string()),
+            Some(6144),
+            Some(2048),
+            Some(true),
+            Some(true),
+            raw.clone(),
+        );
+
+        assert_eq!(summary.info.name, "gpt-4");
+        assert_eq!(summary.state, Some("enabled".to_string()));
+        assert_eq!(summary.max_prompt_tokens, Some(6144));
+        assert_eq!(summary.max_completion_tokens, Some(2048));
+        assert_eq!(summary.supports_tool_calls, Some(true));
+        assert_eq!(summary.supports_vision, Some(true));
+        assert_eq!(summary.raw_data, raw);
+    }
+
+    #[test]
+    fn test_model_info_summary_serialization() {
+        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let summary = ModelInfoSummary::new(
+            info,
+            Some("enabled".to_string()),
+            Some(6144),
+            Some(2048),
+            Some(true),
+            Some(false),
+            serde_json::json!({"test": "data"}),
+        );
+
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("\"name\":\"gpt-4\""));
+        assert!(json.contains("\"state\":\"enabled\""));
+        assert!(json.contains("\"max_prompt_tokens\":6144"));
+        assert!(json.contains("\"supports_tool_calls\":true"));
+        assert!(json.contains("\"supports_vision\":false"));
+    }
+
+    #[test]
+    fn test_model_info_summary_deserialization() {
+        let json = r#"{
+            "info": {
+                "name": "gpt-4",
+                "display_name": "GPT-4",
+                "context_window": 8192,
+                "capabilities": [],
+                "provider_specific": {}
+            },
+            "state": "enabled",
+            "max_prompt_tokens": 6144,
+            "max_completion_tokens": 2048,
+            "supports_tool_calls": true,
+            "supports_vision": false,
+            "raw_data": {"test": "data"}
+        }"#;
+
+        let summary: ModelInfoSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(summary.info.name, "gpt-4");
+        assert_eq!(summary.state, Some("enabled".to_string()));
+        assert_eq!(summary.max_prompt_tokens, Some(6144));
+        assert_eq!(summary.max_completion_tokens, Some(2048));
+        assert_eq!(summary.supports_tool_calls, Some(true));
+        assert_eq!(summary.supports_vision, Some(false));
     }
 }
