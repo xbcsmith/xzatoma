@@ -117,14 +117,18 @@ pub mod config;
 pub mod kafka;
 pub mod message;
 
+#[allow(unused_imports)]
 pub use client::{
     ClientError, CreateEventReceiverRequest, CreateEventRequest, EventReceiverResponse,
     PaginatedResponse, PaginationMeta, XzeprClient, XzeprClientConfig,
 };
+#[allow(unused_imports)]
 pub use config::{
     ConfigError, KafkaConsumerConfig, SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
+#[allow(unused_imports)]
 pub use kafka::{ConsumerError, MessageHandler, XzeprConsumer};
+#[allow(unused_imports)]
 pub use message::{
     CloudEventData, CloudEventMessage, EventEntity, EventReceiverEntity, EventReceiverGroupEntity,
 };

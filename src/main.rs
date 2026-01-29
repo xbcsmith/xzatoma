@@ -6,9 +6,20 @@ use anyhow::Result;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use xzatoma::cli::{Cli, Commands, ModelCommand};
-use xzatoma::commands;
-use xzatoma::config::Config;
+mod agent;
+mod chat_mode;
+mod cli;
+mod commands;
+mod config;
+mod error;
+mod mention_parser;
+mod prompts;
+mod providers;
+mod tools;
+mod watcher;
+mod xzepr;
+
+use crate::cli::{Cli, Commands, ModelCommand};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -80,6 +91,27 @@ async fn main() -> Result<()> {
             // Convert plan PathBuf to String before passing it to the command handler.
             let plan_str = plan.map(|p| p.to_string_lossy().to_string());
             commands::run::run_plan_with_options(config, plan_str, prompt, allow_dangerous).await?;
+            Ok(())
+        }
+        Commands::Watch {
+            topic,
+            event_types,
+            filter_config,
+            log_file,
+            json_logs,
+            dry_run,
+        } => {
+            tracing::info!("Starting watcher mode");
+            commands::watch::run_watch(
+                config,
+                topic,
+                event_types,
+                filter_config,
+                log_file,
+                json_logs,
+                dry_run,
+            )
+            .await?;
             Ok(())
         }
         Commands::Auth { provider } => {

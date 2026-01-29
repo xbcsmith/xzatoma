@@ -40,6 +40,7 @@ pub mod prompts;
 pub mod providers;
 pub mod storage;
 pub mod tools;
+pub mod watcher;
 pub mod xzepr;
 
 // Re-export commonly used types

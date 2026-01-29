@@ -1,0 +1,60 @@
+# XZatoma Watcher - Production configuration (example)
+#
+# Notes:
+# - This is an example production configuration. Adjust values to match your
+#   environment and operational requirements.
+# - DO NOT store secrets (e.g., Kafka SASL passwords or private keys) in this
+#   file. Provide credentials via a secrets manager or environment variables.
+#   Recommended environment variables:
+#     - XZEPR_KAFKA_SASL_PASSWORD (sensitive)
+#     - XZEPR_KAFKA_SSL_CA_LOCATION (optional)
+#     - XZEPR_KAFKA_SSL_CERT_LOCATION (optional)
+#     - XZEPR_KAFKA_SSL_KEY_LOCATION (optional)
+#
+# Usage:
+#   xzatoma watch --config /etc/xzatoma/watcher-production.yaml
+
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  # Conservative production values (tune to your needs)
+  max_turns: 20
+  timeout_seconds: 1800
+
+watcher:
+  kafka:
+    # Production Kafka brokers (SASL/SSL)
+    brokers: "kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093"
+    topic: "xzepr.production.events"
+    group_id: "xzatoma-watcher-prod"
+    security:
+      protocol: "SASL_SSL"
+      sasl_mechanism: "SCRAM-SHA-256"
+      sasl_username: "xzatoma-consumer"
+      # sasl_password MUST be provided via environment variable:
+      # export XZEPR_KAFKA_SASL_PASSWORD="(secret)"
+      # (Do not place passwords in this file)
+
+  filters:
+    # Production: typically narrow filters to reduce noise and execution load
+    event_types:
+      - "deployment.production.success"
+    success_only: true
+    source_pattern: "^xzepr\\.event\\.receiver\\.production\\."
+
+  logging:
+    # Use warn/info in production; JSON recommended for structured logging
+    level: "warn"
+    json_format: true
+    file_path: "/var/log/xzatoma/watcher.json"
+    include_payload: false
+
+  execution:
+    # Safety first in production: disallow dangerous operations by default
+    allow_dangerous: false
+    # Scale concurrency according to capacity and downstream systems
+    max_concurrent_executions: 10
+    execution_timeout_secs: 1800
