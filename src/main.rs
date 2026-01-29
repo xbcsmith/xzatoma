@@ -18,6 +18,15 @@ async fn main() -> Result<()> {
     // Parse command line arguments
     let cli = Cli::parse_args();
 
+    // If the user supplied a storage path on the CLI (or via env),
+    // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
+    // This keeps callers unchanged while allowing `SqliteStorage::new()` to
+    // honor an override.
+    if let Some(db_path) = &cli.storage_path {
+        std::env::set_var("XZATOMA_HISTORY_DB", db_path);
+        tracing::info!("Using storage DB override from CLI: {}", db_path);
+    }
+
     // Load configuration
     let config_path = cli.config.as_deref().unwrap_or("config/config.yaml");
     let config = Config::load(config_path, &cli)?;

@@ -19,7 +19,7 @@ XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks 
 - **Context Mentions**: Include files, search results, and web content with `@mention` syntax
 - **Basic Tools**: File operations (list, read, write, delete, diff) and terminal execution
 - **Flexible Input**: Interactive chat mode, structured plan files, or one-shot prompts
-- **Conversation History**: Persist chat sessions locally; use `xzatoma history list` to view sessions, `xzatoma chat --resume <ID>` to resume, and `xzatoma history delete --id <ID>` to delete a session (see `docs/how-to/manage_conversation_history.md`).
+- **Conversation History**: Persist chat sessions locally; use `xzatoma history list` to view sessions, `xzatoma chat --resume <ID>` to resume, and `xzatoma history delete --id <ID>` to delete a session (see `docs/how-to/manage_conversation_history.md`). You can override the history database path with `--storage-path <PATH>` (CLI) or by setting the environment variable `XZATOMA_HISTORY_DB` to point to an alternate `history.db` file.
 - **Generic Design**: No specialized features - agent uses basic tools creatively
 
 ## Quick Start

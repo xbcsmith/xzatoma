@@ -22,6 +22,13 @@ impl SqliteStorage {
     ///
     /// Initializes the database file in the user's data directory.
     pub fn new() -> Result<Self> {
+        // Allow override of the history DB path via environment variable.
+        // This makes it easy to point the binary at a test DB or alternate file
+        // without changing the user's application data dir.
+        if let Ok(override_path) = std::env::var("XZATOMA_HISTORY_DB") {
+            return Self::new_with_path(override_path);
+        }
+
         let proj_dirs = ProjectDirs::from("com", "xbcsmith", "xzatoma")
             .ok_or_else(|| XzatomaError::Config("Could not determine data directory".into()))?;
 
@@ -51,9 +58,16 @@ impl SqliteStorage {
     /// let storage = SqliteStorage::new_with_path("/tmp/test_history.db").unwrap();
     /// ```
     pub fn new_with_path<P: Into<PathBuf>>(db_path: P) -> Result<Self> {
-        let storage = Self {
-            db_path: db_path.into(),
-        };
+        let db_path = db_path.into();
+
+        // Ensure parent directory exists so opening the DB file succeeds.
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)
+                .context("Failed to create parent directory for database")
+                .map_err(|e| XzatomaError::Config(e.to_string()))?;
+        }
+
+        let storage = Self { db_path };
         storage.init()?;
         Ok(storage)
     }
@@ -259,6 +273,8 @@ impl SqliteStorage {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    use serial_test::serial;
+    use std::env;
     use std::thread::sleep;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -500,5 +516,22 @@ mod tests {
         assert_eq!(deserialized.len(), 2);
         assert_eq!(deserialized[0].role, "user");
         assert_eq!(deserialized[1].role, "assistant");
+    }
+
+    #[test]
+    #[serial]
+    fn test_new_respects_env_override() {
+        // Use nested path to ensure parent directory creation is exercised.
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let db_path = dir.path().join("nested").join("history.db");
+        env::set_var("XZATOMA_HISTORY_DB", db_path.to_string_lossy().to_string());
+
+        let storage = SqliteStorage::new().expect("new failed with env override");
+        assert_eq!(storage.db_path, db_path);
+
+        // Parent directory should have been created by new_with_path
+        assert!(db_path.parent().unwrap().exists());
+
+        env::remove_var("XZATOMA_HISTORY_DB");
     }
 }

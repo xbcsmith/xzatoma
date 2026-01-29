@@ -63,6 +63,7 @@ tokio-test = "0.4"
 wiremock = "0.5"
 assert_cmd = "2.0"
 predicates = "3.0"
+serial_test = "0.5"
 
 [profile.release]
 opt-level = 3

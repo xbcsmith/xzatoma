@@ -22,6 +22,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub verbose: bool,
 
+    /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
+    #[arg(long, env = "XZATOMA_HISTORY_DB")]
+    pub storage_path: Option<String>,
+
     /// Command to execute
     #[command(subcommand)]
     pub command: Commands,
@@ -148,6 +152,7 @@ impl Default for Cli {
         Self {
             config: Some("config/config.yaml".to_string()),
             verbose: false,
+            storage_path: None,
             command: Commands::Auth {
                 provider: Some("copilot".to_string()),
             },
@@ -237,6 +242,14 @@ mod tests {
         } else {
             panic!("Expected History command");
         }
+    }
+
+    #[test]
+    fn test_cli_parse_storage_path() {
+        // Include a subcommand (auth) so clap parsing succeeds (avoids MissingSubcommand).
+        let cli = Cli::try_parse_from(["xzatoma", "--storage-path", "/tmp/my.db", "auth"])
+            .expect("failed to parse CLI args (storage-path)");
+        assert_eq!(cli.storage_path, Some("/tmp/my.db".to_string()));
     }
 
     #[test]
