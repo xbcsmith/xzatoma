@@ -28,12 +28,25 @@ use prettytable::{cell, row, Table};
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let config = Config::load("config/config.yaml", &Default::default())?;
-/// list_models(&config, None).await?;
+/// // Pass json and summary flags (both default to false)
+/// list_models(&config, None, false, false).await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn list_models(config: &Config, provider_name: Option<&str>) -> Result<()> {
+pub async fn list_models(
+    config: &Config,
+    provider_name: Option<&str>,
+    json: bool,
+    summary: bool,
+) -> Result<()> {
     let provider_type = provider_name.unwrap_or(&config.provider.provider_type);
+
+    // Acknowledge flags (parsed in Phase 1); behavior unchanged for now.
+    tracing::debug!(
+        "models::list_models flags - json: {}, summary: {}",
+        json,
+        summary
+    );
 
     tracing::info!("Listing models from provider: {}", provider_type);
 
@@ -101,7 +114,8 @@ pub async fn list_models(config: &Config, provider_name: Option<&str>) -> Result
 ///
 /// # async fn example() -> anyhow::Result<()> {
 /// let config = Config::load("config/config.yaml", &Default::default())?;
-/// show_model_info(&config, "gpt-4", None).await?;
+/// // Pass json and summary flags (both default to false)
+/// show_model_info(&config, "gpt-4", None, false, false).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -109,8 +123,17 @@ pub async fn show_model_info(
     config: &Config,
     model_name: &str,
     provider_name: Option<&str>,
+    json: bool,
+    summary: bool,
 ) -> Result<()> {
     let provider_type = provider_name.unwrap_or(&config.provider.provider_type);
+
+    // Acknowledge flags to avoid unused variable warnings; behavior unchanged for now.
+    tracing::debug!(
+        "models::show_model_info flags - json: {}, summary: {}",
+        json,
+        summary
+    );
 
     tracing::info!(
         "Getting model info for '{}' from provider: {}",
