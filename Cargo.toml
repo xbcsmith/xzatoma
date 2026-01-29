@@ -56,6 +56,9 @@ tokio-stream = "0.1"
 
 url = "2.5.8"
 prettytable-rs = "0.10.0"
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+directories = "6.0.0"
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 mockall = "0.12"
@@ -64,6 +67,7 @@ tokio-test = "0.4"
 wiremock = "0.5"
 assert_cmd = "2.0"
 predicates = "3.0"
+serial_test = "0.5"
 
 [profile.release]
 opt-level = 3

@@ -902,6 +902,7 @@ agent:
         let cli = crate::cli::Cli {
             config: None,
             verbose: false,
+            storage_path: None,
             command: crate::cli::Commands::Auth {
                 provider: Some("copilot".to_string()),
             },

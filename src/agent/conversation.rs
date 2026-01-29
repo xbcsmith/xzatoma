@@ -6,6 +6,8 @@
 use crate::error::Result;
 use crate::providers::{Message, TokenUsage};
 
+use uuid::Uuid;
+
 /// Information about the current context window status
 ///
 /// Provides context window metrics including maximum tokens, tokens used,
@@ -78,6 +80,8 @@ impl ContextInfo {
 /// 4. Insert summary as new system message
 #[derive(Debug, Clone)]
 pub struct Conversation {
+    id: Uuid,
+    title: String,
     messages: Vec<Message>,
     token_count: usize,
     max_tokens: usize,
@@ -103,8 +107,26 @@ impl Conversation {
     /// let conversation = Conversation::new(8000, 10, 0.8);
     /// assert_eq!(conversation.token_count(), 0);
     /// ```
+    /// Creates a new conversation with specified limits
+    ///
+    /// # Arguments
+    ///
+    /// * `max_tokens` - Maximum token count before pruning
+    /// * `min_retain_turns` - Minimum conversation turns to keep during pruning
+    /// * `prune_threshold` - Fraction of max_tokens that triggers pruning (0.0-1.0)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    ///
+    /// let conversation = Conversation::new(8000, 10, 0.8);
+    /// assert_eq!(conversation.token_count(), 0);
+    /// ```
     pub fn new(max_tokens: usize, min_retain_turns: usize, prune_threshold: f64) -> Self {
         Self {
+            id: Uuid::new_v4(),
+            title: "New Conversation".to_string(),
             messages: Vec::new(),
             token_count: 0,
             max_tokens,
@@ -112,6 +134,51 @@ impl Conversation {
             prune_threshold: prune_threshold.clamp(0.0, 1.0),
             provider_token_usage: None,
         }
+    }
+
+    /// Reconstructs a conversation from history
+    pub fn with_history(
+        id: Uuid,
+        title: String,
+        messages: Vec<Message>,
+        max_tokens: usize,
+        min_retain_turns: usize,
+        prune_threshold: f64,
+    ) -> Self {
+        let mut conv = Self {
+            id,
+            title,
+            messages: Vec::new(), // Will be populated via update_token_count loop
+            token_count: 0,
+            max_tokens,
+            min_retain_turns,
+            prune_threshold,
+            provider_token_usage: None,
+        };
+
+        // Add messages one by one to calculate tokens
+        // Ideally we would trust persisted token count but recalculating is safer
+        for msg in messages {
+            conv.update_token_count(&msg);
+            conv.messages.push(msg);
+        }
+
+        conv
+    }
+
+    /// Get the conversation ID
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    /// Get the conversation title
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Set the conversation title
+    pub fn set_title(&mut self, title: impl Into<String>) {
+        self.title = title.into();
     }
 
     /// Adds a user message to the conversation

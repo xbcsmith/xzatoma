@@ -518,6 +518,11 @@ impl Agent {
         &self.conversation
     }
 
+    /// Returns a mutable reference to the conversation
+    pub fn conversation_mut(&mut self) -> &mut Conversation {
+        &mut self.conversation
+    }
+
     /// Returns a reference to the provider
     ///
     /// Useful for accessing provider-specific methods like model listing and switching

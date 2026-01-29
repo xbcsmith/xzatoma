@@ -18,6 +18,8 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 ### Implementation Documentation
 
+- **[conversation_persistence_implementation.md](conversation_persistence_implementation.md)** - Conversation persistence: SQLite-backed history, auto-save/resume, CLI history commands (list/resume/delete), unit & integration tests
+
 - **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 - **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
@@ -66,18 +68,6 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Comprehensive test suite (17 tests, 100% coverage)
   Documentation: `../archive/implementation_summaries/phase3_security_validation_implementation.md`
 - ~291 lines of code with full validation
-
-  **Phase 3: Configuration and Documentation** - Complete
-
-- Example configuration added: `config/watcher.yaml` (development & production examples)
-- Environment variables reference: `docs/reference/watcher_environment_variables.md`
-- How-To guide: `docs/how-to/setup_watcher.md`
-- Implementation summary and phase documentation: `docs/explanation/phase3_configuration_and_documentation.md`
-- Code changes: updated `src/config.rs` to apply watcher environment variable overrides (`XZATOMA_WATCHER_*`) and to optionally populate/override `watcher.kafka` from `XZEPR_KAFKA_*` environment variables
-- Tests: added unit tests to validate example configuration parsing and environment overrides. Environment-sensitive tests (those that modify global environment variables) are marked `#[ignore]` and should be run explicitly with `cargo test -- --ignored --test-threads=1`
-- Documentation: configuration examples, environment variables reference, and how-to guide added and cross-referenced in the documentation index
-
-- Deliverables validated: example YAML files parse correctly, environment override behavior covered by tests, and documentation files created in the correct Diataxis categories.
 
   **Model Management Documentation** - Complete
 
