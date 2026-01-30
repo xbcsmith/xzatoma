@@ -85,3 +85,68 @@ fn test_empty_model_list_json_is_array() {
     let json = serde_json::to_string_pretty(&models).expect("serialize empty model list");
     assert_eq!(json.trim(), "[]");
 }
+
+#[test]
+fn test_list_models_summary_table_output() {
+    let info1 = ModelInfo::new("gpt-4", "GPT-4", 8192)
+        .with_capabilities(vec![ModelCapability::FunctionCalling]);
+    let info2 = ModelInfo::new("llama-3", "Llama 3", 65536);
+
+    let summary1 = ModelInfoSummary::new(
+        info1.clone(),
+        Some("enabled".to_string()),
+        Some(6144),
+        Some(2048),
+        Some(true),
+        Some(true),
+        json!({"version": "2024-01"}),
+    );
+
+    let summary2 = ModelInfoSummary::new(info2.clone(), None, None, None, None, None, json!(null));
+
+    // Call public render helper for table output and assert on content
+    let output =
+        xzatoma::commands::models::render_models_summary_table(&[summary1, summary2], "copilot");
+    assert!(output.contains("Available models from copilot (summary):"));
+    assert!(output.contains("Model Name"));
+    assert!(output.contains("Display Name"));
+    assert!(output.contains("Context Window"));
+    assert!(output.contains("State"));
+    assert!(output.contains("Tool Calls"));
+    assert!(output.contains("Vision"));
+    // Check that 'Unknown' shows for missing optional booleans
+    assert!(output.contains("Unknown"));
+    // And that 'Yes' appears for a true boolean
+    assert!(output.contains("Yes"));
+}
+
+#[test]
+fn test_model_info_summary_detailed_output() {
+    let mut info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    info.provider_specific
+        .insert("policy".to_string(), "standard".to_string());
+
+    let summary = ModelInfoSummary::new(
+        info.clone(),
+        Some("enabled".to_string()),
+        Some(6144),
+        Some(2048),
+        Some(true),
+        Some(false),
+        json!({"meta": "value"}),
+    );
+
+    let output = xzatoma::commands::models::render_model_summary_detailed(&summary);
+    assert!(output.contains("Model Information (GPT-4)"));
+    assert!(output.contains("Name:"));
+    assert!(output.contains("Display Name:"));
+    assert!(output.contains("Context Window:  8192 tokens"));
+    assert!(output.contains("State:           enabled"));
+    assert!(output.contains("Max Prompt:      6144 tokens"));
+    assert!(output.contains("Max Completion:  2048 tokens"));
+    assert!(output.contains("Tool Calls:"));
+    assert!(output.contains("Vision:"));
+    assert!(output.contains("Provider-Specific Metadata:"));
+    assert!(output.contains("policy: standard"));
+    assert!(output.contains("Raw API Data Available: Yes"));
+}

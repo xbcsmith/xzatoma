@@ -78,6 +78,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Provider comparison (Copilot vs Ollama)
 - Troubleshooting and best practices
 - Documentation: `docs/reference/model_management.md`, `docs/how-to/manage_models.md`, `docs/how-to/switch_models.md`
+- **[models_command_summary_output_implementation.md](models_command_summary_output_implementation.md)** - Phase 4: Summary Output Implementation (verification tests and rendering helpers)
 - ~1,502 lines of comprehensive documentation
 
 ### Pending Implementation

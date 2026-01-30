@@ -10,6 +10,7 @@ use crate::providers;
 use crate::providers::{ModelInfo, ModelInfoSummary};
 use prettytable::{cell, row, Table};
 use serde_json;
+use std::io::Write;
 
 /// List available models from a provider
 ///
@@ -284,6 +285,47 @@ fn output_models_table(models: &[ModelInfo], provider_type: &str) {
 
 /// Output models summary in table format (full data)
 fn output_models_summary_table(models: &[ModelInfoSummary], provider_type: &str) {
+    // Print the rendered table string. Rendering is done by a helper so unit tests
+    // can capture and assert on the string output without redirecting stdout.
+    let output = render_models_summary_table(models, provider_type);
+    print!("{}", output);
+}
+
+/// Format optional boolean for display
+fn format_optional_bool(value: Option<bool>) -> String {
+    match value {
+        Some(true) => "Yes".to_string(),
+        Some(false) => "No".to_string(),
+        None => "Unknown".to_string(),
+    }
+}
+
+/// Render a prettytable `Table` into a String.
+///
+/// Public helper used by other rendering helpers to capture table output into a
+/// String buffer. Useful for testing and integration assertions.
+pub fn render_table_to_string(table: &Table) -> String {
+    let mut buf: Vec<u8> = Vec::new();
+    // Table::print writes to any `Write` sink, so capture into a Vec<u8>.
+    let _ = table.print(&mut buf);
+    String::from_utf8(buf).unwrap_or_default()
+}
+
+/// Render models summary table into a string (includes header lines).
+///
+/// Public helper: returns the formatted table string, useful for testing and
+/// integration tests that need to assert on CLI output.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ModelInfoSummary;
+/// use xzatoma::commands::models::render_models_summary_table;
+///
+/// let summaries: Vec<ModelInfoSummary> = vec![];
+/// let _ = render_models_summary_table(&summaries, "copilot");
+/// ```
+pub fn render_models_summary_table(models: &[ModelInfoSummary], provider_type: &str) -> String {
     let mut table = Table::new();
     table.add_row(row![
         "Model Name",
@@ -309,18 +351,99 @@ fn output_models_summary_table(models: &[ModelInfoSummary], provider_type: &str)
         ]);
     }
 
-    println!("\nAvailable models from {} (summary):\n", provider_type);
-    table.printstd();
-    println!();
+    let mut output = String::new();
+    output.push_str(&format!(
+        "\nAvailable models from {} (summary):\n\n",
+        provider_type
+    ));
+    output.push_str(&render_table_to_string(&table));
+    output.push('\n');
+    output
 }
 
-/// Format optional boolean for display
-fn format_optional_bool(value: Option<bool>) -> String {
-    match value {
-        Some(true) => "Yes".to_string(),
-        Some(false) => "No".to_string(),
-        None => "Unknown".to_string(),
+/// Render a `ModelInfoSummary` into a detailed string (public helper).
+///
+/// Returns a string containing all fields displayed in a human-readable form.
+/// Useful for testing and programmatic inspection of CLI output.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ModelInfoSummary;
+/// use xzatoma::commands::models::render_model_summary_detailed;
+///
+/// let summary = ModelInfoSummary::new(
+///     xzatoma::providers::ModelInfo::new("gpt-4", "GPT-4", 8192),
+///     None,
+///     None,
+///     None,
+///     None,
+///     None,
+///     serde_json::json!(null),
+/// );
+/// let _ = render_model_summary_detailed(&summary);
+/// ```
+pub fn render_model_summary_detailed(model: &ModelInfoSummary) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "\nModel Information ({})\n\n",
+        model.info.display_name
+    ));
+    s.push_str(&format!("Name:            {}\n", model.info.name));
+    s.push_str(&format!("Display Name:    {}\n", model.info.display_name));
+    s.push_str(&format!(
+        "Context Window:  {} tokens\n",
+        model.info.context_window
+    ));
+
+    if let Some(state) = &model.state {
+        s.push_str(&format!("State:           {}\n", state));
     }
+
+    if let Some(max_prompt) = model.max_prompt_tokens {
+        s.push_str(&format!("Max Prompt:      {} tokens\n", max_prompt));
+    }
+
+    if let Some(max_completion) = model.max_completion_tokens {
+        s.push_str(&format!("Max Completion:  {} tokens\n", max_completion));
+    }
+
+    s.push_str("\nCapabilities:\n");
+    s.push_str(&format!(
+        "  Tool Calls:    {}\n",
+        format_optional_bool(model.supports_tool_calls)
+    ));
+    s.push_str(&format!(
+        "  Vision:        {}\n",
+        format_optional_bool(model.supports_vision)
+    ));
+
+    if !model.info.capabilities.is_empty() {
+        s.push_str(&format!(
+            "  Full List:     {}\n",
+            model
+                .info
+                .capabilities
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    if !model.info.provider_specific.is_empty() {
+        s.push_str("\nProvider-Specific Metadata:\n");
+        for (key, value) in &model.info.provider_specific {
+            s.push_str(&format!("  {}: {}\n", key, value));
+        }
+    }
+
+    if model.raw_data != serde_json::Value::Null {
+        s.push_str("\nRaw API Data Available: Yes\n");
+    }
+
+    s.push('\n');
+    s
 }
 
 /// Output model info in JSON format (basic data)
@@ -369,58 +492,8 @@ fn output_model_info_detailed(model: &ModelInfo) {
 
 /// Output model summary in detailed format (full data)
 fn output_model_summary_detailed(model: &ModelInfoSummary) {
-    println!("\nModel Information ({})\n", model.info.display_name);
-    println!("Name:            {}", model.info.name);
-    println!("Display Name:    {}", model.info.display_name);
-    println!("Context Window:  {} tokens", model.info.context_window);
-
-    if let Some(state) = &model.state {
-        println!("State:           {}", state);
-    }
-
-    if let Some(max_prompt) = model.max_prompt_tokens {
-        println!("Max Prompt:      {} tokens", max_prompt);
-    }
-
-    if let Some(max_completion) = model.max_completion_tokens {
-        println!("Max Completion:  {} tokens", max_completion);
-    }
-
-    println!("\nCapabilities:");
-    println!(
-        "  Tool Calls:    {}",
-        format_optional_bool(model.supports_tool_calls)
-    );
-    println!(
-        "  Vision:        {}",
-        format_optional_bool(model.supports_vision)
-    );
-
-    if !model.info.capabilities.is_empty() {
-        println!(
-            "  Full List:     {}",
-            model
-                .info
-                .capabilities
-                .iter()
-                .map(|c| c.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-
-    if !model.info.provider_specific.is_empty() {
-        println!("\nProvider-Specific Metadata:");
-        for (key, value) in &model.info.provider_specific {
-            println!("  {}: {}", key, value);
-        }
-    }
-
-    if model.raw_data != serde_json::Value::Null {
-        println!("\nRaw API Data Available: Yes");
-    }
-
-    println!();
+    let output = render_model_summary_detailed(model);
+    print!("{}", output);
 }
 
 #[cfg(test)]
@@ -557,5 +630,75 @@ mod tests {
             json!({"meta": "value"}),
         );
         assert!(output_model_summary_json(&summary).is_ok());
+    }
+
+    #[test]
+    fn test_list_models_summary_table_output() {
+        let info1 = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let info2 = ModelInfo::new("llama-3", "Llama 3", 65536);
+
+        let summary1 = ModelInfoSummary::new(
+            info1.clone(),
+            Some("enabled".to_string()),
+            Some(6144),
+            Some(2048),
+            Some(true),
+            None,
+            json!({"version": "2024-01"}),
+        );
+
+        let summary2 = ModelInfoSummary::new(
+            info2.clone(),
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+            json!(null),
+        );
+
+        let output = render_models_summary_table(&[summary1, summary2], "copilot");
+        assert!(output.contains("Available models from copilot (summary):"));
+        assert!(output.contains("Model Name"));
+        assert!(output.contains("Display Name"));
+        assert!(output.contains("Context Window"));
+        assert!(output.contains("State"));
+        assert!(output.contains("Tool Calls"));
+        assert!(output.contains("Vision"));
+        // Check that 'Unknown' shows for missing optional booleans
+        assert!(output.contains("Unknown"));
+        // And that 'Yes' appears for a true boolean
+        assert!(output.contains("Yes"));
+    }
+
+    #[test]
+    fn test_model_info_summary_detailed_output() {
+        let mut info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        info.provider_specific
+            .insert("policy".to_string(), "standard".to_string());
+
+        let summary = ModelInfoSummary::new(
+            info.clone(),
+            Some("enabled".to_string()),
+            Some(6144),
+            Some(2048),
+            Some(true),
+            Some(false),
+            json!({"meta": "value"}),
+        );
+
+        let output = render_model_summary_detailed(&summary);
+        assert!(output.contains("Model Information (GPT-4)"));
+        assert!(output.contains("Name:"));
+        assert!(output.contains("Display Name:"));
+        assert!(output.contains("Context Window:  8192 tokens"));
+        assert!(output.contains("State:           enabled"));
+        assert!(output.contains("Max Prompt:      6144 tokens"));
+        assert!(output.contains("Max Completion:  2048 tokens"));
+        assert!(output.contains("Tool Calls:"));
+        assert!(output.contains("Vision:"));
+        assert!(output.contains("Provider-Specific Metadata:"));
+        assert!(output.contains("policy: standard"));
+        assert!(output.contains("Raw API Data Available: Yes"));
     }
 }
