@@ -79,6 +79,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Troubleshooting and best practices
 - Documentation: `docs/reference/model_management.md`, `docs/how-to/manage_models.md`, `docs/how-to/switch_models.md`
 - **[models_command_summary_output_implementation.md](models_command_summary_output_implementation.md)** - Phase 4: Summary Output Implementation (verification tests and rendering helpers)
+- **[models_command_documentation_and_examples_implementation.md](models_command_documentation_and_examples_implementation.md)** - Phase 5: Documentation and Examples (reference docs, how-to updates, CLI help text, tests, and example scripts)
 - ~1,502 lines of comprehensive documentation
 
 ### Pending Implementation

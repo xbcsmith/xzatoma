@@ -341,47 +341,78 @@ if context.percentage_used > 80.0 {
 Lists all available models from the configured provider.
 
 ```bash
-xzatoma models list [--provider <provider>]
+xzatoma models list [--provider <provider>] [--json] [--summary]
 ```
 
 **Options:**
 
 - `--provider`, `-p`: Override configured provider (copilot, ollama)
+- `--json`, `-j`: Output in pretty JSON format (useful for scripting and exporting). When used with `--summary`, JSON will include summary fields such as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and `raw_data`.
+- `--summary`, `-s`: Output a human-readable summary table (compact view). Combine with `--json` to serialize the summary data to JSON.
 
-**Example:**
+**Examples:**
 
 ```bash
+# Default table output
 xzatoma models list
+
+# List models from Ollama
 xzatoma models list --provider ollama
+
+# Export all models as pretty JSON
+xzatoma models list --json > all_models.json
+
+# Show a compact human-readable summary
+xzatoma models list --summary
+
+# Export summary data as JSON
+xzatoma models list --json --summary > all_models_with_summary.json
 ```
 
-**Output:**
+**Output Summary:**
 
-Displays a table with model name, display name, context window, and capabilities.
+- Default (no flags): Displays a table with columns: `Model Name`, `Display Name`, `Context Window`, and `Capabilities`.
+- `--json`: Produces pretty-printed JSON containing an array of `ModelInfo` objects (suitable for downstream tools like `jq`).
+- `--summary`: Produces a compact human-readable table with columns: `Model Name`, `Display Name`, `Context Window`, `State`, `Tool Calls`, and `Vision`. Optional boolean fields are displayed as `Yes`, `No`, or `Unknown`.
+- `--json --summary`: Produces pretty-printed JSON containing an array of `ModelInfoSummary` objects which include both summary fields and provider-specific metadata.
 
 ### models info
 
 Shows detailed information about a specific model.
 
 ```bash
-xzatoma models info --model <name> [--provider <provider>]
+xzatoma models info --model <name> [--provider <provider>] [--json] [--summary]
 ```
 
 **Options:**
 
 - `--model`, `-m`: Model name or identifier (required)
 - `--provider`, `-p`: Override configured provider (copilot, ollama)
+- `--json`, `-j`: Output in pretty JSON format. When used with `--summary`, JSON will include summary fields such as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and `raw_data`.
+- `--summary`, `-s`: Output a compact human-readable summary for the specified model, showing capabilities and provider metadata. Combine with `--json` to serialize the summary to JSON.
 
-**Example:**
+**Examples:**
 
 ```bash
+# Basic model info
 xzatoma models info --model gpt-4o
+
+# Provider-specific model info
 xzatoma models info --model qwen2.5-coder:7b --provider ollama
+
+# Export model info as JSON
+xzatoma models info --model gpt-4 --json > gpt4_info.json
+
+# Export model summary as JSON
+xzatoma models info --model gpt-4 --json --summary > gpt4_summary.json
 ```
 
-**Output:**
+**Output Summary:**
 
-Displays model name, display name, context window, capabilities, and provider-specific metadata.
+- Default (no flags): Displays model name, display name, context window, capabilities, and provider-specific metadata.
+- `--json`: Produces pretty-printed JSON of a `ModelInfo` object for programmatic analysis.
+- `--summary`: Produces a compact summary view including state, limits (when available), capabilities (Tool Calls, Vision), provider metadata, and an indicator if raw API data is available.
+- `--json --summary`: Produces pretty-printed JSON of a `ModelInfoSummary` object that includes summary fields and provider-specific information.
 
 ### models current
 
@@ -479,9 +510,9 @@ Shows current model, context window size, tokens used, remaining tokens, usage p
 
 ```yaml
 provider:
- provider_type: copilot
- copilot:
-  model: gpt-4o
+  provider_type: copilot
+  copilot:
+    model: gpt-4o
 ```
 
 ### Ollama
@@ -502,10 +533,10 @@ All models available on the local Ollama instance.
 
 ```yaml
 provider:
- provider_type: ollama
- ollama:
-  host: http://localhost:11434
-  model: qwen2.5-coder:7b
+  provider_type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: qwen2.5-coder:7b
 ```
 
 **Dynamic Discovery:**
