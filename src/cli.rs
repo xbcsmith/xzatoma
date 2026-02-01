@@ -105,7 +105,16 @@ pub enum Commands {
         provider: Option<String>,
     },
 
-    /// Manage AI models
+    /// Manage AI models (discover, inspect, and query models)
+    ///
+    /// Subcommands:
+    /// - `list` — List available models
+    /// - `info` — Show detailed info for a model
+    /// - `current` — Show the currently active model
+    ///
+    /// Examples:
+    ///   xzatoma models list --summary
+    ///   xzatoma models info --model gpt-4 --json
     Models {
         /// Model management subcommand
         #[command(subcommand)]
@@ -123,14 +132,46 @@ pub enum Commands {
 /// Model management subcommands
 #[derive(Subcommand, Debug, Clone)]
 pub enum ModelCommand {
-    /// List available models
+    /// List available models.
+    ///
+    /// Output formats:
+    /// - Use `--json` to produce pretty-printed JSON suitable for scripting or exporting.
+    /// - Use `--summary` to produce a human-friendly compact summary table. Combine both to
+    ///   include summary data in JSON output (`--json --summary`).
+    ///
+    /// Examples:
+    ///   xzatoma models list --summary
+    ///   xzatoma models list --json > all_models.json
+    ///   xzatoma models list --json --summary > all_models_with_summary.json
     List {
         /// Filter by provider (copilot, ollama)
         #[arg(short, long)]
         provider: Option<String>,
+
+        #[arg(
+            short,
+            long,
+            help = "Output in pretty JSON format (useful for scripting/export)."
+        )]
+        json: bool,
+
+        #[arg(
+            short = 's',
+            long,
+            help = "Output a compact, human-readable summary table."
+        )]
+        summary: bool,
     },
 
-    /// Show detailed information about a model
+    /// Show detailed information about a model.
+    ///
+    /// Output formats:
+    /// - `--json` returns pretty-printed JSON with full model details (good for programmatic use).
+    /// - `--summary` returns a compact, human-readable summary combining basic info and provider metadata.
+    ///
+    /// Examples:
+    ///   xzatoma models info --model gpt-4 --summary
+    ///   xzatoma models info --model gpt-4 --json > gpt4_info.json
     Info {
         /// Model name/identifier
         #[arg(short, long)]
@@ -139,6 +180,20 @@ pub enum ModelCommand {
         /// Filter by provider (copilot, ollama)
         #[arg(short, long)]
         provider: Option<String>,
+
+        #[arg(
+            short,
+            long,
+            help = "Output in pretty JSON format (useful for scripting/export)."
+        )]
+        json: bool,
+
+        #[arg(
+            short = 's',
+            long,
+            help = "Output a compact, human-readable summary for the specified model."
+        )]
+        summary: bool,
     },
 
     /// Show the currently active model
@@ -524,8 +579,100 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Models { command } = cli.command {
-            if let ModelCommand::List { provider } = command {
+            if let ModelCommand::List { provider, .. } = command {
                 assert_eq!(provider, Some("ollama".to_string()));
+            } else {
+                panic!("Expected List command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_list_with_json() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--json"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::List {
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(!summary);
+            } else {
+                panic!("Expected List command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_list_with_summary() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--summary"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::List {
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(provider, None);
+                assert!(!json);
+                assert!(summary);
+            } else {
+                panic!("Expected List command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_list_with_json_and_summary() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--json", "--summary"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::List {
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(summary);
+            } else {
+                panic!("Expected List command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_list_short_flags() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "list", "-j", "-s"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::List {
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(summary);
             } else {
                 panic!("Expected List command");
             }
@@ -540,7 +687,10 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Models { command } = cli.command {
-            if let ModelCommand::Info { model, provider } = command {
+            if let ModelCommand::Info {
+                model, provider, ..
+            } = command
+            {
                 assert_eq!(model, "gpt-4");
                 assert_eq!(provider, None);
             } else {
@@ -565,9 +715,122 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Models { command } = cli.command {
-            if let ModelCommand::Info { model, provider } = command {
+            if let ModelCommand::Info {
+                model, provider, ..
+            } = command
+            {
                 assert_eq!(model, "llama3.2:latest");
                 assert_eq!(provider, Some("ollama".to_string()));
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info_with_json() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "--json"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info {
+                model,
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(model, "gpt-4");
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(!summary);
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info_with_summary() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "--summary"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info {
+                model,
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(model, "gpt-4");
+                assert_eq!(provider, None);
+                assert!(!json);
+                assert!(summary);
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info_with_json_and_summary() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "models",
+            "info",
+            "--model",
+            "gpt-4",
+            "--json",
+            "--summary",
+        ]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info {
+                model,
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(model, "gpt-4");
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(summary);
+            } else {
+                panic!("Expected Info command");
+            }
+        } else {
+            panic!("Expected Models command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_models_info_short_flags() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "-j", "-s"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        if let Commands::Models { command } = cli.command {
+            if let ModelCommand::Info {
+                model,
+                provider,
+                json,
+                summary,
+            } = command
+            {
+                assert_eq!(model, "gpt-4");
+                assert_eq!(provider, None);
+                assert!(json);
+                assert!(summary);
             } else {
                 panic!("Expected Info command");
             }
@@ -602,5 +865,67 @@ mod tests {
         } else {
             panic!("Expected Models command");
         }
+    }
+
+    #[test]
+    fn test_models_list_help_contains_json_and_summary_help() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let models_cmd = cmd
+            .find_subcommand_mut("models")
+            .expect("models subcommand missing");
+        let list_cmd = models_cmd
+            .find_subcommand_mut("list")
+            .expect("list subcommand missing");
+
+        let help = list_cmd.render_long_help().to_string();
+
+        // Verify flags exist
+        assert!(help.contains("--json"), "list help missing --json flag");
+        assert!(
+            help.contains("--summary"),
+            "list help missing --summary flag"
+        );
+
+        // Verify descriptive text mentions JSON and summary
+        assert!(
+            help.to_lowercase().contains("json"),
+            "list help missing json description"
+        );
+        assert!(
+            help.to_lowercase().contains("summary"),
+            "list help missing summary description"
+        );
+    }
+
+    #[test]
+    fn test_models_info_help_contains_json_and_summary_help() {
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        let models_cmd = cmd
+            .find_subcommand_mut("models")
+            .expect("models subcommand missing");
+        let info_cmd = models_cmd
+            .find_subcommand_mut("info")
+            .expect("info subcommand missing");
+
+        let help = info_cmd.render_long_help().to_string();
+
+        // Verify flags exist
+        assert!(help.contains("--json"), "info help missing --json flag");
+        assert!(
+            help.contains("--summary"),
+            "info help missing --summary flag"
+        );
+
+        // Verify descriptive text mentions JSON and summary
+        assert!(
+            help.to_lowercase().contains("json"),
+            "info help missing json description"
+        );
+        assert!(
+            help.to_lowercase().contains("summary"),
+            "info help missing summary description"
+        );
     }
 }

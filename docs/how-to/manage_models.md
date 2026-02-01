@@ -237,36 +237,38 @@ ollama pull llama3.2:3b
 
 1. Check if Ollama is running:
 
-  ```bash
-  curl http://localhost:11434/api/tags
-  ```
+```bash
+curl http://localhost:11434/api/tags
+```
 
 2. Install a model if none are available:
 
-  ```bash
-  ollama pull llama3.2:13b
-  ```
+```bash
+ollama pull llama3.2:13b
+```
 
 3. Check Ollama host in config:
-  ```yaml
-  provider:
-   ollama:
+
+```yaml
+provider:
+  ollama:
     host: http://localhost:11434
-  ```
+```
 
 **For Copilot**:
 
 1. Verify authentication:
 
-  ```bash
-  xzatoma auth --provider copilot
-  ```
+```bash
+xzatoma auth --provider copilot
+```
 
 2. Check provider configuration:
-  ```yaml
-  provider:
-   provider_type: copilot
-  ```
+
+```yaml
+provider:
+  provider_type: copilot
+```
 
 ### Model Not Found
 
@@ -276,9 +278,9 @@ ollama pull llama3.2:3b
 
 1. List available models first:
 
-  ```bash
-  xzatoma models list
-  ```
+```bash
+xzatoma models list
+```
 
 2. Use exact model name from the list
 3. Model names are case-sensitive
@@ -291,15 +293,15 @@ ollama pull llama3.2:3b
 
 1. Ensure Ollama is running:
 
-  ```bash
-  ollama list
-  ```
+```bash
+ollama list
+```
 
 2. Start Ollama if needed:
 
-  ```bash
-  ollama serve
-  ```
+```bash
+ollama serve
+```
 
 3. Check firewall settings if using custom host
 
@@ -308,9 +310,10 @@ ollama pull llama3.2:3b
 1. Check internet connection
 2. Verify authentication token is valid
 3. Re-authenticate if needed:
-  ```bash
-  xzatoma auth --provider copilot
-  ```
+
+```bash
+xzatoma auth --provider copilot
+```
 
 ## Configuration
 
@@ -320,10 +323,10 @@ Edit your `config/config.yaml`:
 
 ```yaml
 provider:
- provider_type: ollama
- ollama:
-  host: http://localhost:11434
-  model: llama3.2:latest # Default model
+  provider_type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest # Default model
 ```
 
 ### Multiple Providers
@@ -332,14 +335,14 @@ You can configure multiple providers and switch between them:
 
 ```yaml
 provider:
- provider_type: ollama # Active provider
+  provider_type: ollama # Active provider
 
- copilot:
-  model: gpt-4o
+  copilot:
+    model: gpt-4o
 
- ollama:
-  host: http://localhost:11434
-  model: llama3.2:latest
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
 ```
 
 Use `--provider` flag to override:
@@ -391,18 +394,96 @@ xzatoma chat
 > /context
 ```
 
-### Compare Models
+### Exporting Model Data
+
+You can export model data for analysis, reporting, or integration with other tools using the `--json` and `--summary` flags.
+
+- Export all models to pretty JSON:
 
 ```bash
-# Check Copilot models
-xzatoma models list --provider copilot | grep "Context Window"
+xzatoma models list --json > all_models.json
+```
 
-# Check Ollama models
+- Export all models including summary fields (state, limits, capabilities, raw provider data when available):
+
+```bash
+xzatoma models list --json --summary > all_models_with_summary.json
+```
+
+- Export details for a single model:
+
+```bash
+xzatoma models info --model llama3.2:13b --json > llama3.2-13b.json
+```
+
+- Export a model's summary (compact, but serialized to JSON):
+
+```bash
+xzatoma models info --model gpt-4 --json --summary > gpt4_summary.json
+```
+
+Tips:
+
+- The JSON output is pretty-printed and intended for human readability or piping into tools like `jq`.
+- The `--summary` flag augments outputs with additional fields such as `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and a `raw_data` field that mirrors provider API payloads when present.
+
+---
+
+### Comparing Models
+
+There are two common approaches to comparing models: manual inspection and script-based comparison.
+
+1. View a side-by-side detailed comparison (manual)
+
+```bash
+# Dump model info to JSON for manual inspection
+xzatoma models info --model gpt-4 --json > gpt4.json
+xzatoma models info --model llama3.2:13b --json > llama13b.json
+
+# Inspect specific fields
+jq '.context_window, .capabilities, .provider_specific' gpt4.json
+jq '.context_window, .capabilities, .provider_specific' llama13b.json
+```
+
+2. Script-based comparison using `jq`
+
+- List models and show name + context window (sorted by context window):
+
+```bash
+xzatoma models list --json | jq -r '.[] | "\(.display_name)\t\(.context_window)"' | sort -k2 -n -r
+```
+
+- Compare support for tool calls across models (uses `--summary` to expose `supports_tool_calls`):
+
+```bash
+xzatoma models list --json --summary \
+  | jq -r '.[] | "\(.info.name)\t\(if .supports_tool_calls == true then \"yes\" elif .supports_tool_calls == false then \"no\" else \"unknown\" end)"'
+```
+
+- Create a tabular view for quick comparison (requires `column`):
+
+```bash
+xzatoma models list --json \
+  | jq -r '.[] | "\(.name)\t\(.display_name)\t\(.context_window)\t\(.capabilities|join(\",\"))"' \
+  | column -t -s $'\t'
+```
+
+3. Tips for robust comparisons
+
+- Use `--json --summary` to ensure summary fields (like `supports_tool_calls` and `supports_vision`) are available in the exported data.
+- When comparing across providers, include the `--provider` flag or filter the JSON output by provider-specific identifiers.
+- For automated scripts, rely on JSON fields rather than human-oriented tables (tables are for quick manual inspection).
+
+---
+
+These short recipes cover exporting and comparing model metadata. If you'd like, I can add a small example script in `examples/` that demonstrates the export + `jq` comparison workflow.
 xzatoma models list --provider ollama | grep "Context Window"
 
 # View specific model details
+
 xzatoma models info --model gpt-4o --provider copilot
 xzatoma models info --model llama3.2:13b --provider ollama
+
 ```
 
 ## Next Steps
@@ -422,3 +503,4 @@ xzatoma models info --model llama3.2:13b --provider ollama
 - Model Management API Reference: `docs/reference/model_management.md`
 - Configuration Guide: `docs/reference/quick_reference.md`
 - Chat Modes Guide: `docs/how-to/use_chat_modes.md`
+```

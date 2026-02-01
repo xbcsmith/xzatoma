@@ -1,25 +1,17 @@
 //! XZatoma - Autonomous AI agent CLI
 //!
-//! Main entry point for the XZatoma agent application.
+#![doc = "XZatoma - Autonomous AI agent CLI"]
+#![doc = "Main entry point for the XZatoma agent application."]
 
 use anyhow::Result;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-mod agent;
-mod chat_mode;
-mod cli;
-mod commands;
-mod config;
-mod error;
-mod mention_parser;
-mod prompts;
-mod providers;
-mod tools;
-mod watcher;
-mod xzepr;
+// Removed unused grouped imports to satisfy clippy
 
-use crate::cli::{Cli, Commands, ModelCommand};
+use xzatoma::cli::{Cli, Commands, ModelCommand};
+use xzatoma::commands;
+use xzatoma::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -125,12 +117,29 @@ async fn main() -> Result<()> {
         Commands::Models { command } => {
             tracing::info!("Starting model management command");
             match command {
-                ModelCommand::List { provider } => {
-                    commands::models::list_models(&config, provider.as_deref()).await?;
+                ModelCommand::List {
+                    provider,
+                    json,
+                    summary,
+                } => {
+                    commands::models::list_models(&config, provider.as_deref(), json, summary)
+                        .await?;
                     Ok(())
                 }
-                ModelCommand::Info { model, provider } => {
-                    commands::models::show_model_info(&config, &model, provider.as_deref()).await?;
+                ModelCommand::Info {
+                    model,
+                    provider,
+                    json,
+                    summary,
+                } => {
+                    commands::models::show_model_info(
+                        &config,
+                        &model,
+                        provider.as_deref(),
+                        json,
+                        summary,
+                    )
+                    .await?;
                     Ok(())
                 }
                 ModelCommand::Current { provider } => {

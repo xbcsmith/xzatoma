@@ -78,6 +78,8 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Provider comparison (Copilot vs Ollama)
 - Troubleshooting and best practices
 - Documentation: `docs/reference/model_management.md`, `docs/how-to/manage_models.md`, `docs/how-to/switch_models.md`
+- **[models_command_summary_output_implementation.md](models_command_summary_output_implementation.md)** - Phase 4: Summary Output Implementation (verification tests and rendering helpers)
+- **[models_command_documentation_and_examples_implementation.md](models_command_documentation_and_examples_implementation.md)** - Phase 5: Documentation and Examples (reference docs, how-to updates, CLI help text, tests, and example scripts)
 - ~1,502 lines of comprehensive documentation
 
 ### Pending Implementation
@@ -266,8 +268,9 @@ All implementations must meet these requirements (per AGENTS.md):
 - `docs/how-to/manage_models.md` (418 lines) - Practical guide for discovering and inspecting models
 - `docs/how-to/switch_models.md` (439 lines) - Practical guide for switching models in chat mode
 - `docs/explanation/model_management_missing_deliverables_implementation.md` (362 lines) - Implementation summary
+- `docs/explanation/models_command_chat_mode_help_implementation.md` (new) - Bug fix: Chat mode `/models` (no args) now shows models-specific help; special-command parser and chat loop updated; tests added
 
-**Total:** ~1,502 lines of documentation
+- **Total:** ~1,502 lines of documentation
 
 **Coverage:**
 

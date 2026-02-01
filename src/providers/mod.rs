@@ -12,8 +12,8 @@ pub mod copilot;
 pub mod ollama;
 
 pub use base::{
-    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
-    ProviderCapabilities, TokenUsage, ToolCall,
+    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary,
+    Provider, ProviderCapabilities, TokenUsage, ToolCall,
 };
 pub use copilot::CopilotProvider;
 pub use ollama::OllamaProvider;
