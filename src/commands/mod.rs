@@ -19,7 +19,7 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    parse_special_command, print_help, print_mention_help, SpecialCommand,
+    parse_special_command, print_help, print_mention_help, print_models_help, SpecialCommand,
 };
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
@@ -221,6 +221,10 @@ pub mod chat {
                         }
                         SpecialCommand::Help => {
                             print_help();
+                            continue;
+                        }
+                        SpecialCommand::ModelsHelp => {
+                            print_models_help();
                             continue;
                         }
                         SpecialCommand::Mentions => {

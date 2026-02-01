@@ -280,22 +280,22 @@ Expected results:
 
 ## References
 
-- Implementation plan (Phase 5):  
+- Implementation plan (Phase 5):
 ```xzatoma/docs/explanation/models_command_json_summary_implementation_plan.md#L1025-1214
 # Phase 5: Documentation and Examples
 ```
 
-- Summary Output (Phase 4) implementation notes:  
+- Summary Output (Phase 4) implementation notes:
 ```xzatoma/docs/explanation/models_command_summary_output_implementation.md#L1-220
 # Models Command - Summary Output Implementation
 ```
 
-- CLI reference (updated):  
+- CLI reference (updated):
 ```xzatoma/docs/reference/model_management.md#L341-380
 # models list
 ```
 
-- How-To (updated):  
+- How-To (updated):
 ```xzatoma/docs/how-to/manage_models.md#L391-480
 # Exporting Model Data
 ```

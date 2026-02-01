@@ -268,8 +268,9 @@ All implementations must meet these requirements (per AGENTS.md):
 - `docs/how-to/manage_models.md` (418 lines) - Practical guide for discovering and inspecting models
 - `docs/how-to/switch_models.md` (439 lines) - Practical guide for switching models in chat mode
 - `docs/explanation/model_management_missing_deliverables_implementation.md` (362 lines) - Implementation summary
+- `docs/explanation/models_command_chat_mode_help_implementation.md` (new) - Bug fix: Chat mode `/models` (no args) now shows models-specific help; special-command parser and chat loop updated; tests added
 
-**Total:** ~1,502 lines of documentation
+- **Total:** ~1,502 lines of documentation
 
 **Coverage:**
 

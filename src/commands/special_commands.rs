@@ -56,6 +56,11 @@ pub enum SpecialCommand {
     /// Shows all available models from the current provider.
     ListModels,
 
+    /// Show help specific to the models command
+    ///
+    /// Useful when users type `/models` without any subcommand.
+    ModelsHelp,
+
     /// Switch to a different model
     ///
     /// Changes the active model for the provider.
@@ -141,6 +146,8 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
         "/mentions" => SpecialCommand::Mentions,
 
         // Model management commands and provider auth
+        // `/models` with no subcommand prints help for model-management usage
+        "/models" => SpecialCommand::ModelsHelp,
         "/models list" => SpecialCommand::ListModels,
         "/context" => SpecialCommand::ShowContextInfo,
         "/auth" => SpecialCommand::Auth(None),
@@ -213,7 +220,9 @@ CONTEXT MENTIONS (Quick Reference):
   @url:https://...      - Include web content
 
 MODEL MANAGEMENT:
+  /models         - Show help for models subcommands and flags
   /models list    - Show available models from current provider
+  /models info <name> - Show detailed info about a specific model
   /model <name>   - Switch to a different model
   /context        - Show context window and token usage information
   /auth [provider] - Start authentication for the provider; use `/auth` for the configured provider
@@ -235,6 +244,53 @@ NOTES:
   - Switching to Write mode enables powerful file and terminal tools
   - Use /safe in Write mode to require confirmation for dangerous operations
   - See /mentions for complete mention syntax and examples
+"#
+    );
+}
+
+/// Display detailed help for the `/models` command
+///
+/// Shows usage, flags, and examples for `/models` subcommands such as
+/// `/models list` and `/models info <name>`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::commands::special_commands::print_models_help;
+///
+/// print_models_help();
+/// ```
+pub fn print_models_help() {
+    println!(
+        r#"
+Models Command - Usage and Examples
+===================================
+
+The `/models` command manages and inspects the provider's available models.
+
+USAGE:
+  /models                      - Show this help message for model-management
+  /models list                 - Show available models from the current provider
+      Flags:
+        --json      - Output pretty-printed JSON (good for tooling like jq)
+        --summary   - Output a compact summary suitable for scripting/comparison
+
+  /models info <name>          - Show detailed information about a specific model
+      Flags:
+        --json      - Output model info as JSON
+        --summary   - Output summarized detail
+
+EXAMPLES:
+  /models
+  /models list
+  /models list --json
+  /models list --summary
+  /models info gpt-4 --summary
+
+NOTES:
+  - `--json` prints pretty JSON (useful with `jq`)
+  - `--summary` prints compact, script-friendly summaries
+  - Use `/models` to see this help when you don't know which subcommand to run
 "#
     );
 }
@@ -407,6 +463,19 @@ For more details, see the user guide: docs/how-to/use_context_mentions.md
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_special_command_models_bare_returns_models_help() {
+        assert_eq!(parse_special_command("/models"), SpecialCommand::ModelsHelp);
+    }
+
+    #[test]
+    fn test_parse_special_command_models_list_returns_list_models() {
+        assert_eq!(
+            parse_special_command("/models list"),
+            SpecialCommand::ListModels
+        );
+    }
 
     #[test]
     fn test_parse_switch_mode_planning() {
