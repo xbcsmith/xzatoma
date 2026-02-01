@@ -777,6 +777,76 @@ pub trait Provider: Send + Sync {
     }
 }
 
+/// Validates message sequence and removes orphan tool messages
+///
+/// Orphan tool messages are those that don't have a corresponding preceding
+/// assistant message with matching tool_calls. This validates message integrity
+/// and prevents provider API errors (e.g., 400 Bad Request from Copilot API).
+///
+/// An orphan tool message is:
+/// - A message with role="tool" but no matching assistant message with tool_calls
+/// - A message with role="tool" but no tool_call_id field
+///
+/// # Arguments
+///
+/// * `messages` - The messages to validate
+///
+/// # Returns
+///
+/// Returns a vector of validated messages with orphans removed and warnings logged
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{Message, validate_message_sequence};
+///
+/// let messages = vec![
+///     Message::user("Do something"),
+///     Message::tool_result("call_123", "Result"),
+/// ];
+/// let validated = validate_message_sequence(&messages);
+/// assert_eq!(validated.len(), 1); // Orphan tool removed, only user remains
+/// ```
+pub fn validate_message_sequence(messages: &[Message]) -> Vec<Message> {
+    use std::collections::HashSet;
+
+    // First pass: collect all tool_call IDs from assistant messages with tool_calls
+    let mut valid_tool_ids: HashSet<String> = HashSet::new();
+    for message in messages {
+        if message.role == "assistant" {
+            if let Some(tool_calls) = &message.tool_calls {
+                for tool_call in tool_calls {
+                    valid_tool_ids.insert(tool_call.id.clone());
+                }
+            }
+        }
+    }
+
+    // Second pass: filter out orphan tool messages
+    messages
+        .iter()
+        .filter_map(|message| {
+            // Tool messages must have a tool_call_id and a matching assistant message
+            if message.role == "tool" {
+                if let Some(tool_call_id) = &message.tool_call_id {
+                    if !valid_tool_ids.contains(tool_call_id) {
+                        tracing::warn!(
+                            "Dropping orphan tool message with tool_call_id: {}",
+                            tool_call_id
+                        );
+                        return None;
+                    }
+                } else {
+                    tracing::warn!("Dropping tool message without tool_call_id");
+                    return None;
+                }
+            }
+
+            Some(message.clone())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1205,6 +1275,78 @@ mod tests {
         assert!(json.contains("\"max_prompt_tokens\":6144"));
         assert!(json.contains("\"supports_tool_calls\":true"));
         assert!(json.contains("\"supports_vision\":false"));
+    }
+
+    #[test]
+    fn test_validate_message_sequence_drops_orphan_tool() {
+        let messages = vec![
+            Message::user("Do something"),
+            Message::tool_result("call_123", "Result"),
+        ];
+
+        let validated = validate_message_sequence(&messages);
+
+        assert_eq!(validated.len(), 1);
+        assert_eq!(validated[0].role, "user");
+    }
+
+    #[test]
+    fn test_validate_message_sequence_preserves_valid_pair() {
+        let tool_call = ToolCall {
+            id: "call_123".to_string(),
+            function: FunctionCall {
+                name: "test_func".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+
+        let messages = vec![
+            Message::user("Do something"),
+            Message::assistant_with_tools(vec![tool_call]),
+            Message::tool_result("call_123", "Result"),
+        ];
+
+        let validated = validate_message_sequence(&messages);
+
+        assert_eq!(validated.len(), 3);
+        assert_eq!(validated[0].role, "user");
+        assert_eq!(validated[1].role, "assistant");
+        assert_eq!(validated[2].role, "tool");
+        assert_eq!(validated[2].tool_call_id, Some("call_123".to_string()));
+    }
+
+    #[test]
+    fn test_validate_message_sequence_allows_user_and_system() {
+        let messages = vec![
+            Message::system("You are helpful"),
+            Message::user("Question"),
+            Message::assistant("Answer"),
+        ];
+
+        let validated = validate_message_sequence(&messages);
+
+        assert_eq!(validated.len(), 3);
+        assert_eq!(validated[0].role, "system");
+        assert_eq!(validated[1].role, "user");
+        assert_eq!(validated[2].role, "assistant");
+    }
+
+    #[test]
+    fn test_validate_message_sequence_drops_tool_without_id() {
+        let messages = vec![
+            Message::user("Do something"),
+            Message {
+                role: "tool".to_string(),
+                content: Some("Result".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ];
+
+        let validated = validate_message_sequence(&messages);
+
+        assert_eq!(validated.len(), 1);
+        assert_eq!(validated[0].role, "user");
     }
 
     #[test]
