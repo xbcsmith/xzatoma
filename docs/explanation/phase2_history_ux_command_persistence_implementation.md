@@ -103,7 +103,7 @@ The `ChatConfig` struct now includes:
 ```rust
 pub struct ChatConfig {
     // ... existing fields
-    
+
     /// Persist special commands in conversation history
     #[serde(default = "default_persist_special_commands")]
     pub persist_special_commands: bool,
