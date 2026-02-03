@@ -20,6 +20,10 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - **[conversation_persistence_implementation.md](conversation_persistence_implementation.md)** - Conversation persistence: SQLite-backed history, auto-save/resume, CLI history commands (list/resume/delete), unit & integration tests
 
+- **[phase1_core_validation_implementation.md](phase1_core_validation_implementation.md)** - Phase 1: Core Validation - Message sequence validation to prevent orphan tool messages, integrated into provider conversion, comprehensive tests for Copilot and Ollama providers
+
+- **[phase2_history_ux_command_persistence_implementation.md](phase2_history_ux_command_persistence_implementation.md)** - Phase 2: History UX & Command Persistence - Enhanced `history show` command with formatted/JSON output and message limiting, persistence configuration for special commands, 10 new tests
+
 - **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 - **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)

@@ -164,6 +164,10 @@ pub struct ChatConfig {
     /// Allow switching between modes during a session
     #[serde(default = "default_allow_mode_switching")]
     pub allow_mode_switching: bool,
+
+    /// Persist special commands in conversation history
+    #[serde(default = "default_persist_special_commands")]
+    pub persist_special_commands: bool,
 }
 
 fn default_chat_mode() -> String {
@@ -178,12 +182,17 @@ fn default_allow_mode_switching() -> bool {
     true
 }
 
+fn default_persist_special_commands() -> bool {
+    true
+}
+
 impl Default for ChatConfig {
     fn default() -> Self {
         Self {
             default_mode: default_chat_mode(),
             default_safety: default_safety_mode(),
             allow_mode_switching: default_allow_mode_switching(),
+            persist_special_commands: default_persist_special_commands(),
         }
     }
 }
@@ -766,6 +775,15 @@ impl Config {
 
         Ok(())
     }
+
+    /// Check if special commands should be persisted in conversation history
+    ///
+    /// # Returns
+    ///
+    /// Returns true if special commands should be persisted (default is true)
+    pub fn should_persist_commands(&self) -> bool {
+        self.agent.chat.persist_special_commands
+    }
 }
 
 impl Default for Config {
@@ -835,6 +853,25 @@ mod tests {
 
         config.agent.conversation.prune_threshold = 0.0;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_should_persist_commands_default_on() {
+        let config = Config::default();
+        assert!(config.should_persist_commands());
+    }
+
+    #[test]
+    fn test_config_should_persist_commands_can_disable() {
+        let mut config = Config::default();
+        config.agent.chat.persist_special_commands = false;
+        assert!(!config.should_persist_commands());
+    }
+
+    #[test]
+    fn test_chat_config_persist_special_commands_default() {
+        let chat_config = ChatConfig::default();
+        assert!(chat_config.persist_special_commands);
     }
 
     #[test]

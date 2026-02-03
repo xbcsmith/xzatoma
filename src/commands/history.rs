@@ -1,5 +1,6 @@
 use crate::cli::HistoryCommand;
-use crate::error::Result;
+use crate::error::{Result, XzatomaError};
+use crate::providers::Message;
 use crate::storage::SqliteStorage;
 use colored::Colorize;
 use prettytable::{format, Table};
@@ -65,6 +66,9 @@ fn handle_history_with_storage(storage: &SqliteStorage, command: HistoryCommand)
             );
             println!();
         }
+        HistoryCommand::Show { id, raw, limit } => {
+            show_conversation(storage, &id, raw, limit)?;
+        }
         HistoryCommand::Delete { id } => {
             // Delete is idempotent; report to user for feedback.
             storage.delete_conversation(&id)?;
@@ -73,6 +77,105 @@ fn handle_history_with_storage(storage: &SqliteStorage, command: HistoryCommand)
     }
 
     Ok(())
+}
+
+/// Show detailed conversation history
+fn show_conversation(
+    storage: &SqliteStorage,
+    id: &str,
+    raw: bool,
+    limit: Option<usize>,
+) -> Result<()> {
+    // Load conversation from storage
+    let maybe_conv = storage.load_conversation(id)?;
+
+    let (title, model, messages) = maybe_conv
+        .ok_or_else(|| XzatomaError::Config(format!("Conversation not found: {}", id)))?;
+
+    // Apply limit if specified
+    let messages_to_display = if let Some(n) = limit {
+        let start = messages.len().saturating_sub(n);
+        &messages[start..]
+    } else {
+        &messages
+    };
+
+    if raw {
+        // Raw JSON output
+        let output = serde_json::json!({
+            "id": id,
+            "title": title,
+            "model": model,
+            "message_count": messages.len(),
+            "messages": messages_to_display,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        // Formatted display
+        println!("\n{}", "Conversation: ".bold());
+        println!("{}", title.cyan());
+        println!("{}", "ID: ".bold());
+        println!("{}", id.cyan());
+        println!("{}", "Model: ".bold());
+        println!("{}", model.unwrap_or_else(|| "unknown".to_string()).cyan());
+        println!("{}", "Messages: ".bold());
+        println!("{} total", messages.len());
+        if limit.is_some() {
+            println!("Showing: last {} messages", messages_to_display.len());
+        }
+        println!("{}", "=".repeat(80));
+
+        for (idx, msg) in messages_to_display.iter().enumerate() {
+            let global_idx = if limit.is_some() {
+                messages.len() - messages_to_display.len() + idx
+            } else {
+                idx
+            };
+
+            print_message(global_idx, msg);
+        }
+        println!();
+    }
+
+    tracing::info!(
+        "Displayed conversation: id={}, message_count={}",
+        id,
+        messages.len()
+    );
+
+    Ok(())
+}
+
+/// Print a single message in formatted mode
+fn print_message(idx: usize, msg: &Message) {
+    println!("\n{} [{}]", "[MESSAGE]".bold(), idx.to_string().cyan());
+    println!("  {}: {}", "Role".bold(), msg.role.yellow());
+
+    // Show tool_call_id if present (for tool messages)
+    if let Some(tool_call_id) = &msg.tool_call_id {
+        println!("  {}: {}", "Tool Call ID".bold(), tool_call_id.magenta());
+    }
+
+    // Show tool_calls summary if present (for assistant messages)
+    if let Some(tool_calls) = &msg.tool_calls {
+        println!("  {}: {} total", "Tool Calls".bold(), tool_calls.len());
+        for tc in tool_calls {
+            println!("    - {} (id: {})", tc.function.name, tc.id);
+        }
+    }
+
+    // Show content (truncate if very long in formatted mode)
+    if let Some(content) = &msg.content {
+        let content_preview = if content.len() > 500 {
+            format!("{}... ({} chars total)", &content[..500], content.len())
+        } else {
+            content.clone()
+        };
+
+        println!("  {}: {}", "Content".bold(), content_preview);
+    } else {
+        println!("  {}: {}", "Content".bold(), "(no content)".dimmed());
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +254,66 @@ mod tests {
             .load_conversation(&id)
             .expect("load failed")
             .is_none());
+    }
+
+    #[test]
+    fn test_show_conversation_formatted() {
+        let tmp = tempdir().expect("failed to create tempdir");
+        let db_path = tmp.path().join("history.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("failed to create storage");
+
+        let messages = vec![Message::user("Hello"), Message::assistant("Hi there")];
+
+        storage
+            .save_conversation("test_id", "Test Conv", Some("gpt-4"), &messages)
+            .expect("save failed");
+
+        let result = show_conversation(&storage, "test_id", false, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_conversation_raw_json() {
+        let tmp = tempdir().expect("failed to create tempdir");
+        let db_path = tmp.path().join("history.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("failed to create storage");
+
+        let messages = vec![Message::user("Test")];
+        storage
+            .save_conversation("test_id", "Test", Some("gpt-4"), &messages)
+            .expect("save failed");
+
+        let result = show_conversation(&storage, "test_id", true, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_conversation_with_limit() {
+        let tmp = tempdir().expect("failed to create tempdir");
+        let db_path = tmp.path().join("history.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("failed to create storage");
+
+        let messages = vec![
+            Message::user("Msg 1"),
+            Message::user("Msg 2"),
+            Message::user("Msg 3"),
+        ];
+
+        storage
+            .save_conversation("test_id", "Test", Some("gpt-4"), &messages)
+            .expect("save failed");
+
+        let result = show_conversation(&storage, "test_id", false, Some(2));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_show_conversation_not_found() {
+        let tmp = tempdir().expect("failed to create tempdir");
+        let db_path = tmp.path().join("history.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("failed to create storage");
+
+        let result = show_conversation(&storage, "nonexistent", false, None);
+        assert!(result.is_err());
     }
 }
