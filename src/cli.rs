@@ -210,6 +210,21 @@ pub enum HistoryCommand {
     /// List saved conversations
     List,
 
+    /// Show detailed message-level history for a conversation
+    Show {
+        /// Conversation ID to display
+        #[arg(short, long)]
+        id: String,
+
+        /// Output raw JSON format instead of formatted display
+        #[arg(short, long)]
+        raw: bool,
+
+        /// Show only the last N messages (default: all)
+        #[arg(short = 'n', long)]
+        limit: Option<usize>,
+    },
+
     /// Delete a saved conversation
     Delete {
         /// ID of the conversation to delete
@@ -323,6 +338,58 @@ mod tests {
             }
         } else {
             panic!("Expected History command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_show_parses_id() {
+        let cli = Cli::try_parse_from(["xzatoma", "history", "show", "--id", "abc123"]).unwrap();
+
+        match cli.command {
+            Commands::History {
+                command: HistoryCommand::Show { id, raw, limit },
+            } => {
+                assert_eq!(id, "abc123");
+                assert!(!raw);
+                assert_eq!(limit, None);
+            }
+            _ => panic!("Expected History::Show command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_show_parses_raw_flag() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "history", "show", "--id", "abc123", "--raw"]).unwrap();
+
+        match cli.command {
+            Commands::History {
+                command: HistoryCommand::Show { id, raw, limit },
+            } => {
+                assert_eq!(id, "abc123");
+                assert!(raw);
+                assert_eq!(limit, None);
+            }
+            _ => panic!("Expected History::Show command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_show_parses_limit() {
+        let cli = Cli::try_parse_from([
+            "xzatoma", "history", "show", "--id", "abc123", "--limit", "10",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::History {
+                command: HistoryCommand::Show { id, raw, limit },
+            } => {
+                assert_eq!(id, "abc123");
+                assert!(!raw);
+                assert_eq!(limit, Some(10));
+            }
+            _ => panic!("Expected History::Show command"),
         }
     }
 

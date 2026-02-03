@@ -240,6 +240,16 @@ impl Conversation {
         self.prune_if_needed();
     }
 
+    /// Adds a generic message to the conversation
+    ///
+    /// This is a helper for tests and for callers that already have a
+    /// `Message` instance. It updates token counting and triggers pruning.
+    pub fn add_message(&mut self, message: Message) {
+        self.update_token_count(&message);
+        self.messages.push(message);
+        self.prune_if_needed();
+    }
+
     /// Updates the token count based on a new message
     ///
     /// Uses a simple heuristic: characters / 4
@@ -268,24 +278,51 @@ impl Conversation {
         self.token_count += content_tokens + tool_calls_tokens;
     }
 
+    /// Find indices of tool messages that reference the given tool_call_id
+    ///
+    /// Used during pruning to ensure tool results are removed atomically
+    /// with their corresponding assistant tool_calls.
+    fn find_tool_results_for_call(&self, tool_call_id: &str) -> Vec<usize> {
+        self.messages
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, msg)| {
+                if msg.role == "tool" && msg.tool_call_id.as_deref() == Some(tool_call_id) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Prunes old messages if token count exceeds threshold
     ///
     /// Keeps:
     /// - System messages
     /// - Last `min_retain_turns` conversation turns (user/assistant pairs)
-    /// - Tool calls and their results (to maintain context)
+    /// - Tool call pairs (assistant tool_calls + corresponding tool results)
     ///
     /// Removed messages are summarized and added as a new system message.
     fn prune_if_needed(&mut self) {
+        use std::collections::HashSet;
+
         let threshold = (self.max_tokens as f64 * self.prune_threshold) as usize;
 
         if self.token_count <= threshold {
             return;
         }
 
-        // Find messages to keep
-        let mut keep_from_index = 0;
-        let mut retained_turns = 0;
+        tracing::info!(
+            "Pruning conversation: tokens={}/{}, threshold={}",
+            self.token_count,
+            self.max_tokens,
+            threshold
+        );
+
+        // Find messages to keep (index of the first message to keep)
+        let mut keep_from_index = 0usize;
+        let mut retained_turns = 0usize;
 
         // Count backwards to find min_retain_turns
         for (idx, message) in self.messages.iter().enumerate().rev() {
@@ -303,33 +340,115 @@ impl Conversation {
             return;
         }
 
-        // Separate system messages, messages to prune, and messages to keep
-        let mut system_messages = Vec::new();
-        let mut to_prune = Vec::new();
-        let mut to_keep = Vec::new();
-
-        for (idx, message) in self.messages.drain(..).enumerate() {
-            if message.role == "system" {
-                system_messages.push(message);
-            } else if idx < keep_from_index {
-                to_prune.push(message);
-            } else {
-                to_keep.push(message);
+        // Build initial prune index set (exclude system messages)
+        let mut prune_indices: HashSet<usize> = HashSet::new();
+        for (idx, message) in self.messages.iter().enumerate() {
+            if idx < keep_from_index && message.role != "system" {
+                prune_indices.insert(idx);
             }
         }
 
-        // Create summary of pruned messages
-        if !to_prune.is_empty() {
-            let summary = self.create_summary(&to_prune);
-            system_messages.push(Message::system(summary));
+        // Expand prune set to include tool pairs atomically (transitive closure)
+        let mut stack: Vec<usize> = prune_indices.iter().copied().collect();
+        while let Some(idx) = stack.pop() {
+            if idx >= self.messages.len() {
+                continue;
+            }
+            let msg = &self.messages[idx];
+
+            if msg.role == "assistant" {
+                if let Some(tool_calls) = &msg.tool_calls {
+                    for tc in tool_calls {
+                        let result_indices = self.find_tool_results_for_call(&tc.id);
+                        for res_idx in result_indices {
+                            if res_idx < self.messages.len()
+                                && !prune_indices.contains(&res_idx)
+                                && self.messages[res_idx].role != "system"
+                            {
+                                prune_indices.insert(res_idx);
+                                stack.push(res_idx);
+                                tracing::debug!(
+                                    "Pruning tool call pair atomically: call_id={}, tool_name={}",
+                                    tc.id,
+                                    tc.function.name
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if msg.role == "tool" {
+                if let Some(tool_call_id) = &msg.tool_call_id {
+                    // Find assistant messages that reference this tool_call_id
+                    for (a_idx, a_msg) in self.messages.iter().enumerate() {
+                        if a_msg.role == "assistant" {
+                            if let Some(tool_calls) = &a_msg.tool_calls {
+                                if tool_calls.iter().any(|tc| &tc.id == tool_call_id)
+                                    && !prune_indices.contains(&a_idx)
+                                    && a_msg.role != "system"
+                                {
+                                    prune_indices.insert(a_idx);
+                                    stack.push(a_idx);
+                                    tracing::debug!(
+                                        "Pruning assistant with tool_calls to match pruned tool result: {}",
+                                        tool_call_id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Reconstruct messages: system messages + kept messages
-        self.messages = system_messages;
-        self.messages.extend(to_keep);
+        // Collect pruned messages
+        let mut indices_vec: Vec<usize> = prune_indices.iter().copied().collect();
+        indices_vec.sort();
 
-        // Recalculate token count
-        self.recalculate_tokens();
+        if !indices_vec.is_empty() {
+            let mut pruned_messages = Vec::new();
+            for &i in &indices_vec {
+                if i < self.messages.len() {
+                    pruned_messages.push(self.messages[i].clone());
+                }
+            }
+
+            // Create summary for pruned content
+            let summary = self.create_summary(&pruned_messages);
+            tracing::debug!(
+                "Pruned {} messages, inserting summary",
+                pruned_messages.len()
+            );
+
+            // Reconstruct messages: system messages + kept messages
+            let mut system_messages = Vec::new();
+            let mut to_keep = Vec::new();
+
+            for (idx, message) in self.messages.iter().enumerate() {
+                if message.role == "system" {
+                    system_messages.push(message.clone());
+                } else if prune_indices.contains(&idx) {
+                    // Skip pruned
+                } else {
+                    to_keep.push(message.clone());
+                }
+            }
+
+            // Append summary system message
+            system_messages.push(Message::system(summary));
+
+            self.messages = system_messages;
+            self.messages.extend(to_keep);
+
+            // Recalculate token count
+            self.recalculate_tokens();
+
+            tracing::info!(
+                "Pruning complete: removed {} messages, tokens now {}/{}",
+                pruned_messages.len(),
+                self.token_count,
+                self.max_tokens
+            );
+        }
     }
 
     /// Creates a summary of messages being pruned
@@ -592,6 +711,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::{FunctionCall, ToolCall};
 
     #[test]
     fn test_new_conversation() {
@@ -703,11 +823,7 @@ mod tests {
 
         // Should have a summary system message after pruning
         let has_summary = conversation.messages().iter().any(|m| {
-            m.role == "system"
-                && m.content
-                    .as_ref()
-                    .map(|c| c.contains("Summary"))
-                    .unwrap_or(false)
+            m.role == "system" && m.content.as_ref().is_some_and(|c| c.contains("Summary"))
         });
 
         assert!(has_summary);
@@ -764,5 +880,158 @@ mod tests {
 
         let conversation = Conversation::new(1000, 10, -0.5);
         assert_eq!(conversation.prune_threshold, 0.0);
+    }
+
+    // -----------------------
+    // Phase 3: Helper tests
+    // -----------------------
+
+    #[test]
+    fn test_find_tool_results_for_call_finds_matching() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_message(Message::user("test"));
+        conv.add_message(Message::tool_result("call_123", "result1"));
+        conv.add_message(Message::tool_result("call_456", "result2"));
+        conv.add_message(Message::tool_result("call_123", "result3"));
+
+        let indices = conv.find_tool_results_for_call("call_123");
+
+        assert_eq!(indices.len(), 2);
+        assert_eq!(indices[0], 1);
+        assert_eq!(indices[1], 3);
+    }
+
+    #[test]
+    fn test_find_tool_results_for_call_returns_empty_when_none() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_message(Message::user("test"));
+        conv.add_message(Message::assistant("response"));
+
+        let indices = conv.find_tool_results_for_call("call_nonexistent");
+
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_find_tool_results_for_call_ignores_other_roles() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_message(Message::user("call_123")); // Not a tool message
+        conv.add_message(Message::tool_result("call_123", "result"));
+
+        let indices = conv.find_tool_results_for_call("call_123");
+
+        assert_eq!(indices.len(), 1);
+        assert_eq!(indices[0], 1); // Only the actual tool message
+    }
+
+    // -----------------------
+    // Phase 3: Pruning tests
+    // -----------------------
+
+    #[test]
+    fn test_prune_preserves_tool_call_pair_when_both_in_retain_window() {
+        let mut conv = Conversation::new(100, 2, 0.5); // Low token limit to force pruning
+
+        // Add many messages to trigger pruning behavior
+        for i in 0..10 {
+            conv.add_message(Message::user(format!("msg {}", i)));
+        }
+
+        // Add tool call pair in retention window
+        let tool_call = ToolCall {
+            id: "call_retain".to_string(),
+            function: FunctionCall {
+                name: "test".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+        conv.add_message(Message::assistant_with_tools(vec![tool_call]));
+        conv.add_message(Message::tool_result("call_retain", "result"));
+
+        // Force token count high to trigger pruning
+        conv.token_count = 60; // Above threshold (50)
+        conv.prune_if_needed();
+
+        // Verify tool pair preserved
+        assert!(conv
+            .messages()
+            .iter()
+            .any(|m| m.role == "assistant" && m.tool_calls.is_some()));
+        assert!(conv
+            .messages()
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_retain")));
+    }
+
+    #[test]
+    fn test_prune_removes_both_when_assistant_in_prune_zone() {
+        let mut conv = Conversation::new(1000, 2, 0.5);
+
+        // Add tool call pair in what will be prune zone
+        let tool_call = ToolCall {
+            id: "call_prune".to_string(),
+            function: FunctionCall {
+                name: "test".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+        conv.add_message(Message::assistant_with_tools(vec![tool_call.clone()]));
+        conv.add_message(Message::tool_result("call_prune", "result"));
+
+        // Add many more messages to push tool pair into prune zone
+        for i in 0..10 {
+            conv.add_message(Message::user(format!("msg {}", i)));
+            conv.add_message(Message::assistant(format!("response {}", i)));
+        }
+
+        conv.token_count = 600; // Above threshold
+        conv.prune_if_needed();
+
+        // Verify BOTH assistant and tool messages removed (no orphan)
+        assert!(!conv
+            .messages()
+            .iter()
+            .any(|m| m.tool_call_id.as_deref() == Some("call_prune")));
+
+        // Verify no orphans remain
+        for msg in conv.messages() {
+            if msg.role == "tool" {
+                if let Some(tool_call_id) = &msg.tool_call_id {
+                    // Find corresponding assistant
+                    let has_assistant = conv.messages().iter().any(|m| {
+                        m.role == "assistant"
+                            && m.tool_calls
+                                .as_ref()
+                                .is_some_and(|tcs| tcs.iter().any(|tc| &tc.id == tool_call_id))
+                    });
+                    assert!(
+                        has_assistant,
+                        "Orphan tool message found after pruning: {}",
+                        tool_call_id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_prune_creates_summary_message() {
+        let mut conv = Conversation::new(100, 1, 0.5);
+
+        for i in 0..5 {
+            conv.add_message(Message::user(format!("message {}", i)));
+        }
+
+        let initial_count = conv.messages().len();
+        conv.token_count = 60; // Force pruning
+        conv.prune_if_needed();
+
+        // Should have fewer messages but include summary
+        assert!(conv.messages().len() < initial_count);
+
+        // Summary should be a system message containing "Summary"
+        assert!(conv.messages().iter().any(
+            |m| m.role == "system" && m.content.as_ref().is_some_and(|c| c.contains("Summary"))
+        ));
     }
 }

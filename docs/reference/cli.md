@@ -167,6 +167,93 @@ xzatoma models info --model gpt-4 --json > gpt4_info.json
 xzatoma models current --provider copilot
 ```
 
+### history
+
+Commands for inspecting and managing conversation history.
+
+Subcommands:
+
+- `xzatoma history list` — list all saved conversations with metadata
+- `xzatoma history show --id <id> [--raw] [--limit N]` — show detailed message-level history for a conversation
+- `xzatoma history delete --id <id>` — delete a saved conversation
+
+#### history list
+
+List all saved conversations with metadata (ID, title, model, message count, last updated).
+
+Synopsis:
+
+```
+xzatoma history list
+```
+
+Output: Table showing conversation ID (first 8 chars), title, model used, number of messages, and timestamp of last update.
+
+Examples:
+
+```bash
+# List all conversations
+xzatoma history list
+```
+
+#### history show
+
+Display detailed message-level history for a specific conversation. Supports formatted output (default) or raw JSON export, with optional message limiting.
+
+Synopsis:
+
+```
+xzatoma history show --id <id> [--raw] [--limit N]
+```
+
+Options:
+
+- `-i, --id <ID>` — conversation ID to display (required)
+- `-r, --raw` — output raw JSON format instead of formatted display
+- `-n, --limit <N>` — show only the last N messages (default: all)
+
+Output:
+
+- **Default (formatted):** Color-coded message display with role, content preview, and metadata
+- **Raw JSON:** Complete message objects including tool calls, tool results, and all message fields
+
+Examples:
+
+```bash
+# Show full conversation history
+xzatoma history show --id abc123def456
+
+# Show last 10 messages only
+xzatoma history show --id abc123def456 --limit 10
+
+# Export as JSON for scripting or analysis
+xzatoma history show --id abc123def456 --raw > history.json
+
+# Combine options: show last 5 messages as JSON
+xzatoma history show --id abc123def456 --raw --limit 5 > recent_messages.json
+```
+
+#### history delete
+
+Delete a saved conversation permanently. This action cannot be undone.
+
+Synopsis:
+
+```
+xzatoma history delete --id <id>
+```
+
+Options:
+
+- `-i, --id <ID>` — conversation ID to delete (required)
+
+Examples:
+
+```bash
+# Delete a conversation
+xzatoma history delete --id abc123def456
+```
+
 ## Environment variables and configuration precedence
 
 Configuration is loaded from the file specified by `--config` (default `config/config.yaml`), then environment variables are applied, and finally CLI overrides (where implemented) are applied.

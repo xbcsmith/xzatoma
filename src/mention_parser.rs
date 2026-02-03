@@ -301,6 +301,7 @@ impl Default for MentionCache {
 /// ```
 pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String)> {
     let mut mentions = Vec::new();
+    let mut cleaned = String::new();
     let mut i = 0;
     let chars: Vec<char> = input.chars().collect();
     let len = chars.len();
@@ -309,6 +310,7 @@ pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String
         if chars[i] == '@' {
             // Check if this @ is escaped
             if i > 0 && chars[i - 1] == '\\' {
+                cleaned.push(chars[i]);
                 i += 1;
                 continue;
             }
@@ -316,6 +318,7 @@ pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String
             // Check if @ is at start or preceded by whitespace
             let valid_start = i == 0 || chars[i - 1].is_whitespace();
             if !valid_start {
+                cleaned.push(chars[i]);
                 i += 1;
                 continue;
             }
@@ -323,16 +326,19 @@ pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String
             // Try to parse a mention starting at position i+1
             if let Some((mention, consumed)) = try_parse_mention_at(&chars, i + 1) {
                 mentions.push(mention);
+                // Skip the @ and the mention text in the cleaned output
                 i += 1 + consumed;
             } else {
+                cleaned.push(chars[i]);
                 i += 1;
             }
         } else {
+            cleaned.push(chars[i]);
             i += 1;
         }
     }
 
-    Ok((mentions, input.to_string()))
+    Ok((mentions, cleaned))
 }
 
 /// Try to parse a mention starting at the given position
@@ -2124,6 +2130,62 @@ mod tests {
             .unwrap()
             .contains("max_file_read_size"));
         assert!(augmented.contains("Failed to include file large.txt"));
+    }
+
+    #[test]
+    fn test_parse_mentions_cleans_single_file() {
+        let input = "@src/main.rs";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The mention should be removed, leaving empty string
+        assert_eq!(cleaned.trim(), "");
+    }
+
+    #[test]
+    fn test_parse_mentions_cleans_multiple_files() {
+        let input = "Check @src/main.rs and @README.md please";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The mentions should be removed, leaving the rest of the text
+        assert_eq!(cleaned, "Check  and  please");
+    }
+
+    #[test]
+    fn test_parse_mentions_cleans_file_with_range() {
+        let input = "Review @file.rs#L10-20 for issues";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The mention with line range should be removed
+        assert_eq!(cleaned, "Review  for issues");
+    }
+
+    #[test]
+    fn test_parse_mentions_cleans_url() {
+        let input = "Check @url:https://example.com for docs";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The URL mention should be removed
+        assert_eq!(cleaned, "Check  for docs");
+    }
+
+    #[test]
+    fn test_parse_mentions_cleans_search() {
+        let input = "Find @search:\"pattern\" in the code";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The search mention should be removed
+        assert_eq!(cleaned, "Find  in the code");
+    }
+
+    #[test]
+    fn test_parse_mentions_preserves_text() {
+        let input = "Explain what @src/storage/types.rs does";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // The mention should be removed, preserving other text
+        assert_eq!(cleaned, "Explain what  does");
+    }
+
+    #[test]
+    fn test_parse_mentions_no_mentions_unchanged() {
+        let input = "This is regular text without mentions";
+        let (_mentions, cleaned) = parse_mentions(input).unwrap();
+        // Text without mentions should be unchanged
+        assert_eq!(cleaned, input);
     }
 
     #[tokio::test]

@@ -40,7 +40,7 @@ use super::{ContextInfo, Conversation};
 /// let tools = ToolRegistry::new();
 /// let config = AgentConfig::default();
 ///
-/// let agent = Agent::new(provider, tools, config)?;
+/// let mut agent = Agent::new(provider, tools, config)?;
 /// let result = agent.execute("Write a hello world program").await?;
 /// # Ok(())
 /// # }
@@ -238,7 +238,7 @@ impl Agent {
     /// # let provider = unimplemented!();
     /// let tools = ToolRegistry::new();
     /// let config = AgentConfig::default();
-    /// let agent = Agent::new_with_mode(
+    /// let mut agent = Agent::new_with_mode(
     ///     provider,
     ///     tools,
     ///     config,
@@ -316,21 +316,20 @@ impl Agent {
     /// # let provider = unimplemented!();
     /// # let tools = ToolRegistry::new();
     /// # let config = AgentConfig::default();
-    /// # let agent = Agent::new(provider, tools, config)?;
+    /// # let mut agent = Agent::new(provider, tools, config)?;
     /// let result = agent.execute("List files in current directory").await?;
     /// println!("Agent result: {}", result);
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn execute(&self, user_prompt: impl Into<String>) -> Result<String> {
+    pub async fn execute(&mut self, user_prompt: impl Into<String>) -> Result<String> {
         let start_time = Instant::now();
         let timeout = Duration::from_secs(self.config.timeout_seconds);
 
         info!("Starting agent execution");
 
         // Add initial user prompt
-        let mut conversation = self.conversation.clone();
-        conversation.add_user_message(user_prompt.into());
+        self.conversation.add_user_message(user_prompt.into());
 
         let mut iteration = 0;
 
@@ -364,15 +363,15 @@ impl Agent {
                 "Iteration {}/{}, tokens: {}/{}",
                 iteration,
                 self.config.max_turns,
-                conversation.token_count(),
-                conversation.max_tokens()
+                self.conversation.token_count(),
+                self.conversation.max_tokens()
             );
 
             // Get completion from provider
             let tool_definitions = self.tools.all_definitions();
             let completion_response = self
                 .provider
-                .complete(conversation.messages(), &tool_definitions)
+                .complete(self.conversation.messages(), &tool_definitions)
                 .await?;
 
             let message = completion_response.message;
@@ -380,7 +379,7 @@ impl Agent {
 
             // Track token usage if provider reported it
             if let Some(usage) = completion_response.usage {
-                conversation.update_from_provider_usage(&usage);
+                self.conversation.update_from_provider_usage(&usage);
 
                 // Accumulate token usage at agent level
                 let mut accumulated = self.accumulated_usage.lock().unwrap();
@@ -395,10 +394,10 @@ impl Agent {
                 drop(accumulated);
             }
 
-            // Add assistant message to conversation
-            if let Some(content) = &message.content {
-                conversation.add_assistant_message(content.clone());
-            }
+            // Add assistant message to conversation (preserving tool_calls if present)
+            // We must add the complete message including tool_calls so that when
+            // validate_message_sequence runs, it can find the tool_call IDs
+            self.conversation.add_message(message.clone());
 
             // Handle tool calls if present
             if let Some(tool_calls) = &message.tool_calls {
@@ -414,7 +413,8 @@ impl Agent {
                     let result = self.execute_tool_call(tool_call).await?;
 
                     // Add tool result to conversation
-                    conversation.add_tool_result(&tool_call.id, result.to_message());
+                    self.conversation
+                        .add_tool_result(&tool_call.id, result.to_message());
                 }
 
                 // Continue loop to get next response after tool execution
@@ -436,7 +436,8 @@ impl Agent {
         }
 
         // Get the final response
-        let final_message = conversation
+        let final_message = self
+            .conversation
             .messages()
             .iter()
             .rev()
@@ -563,7 +564,7 @@ impl Agent {
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
     /// # let provider = unimplemented!();
-    /// # let agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
+    /// # let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
     /// # agent.execute("test").await?;
     /// let usage = agent.get_token_usage();
     /// if let Some(u) = usage {
@@ -599,7 +600,7 @@ impl Agent {
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
     /// # let provider = unimplemented!();
-    /// # let agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
+    /// # let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
     /// # agent.execute("test").await?;
     /// let context = agent.get_context_info(8192);
     /// println!("Context: {}/{} tokens ({:.1}% used)",
@@ -714,7 +715,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let config = AgentConfig::default();
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Say hello").await;
 
         assert!(result.is_ok());
@@ -728,7 +729,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let config = AgentConfig::default();
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Complex task").await;
 
         assert!(result.is_ok());
@@ -761,7 +762,7 @@ mod tests {
             ..Default::default()
         };
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Loop test").await;
 
         // Should fail due to tool not found, but we're testing iteration limit
@@ -780,7 +781,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let config = AgentConfig::default();
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Test").await;
 
         assert!(result.is_err());
@@ -809,7 +810,7 @@ mod tests {
         // For now, this test will fail with "Tool not found" which is expected
 
         let config = AgentConfig::default();
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Use tool").await;
 
         // Should fail because tool is not registered
@@ -866,7 +867,7 @@ mod tests {
             ..Default::default()
         };
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Timeout test").await;
 
         // Should fail (either timeout or tool not found)
@@ -883,7 +884,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let config = AgentConfig::default();
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Test token tracking").await;
 
         assert!(result.is_ok());
@@ -904,7 +905,7 @@ mod tests {
         let tools = ToolRegistry::new();
         let config = AgentConfig::default();
 
-        let agent = Agent::new(provider, tools, config).unwrap();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
         let result = agent.execute("Test context").await;
 
         assert!(result.is_ok());

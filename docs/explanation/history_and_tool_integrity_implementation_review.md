@@ -36,7 +36,7 @@ This review evaluates the plan against:
 ## Terminology
 
 ### Orphan Tool Message
-A `tool` role message where `tool_call_id` does not match any `tool_calls[].id` 
+A `tool` role message where `tool_call_id` does not match any `tool_calls[].id`
 from a preceding `assistant` role message in the conversation history.
 
 **Example of Orphan**:
@@ -128,7 +128,7 @@ ALTER TABLE conversations ADD COLUMN message_timestamps JSON;
 cargo fmt --all
 # Expected: No output
 
-# 2. Check compilation  
+# 2. Check compilation
 cargo check --all-targets --all-features
 # Expected: "Finished" with 0 errors
 
@@ -259,10 +259,10 @@ cargo tarpaulin --out Stdout > coverage_baseline.txt
 #[derive(Error, Debug)]
 pub enum XzatomaError {
     // ... existing variants
-    
+
     #[error("Orphan tool message detected: tool_call_id={0}, no matching assistant message")]
     OrphanToolMessage(String),
-    
+
     #[error("Invalid message sequence: {0}")]
     InvalidMessageSequence(String),
 }
@@ -281,7 +281,7 @@ fn test_orphan_tool_message_logged_and_dropped() {
     // Assert: warning logged, message not in provider request
 }
 
-#[test]  
+#[test]
 fn test_valid_tool_pair_preserved() {
     // Setup conversation with valid pair
     // Assert: both messages in provider request
@@ -344,7 +344,7 @@ let to_prune = self.messages.len() - to_keep;
 let mut prune_indices = HashSet::new();
 for (idx, msg) in self.messages[..to_prune].iter().enumerate() {
     prune_indices.insert(idx);
-    
+
     // If pruning assistant with tool_calls, also prune results
     if msg.role == "assistant" {
         if let Some(tool_calls) = &msg.tool_calls {
@@ -433,7 +433,7 @@ git checkout HEAD~1 src/providers/copilot.rs
 cargo test --all-features  # Verify tests pass
 ```
 
-**Recovery**: 
+**Recovery**:
 - Review test failure output
 - Adjust validation logic to be less aggressive
 - Retry with logging enabled: `RUST_LOG=debug cargo test`
@@ -501,7 +501,7 @@ If ANY phase introduces a critical bug:
 
 ### Source Code
 - `src/providers/copilot.rs` (+45 lines, modified) - Orphan tool validation
-- `src/providers/ollama.rs` (+40 lines, modified) - Orphan tool validation  
+- `src/providers/ollama.rs` (+40 lines, modified) - Orphan tool validation
 - `src/providers/base.rs` (+30 lines, new) - Shared validation utilities
 - `src/commands/history.rs` (+120 lines, modified) - History show command
 - `src/cli.rs` (+15 lines, modified) - CLI argument parsing
@@ -525,7 +525,7 @@ If ANY phase introduces a critical bug:
 ### Orphan Tool Message Validation
 [Detailed explanation with code examples]
 
-### History Inspection UX  
+### History Inspection UX
 [Detailed explanation with CLI examples]
 
 ### Pruning Integrity Preservation
@@ -642,7 +642,7 @@ pub fn load(&self, id: &str) -> Result<Option<(String, Option<String>, Vec<Messa
 // Task 2.2 - CORRECT implementation
 pub fn show_history(storage: &SqliteStorage, id: &str) -> Result<()> {
     let maybe_conv = storage.load(id)?;  // Note: load() not load_conversation()
-    
+
     match maybe_conv {
         Some((title, model, messages)) => {
             println!("Title: {}", title);
@@ -696,11 +696,11 @@ pub fn show_history(storage: &SqliteStorage, id: &str) -> Result<()> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     // ... existing fields
-    
+
     /// Record special commands in conversation history
     #[serde(default = "default_persist_special_commands")]
     pub persist_special_commands: bool,
-    
+
     /// List of special commands to persist (empty = all)
     #[serde(default)]
     pub persist_command_allowlist: Vec<String>,
@@ -766,10 +766,10 @@ Options:
 Examples:
   # Show formatted history
   xzatoma history show --id abc123
-  
+
   # Show raw JSON for piping to jq
   xzatoma history show --id abc123 --raw | jq '.messages[] | select(.role == "tool")'
-  
+
   # Show only last 10 messages
   xzatoma history show --id abc123 --limit 10
 ```
@@ -898,7 +898,7 @@ The plan provides a solid architectural approach but requires significant refine
 
 **Strengths**:
 - Clear problem identification
-- Logical phase progression  
+- Logical phase progression
 - Good file path references
 - Sensible scope boundaries
 
@@ -915,6 +915,6 @@ Estimated revision time: 2-4 hours to address all CRITICAL and HIGH issues.
 
 ---
 
-**Reviewer**: AI Planning Agent  
-**Date**: 2025  
+**Reviewer**: AI Planning Agent
+**Date**: 2025
 **Next Review**: After plan revision addressing CRITICAL issues

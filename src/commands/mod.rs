@@ -122,13 +122,13 @@ pub mod chat {
         let provider = create_provider(provider_type, &config.provider)?;
 
         // Initialize agent with conversation
-        let mut agent = if let Some(resume_id) = resume {
+        let mut agent = if let Some(ref resume_id) = resume {
             if let Some(storage) = &storage {
-                match storage.load_conversation(&resume_id) {
+                match storage.load_conversation(resume_id) {
                     Ok(Some((title, _model, messages))) => {
                         println!("Resuming conversation: {}", title.cyan());
                         let conversation = crate::agent::Conversation::with_history(
-                            uuid::Uuid::parse_str(&resume_id)
+                            uuid::Uuid::parse_str(resume_id)
                                 .unwrap_or_else(|_| uuid::Uuid::new_v4()),
                             title,
                             messages,
@@ -170,6 +170,18 @@ pub mod chat {
 
         // Create readline instance
         let mut rl = DefaultEditor::new()?;
+
+        // Populate readline history with previous user inputs when resuming
+        if resume.is_some() {
+            for msg in agent.conversation().messages() {
+                if msg.role == "user" {
+                    if let Some(content) = &msg.content {
+                        // Add each user message to readline history so up/down arrows work
+                        let _ = rl.add_history_entry(content);
+                    }
+                }
+            }
+        }
 
         // Initialize mention cache for file content injection
         let mut mention_cache = crate::mention_parser::MentionCache::new();
@@ -273,7 +285,7 @@ pub mod chat {
                     }
 
                     // Parse mentions from input
-                    let (mentions, _cleaned_text) = match mention_parser::parse_mentions(trimmed) {
+                    let (mentions, cleaned_text) = match mention_parser::parse_mentions(trimmed) {
                         Ok((m, c)) => {
                             if !m.is_empty() {
                                 tracing::info!("Detected {} mentions in input", m.len());
@@ -347,7 +359,7 @@ pub mod chat {
                     let (augmented_prompt, load_errors, successes) =
                         crate::mention_parser::augment_prompt_with_mentions(
                             &mentions,
-                            trimmed,
+                            &cleaned_text,
                             &working_dir,
                             max_file_size,
                             &mut mention_cache,
@@ -1217,7 +1229,7 @@ pub mod r#run {
         tools.register("terminal", terminal_tool_executor);
 
         // Create agent using concrete providers
-        let agent = match config.provider.provider_type.as_str() {
+        let mut agent = match config.provider.provider_type.as_str() {
             "ollama" => {
                 let p = OllamaProvider::new(config.provider.ollama.clone())?;
                 Agent::new(p, tools, config.agent.clone())?

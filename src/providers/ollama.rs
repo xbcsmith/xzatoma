@@ -256,7 +256,8 @@ impl OllamaProvider {
 
     /// Convert XZatoma messages to Ollama format
     fn convert_messages(&self, messages: &[Message]) -> Vec<OllamaMessage> {
-        messages
+        let validated_messages = crate::providers::validate_message_sequence(messages);
+        validated_messages
             .iter()
             .filter_map(|m| {
                 // Skip messages without content (unless they have tool calls)
@@ -970,5 +971,55 @@ mod tests {
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model().unwrap(), "test-model");
+    }
+
+    #[test]
+    fn test_convert_messages_drops_orphan_tool() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "test".to_string(),
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+
+        let messages = vec![
+            Message::user("Do something"),
+            Message::tool_result("call_123", "Result"),
+        ];
+
+        let converted = provider.convert_messages(&messages);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "user");
+    }
+
+    #[test]
+    fn test_convert_messages_preserves_valid_tool_pair() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "test".to_string(),
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+
+        let tool_call = crate::providers::ToolCall {
+            id: "call_123".to_string(),
+            function: crate::providers::FunctionCall {
+                name: "test_func".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+
+        let messages = vec![
+            Message::user("Do something"),
+            Message::assistant_with_tools(vec![tool_call]),
+            Message::tool_result("call_123", "Result"),
+        ];
+
+        let converted = provider.convert_messages(&messages);
+
+        assert_eq!(converted.len(), 3);
+        assert_eq!(converted[0].role, "user");
+        assert_eq!(converted[1].role, "assistant");
+        assert_eq!(converted[2].role, "tool");
+        assert_eq!(converted[2].content, "Result");
     }
 }

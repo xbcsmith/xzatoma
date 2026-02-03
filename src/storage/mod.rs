@@ -158,23 +158,34 @@ impl SqliteStorage {
         Ok(())
     }
 
-    /// Load a conversation by ID
+    /// Load a conversation by ID (supports full UUID or 8-char prefix)
     pub fn load_conversation(&self, id: &str) -> Result<Option<LoadedConversation>> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
             .map_err(|e| XzatomaError::Config(e.to_string()))?;
 
+        // Support both full UUID and 8-char prefix matching
+        let query = if id.len() == 36 {
+            // Full UUID provided
+            "SELECT title, model, messages FROM conversations WHERE id = ?"
+        } else {
+            // Prefix matching (e.g., first 8 chars)
+            "SELECT title, model, messages FROM conversations WHERE id LIKE ?"
+        };
+
+        let search_param = if id.len() == 36 {
+            id.to_string()
+        } else {
+            format!("{}%", id)
+        };
+
         let result = conn
-            .query_row(
-                "SELECT title, model, messages FROM conversations WHERE id = ?",
-                params![id],
-                |row| {
-                    let title: String = row.get(0)?;
-                    let model: Option<String> = row.get(1)?;
-                    let messages_json: String = row.get(2)?;
-                    Ok((title, model, messages_json))
-                },
-            )
+            .query_row(query, params![search_param], |row| {
+                let title: String = row.get(0)?;
+                let model: Option<String> = row.get(1)?;
+                let messages_json: String = row.get(2)?;
+                Ok((title, model, messages_json))
+            })
             .optional()
             .context("Failed to query conversation")
             .map_err(|e| XzatomaError::Config(e.to_string()))?;
@@ -255,13 +266,25 @@ impl SqliteStorage {
         Ok(sessions)
     }
 
-    /// Delete a conversation
+    /// Delete a conversation (supports full UUID or 8-char prefix)
     pub fn delete_conversation(&self, id: &str) -> Result<()> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
             .map_err(|e| XzatomaError::Config(e.to_string()))?;
 
-        conn.execute("DELETE FROM conversations WHERE id = ?", params![id])
+        // Support both full UUID and 8-char prefix matching
+        let (query, param) = if id.len() == 36 {
+            // Full UUID provided
+            ("DELETE FROM conversations WHERE id = ?", id.to_string())
+        } else {
+            // Prefix matching (e.g., first 8 chars)
+            (
+                "DELETE FROM conversations WHERE id LIKE ?",
+                format!("{}%", id),
+            )
+        };
+
+        conn.execute(query, params![param])
             .context("Failed to delete conversation")
             .map_err(|e| XzatomaError::Config(e.to_string()))?;
 
@@ -516,6 +539,80 @@ mod tests {
         assert_eq!(deserialized.len(), 2);
         assert_eq!(deserialized[0].role, "user");
         assert_eq!(deserialized[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_load_conversation_by_full_uuid() {
+        let (storage, _dir) = create_test_storage();
+        let full_id = "21173421-201f-4e56-87a0-8e13fc02f7e5";
+        let title = "Test UUID Load";
+        let messages = vec![crate::providers::Message::user("Full UUID test")];
+
+        storage
+            .save_conversation(full_id, title, Some("gpt-4"), &messages)
+            .expect("save failed");
+
+        let loaded = storage.load_conversation(full_id).expect("load failed");
+        assert!(loaded.is_some());
+
+        let (ltitle, _, lmessages) = loaded.unwrap();
+        assert_eq!(ltitle, title);
+        assert_eq!(lmessages.len(), 1);
+    }
+
+    #[test]
+    fn test_load_conversation_by_8char_prefix() {
+        let (storage, _dir) = create_test_storage();
+        let full_id = "abcdef12-3456-7890-abcd-ef1234567890";
+        let prefix = "abcdef12";
+        let title = "Test Prefix Load";
+        let messages = vec![crate::providers::Message::user("Prefix test")];
+
+        storage
+            .save_conversation(full_id, title, Some("gpt-4"), &messages)
+            .expect("save failed");
+
+        let loaded = storage
+            .load_conversation(prefix)
+            .expect("load failed by prefix");
+        assert!(loaded.is_some());
+
+        let (ltitle, _, lmessages) = loaded.unwrap();
+        assert_eq!(ltitle, title);
+        assert_eq!(lmessages.len(), 1);
+    }
+
+    #[test]
+    fn test_delete_conversation_by_8char_prefix() {
+        let (storage, _dir) = create_test_storage();
+        let full_id = "ffffffff-1234-5678-abcd-ef1234567890";
+        let prefix = "ffffffff";
+
+        storage
+            .save_conversation(
+                full_id,
+                "To Delete",
+                None,
+                &[crate::providers::Message::user("x")],
+            )
+            .expect("save failed");
+
+        // Delete using prefix
+        storage
+            .delete_conversation(prefix)
+            .expect("delete by prefix failed");
+
+        // Verify it's gone (by full ID)
+        assert!(storage
+            .load_conversation(full_id)
+            .expect("load failed")
+            .is_none());
+
+        // And by prefix
+        assert!(storage
+            .load_conversation(prefix)
+            .expect("load failed")
+            .is_none());
     }
 
     #[test]
