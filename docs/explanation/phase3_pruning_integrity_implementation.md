@@ -170,15 +170,15 @@ impl Conversation {
 pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
     // Calculate current token usage
     let token_count = self.calculate_tokens();
-    
+
     if token_count <= TOKEN_LIMIT {
         return Ok(());
     }
-    
+
     let excess_tokens = token_count - TOKEN_LIMIT;
     let mut messages_to_remove = Vec::new();
     let mut current_tokens = 0;
-    
+
     // Identify messages to remove from oldest to newest
     for (idx, msg) in self.messages.iter().enumerate().rev() {
         if current_tokens >= excess_tokens {
@@ -187,19 +187,19 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
         current_tokens += msg.token_count();
         messages_to_remove.push(idx);
     }
-    
+
     // For each message in prune zone, check if it's part of a pair
     let mut pairs_to_remove = Vec::new();
-    
+
     for &idx in &messages_to_remove {
         if let Message::Assistant { tool_calls: Some(calls), .. } = &self.messages[idx] {
             for call in calls {
                 let result_indices = self.find_tool_results_for_call(&call.id);
-                
+
                 for &result_idx in &result_indices {
                     let in_prune_zone = messages_to_remove.contains(&idx);
                     let result_in_prune_zone = messages_to_remove.contains(&result_idx);
-                    
+
                     // If pair is split, remove entire pair
                     if in_prune_zone != result_in_prune_zone {
                         pairs_to_remove.push((idx, result_idx));
@@ -208,13 +208,13 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
             }
         }
     }
-    
+
     // Remove paired messages
     for (call_idx, result_idx) in pairs_to_remove {
         messages_to_remove.insert(call_idx, call_idx);
         messages_to_remove.insert(result_idx, result_idx);
     }
-    
+
     // Build summary message
     let removed_tools: Vec<String> = self.messages
         .iter()
@@ -233,7 +233,7 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
         })
         .flatten()
         .collect();
-    
+
     // Create context summary
     let summary = if removed_tools.is_empty() {
         "Earlier messages have been pruned to manage token usage.".to_string()
@@ -243,7 +243,7 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
             removed_tools.join(", ")
         )
     };
-    
+
     // Remove old messages and add summary
     let new_messages: Vec<_> = self.messages
         .iter()
@@ -251,10 +251,10 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
         .filter(|(idx, _)| !messages_to_remove.contains(idx))
         .map(|(_, msg)| msg.clone())
         .collect();
-    
+
     self.messages = new_messages;
     self.messages.insert(0, Message::system(summary));
-    
+
     // Final validation: no orphans should remain
     let validated = validate_message_sequence(&self.messages);
     if validated.len() < self.messages.len() {
@@ -262,7 +262,7 @@ pub fn prune_if_needed(&mut self) -> Result<(), XzatomaError> {
             "Pruning created orphan messages".to_string()
         ));
     }
-    
+
     Ok(())
 }
 ```
@@ -293,7 +293,7 @@ fn test_find_tool_results_for_call_finds_matching() {
     ])));
     conv.add_message(Message::tool_result("call_1", "result"));
     conv.add_message(Message::tool_result("call_2", "other")); // Different call
-    
+
     let results = conv.find_tool_results_for_call("call_1");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 1);
@@ -307,7 +307,7 @@ fn test_find_tool_results_for_call_finds_matching() {
 fn test_find_tool_results_for_call_returns_empty_when_none() {
     let conv = Conversation::new("test");
     conv.add_message(Message::user("No tool calls"));
-    
+
     let results = conv.find_tool_results_for_call("missing");
     assert!(results.is_empty());
 }
@@ -322,7 +322,7 @@ fn test_find_tool_results_for_call_ignores_other_roles() {
     conv.add_message(Message::user("call_1")); // Not a tool result
     conv.add_message(Message::assistant("call_1")); // Not a tool result
     conv.add_message(Message::tool_result("call_1", "result")); // Real result
-    
+
     let results = conv.find_tool_results_for_call("call_1");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0], 2);
@@ -341,10 +341,10 @@ fn test_prune_preserves_tool_call_pair_when_both_in_retain_window() {
         ToolCall { id: "call_1", function: "search".to_string() }
     ])));
     conv.add_message(Message::tool_result("call_1", "Found: ..."));
-    
+
     // Set token limit such that these are retained
     conv.prune_if_needed()?;
-    
+
     // Pair should still exist
     assert_eq!(conv.messages.len(), 3);
     assert!(matches!(conv.messages[1], Message::Assistant { .. }));
@@ -364,22 +364,22 @@ fn test_prune_removes_both_when_assistant_in_prune_zone() {
         ToolCall { id: "call_1", function: "analyze".to_string() }
     ])));
     conv.add_message(Message::tool_result("call_1", "Result"));
-    
+
     // Recent messages (to retain)
     for i in 0..20 {
         conv.add_message(Message::user(&format!("Question {}", i)));
         conv.add_message(Message::assistant("Response"));
     }
-    
+
     conv.prune_if_needed()?;
-    
+
     // Pair [1,2] should be removed atomically
     // Recent messages should be retained
-    assert!(conv.messages.iter().any(|m| 
+    assert!(conv.messages.iter().any(|m|
         matches!(m, Message::User { content } if content.contains("Question 19"))
     ));
     // Old pair should not exist
-    assert!(!conv.messages.iter().any(|m| 
+    assert!(!conv.messages.iter().any(|m|
         matches!(m, Message::User { content } if content.contains("Old question"))
     ));
 }
@@ -397,14 +397,14 @@ fn test_prune_creates_summary_message() {
         ToolCall { id: "call_1", function: "search".to_string() }
     ])));
     conv.add_message(Message::tool_result("call_1", "Results"));
-    
+
     // Add recent messages to trigger pruning
     for i in 0..30 {
         conv.add_message(Message::user(&format!("Q{}", i)));
     }
-    
+
     conv.prune_if_needed()?;
-    
+
     // First message should be summary
     assert!(matches!(conv.messages[0], Message::System { .. }));
     if let Message::System { content } = &conv.messages[0] {

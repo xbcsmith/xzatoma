@@ -24,9 +24,13 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - **[phase2_history_ux_command_persistence_implementation.md](phase2_history_ux_command_persistence_implementation.md)** - Phase 2: History UX & Command Persistence - Enhanced `history show` command with formatted/JSON output and message limiting, persistence configuration for special commands, 10 new tests
 
+- **[phase3_pruning_integrity_implementation.md](phase3_pruning_integrity_implementation.md)** - Phase 3: Pruning Integrity - Atomic tool-call pair removal during conversation pruning, helper methods for finding tool results, maintains message sequence integrity
+
 - **[phase4_cross_provider_consistency_implementation.md](phase4_cross_provider_consistency_implementation.md)** - Phase 4: Cross-Provider Consistency & Integration Tests - Provider parity validation, integration tests for save/load/resume lifecycle with orphan sanitization, pruning integrity verification
 
 - **[phase5_documentation_qa_and_release_implementation.md](phase5_documentation_qa_and_release_implementation.md)** - Phase 5: Documentation, QA, and Release - Comprehensive implementation documentation, quality assurance validation (81 tests passing), release preparation notes, migration guidance, and usage examples
+
+- **[history_and_tool_integrity_implementation.md](history_and_tool_integrity_implementation.md)** - Chat History and Tool Integrity: Complete four-phase implementation covering core validation (orphan tool message prevention), history UX enhancements (message-level inspection with `history show` command), pruning integrity (atomic tool-call pair removal), and cross-provider consistency with integration tests. Includes orphan message sanitization in both Copilot and Ollama providers, special command persistence configuration, and 30+ tests validating all scenarios
 
 - **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)

@@ -552,7 +552,7 @@ Default behavior (no config needed):
 
 **Objective**: Enable conversation history inspection and special command persistence
 
-**Implementation**: 
+**Implementation**:
 - `history show` command with formatted and JSON output
 - Message limiting for large conversations
 - Configuration option for special command persistence

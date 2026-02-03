@@ -88,7 +88,7 @@ Ignored: 15 (platform-specific, require system resources)
 
 **Solution**: Central validation function removes orphans at provider boundary before API calls.
 
-**Impact**: 
+**Impact**:
 - Providers never receive invalid message sequences
 - Transparent and automatic
 - Zero configuration needed
