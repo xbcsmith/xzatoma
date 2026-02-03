@@ -24,6 +24,10 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - **[phase2_history_ux_command_persistence_implementation.md](phase2_history_ux_command_persistence_implementation.md)** - Phase 2: History UX & Command Persistence - Enhanced `history show` command with formatted/JSON output and message limiting, persistence configuration for special commands, 10 new tests
 
+- **[phase4_cross_provider_consistency_implementation.md](phase4_cross_provider_consistency_implementation.md)** - Phase 4: Cross-Provider Consistency & Integration Tests - Provider parity validation, integration tests for save/load/resume lifecycle with orphan sanitization, pruning integrity verification
+
+- **[phase5_documentation_qa_and_release_implementation.md](phase5_documentation_qa_and_release_implementation.md)** - Phase 5: Documentation, QA, and Release - Comprehensive implementation documentation, quality assurance validation (81 tests passing), release preparation notes, migration guidance, and usage examples
+
 - **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** - Complete implementation of security validation for terminal commands
 - **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** - CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README; tests and documentation added)
 - **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** - Phase 5: Error handling and user feedback for mention-based content loading (structured `LoadError` types, graceful degradation with placeholders, CLI warnings and suggestions, tests, and documentation)
