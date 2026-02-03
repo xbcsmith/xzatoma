@@ -159,7 +159,7 @@ async fn test_title_generated_from_first_user_message() {
     let provider = MockProvider::new(vec![Message::assistant("Reply")]);
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    let agent = Agent::new(provider, tools, config).expect("agent");
+    let mut agent = Agent::new(provider, tools, config).expect("agent");
 
     let prompt = "Short title";
     let _ = agent.execute(prompt).await.expect("execute ok");
@@ -192,7 +192,7 @@ async fn test_title_truncates_long_first_message() {
     let provider = MockProvider::new(vec![Message::assistant("Reply")]);
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    let agent = Agent::new(provider, tools, config).expect("agent");
+    let mut agent = Agent::new(provider, tools, config).expect("agent");
 
     let long_prompt = "This is a very long prompt that should be truncated by the title generation logic because it exceeds the fifty character limit.";
     let _ = agent.execute(long_prompt).await.expect("execute ok");

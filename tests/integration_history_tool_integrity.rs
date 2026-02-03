@@ -122,7 +122,7 @@ async fn test_save_load_resume_with_orphan_sanitized() {
     // Create new agent with loaded conversation
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    let resumed_agent = Agent::with_conversation(
+    let mut resumed_agent = Agent::with_conversation(
         Box::new(provider.as_ref().clone()),
         tools,
         config,
@@ -209,7 +209,7 @@ async fn test_save_load_resume_preserves_valid_tool_pair() {
         Conversation::with_history(conv_id, loaded_title, loaded_messages, 8000, 10, 0.8);
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    let resumed_agent = Agent::with_conversation(
+    let mut resumed_agent = Agent::with_conversation(
         Box::new(provider.as_ref().clone()),
         tools,
         config,
@@ -312,7 +312,7 @@ async fn test_pruning_during_resume_maintains_integrity() {
 
     let tools = ToolRegistry::new();
     let config = AgentConfig::default();
-    let resumed_agent = Agent::with_conversation(
+    let mut resumed_agent = Agent::with_conversation(
         Box::new(provider.as_ref().clone()),
         tools,
         config,
