@@ -141,6 +141,79 @@ impl Agent {
         })
     }
 
+    /// Creates a new agent instance sharing an existing provider
+    ///
+    /// This constructor allows multiple agents to share the same
+    /// provider instance (via Arc), useful for subagents that need
+    /// the same LLM client without duplication.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Shared reference to an existing provider
+    /// * `tools` - The tool registry with available tools
+    /// * `config` - Agent configuration (limits, timeouts, etc.)
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Agent instance or an error if configuration is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if configuration validation fails
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::tools::ToolRegistry;
+    /// use xzatoma::config::AgentConfig;
+    /// use std::sync::Arc;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let some_provider = unimplemented!();
+    /// let parent_provider = Arc::new(some_provider);
+    /// let parent_agent = Agent::new_from_shared_provider(
+    ///     Arc::clone(&parent_provider),
+    ///     ToolRegistry::new(),
+    ///     AgentConfig::default(),
+    /// )?;
+    ///
+    /// // Subagent shares the same provider
+    /// let subagent = Agent::new_from_shared_provider(
+    ///     parent_provider,
+    ///     ToolRegistry::new(),
+    ///     AgentConfig::default(),
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new_from_shared_provider(
+        provider: Arc<dyn Provider>,
+        tools: ToolRegistry,
+        config: AgentConfig,
+    ) -> Result<Self> {
+        // Validate configuration (same as new() method)
+        if config.max_turns == 0 {
+            return Err(
+                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
+            );
+        }
+
+        let conversation = Conversation::new(
+            config.conversation.max_tokens,
+            config.conversation.min_retain_turns,
+            config.conversation.prune_threshold.into(),
+        );
+
+        Ok(Self {
+            provider, // Use provided Arc directly (no wrapping)
+            conversation,
+            tools,
+            config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
+        })
+    }
+
     /// Creates a new agent instance with an existing conversation
     ///
     /// Useful for preserving conversation history when switching modes or

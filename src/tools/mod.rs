@@ -13,6 +13,7 @@ pub mod grep;
 pub mod plan;
 pub mod plan_format;
 pub mod registry_builder;
+pub mod subagent;
 pub mod terminal;
 
 // Re-export terminal functions for convenience
@@ -26,6 +27,9 @@ pub use grep::{GrepTool, SearchMatch};
 
 // Re-export fetch tool and types
 pub use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
+
+// Re-export subagent tool and types
+pub use subagent::{SubagentTool, SubagentToolInput};
 
 // Re-export commonly used file operations and plan parser symbols for convenience
 pub use file_ops::{
@@ -306,6 +310,15 @@ impl ToolRegistry {
     /// Returns the tool executor if found
     pub fn get(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
         self.tools.get(name).cloned()
+    }
+
+    /// Get all tool names in the registry
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of all registered tool names
+    pub fn tool_names(&self) -> Vec<String> {
+        self.tools.keys().cloned().collect()
     }
 
     /// Get all tool definitions as JSON values
