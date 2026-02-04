@@ -277,6 +277,70 @@ impl Agent {
         })
     }
 
+    /// Creates a new agent instance with an existing conversation and shared provider
+    ///
+    /// Useful for resuming conversations while sharing a provider instance with other agents.
+    /// This combines the benefits of conversation persistence with provider efficiency (via Arc).
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Shared reference to an existing provider
+    /// * `tools` - The tool registry with available tools
+    /// * `config` - Agent configuration (limits, timeouts, etc.)
+    /// * `conversation` - An existing conversation to use
+    ///
+    /// # Returns
+    ///
+    /// Returns a new Agent instance or an error if configuration is invalid
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if configuration validation fails
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use xzatoma::agent::{Agent, Conversation};
+    /// use xzatoma::config::AgentConfig;
+    /// use xzatoma::tools::ToolRegistry;
+    /// use std::sync::Arc;
+    ///
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # let provider_impl = unimplemented!();
+    /// let provider = Arc::new(provider_impl);
+    /// let conversation = Conversation::new(4096, 5, 0.8);
+    ///
+    /// let agent = Agent::with_conversation_and_shared_provider(
+    ///     Arc::clone(&provider),
+    ///     ToolRegistry::new(),
+    ///     AgentConfig::default(),
+    ///     conversation,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_conversation_and_shared_provider(
+        provider: Arc<dyn Provider>,
+        tools: ToolRegistry,
+        config: AgentConfig,
+        conversation: Conversation,
+    ) -> Result<Self> {
+        // Validate configuration
+        if config.max_turns == 0 {
+            return Err(
+                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
+            );
+        }
+
+        Ok(Self {
+            provider,
+            conversation,
+            tools,
+            config,
+            accumulated_usage: Arc::new(Mutex::new(None)),
+        })
+    }
+
     /// Creates a new agent instance with mode-specific system prompt
     ///
     /// This constructor creates an agent with a system prompt tailored to the
