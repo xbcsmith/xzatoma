@@ -6,7 +6,7 @@
 //! of sub-problems without polluting the main conversation history.
 
 use crate::agent::Agent;
-use crate::config::AgentConfig;
+use crate::config::{AgentConfig, SubagentConfig};
 use crate::error::{Result, XzatomaError};
 use crate::providers::Provider;
 use crate::tools::{ToolExecutor, ToolRegistry, ToolResult};
@@ -14,25 +14,144 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Maximum recursion depth for subagents
+/// Telemetry module for subagent execution tracing
 ///
-/// Prevents infinite recursion and stack overflow. Allows main agent (depth=0)
-/// to spawn first subagent (depth=1), which can spawn a nested subagent (depth=2).
-/// Any attempt to spawn at depth >= 3 will fail with an error.
-const MAX_SUBAGENT_DEPTH: usize = 3;
+/// Provides structured logging events for subagent lifecycle management.
+/// All events are emitted with consistent field naming for easy aggregation and filtering.
+mod telemetry {
+    use tracing::{debug, error, info, warn};
 
-/// Default maximum turns if not specified in input
-///
-/// Used when the subagent task does not specify a custom max_turns value.
-/// This limits the number of conversation turns to prevent runaway execution.
-const DEFAULT_SUBAGENT_MAX_TURNS: usize = 10;
+    /// Log subagent spawn event
+    ///
+    /// Called when a subagent is about to be created and executed.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `depth` - Current recursion depth
+    /// * `max_turns` - Maximum turns for this subagent
+    /// * `allowed_tools` - List of tools available to subagent
+    pub fn log_subagent_spawn(
+        label: &str,
+        depth: usize,
+        max_turns: usize,
+        allowed_tools: &[String],
+    ) {
+        info!(
+            subagent.event = "spawn",
+            subagent.label = label,
+            subagent.depth = depth,
+            subagent.max_turns = max_turns,
+            subagent.allowed_tools = ?allowed_tools,
+            "Spawning subagent"
+        );
+    }
 
-/// Maximum output size before truncation (4KB)
-///
-/// Prevents subagent output from exploding the context window.
-/// If a subagent's final result exceeds this size, it will be truncated
-/// and a truncation notice added.
-const SUBAGENT_OUTPUT_MAX_SIZE: usize = 4096;
+    /// Log subagent completion event
+    ///
+    /// Called when a subagent successfully completes execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `depth` - Recursion depth
+    /// * `turns_used` - Number of conversation turns consumed
+    /// * `tokens_used` - Number of tokens consumed
+    /// * `status` - Completion status ("complete" or "incomplete")
+    pub fn log_subagent_complete(
+        label: &str,
+        depth: usize,
+        turns_used: usize,
+        tokens_used: usize,
+        status: &str,
+    ) {
+        info!(
+            subagent.event = "complete",
+            subagent.label = label,
+            subagent.depth = depth,
+            subagent.turns_used = turns_used,
+            subagent.tokens_consumed = tokens_used,
+            subagent.status = status,
+            "Subagent completed"
+        );
+    }
+
+    /// Log subagent error event
+    ///
+    /// Called when a subagent execution fails.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `depth` - Recursion depth
+    /// * `error` - Error message describing the failure
+    pub fn log_subagent_error(label: &str, depth: usize, error: &str) {
+        error!(
+            subagent.event = "error",
+            subagent.label = label,
+            subagent.depth = depth,
+            subagent.error = error,
+            "Subagent execution failed"
+        );
+    }
+
+    /// Log output truncation event
+    ///
+    /// Called when subagent output exceeds maximum size and is truncated.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `original_size` - Original output size in bytes
+    /// * `truncated_size` - Size after truncation
+    pub fn log_output_truncation(label: &str, original_size: usize, truncated_size: usize) {
+        warn!(
+            subagent.event = "truncation",
+            subagent.label = label,
+            subagent.original_size = original_size,
+            subagent.truncated_size = truncated_size,
+            "Subagent output truncated"
+        );
+    }
+
+    /// Log max turns exceeded event
+    ///
+    /// Called when a subagent reaches its maximum turn limit before completion.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `depth` - Recursion depth
+    /// * `max_turns` - Maximum turns limit that was reached
+    pub fn log_max_turns_exceeded(label: &str, depth: usize, max_turns: usize) {
+        warn!(
+            subagent.event = "max_turns_exceeded",
+            subagent.label = label,
+            subagent.depth = depth,
+            subagent.max_turns = max_turns,
+            "Subagent exceeded max turns"
+        );
+    }
+
+    /// Log recursion depth limit event
+    ///
+    /// Called when a subagent cannot be spawned due to recursion depth limit.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - Subagent identifier
+    /// * `current_depth` - Current recursion depth
+    /// * `max_depth` - Maximum allowed depth
+    pub fn log_depth_limit_reached(label: &str, current_depth: usize, max_depth: usize) {
+        debug!(
+            subagent.event = "depth_limit",
+            subagent.label = label,
+            subagent.current_depth = current_depth,
+            subagent.max_depth = max_depth,
+            "Subagent recursion depth limit enforced"
+        );
+    }
+}
 
 /// Input parameters for subagent tool
 ///
@@ -148,12 +267,18 @@ pub struct SubagentTool {
     /// Current recursion depth (0 = root agent)
     ///
     /// Tracks how deeply nested this subagent is. Used to enforce
-    /// MAX_SUBAGENT_DEPTH limit. Incremented on each nested spawn.
+    /// max_depth limit. Incremented on each nested spawn.
     /// - depth=0: Main agent
     /// - depth=1: First subagent spawned from main
     /// - depth=2: Subagent spawned from first subagent
-    /// - depth>=3: Error, exceeds limit
+    /// - depth>=max_depth: Error, exceeds limit
     current_depth: usize,
+
+    /// Subagent configuration
+    ///
+    /// Contains limits and settings specific to subagent execution:
+    /// max_depth, default_max_turns, output_max_size, telemetry_enabled, persistence_enabled
+    subagent_config: SubagentConfig,
 }
 
 impl SubagentTool {
@@ -192,11 +317,13 @@ impl SubagentTool {
         parent_registry: ToolRegistry,
         current_depth: usize,
     ) -> Self {
+        let subagent_config = config.subagent.clone();
         Self {
             provider,
             config,
             parent_registry,
             current_depth,
+            subagent_config,
         }
     }
 }
@@ -315,10 +442,23 @@ impl ToolExecutor for SubagentTool {
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
         // STEP 1: Validate recursion depth FIRST (before any work)
-        if self.current_depth >= MAX_SUBAGENT_DEPTH {
+        if self.current_depth >= self.subagent_config.max_depth {
+            let telemetry_enabled = self.subagent_config.telemetry_enabled;
+            // Try to parse label for logging, fallback to "unknown"
+            let label = args
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            if telemetry_enabled {
+                telemetry::log_depth_limit_reached(
+                    label,
+                    self.current_depth,
+                    self.subagent_config.max_depth,
+                );
+            }
             return Ok(ToolResult::error(format!(
                 "Maximum subagent recursion depth ({}) exceeded. Current depth: {}. Cannot spawn nested subagent.",
-                MAX_SUBAGENT_DEPTH,
+                self.subagent_config.max_depth,
                 self.current_depth
             )));
         }
@@ -327,8 +467,18 @@ impl ToolExecutor for SubagentTool {
         let input: SubagentToolInput = serde_json::from_value(args)
             .map_err(|e| XzatomaError::Config(format!("Invalid subagent input: {}", e)))?;
 
+        // Check telemetry enabled flag
+        let telemetry_enabled = self.subagent_config.telemetry_enabled;
+
         // Validate task_prompt not empty
         if input.task_prompt.trim().is_empty() {
+            if telemetry_enabled {
+                telemetry::log_subagent_error(
+                    &input.label,
+                    self.current_depth + 1,
+                    "task_prompt cannot be empty",
+                );
+            }
             return Ok(ToolResult::error("task_prompt cannot be empty".to_string()));
         }
 
@@ -350,13 +500,28 @@ impl ToolExecutor for SubagentTool {
         let subagent_registry =
             create_filtered_registry(&self.parent_registry, input.allowed_tools.clone())?;
 
+        // Log spawn event before creating subagent
+        let next_depth = self.current_depth + 1;
+        let max_turns_for_spawn = input
+            .max_turns
+            .unwrap_or(self.subagent_config.default_max_turns);
+        let allowed_tools_for_log = input.allowed_tools.clone().unwrap_or_default();
+        if telemetry_enabled {
+            telemetry::log_subagent_spawn(
+                &input.label,
+                next_depth,
+                max_turns_for_spawn,
+                &allowed_tools_for_log,
+            );
+        }
+
         // STEP 4: Create nested subagent tool for this child
-        // (allows further nesting up to MAX_SUBAGENT_DEPTH)
+        // (allows further nesting up to max_depth)
         let nested_subagent_tool = SubagentTool::new(
             Arc::clone(&self.provider),
             self.config.clone(),
             subagent_registry.clone(),
-            self.current_depth + 1, // INCREMENT DEPTH
+            next_depth,
         );
 
         // Register nested subagent tool in child's registry
@@ -369,18 +534,40 @@ impl ToolExecutor for SubagentTool {
         if let Some(max_turns) = input.max_turns {
             subagent_config.max_turns = max_turns;
         } else {
-            subagent_config.max_turns = DEFAULT_SUBAGENT_MAX_TURNS;
+            subagent_config.max_turns = self.subagent_config.default_max_turns;
         }
 
         // STEP 6: Create and execute subagent
-        let mut subagent = Agent::new_from_shared_provider(
+        let mut subagent = match Agent::new_from_shared_provider(
             Arc::clone(&self.provider),
             final_registry,
             subagent_config,
-        )?;
+        ) {
+            Ok(agent) => agent,
+            Err(e) => {
+                if telemetry_enabled {
+                    telemetry::log_subagent_error(&input.label, next_depth, &e.to_string());
+                }
+                return Ok(ToolResult::error(format!(
+                    "Subagent initialization failed: {}",
+                    e
+                )));
+            }
+        };
 
         // Execute task
-        let _task_result = subagent.execute(input.task_prompt.clone()).await?;
+        let _task_result = match subagent.execute(input.task_prompt.clone()).await {
+            Ok(result) => result,
+            Err(e) => {
+                if telemetry_enabled {
+                    telemetry::log_subagent_error(&input.label, next_depth, &e.to_string());
+                }
+                return Ok(ToolResult::error(format!(
+                    "Subagent task execution failed: {}",
+                    e
+                )));
+            }
+        };
 
         // STEP 7: Request summary
         // Decision 3: Always request summary (use default if not provided)
@@ -391,9 +578,13 @@ impl ToolExecutor for SubagentTool {
         // Continue conversation with summary request
         let final_output = subagent.execute(summary_prompt).await?;
 
+        // Capture values before they're moved
+        let label = input.label.clone();
+        let output_len = final_output.len();
+
         // STEP 8: Build result with metadata
         let mut result = ToolResult::success(final_output)
-            .with_metadata("subagent_label".to_string(), input.label)
+            .with_metadata("subagent_label".to_string(), label.clone())
             .with_metadata(
                 "recursion_depth".to_string(),
                 self.current_depth.to_string(),
@@ -407,8 +598,13 @@ impl ToolExecutor for SubagentTool {
             .iter()
             .filter(|msg| msg.role == "user")
             .count();
-        let max_turns = input.max_turns.unwrap_or(DEFAULT_SUBAGENT_MAX_TURNS);
+        let max_turns = input
+            .max_turns
+            .unwrap_or(self.subagent_config.default_max_turns);
         if turn_count >= max_turns {
+            if telemetry_enabled {
+                telemetry::log_max_turns_exceeded(&label, next_depth, max_turns);
+            }
             result = result
                 .with_metadata("max_turns_reached".to_string(), "true".to_string())
                 .with_metadata("completion_status".to_string(), "incomplete".to_string())
@@ -431,8 +627,31 @@ impl ToolExecutor for SubagentTool {
                 );
         }
 
-        // STEP 9: Truncate if needed
-        result = result.truncate_if_needed(SUBAGENT_OUTPUT_MAX_SIZE);
+        // STEP 9: Truncate if needed and log if truncation occurred
+        if output_len > self.subagent_config.output_max_size {
+            if telemetry_enabled {
+                telemetry::log_output_truncation(
+                    &label,
+                    output_len,
+                    self.subagent_config.output_max_size,
+                );
+            }
+            result = result.truncate_if_needed(self.subagent_config.output_max_size);
+        }
+
+        // Log completion event
+        if telemetry_enabled {
+            let status = if turn_count >= max_turns {
+                "incomplete"
+            } else {
+                "complete"
+            };
+            let tokens_used = subagent
+                .get_token_usage()
+                .map(|u| u.total_tokens)
+                .unwrap_or(0);
+            telemetry::log_subagent_complete(&label, next_depth, turn_count, tokens_used, status);
+        }
 
         Ok(result)
     }
@@ -542,8 +761,9 @@ mod tests {
         let provider = Arc::new(MockProvider::new(vec!["response".to_string()]));
         let registry = ToolRegistry::new();
         let config = create_test_config();
+        let max_depth = config.subagent.max_depth;
 
-        let tool = SubagentTool::new(provider, config, registry, MAX_SUBAGENT_DEPTH);
+        let tool = SubagentTool::new(provider, config, registry, max_depth);
 
         let input = serde_json::json!({
             "label": "test",
