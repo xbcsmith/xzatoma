@@ -10,10 +10,14 @@
 pub mod conversation;
 pub mod core;
 pub mod executor;
+pub mod metrics;
 pub mod persistence;
+pub mod quota;
 
 pub use conversation::{ContextInfo, Conversation};
 pub use core::Agent;
+pub use metrics::{init_metrics_exporter, SubagentMetrics};
 pub use persistence::{
     new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,
 };
+pub use quota::{QuotaLimits, QuotaTracker, QuotaUsage};

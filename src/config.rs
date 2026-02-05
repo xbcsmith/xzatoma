@@ -201,6 +201,27 @@ pub struct SubagentConfig {
     /// of the sled database storing conversation history.
     #[serde(default = "default_persistence_path")]
     pub persistence_path: String,
+
+    /// Maximum total subagent executions per session
+    ///
+    /// Limits the number of subagents that can be spawned in a single session.
+    /// None means unlimited executions.
+    #[serde(default = "default_max_executions")]
+    pub max_executions: Option<usize>,
+
+    /// Maximum total tokens consumable by all subagents
+    ///
+    /// Limits total token consumption across all subagent executions.
+    /// None means unlimited tokens.
+    #[serde(default = "default_max_total_tokens")]
+    pub max_total_tokens: Option<usize>,
+
+    /// Maximum wall-clock time for all subagents (seconds)
+    ///
+    /// Limits the total execution time for all subagents in a session.
+    /// None means unlimited time.
+    #[serde(default = "default_max_total_time")]
+    pub max_total_time: Option<u64>,
 }
 
 fn default_subagent_max_depth() -> usize {
@@ -234,6 +255,18 @@ fn default_persistence_path() -> String {
         .to_string()
 }
 
+fn default_max_executions() -> Option<usize> {
+    None
+}
+
+fn default_max_total_tokens() -> Option<usize> {
+    None
+}
+
+fn default_max_total_time() -> Option<u64> {
+    None
+}
+
 impl Default for SubagentConfig {
     fn default() -> Self {
         Self {
@@ -243,6 +276,9 @@ impl Default for SubagentConfig {
             telemetry_enabled: default_subagent_telemetry_enabled(),
             persistence_enabled: default_subagent_persistence_enabled(),
             persistence_path: default_persistence_path(),
+            max_executions: default_max_executions(),
+            max_total_tokens: default_max_total_tokens(),
+            max_total_time: default_max_total_time(),
         }
     }
 }

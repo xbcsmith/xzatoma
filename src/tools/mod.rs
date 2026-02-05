@@ -109,10 +109,10 @@ impl ToolResult {
     /// # Returns
     ///
     /// Returns a successful ToolResult
-    pub fn success(output: String) -> Self {
+    pub fn success(output: impl Into<String>) -> Self {
         Self {
             success: true,
-            output,
+            output: output.into(),
             error: None,
             truncated: false,
             metadata: HashMap::new(),
@@ -128,11 +128,11 @@ impl ToolResult {
     /// # Returns
     ///
     /// Returns a failed ToolResult
-    pub fn error(error: String) -> Self {
+    pub fn error(error: impl Into<String>) -> Self {
         Self {
             success: false,
             output: String::new(),
-            error: Some(error),
+            error: Some(error.into()),
             truncated: false,
             metadata: HashMap::new(),
         }

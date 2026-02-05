@@ -108,6 +108,10 @@ pub enum XzatomaError {
     /// Conversation storage errors (database operations)
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// Resource quota exceeded
+    #[error("Resource quota exceeded: {0}")]
+    QuotaExceeded(String),
 }
 
 /// Result type alias for XZatoma operations
