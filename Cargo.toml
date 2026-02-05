@@ -60,6 +60,10 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 directories = "6.0.0"
 uuid = { version = "1.20.0", features = ["v4", "serde"] }
 
+# Phase 4: Conversation Persistence
+sled = "0.34"           # Embedded key-value store for conversation history
+ulid = { version = "1.1", features = ["serde"] }  # Sortable unique IDs with serde support
+
 [dev-dependencies]
 mockall = "0.12"
 tempfile = "3.8"

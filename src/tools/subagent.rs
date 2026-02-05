@@ -5,7 +5,7 @@
 //! This feature prevents context pollution and enables parallel exploration
 //! of sub-problems without polluting the main conversation history.
 
-use crate::agent::Agent;
+use crate::agent::{Agent, ConversationStore};
 use crate::config::{AgentConfig, SubagentConfig};
 use crate::error::{Result, XzatomaError};
 use crate::providers::Provider;
@@ -279,6 +279,18 @@ pub struct SubagentTool {
     /// Contains limits and settings specific to subagent execution:
     /// max_depth, default_max_turns, output_max_size, telemetry_enabled, persistence_enabled
     subagent_config: SubagentConfig,
+
+    /// Conversation persistence store (optional)
+    ///
+    /// When Some, conversations are persisted for debugging and replay.
+    /// When None, persistence is disabled.
+    conversation_store: Option<Arc<ConversationStore>>,
+
+    /// Parent conversation ID (if this is a nested subagent)
+    ///
+    /// Used to link conversations in the persistence store,
+    /// forming a tree of parent-child relationships.
+    parent_conversation_id: Option<String>,
 }
 
 impl SubagentTool {
@@ -318,13 +330,43 @@ impl SubagentTool {
         current_depth: usize,
     ) -> Self {
         let subagent_config = config.subagent.clone();
+
+        // Initialize conversation store if persistence enabled
+        let conversation_store = if subagent_config.persistence_enabled {
+            match ConversationStore::new(&subagent_config.persistence_path) {
+                Ok(store) => Some(Arc::new(store)),
+                Err(e) => {
+                    tracing::warn!("Failed to initialize conversation store: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             provider,
             config,
             parent_registry,
             current_depth,
             subagent_config,
+            conversation_store,
+            parent_conversation_id: None,
         }
+    }
+
+    /// Set the parent conversation ID for linking in persistence store
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The parent conversation ID
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_parent_conversation_id(mut self, id: String) -> Self {
+        self.parent_conversation_id = Some(id);
+        self
     }
 }
 
@@ -515,14 +557,26 @@ impl ToolExecutor for SubagentTool {
             );
         }
 
+        // Generate conversation ID and capture start time for this subagent
+        let conversation_id = crate::agent::new_conversation_id();
+        let started_at = crate::agent::now_rfc3339();
+
         // STEP 4: Create nested subagent tool for this child
         // (allows further nesting up to max_depth)
-        let nested_subagent_tool = SubagentTool::new(
+        let mut nested_subagent_tool = SubagentTool::new(
             Arc::clone(&self.provider),
             self.config.clone(),
             subagent_registry.clone(),
             next_depth,
         );
+
+        // Link to parent conversation if available
+        if let Some(parent_id) = &self.parent_conversation_id {
+            nested_subagent_tool =
+                nested_subagent_tool.with_parent_conversation_id(parent_id.clone());
+        }
+        nested_subagent_tool =
+            nested_subagent_tool.with_parent_conversation_id(conversation_id.clone());
 
         // Register nested subagent tool in child's registry
         // (will be blocked by depth check if limit reached)
@@ -573,6 +627,8 @@ impl ToolExecutor for SubagentTool {
         // Decision 3: Always request summary (use default if not provided)
         let summary_prompt = input
             .summary_prompt
+            .as_ref()
+            .cloned()
             .unwrap_or_else(|| "Summarize your findings concisely".to_string());
 
         // Continue conversation with summary request
@@ -651,6 +707,49 @@ impl ToolExecutor for SubagentTool {
                 .map(|u| u.total_tokens)
                 .unwrap_or(0);
             telemetry::log_subagent_complete(&label, next_depth, turn_count, tokens_used, status);
+        }
+
+        // STEP 10: Persist conversation if persistence enabled
+        if let Some(store) = &self.conversation_store {
+            let completion_status = if turn_count >= max_turns {
+                "incomplete".to_string()
+            } else {
+                "complete".to_string()
+            };
+
+            let tokens_consumed = subagent
+                .get_token_usage()
+                .map(|u| u.total_tokens)
+                .unwrap_or(0);
+
+            let record = crate::agent::ConversationRecord {
+                id: conversation_id.clone(),
+                parent_id: self.parent_conversation_id.clone(),
+                label: input.label.clone(),
+                depth: next_depth,
+                messages: subagent.conversation().messages().to_vec(),
+                started_at,
+                completed_at: Some(crate::agent::now_rfc3339()),
+                metadata: crate::agent::ConversationMetadata {
+                    turns_used: turn_count,
+                    tokens_consumed,
+                    completion_status,
+                    max_turns_reached: turn_count >= max_turns,
+                    task_prompt: input.task_prompt.clone(),
+                    summary_prompt: input.summary_prompt.clone(),
+                    allowed_tools: input.allowed_tools.clone().unwrap_or_default(),
+                },
+            };
+
+            if let Err(e) = store.save(&record) {
+                tracing::warn!("Failed to persist conversation {}: {}", conversation_id, e);
+            } else {
+                tracing::debug!(
+                    subagent.event = "persisted",
+                    subagent.conversation_id = %conversation_id,
+                    "Conversation persisted"
+                );
+            }
         }
 
         Ok(result)

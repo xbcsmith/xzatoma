@@ -44,6 +44,9 @@ pub mod models;
 // History management commands
 pub mod history;
 
+// Replay command for conversation debugging
+pub mod replay;
+
 // Chat command handler
 pub mod chat {
     //! Interactive chat mode handler.

@@ -194,6 +194,13 @@ pub struct SubagentConfig {
     /// for replay and debugging. Phase 4 feature, currently ignored.
     #[serde(default = "default_subagent_persistence_enabled")]
     pub persistence_enabled: bool,
+
+    /// Path to conversation database for persistence
+    ///
+    /// Used when persistence_enabled is true. Specifies the location
+    /// of the sled database storing conversation history.
+    #[serde(default = "default_persistence_path")]
+    pub persistence_path: String,
 }
 
 fn default_subagent_max_depth() -> usize {
@@ -216,6 +223,17 @@ fn default_subagent_persistence_enabled() -> bool {
     false
 }
 
+fn default_persistence_path() -> String {
+    let home = std::env::var("HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    home.join(".xzatoma")
+        .join("conversations.db")
+        .to_string_lossy()
+        .to_string()
+}
+
 impl Default for SubagentConfig {
     fn default() -> Self {
         Self {
@@ -224,6 +242,7 @@ impl Default for SubagentConfig {
             output_max_size: default_subagent_output_max_size(),
             telemetry_enabled: default_subagent_telemetry_enabled(),
             persistence_enabled: default_subagent_persistence_enabled(),
+            persistence_path: default_persistence_path(),
         }
     }
 }

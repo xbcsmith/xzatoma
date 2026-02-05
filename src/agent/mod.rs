@@ -10,6 +10,10 @@
 pub mod conversation;
 pub mod core;
 pub mod executor;
+pub mod persistence;
 
 pub use conversation::{ContextInfo, Conversation};
 pub use core::Agent;
+pub use persistence::{
+    new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,
+};
