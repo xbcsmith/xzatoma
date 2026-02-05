@@ -13,8 +13,8 @@ subagent
 
 ### Description
 ```
-Delegate a focused task to a recursive agent instance with isolated conversation 
-context. Use this when you need to explore a sub-problem independently without 
+Delegate a focused task to a recursive agent instance with isolated conversation
+context. Use this when you need to explore a sub-problem independently without
 polluting the main conversation.
 ```
 
@@ -227,7 +227,7 @@ If the subagent fails, the response contains an error message:
 
 **Example:**
 ```
-Maximum subagent recursion depth (3) exceeded. Current depth: 3. 
+Maximum subagent recursion depth (3) exceeded. Current depth: 3.
 Cannot spawn nested subagent.
 ```
 
@@ -352,7 +352,7 @@ Emitted when a subagent is created and ready to execute.
 
 **Example:**
 ```
-subagent.event=spawn subagent.label=research_quantum subagent.depth=1 
+subagent.event=spawn subagent.label=research_quantum subagent.depth=1
 subagent.max_turns=8 subagent.allowed_tools=["fetch","grep"]
 Spawning subagent
 ```
@@ -371,7 +371,7 @@ Emitted when a subagent finishes successfully.
 
 **Example:**
 ```
-subagent.event=complete subagent.label=research_quantum subagent.depth=1 
+subagent.event=complete subagent.label=research_quantum subagent.depth=1
 subagent.turns_used=4 subagent.tokens_consumed=3200 subagent.status=complete
 Subagent completed
 ```
@@ -388,7 +388,7 @@ Emitted when a subagent fails.
 
 **Example:**
 ```
-subagent.event=error subagent.label=research_quantum subagent.depth=1 
+subagent.event=error subagent.label=research_quantum subagent.depth=1
 subagent.error="Tool execution failed: fetch timeout"
 Subagent execution failed
 ```
@@ -405,7 +405,7 @@ Emitted when a subagent hits its max_turns limit.
 
 **Example:**
 ```
-subagent.event=max_turns_exceeded subagent.label=research_quantum 
+subagent.event=max_turns_exceeded subagent.label=research_quantum
 subagent.depth=1 subagent.max_turns=8
 Subagent exceeded max turns
 ```
@@ -422,7 +422,7 @@ Emitted when output is truncated due to size limit.
 
 **Example:**
 ```
-subagent.event=truncation subagent.label=research_quantum 
+subagent.event=truncation subagent.label=research_quantum
 subagent.original_size=8192 subagent.truncated_size=4096
 Subagent output truncated
 ```
@@ -439,7 +439,7 @@ Emitted when a subagent cannot be spawned due to depth limit.
 
 **Example:**
 ```
-subagent.event=depth_limit subagent.label=research_quantum 
+subagent.event=depth_limit subagent.label=research_quantum
 subagent.current_depth=3 subagent.max_depth=3
 Subagent recursion depth limit enforced
 ```

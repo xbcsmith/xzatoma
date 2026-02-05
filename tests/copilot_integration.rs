@@ -7,10 +7,19 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 use xzatoma::config::CopilotConfig;
 use xzatoma::providers::CopilotProvider;
 
+/// Helper to check if keychain tests should run
+fn should_run_keychain_tests() -> bool {
+    std::env::var("XZATOMA_RUN_KEYCHAIN_TESTS").is_ok()
+}
+
 /// Basic 401 -> non-interactive refresh -> retry flow for Copilot models
 #[tokio::test]
-#[ignore = "requires system keyring"]
+#[ignore = "requires system keyring; enable with XZATOMA_RUN_KEYCHAIN_TESTS=1"]
 async fn test_copilot_models_401_refresh_retry() {
+    if !should_run_keychain_tests() {
+        println!("Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored");
+        return;
+    }
     let server = MockServer::start().await;
 
     // Create provider config that points at the mock server
@@ -89,8 +98,12 @@ async fn test_copilot_models_401_refresh_retry() {
 
 /// Verify models list is cached and second call does not hit the server
 #[tokio::test]
-#[ignore = "requires system keyring"]
+#[ignore = "requires system keyring; enable with XZATOMA_RUN_KEYCHAIN_TESTS=1"]
 async fn test_copilot_models_caching_ttl() {
+    if !should_run_keychain_tests() {
+        println!("Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored");
+        return;
+    }
     let server = MockServer::start().await;
 
     let cfg = CopilotConfig {

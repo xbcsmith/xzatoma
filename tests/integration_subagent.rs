@@ -1,8 +1,9 @@
-//! End-to-end integration tests for subagent configuration
-//!
-//! These tests validate subagent configuration parsing and validation.
-//! They focus on config schema validation rather than end-to-end execution.
+#![allow(deprecated)]
 
+/// End-to-end integration tests for subagent configuration
+///
+/// These tests validate subagent configuration parsing and validation.
+/// They focus on config schema validation rather than end-to-end execution.
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;

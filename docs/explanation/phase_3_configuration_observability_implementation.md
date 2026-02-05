@@ -266,10 +266,10 @@ SubagentTool::execute()
 Unit Tests:
   - config.rs: 7 new tests (all passing)
   - subagent.rs: 19 existing tests (all passing)
-  
+
 Integration Tests:
   - integration_subagent.rs: 10 new tests (all passing)
-  
+
 Total: 81 tests passed, 0 failed
 Coverage: >80%
 ```

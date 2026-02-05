@@ -42,7 +42,7 @@ xzatoma chat
 Ask the agent to research something using the subagent tool:
 
 ```
-Research the history of artificial intelligence using the fetch and grep tools. 
+Research the history of artificial intelligence using the fetch and grep tools.
 Focus on key milestones and breakthroughs. Create a comprehensive summary.
 ```
 
@@ -198,21 +198,21 @@ provider:
 
 agent:
   max_turns: 50
-  
+
   # Subagent settings
   subagent:
     # Maximum nesting depth (0=root, 1=first subagent, etc.)
     max_depth: 3
-    
+
     # Default max_turns if not specified in tool call
     default_max_turns: 10
-    
+
     # Output truncation threshold (bytes)
     output_max_size: 4096
-    
+
     # Emit structured telemetry logs
     telemetry_enabled: true
-    
+
     # Save conversations for debugging (Phase 4+)
     persistence_enabled: false
 ```
