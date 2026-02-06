@@ -8,7 +8,9 @@
 #![allow(unused_imports)]
 
 pub mod fetch;
+pub mod file_metadata;
 pub mod file_ops;
+pub mod file_utils;
 pub mod grep;
 pub mod parallel_subagent;
 pub mod plan;
@@ -46,11 +48,33 @@ pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
 pub use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
 pub use registry_builder::ToolRegistryBuilder;
 
+// Re-export file utilities and metadata types
+pub use file_metadata::{
+    detect_content_type, get_file_info, get_file_type, is_image_file, read_image_as_base64,
+    FileInfo, FileMetadataError, FileType, ImageFormat, ImageMetadata,
+};
+pub use file_utils::{check_file_size, ensure_parent_dirs, FileUtilsError, PathValidator};
+
 use crate::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Tool name constants for file operations
+///
+/// These constants define the canonical names for file operation tools
+/// used throughout the system for tool selection and registry management.
+pub const TOOL_READ_FILE: &str = "read_file";
+pub const TOOL_WRITE_FILE: &str = "write_file";
+pub const TOOL_DELETE_PATH: &str = "delete_path";
+pub const TOOL_LIST_DIRECTORY: &str = "list_directory";
+pub const TOOL_COPY_PATH: &str = "copy_path";
+pub const TOOL_MOVE_PATH: &str = "move_path";
+pub const TOOL_CREATE_DIRECTORY: &str = "create_directory";
+pub const TOOL_FIND_PATH: &str = "find_path";
+pub const TOOL_EDIT_FILE: &str = "edit_file";
+pub const TOOL_FILE_OPS: &str = "file_ops";
 
 /// Tool definition structure
 ///

@@ -209,21 +209,21 @@ if let Some(quota_tracker) = &self.quota_tracker {
 ```rust
 pub fn check_and_reserve(&self) -> Result<()> {
     let usage = self.usage.lock().unwrap();
-    
+
     // Check execution limit
     if let Some(max) = self.limits.max_executions {
         if usage.executions >= max {
             return Err(...);
         }
     }
-    
+
     // Check time limit
     if let Some(max_time) = self.limits.max_total_time {
         if usage.start_time.elapsed() >= max_time {
             return Err(...);
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -235,14 +235,14 @@ pub fn record_execution(&self, tokens: usize) -> Result<()> {
     let mut usage = self.usage.lock().unwrap();
     usage.executions += 1;
     usage.total_tokens += tokens;
-    
+
     // Check token limit
     if let Some(max) = self.limits.max_total_tokens {
         if usage.total_tokens > max {
             return Err(...);
         }
     }
-    
+
     Ok(())
 }
 ```
@@ -272,10 +272,10 @@ agent:
   subagent:
     # Limit executions to 20 subagents per session
     max_executions: 20
-    
+
     # Limit tokens to 100,000 total
     max_total_tokens: 100000
-    
+
     # Limit time to 30 minutes
     max_total_time: 1800
 ```
@@ -562,7 +562,7 @@ Implement application-specific quota enforcement:
 pub fn enforce_custom_quota(tracker: &QuotaTracker, task_complexity: u32) -> bool {
     // Reserve more quota for complex tasks
     let reserve = task_complexity * 1000;
-    
+
     match tracker.remaining_tokens() {
         Some(remaining) if remaining > reserve => true,
         _ => false,

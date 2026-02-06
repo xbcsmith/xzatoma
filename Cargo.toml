@@ -55,6 +55,10 @@ regex = "1.10"
 # Streaming utilities for Kafka consumer
 tokio-stream = "0.1"
 
+# Image and metadata utilities
+image = "0.25"      # Image decoding for PNG, JPEG, WebP, GIF, BMP, TIFF
+base64 = "0.22"     # Base64 encoding for image data
+
 url = "2.5.8"
 prettytable-rs = "0.10.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
