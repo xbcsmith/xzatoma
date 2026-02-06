@@ -124,6 +124,10 @@ pub struct AgentConfig {
     /// Chat mode settings
     #[serde(default)]
     pub chat: ChatConfig,
+
+    /// Subagent delegation settings
+    #[serde(default)]
+    pub subagent: SubagentConfig,
 }
 
 fn default_max_turns() -> usize {
@@ -143,6 +147,138 @@ impl Default for AgentConfig {
             tools: ToolsConfig::default(),
             terminal: TerminalConfig::default(),
             chat: ChatConfig::default(),
+            subagent: SubagentConfig::default(),
+        }
+    }
+}
+
+/// Subagent delegation configuration
+///
+/// Settings for spawning and managing recursive agent instances
+/// with task delegation and controlled resource usage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentConfig {
+    /// Maximum recursion depth for nested subagents
+    ///
+    /// Root agent is depth 0, first subagent spawned is depth 1.
+    /// Prevents infinite recursion and stack overflow.
+    /// - depth < max_depth: Allow spawning
+    /// - depth >= max_depth: Return error
+    #[serde(default = "default_subagent_max_depth")]
+    pub max_depth: usize,
+
+    /// Default maximum turns per subagent execution
+    ///
+    /// Used when subagent input does not specify max_turns.
+    /// Limits conversation turns to prevent runaway execution.
+    #[serde(default = "default_subagent_max_turns")]
+    pub default_max_turns: usize,
+
+    /// Maximum output size in bytes before truncation
+    ///
+    /// Prevents subagent output from expanding context window excessively.
+    /// Output exceeding this size will be truncated with notice.
+    #[serde(default = "default_subagent_output_max_size")]
+    pub output_max_size: usize,
+
+    /// Enable subagent execution telemetry
+    ///
+    /// When true, logs structured telemetry events (spawn, complete, error, etc).
+    /// Set to false to disable telemetry logging.
+    #[serde(default = "default_subagent_telemetry_enabled")]
+    pub telemetry_enabled: bool,
+
+    /// Enable conversation persistence for debugging
+    ///
+    /// When true, saves subagent conversations to persistent storage
+    /// for replay and debugging. Phase 4 feature, currently ignored.
+    #[serde(default = "default_subagent_persistence_enabled")]
+    pub persistence_enabled: bool,
+
+    /// Path to conversation database for persistence
+    ///
+    /// Used when persistence_enabled is true. Specifies the location
+    /// of the sled database storing conversation history.
+    #[serde(default = "default_persistence_path")]
+    pub persistence_path: String,
+
+    /// Maximum total subagent executions per session
+    ///
+    /// Limits the number of subagents that can be spawned in a single session.
+    /// None means unlimited executions.
+    #[serde(default = "default_max_executions")]
+    pub max_executions: Option<usize>,
+
+    /// Maximum total tokens consumable by all subagents
+    ///
+    /// Limits total token consumption across all subagent executions.
+    /// None means unlimited tokens.
+    #[serde(default = "default_max_total_tokens")]
+    pub max_total_tokens: Option<usize>,
+
+    /// Maximum wall-clock time for all subagents (seconds)
+    ///
+    /// Limits the total execution time for all subagents in a session.
+    /// None means unlimited time.
+    #[serde(default = "default_max_total_time")]
+    pub max_total_time: Option<u64>,
+}
+
+fn default_subagent_max_depth() -> usize {
+    3
+}
+
+fn default_subagent_max_turns() -> usize {
+    10
+}
+
+fn default_subagent_output_max_size() -> usize {
+    4096
+}
+
+fn default_subagent_telemetry_enabled() -> bool {
+    true
+}
+
+fn default_subagent_persistence_enabled() -> bool {
+    false
+}
+
+fn default_persistence_path() -> String {
+    let home = std::env::var("HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    home.join(".xzatoma")
+        .join("conversations.db")
+        .to_string_lossy()
+        .to_string()
+}
+
+fn default_max_executions() -> Option<usize> {
+    None
+}
+
+fn default_max_total_tokens() -> Option<usize> {
+    None
+}
+
+fn default_max_total_time() -> Option<u64> {
+    None
+}
+
+impl Default for SubagentConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: default_subagent_max_depth(),
+            default_max_turns: default_subagent_max_turns(),
+            output_max_size: default_subagent_output_max_size(),
+            telemetry_enabled: default_subagent_telemetry_enabled(),
+            persistence_enabled: default_subagent_persistence_enabled(),
+            persistence_path: default_persistence_path(),
+            max_executions: default_max_executions(),
+            max_total_tokens: default_max_total_tokens(),
+            max_total_time: default_max_total_time(),
         }
     }
 }
@@ -773,6 +909,42 @@ impl Config {
             .into());
         }
 
+        // Validate subagent configuration
+        if self.agent.subagent.max_depth == 0 {
+            return Err(XzatomaError::Config(
+                "agent.subagent.max_depth must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.subagent.max_depth > 10 {
+            return Err(XzatomaError::Config(
+                "agent.subagent.max_depth cannot exceed 10 (stack overflow risk)".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.subagent.default_max_turns == 0 {
+            return Err(XzatomaError::Config(
+                "agent.subagent.default_max_turns must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.subagent.default_max_turns > 100 {
+            return Err(XzatomaError::Config(
+                "agent.subagent.default_max_turns cannot exceed 100".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.subagent.output_max_size < 1024 {
+            return Err(XzatomaError::Config(
+                "agent.subagent.output_max_size must be at least 1024 bytes".to_string(),
+            )
+            .into());
+        }
+
         Ok(())
     }
 
@@ -999,6 +1171,69 @@ allow_mode_switching: false
         assert_eq!(config.chat.default_mode, "planning");
         assert_eq!(config.chat.default_safety, "confirm");
         assert!(config.chat.allow_mode_switching);
+    }
+
+    #[test]
+    fn test_subagent_config_defaults() {
+        let config = SubagentConfig::default();
+        assert_eq!(config.max_depth, 3);
+        assert_eq!(config.default_max_turns, 10);
+        assert_eq!(config.output_max_size, 4096);
+        assert!(config.telemetry_enabled);
+        assert!(!config.persistence_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_validation_max_depth_zero() {
+        let mut config = Config::default();
+        config.agent.subagent.max_depth = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_subagent_config_validation_max_depth_too_large() {
+        let mut config = Config::default();
+        config.agent.subagent.max_depth = 11;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_subagent_config_validation_default_max_turns_zero() {
+        let mut config = Config::default();
+        config.agent.subagent.default_max_turns = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_subagent_config_validation_output_size_too_small() {
+        let mut config = Config::default();
+        config.agent.subagent.output_max_size = 512;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_subagent_config_from_yaml() {
+        let yaml = r#"
+max_depth: 5
+default_max_turns: 20
+output_max_size: 8192
+telemetry_enabled: false
+persistence_enabled: true
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 5);
+        assert_eq!(config.default_max_turns, 20);
+        assert_eq!(config.output_max_size, 8192);
+        assert!(!config.telemetry_enabled);
+        assert!(config.persistence_enabled);
+    }
+
+    #[test]
+    fn test_agent_config_includes_subagent() {
+        let config = AgentConfig::default();
+        assert_eq!(config.subagent.max_depth, 3);
+        assert_eq!(config.subagent.default_max_turns, 10);
+        assert!(config.subagent.telemetry_enabled);
     }
 
     #[test]

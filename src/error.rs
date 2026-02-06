@@ -104,6 +104,14 @@ pub enum XzatomaError {
     /// Keyring/credential storage errors
     #[error("Keyring error: {0}")]
     Keyring(#[from] keyring::Error),
+
+    /// Conversation storage errors (database operations)
+    #[error("Storage error: {0}")]
+    Storage(String),
+
+    /// Resource quota exceeded
+    #[error("Resource quota exceeded: {0}")]
+    QuotaExceeded(String),
 }
 
 /// Result type alias for XZatoma operations
@@ -251,5 +259,14 @@ mod tests {
     fn test_error_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<XzatomaError>();
+    }
+
+    #[test]
+    fn test_storage_error_display() {
+        let error = XzatomaError::Storage("database connection failed".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Storage error: database connection failed"
+        );
     }
 }

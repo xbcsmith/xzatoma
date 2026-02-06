@@ -127,6 +127,33 @@ pub enum Commands {
         #[command(subcommand)]
         command: HistoryCommand,
     },
+
+    /// Replay subagent conversations for debugging
+    Replay {
+        /// Conversation ID to replay
+        #[arg(long, short = 'i')]
+        id: Option<String>,
+
+        /// List all conversations
+        #[arg(long, short = 'l')]
+        list: bool,
+
+        /// Path to conversation database
+        #[arg(long, default_value = "~/.xzatoma/conversations.db")]
+        db_path: std::path::PathBuf,
+
+        /// Limit for list results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+
+        /// Offset for pagination
+        #[arg(long, default_value = "0")]
+        offset: usize,
+
+        /// Show conversation tree (with nested subagents)
+        #[arg(long, short = 't')]
+        tree: bool,
+    },
 }
 
 /// Model management subcommands

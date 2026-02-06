@@ -20,6 +20,7 @@ serde_yaml = "0.9"
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Error handling
 anyhow = "1.0"
@@ -59,6 +60,17 @@ prettytable-rs = "0.10.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 directories = "6.0.0"
 uuid = { version = "1.20.0", features = ["v4", "serde"] }
+
+# Phase 4: Conversation Persistence
+sled = "0.34"           # Embedded key-value store for conversation history
+ulid = { version = "1.1", features = ["serde"] }  # Sortable unique IDs with serde support
+
+# Phase 5: Metrics and Performance
+metrics = "0.21"
+metrics-exporter-prometheus = { version = "0.13", optional = true }
+
+[features]
+prometheus = ["metrics-exporter-prometheus"]
 
 [dev-dependencies]
 mockall = "0.12"

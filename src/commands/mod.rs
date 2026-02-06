@@ -28,7 +28,7 @@ use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::{FileOpsTool, ToolExecutor, ToolRegistry};
+use crate::tools::{FileOpsTool, SubagentTool, ToolExecutor, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -43,6 +43,9 @@ pub mod models;
 
 // History management commands
 pub mod history;
+
+// Replay command for conversation debugging
+pub mod replay;
 
 // Chat command handler
 pub mod chat {
@@ -107,7 +110,7 @@ pub mod chat {
         let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
 
         // Build initial tool registry based on mode
-        let tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
+        let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
 
         // Initialize storage
         let storage = match SqliteStorage::new() {
@@ -119,7 +122,19 @@ pub mod chat {
         };
 
         // Create provider
-        let provider = create_provider(provider_type, &config.provider)?;
+        let provider_box = create_provider(provider_type, &config.provider)?;
+
+        // Convert provider to Arc for sharing with subagent and main agent
+        let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
+
+        // Register subagent tool for task delegation
+        let subagent_tool = SubagentTool::new(
+            Arc::clone(&provider), // Share provider with main agent
+            config.agent.clone(),  // Use same config as template
+            tools.clone(),         // Parent registry for filtering
+            0,                     // Root depth (main agent is depth 0)
+        );
+        tools.register("subagent", Arc::new(subagent_tool));
 
         // Initialize agent with conversation
         let mut agent = if let Some(ref resume_id) = resume {
@@ -136,8 +151,8 @@ pub mod chat {
                             config.agent.conversation.min_retain_turns,
                             config.agent.conversation.prune_threshold as f64,
                         );
-                        Agent::with_conversation(
-                            provider,
+                        Agent::with_conversation_and_shared_provider(
+                            Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
                             conversation,
@@ -149,12 +164,20 @@ pub mod chat {
                             format!("Conversation {} not found, starting new one.", resume_id)
                                 .yellow()
                         );
-                        Agent::new_boxed(provider, tools, config.agent.clone())?
+                        Agent::new_from_shared_provider(
+                            Arc::clone(&provider),
+                            tools,
+                            config.agent.clone(),
+                        )?
                     }
                     Err(e) => {
                         tracing::error!("Failed to load conversation: {}", e);
                         println!("{}", "Failed to load conversation, starting new one.".red());
-                        Agent::new_boxed(provider, tools, config.agent.clone())?
+                        Agent::new_from_shared_provider(
+                            Arc::clone(&provider),
+                            tools,
+                            config.agent.clone(),
+                        )?
                     }
                 }
             } else {
@@ -162,10 +185,10 @@ pub mod chat {
                     "{}",
                     "Storage not available, starting new conversation.".yellow()
                 );
-                Agent::new_boxed(provider, tools, config.agent.clone())?
+                Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
             }
         } else {
-            Agent::new_boxed(provider, tools, config.agent.clone())?
+            Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
         };
 
         // Create readline instance

@@ -153,6 +153,26 @@ async fn main() -> Result<()> {
             commands::history::handle_history(command)?;
             Ok(())
         }
+        Commands::Replay {
+            id,
+            list,
+            db_path,
+            limit,
+            offset,
+            tree,
+        } => {
+            tracing::info!("Starting replay command for conversation debugging");
+            let args = commands::replay::ReplayArgs {
+                id,
+                list,
+                db_path,
+                limit,
+                offset,
+                tree,
+            };
+            commands::replay::run_replay(args).await?;
+            Ok(())
+        }
     }
 }
 

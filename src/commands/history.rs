@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use crate::cli::HistoryCommand;
 use crate::error::{Result, XzatomaError};
 use crate::providers::Message;

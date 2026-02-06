@@ -83,7 +83,7 @@ Updated the chat command handler to use the cleaned text when augmenting the pro
 ```rust
 let (mentions, _cleaned_text) = mention_parser::parse_mentions(trimmed)?;
 // ...
-let (augmented_prompt, _, _) = 
+let (augmented_prompt, _, _) =
     augment_prompt_with_mentions(&mentions, trimmed, &working_dir, ...)?;
     //                                      ^^^^^^^ Original text with @
 ```
@@ -92,7 +92,7 @@ let (augmented_prompt, _, _) =
 ```rust
 let (mentions, cleaned_text) = mention_parser::parse_mentions(trimmed)?;
 // ...
-let (augmented_prompt, _, _) = 
+let (augmented_prompt, _, _) =
     augment_prompt_with_mentions(&mentions, &cleaned_text, &working_dir, ...)?;
     //                                       ^^^^^^^^^^^^ Cleaned text without @
 ```
@@ -161,7 +161,7 @@ Example test:
 fn test_parse_mentions_cleans_multiple_files() {
     let input = "Check @src/main.rs and @README.md please";
     let (_mentions, cleaned) = parse_mentions(input).unwrap();
-    
+
     // Mentions should be removed, leaving the rest
     assert_eq!(cleaned, "Check  and  please");
 }
@@ -260,7 +260,7 @@ Compare @src/main.rs and @tests/integration.rs
 
 ---
 
-Compare  and 
+Compare  and
 ```
 
 ### Example 3: Mixed Mentions
