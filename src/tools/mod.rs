@@ -7,17 +7,21 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod delete_path;
 pub mod fetch;
 pub mod file_metadata;
 pub mod file_ops;
 pub mod file_utils;
 pub mod grep;
+pub mod list_directory;
 pub mod parallel_subagent;
 pub mod plan;
 pub mod plan_format;
+pub mod read_file;
 pub mod registry_builder;
 pub mod subagent;
 pub mod terminal;
+pub mod write_file;
 
 // Re-export terminal functions for convenience
 pub use terminal::{
