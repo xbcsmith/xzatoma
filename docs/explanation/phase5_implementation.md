@@ -68,10 +68,10 @@ The quota system uses a three-tier approach:
 ```text
 1. Pre-Execution Check
    check_and_reserve() -> validates execution and time limits
-   
+
 2. Post-Execution Record
    record_execution(tokens) -> updates usage and checks token limit
-   
+
 3. Usage Queries
    remaining_executions() -> tokens available for next execution
    remaining_tokens() -> remaining token budget

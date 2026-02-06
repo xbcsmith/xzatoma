@@ -10,6 +10,7 @@
 pub mod fetch;
 pub mod file_ops;
 pub mod grep;
+pub mod parallel_subagent;
 pub mod plan;
 pub mod plan_format;
 pub mod registry_builder;
@@ -30,6 +31,11 @@ pub use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
 
 // Re-export subagent tool and types
 pub use subagent::{SubagentTool, SubagentToolInput};
+
+// Re-export parallel subagent tool and types
+pub use parallel_subagent::{
+    ParallelSubagentInput, ParallelSubagentOutput, ParallelSubagentTool, ParallelTask, TaskResult,
+};
 
 // Re-export commonly used file operations and plan parser symbols for convenience
 pub use file_ops::{
@@ -361,6 +367,71 @@ impl Clone for ToolRegistry {
         Self {
             tools: self.tools.clone(),
         }
+    }
+}
+
+impl ToolRegistry {
+    /// Creates a filtered clone with only allowed tools
+    ///
+    /// Returns a new registry containing only the specified tools.
+    ///
+    /// # Arguments
+    ///
+    /// * `allowed` - List of tool names to include
+    ///
+    /// # Returns
+    ///
+    /// A new registry with only the allowed tools
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let filtered = registry.clone_with_filter(&["file_ops", "terminal"]);
+    /// ```
+    pub fn clone_with_filter(&self, allowed: &[String]) -> Self {
+        let mut filtered = ToolRegistry::new();
+        for tool_name in allowed {
+            if let Some(executor) = self.tools.get(tool_name) {
+                filtered.register(tool_name.clone(), Arc::clone(executor));
+            }
+        }
+        filtered
+    }
+
+    /// Creates a clone without the subagent tool
+    ///
+    /// Returns a new registry with all tools except "subagent".
+    ///
+    /// # Returns
+    ///
+    /// A new registry without the subagent tool
+    pub fn clone_without(&self, excluded: &str) -> Self {
+        let mut filtered = ToolRegistry::new();
+        for (name, executor) in &self.tools {
+            if name != excluded {
+                filtered.register(name.clone(), Arc::clone(executor));
+            }
+        }
+        filtered
+    }
+
+    /// Creates a clone without parallel subagent tools
+    ///
+    /// Returns a new registry with all tools except "subagent" and "parallel_subagent".
+    /// Useful for preventing unbounded recursion in nested subagent execution.
+    ///
+    /// # Returns
+    ///
+    /// A new registry without subagent/parallel_subagent tools
+    pub fn clone_without_parallel(&self) -> Self {
+        let mut filtered = ToolRegistry::new();
+        let excluded = ["subagent", "parallel_subagent"];
+        for (name, executor) in &self.tools {
+            if !excluded.contains(&name.as_str()) {
+                filtered.register(name.clone(), Arc::clone(executor));
+            }
+        }
+        filtered
     }
 }
 

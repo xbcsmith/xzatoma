@@ -5,7 +5,7 @@
 //! This feature prevents context pollution and enables parallel exploration
 //! of sub-problems without polluting the main conversation history.
 
-use crate::agent::{Agent, ConversationStore};
+use crate::agent::{quota::QuotaTracker, Agent, ConversationStore, SubagentMetrics};
 use crate::config::{AgentConfig, SubagentConfig};
 use crate::error::{Result, XzatomaError};
 use crate::providers::Provider;
@@ -291,6 +291,13 @@ pub struct SubagentTool {
     /// Used to link conversations in the persistence store,
     /// forming a tree of parent-child relationships.
     parent_conversation_id: Option<String>,
+
+    /// Optional quota tracker for resource management
+    ///
+    /// When Some, enforces limits on execution count, total tokens,
+    /// and wall-clock time across all subagent executions.
+    /// When None, no resource limits are enforced.
+    quota_tracker: Option<QuotaTracker>,
 }
 
 impl SubagentTool {
@@ -352,6 +359,7 @@ impl SubagentTool {
             subagent_config,
             conversation_store,
             parent_conversation_id: None,
+            quota_tracker: None,
         }
     }
 
@@ -366,6 +374,20 @@ impl SubagentTool {
     /// Returns self for method chaining
     pub fn with_parent_conversation_id(mut self, id: String) -> Self {
         self.parent_conversation_id = Some(id);
+        self
+    }
+
+    /// Set the quota tracker for resource management
+    ///
+    /// # Arguments
+    ///
+    /// * `tracker` - The quota tracker instance
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_quota_tracker(mut self, tracker: QuotaTracker) -> Self {
+        self.quota_tracker = Some(tracker);
         self
     }
 }
@@ -483,7 +505,36 @@ impl ToolExecutor for SubagentTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        // STEP 1: Validate recursion depth FIRST (before any work)
+        // Create metrics tracker for this subagent execution
+        let metrics = SubagentMetrics::new(
+            args.get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            self.current_depth + 1,
+        );
+
+        // STEP 1: Check quota availability before any work
+        if let Some(quota_tracker) = &self.quota_tracker {
+            if let Err(e) = quota_tracker.check_and_reserve() {
+                let label = args
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                if self.subagent_config.telemetry_enabled {
+                    tracing::warn!(
+                        subagent.event = "quota_exceeded",
+                        subagent.label = label,
+                        subagent.error = %e,
+                        "Subagent quota exceeded"
+                    );
+                }
+                metrics.record_error("quota_exceeded");
+                return Ok(ToolResult::error(format!("Resource quota exceeded: {}", e)));
+            }
+        }
+
+        // STEP 2: Validate recursion depth
         if self.current_depth >= self.subagent_config.max_depth {
             let telemetry_enabled = self.subagent_config.telemetry_enabled;
             // Try to parse label for logging, fallback to "unknown"
@@ -498,6 +549,7 @@ impl ToolExecutor for SubagentTool {
                     self.subagent_config.max_depth,
                 );
             }
+            metrics.record_error("max_depth_reached");
             return Ok(ToolResult::error(format!(
                 "Maximum subagent recursion depth ({}) exceeded. Current depth: {}. Cannot spawn nested subagent.",
                 self.subagent_config.max_depth,
@@ -505,7 +557,7 @@ impl ToolExecutor for SubagentTool {
             )));
         }
 
-        // STEP 2: Parse and validate input
+        // STEP 3: Parse and validate input
         let input: SubagentToolInput = serde_json::from_value(args)
             .map_err(|e| XzatomaError::Config(format!("Invalid subagent input: {}", e)))?;
 
@@ -521,17 +573,20 @@ impl ToolExecutor for SubagentTool {
                     "task_prompt cannot be empty",
                 );
             }
+            metrics.record_error("invalid_input");
             return Ok(ToolResult::error("task_prompt cannot be empty".to_string()));
         }
 
         // Validate label not empty
         if input.label.trim().is_empty() {
+            metrics.record_error("invalid_input");
             return Ok(ToolResult::error("label cannot be empty".to_string()));
         }
 
         // Validate max_turns if specified
         if let Some(max_turns) = input.max_turns {
             if max_turns == 0 || max_turns > 50 {
+                metrics.record_error("invalid_input");
                 return Ok(ToolResult::error(
                     "max_turns must be between 1 and 50".to_string(),
                 ));
@@ -570,6 +625,11 @@ impl ToolExecutor for SubagentTool {
             next_depth,
         );
 
+        // Pass quota tracker to nested subagent if available
+        if let Some(quota_tracker) = &self.quota_tracker {
+            nested_subagent_tool = nested_subagent_tool.with_quota_tracker(quota_tracker.clone());
+        }
+
         // Link to parent conversation if available
         if let Some(parent_id) = &self.parent_conversation_id {
             nested_subagent_tool =
@@ -602,6 +662,7 @@ impl ToolExecutor for SubagentTool {
                 if telemetry_enabled {
                     telemetry::log_subagent_error(&input.label, next_depth, &e.to_string());
                 }
+                metrics.record_error("initialization_failed");
                 return Ok(ToolResult::error(format!(
                     "Subagent initialization failed: {}",
                     e
@@ -616,6 +677,7 @@ impl ToolExecutor for SubagentTool {
                 if telemetry_enabled {
                     telemetry::log_subagent_error(&input.label, next_depth, &e.to_string());
                 }
+                metrics.record_error("execution_failed");
                 return Ok(ToolResult::error(format!(
                     "Subagent task execution failed: {}",
                     e
@@ -672,15 +734,35 @@ impl ToolExecutor for SubagentTool {
                 .with_metadata("turns_used".to_string(), turn_count.to_string());
         }
 
-        // Add token usage if available
-        if let Some(usage) = subagent.get_token_usage() {
+        // Add token usage if available and record in quota tracker
+        let tokens_used = if let Some(usage) = subagent.get_token_usage() {
+            let total = usage.total_tokens;
             result = result
-                .with_metadata("tokens_used".to_string(), usage.total_tokens.to_string())
+                .with_metadata("tokens_used".to_string(), total.to_string())
                 .with_metadata("prompt_tokens".to_string(), usage.prompt_tokens.to_string())
                 .with_metadata(
                     "completion_tokens".to_string(),
                     usage.completion_tokens.to_string(),
                 );
+            total
+        } else {
+            0
+        };
+
+        // Record quota usage if tracker is available
+        if let Some(quota_tracker) = &self.quota_tracker {
+            if let Err(e) = quota_tracker.record_execution(tokens_used) {
+                if telemetry_enabled {
+                    tracing::warn!(
+                        subagent.event = "quota_recording_failed",
+                        subagent.label = %label,
+                        subagent.error = %e,
+                        "Failed to record quota usage"
+                    );
+                }
+                // Log warning but don't fail the execution
+                // The subagent already completed successfully
+            }
         }
 
         // STEP 9: Truncate if needed and log if truncation occurred
@@ -695,18 +777,27 @@ impl ToolExecutor for SubagentTool {
             result = result.truncate_if_needed(self.subagent_config.output_max_size);
         }
 
+        // Record metrics for completion
+        let completion_status = if turn_count >= max_turns {
+            "incomplete"
+        } else {
+            "complete"
+        };
+        let tokens_used = subagent
+            .get_token_usage()
+            .map(|u| u.total_tokens)
+            .unwrap_or(0);
+        metrics.record_completion(turn_count, tokens_used, completion_status);
+
         // Log completion event
         if telemetry_enabled {
-            let status = if turn_count >= max_turns {
-                "incomplete"
-            } else {
-                "complete"
-            };
-            let tokens_used = subagent
-                .get_token_usage()
-                .map(|u| u.total_tokens)
-                .unwrap_or(0);
-            telemetry::log_subagent_complete(&label, next_depth, turn_count, tokens_used, status);
+            telemetry::log_subagent_complete(
+                &label,
+                next_depth,
+                turn_count,
+                tokens_used,
+                completion_status,
+            );
         }
 
         // STEP 10: Persist conversation if persistence enabled
@@ -1306,5 +1397,93 @@ mod tests {
             .error
             .as_ref()
             .is_some_and(|e| e.contains("timed out")));
+    }
+
+    // Quota tracking tests
+
+    #[test]
+    fn test_subagent_quota_tracking_creation() {
+        use crate::agent::quota::{QuotaLimits, QuotaTracker};
+        use std::time::Duration;
+
+        let limits = QuotaLimits {
+            max_executions: Some(5),
+            max_total_tokens: Some(50000),
+            max_total_time: Some(Duration::from_secs(300)),
+        };
+        let tracker = QuotaTracker::new(limits);
+        let usage = tracker.get_usage();
+
+        assert_eq!(usage.executions, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_subagent_tool_with_quota_tracker() {
+        use crate::agent::quota::{QuotaLimits, QuotaTracker};
+
+        let limits = QuotaLimits {
+            max_executions: Some(10),
+            max_total_tokens: None,
+            max_total_time: None,
+        };
+        let tracker = QuotaTracker::new(limits);
+        let config = create_test_config();
+        let registry = ToolRegistry::new();
+        let provider = Arc::new(MockProvider::new(vec!["response".to_string()]));
+
+        let tool =
+            SubagentTool::new(provider, config, registry, 0).with_quota_tracker(tracker.clone());
+
+        // Verify quota tracker is set
+        assert!(tool.quota_tracker.is_some());
+    }
+
+    #[test]
+    fn test_quota_limits_structure() {
+        use crate::agent::quota::QuotaLimits;
+        use std::time::Duration;
+
+        let limits = QuotaLimits {
+            max_executions: Some(100),
+            max_total_tokens: Some(100000),
+            max_total_time: Some(Duration::from_secs(3600)),
+        };
+
+        assert_eq!(limits.max_executions, Some(100));
+        assert_eq!(limits.max_total_tokens, Some(100000));
+        assert_eq!(limits.max_total_time, Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn test_quota_limits_unlimited() {
+        use crate::agent::quota::QuotaLimits;
+
+        let limits = QuotaLimits {
+            max_executions: None,
+            max_total_tokens: None,
+            max_total_time: None,
+        };
+
+        assert!(limits.max_executions.is_none());
+        assert!(limits.max_total_tokens.is_none());
+        assert!(limits.max_total_time.is_none());
+    }
+
+    #[test]
+    fn test_subagent_quota_remaining_functions() {
+        use crate::agent::quota::{QuotaLimits, QuotaTracker};
+
+        let limits = QuotaLimits {
+            max_executions: Some(10),
+            max_total_tokens: Some(5000),
+            max_total_time: None,
+        };
+        let tracker = QuotaTracker::new(limits);
+
+        // Initial state
+        assert_eq!(tracker.remaining_executions(), Some(10));
+        assert_eq!(tracker.remaining_tokens(), Some(5000));
+        assert!(tracker.remaining_time().is_none());
     }
 }
