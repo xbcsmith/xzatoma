@@ -71,6 +71,21 @@ impl PathValidator {
         Self { working_dir }
     }
 
+    /// Returns a reference to the working directory
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::file_utils::PathValidator;
+    /// use std::path::PathBuf;
+    ///
+    /// let validator = PathValidator::new(PathBuf::from("/project"));
+    /// assert_eq!(validator.working_dir().to_str().unwrap(), "/project");
+    /// ```
+    pub fn working_dir(&self) -> &PathBuf {
+        &self.working_dir
+    }
+
     /// Validates a path against security constraints
     ///
     /// # Arguments

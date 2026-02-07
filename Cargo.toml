@@ -73,6 +73,7 @@ ulid = { version = "1.1", features = ["serde"] }  # Sortable unique IDs with ser
 metrics = "0.21"
 metrics-exporter-prometheus = { version = "0.13", optional = true }
 glob-match = "0.2.1"
+glob = "0.3"
 
 [features]
 prometheus = ["metrics-exporter-prometheus"]

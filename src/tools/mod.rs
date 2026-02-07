@@ -7,13 +7,17 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod copy_path;
+pub mod create_directory;
 pub mod delete_path;
 pub mod fetch;
 pub mod file_metadata;
 pub mod file_ops;
 pub mod file_utils;
+pub mod find_path;
 pub mod grep;
 pub mod list_directory;
+pub mod move_path;
 pub mod parallel_subagent;
 pub mod plan;
 pub mod plan_format;
