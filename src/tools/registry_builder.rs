@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{TerminalConfig, ToolsConfig};
 use crate::error::Result;
+use crate::tools::edit_file::EditFileTool;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::{FileOpsReadOnlyTool, FileOpsTool, ToolExecutor, ToolRegistry};
 
@@ -176,6 +177,14 @@ impl ToolRegistryBuilder {
         let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
         registry.register("terminal", terminal_tool_executor);
 
+        // Register edit_file tool for targeted edits and diffs
+        let edit_tool = EditFileTool::new(
+            self.working_dir.clone(),
+            self.tools_config.max_file_read_size as u64,
+        );
+        let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
+        registry.register("edit_file", edit_tool_executor);
+
         Ok(registry)
     }
 
@@ -273,8 +282,9 @@ mod tests {
         );
 
         let registry = builder.build_for_write().expect("Failed to build registry");
-        assert_eq!(registry.len(), 2);
+        assert_eq!(registry.len(), 3);
         assert!(registry.get("file_ops").is_some());
+        assert!(registry.get("edit_file").is_some());
         assert!(registry.get("terminal").is_some());
     }
 
@@ -296,7 +306,7 @@ mod tests {
         );
 
         let write_registry = write_builder.build().expect("Failed to build registry");
-        assert_eq!(write_registry.len(), 2);
+        assert_eq!(write_registry.len(), 3);
     }
 
     #[test]

@@ -10,6 +10,7 @@
 pub mod copy_path;
 pub mod create_directory;
 pub mod delete_path;
+pub mod edit_file;
 pub mod fetch;
 pub mod file_metadata;
 pub mod file_ops;

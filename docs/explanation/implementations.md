@@ -26,6 +26,8 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - **[phase3_pruning_integrity_implementation.md](phase3_pruning_integrity_implementation.md)** - Phase 3: Pruning Integrity - Atomic tool-call pair removal during conversation pruning, helper methods for finding tool results, maintains message sequence integrity
 
+- **[intelligent_editing_and_buffer_management_implementation.md](intelligent_editing_and_buffer_management_implementation.md)** - Phase 4: Intelligent Editing & Buffer Management - Implemented `edit_file` tool (create/edit/overwrite modes), unified diffs via `similar::TextDiff`, integrated into Write-mode registry, with unit tests and documentation.
+
 - **[phase4_cross_provider_consistency_implementation.md](phase4_cross_provider_consistency_implementation.md)** - Phase 4: Cross-Provider Consistency & Integration Tests - Provider parity validation, integration tests for save/load/resume lifecycle with orphan sanitization, pruning integrity verification
 
 - **[phase5_documentation_qa_and_release_implementation.md](phase5_documentation_qa_and_release_implementation.md)** - Phase 5: Documentation, QA, and Release - Comprehensive implementation documentation, quality assurance validation (81 tests passing), release preparation notes, migration guidance, and usage examples
