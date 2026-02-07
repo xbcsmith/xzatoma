@@ -12,9 +12,17 @@ use std::sync::Arc;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{TerminalConfig, ToolsConfig};
 use crate::error::Result;
+use crate::tools::copy_path::CopyPathTool;
+use crate::tools::create_directory::CreateDirectoryTool;
+use crate::tools::delete_path::DeletePathTool;
 use crate::tools::edit_file::EditFileTool;
+use crate::tools::find_path::FindPathTool;
+use crate::tools::list_directory::ListDirectoryTool;
+use crate::tools::move_path::MovePathTool;
+use crate::tools::read_file::ReadFileTool;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::{FileOpsReadOnlyTool, FileOpsTool, ToolExecutor, ToolRegistry};
+use crate::tools::write_file::WriteFileTool;
+use crate::tools::{ToolExecutor, ToolRegistry};
 
 /// Builder for mode-aware tool registries
 ///
@@ -35,7 +43,7 @@ use crate::tools::{FileOpsReadOnlyTool, FileOpsTool, ToolExecutor, ToolRegistry}
 /// );
 ///
 /// let registry = builder.build_for_planning().expect("Failed to build registry");
-/// assert_eq!(registry.len(), 1); // Only file_ops_read_only
+/// assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
 /// ```
 pub struct ToolRegistryBuilder {
     /// The chat mode (Planning or Write)
@@ -103,7 +111,7 @@ impl ToolRegistryBuilder {
     /// Build a tool registry for the current mode
     ///
     /// Automatically selects the appropriate registry based on `mode`.
-    /// - Planning: read-only tools only
+    /// - Planning: read-only tools only (read_file, list_directory, find_path)
     /// - Write: all tools
     ///
     /// # Returns
@@ -122,12 +130,14 @@ impl ToolRegistryBuilder {
 
     /// Build a tool registry for Planning mode (read-only)
     ///
-    /// Planning mode includes:
-    /// - `file_ops_read_only` - Read-only file operations (read_file, list_files, search_files)
+    /// Planning mode includes read-only tools:
+    /// - `read_file` - Read file contents with optional line range
+    /// - `list_directory` - List directory contents with optional recursion and pattern matching
+    /// - `find_path` - Find files by glob pattern
     ///
     /// Excluded:
     /// - Terminal execution
-    /// - File modifications (write_file, delete_file)
+    /// - File modifications (write_file, delete_path, copy_path, move_path, create_directory, edit_file)
     ///
     /// # Returns
     ///
@@ -135,19 +145,40 @@ impl ToolRegistryBuilder {
     pub fn build_for_planning(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
-        // Register read-only file operations tool
-        let file_tool_readonly =
-            FileOpsReadOnlyTool::new(self.working_dir.clone(), self.tools_config.clone());
-        let file_tool_executor: Arc<dyn ToolExecutor> = Arc::new(file_tool_readonly);
-        registry.register("file_ops", file_tool_executor);
+        // Register read_file tool
+        let read_tool = ReadFileTool::new(
+            self.working_dir.clone(),
+            self.tools_config.max_file_read_size as u64,
+            500, // max_outline_lines for file structure display
+        );
+        let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
+        registry.register("read_file", read_tool_executor);
+
+        // Register list_directory tool
+        let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
+        registry.register("list_directory", list_tool_executor);
+
+        // Register find_path tool
+        let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
+        registry.register("find_path", find_tool_executor);
 
         Ok(registry)
     }
 
     /// Build a tool registry for Write mode (full access)
     ///
-    /// Write mode includes:
-    /// - `file_ops` - Full file operations (read, write, delete, list, search, diff)
+    /// Write mode includes all file operation tools:
+    /// - `read_file` - Read file contents
+    /// - `write_file` - Write or overwrite files
+    /// - `delete_path` - Delete files or directories
+    /// - `list_directory` - List directory contents
+    /// - `copy_path` - Copy files or directories
+    /// - `move_path` - Move or rename files or directories
+    /// - `create_directory` - Create directories
+    /// - `find_path` - Find files by glob pattern
+    /// - `edit_file` - Edit files with targeted replacements or create new files
     /// - `terminal` - Terminal command execution with safety validation
     ///
     /// The terminal tool respects the configured safety mode:
@@ -164,18 +195,52 @@ impl ToolRegistryBuilder {
     pub fn build_for_write(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
-        // Register full file operations tool
-        let file_tool = FileOpsTool::new(self.working_dir.clone(), self.tools_config.clone());
-        let file_tool_executor: Arc<dyn ToolExecutor> = Arc::new(file_tool);
-        registry.register("file_ops", file_tool_executor);
+        // Register read_file tool
+        let read_tool = ReadFileTool::new(
+            self.working_dir.clone(),
+            self.tools_config.max_file_read_size as u64,
+            500, // max_outline_lines for file structure display
+        );
+        let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
+        registry.register("read_file", read_tool_executor);
 
-        // Register terminal tool with safety mode
-        let terminal_validator =
-            CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
-        let terminal_tool = TerminalTool::new(terminal_validator, self.terminal_config.clone())
-            .with_safety_mode(self.safety_mode);
-        let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
-        registry.register("terminal", terminal_tool_executor);
+        // Register write_file tool
+        let write_tool = WriteFileTool::new(
+            self.working_dir.clone(),
+            self.tools_config.max_file_read_size as u64,
+        );
+        let write_tool_executor: Arc<dyn ToolExecutor> = Arc::new(write_tool);
+        registry.register("write_file", write_tool_executor);
+
+        // Register delete_path tool
+        let delete_tool = DeletePathTool::new(self.working_dir.clone());
+        let delete_tool_executor: Arc<dyn ToolExecutor> = Arc::new(delete_tool);
+        registry.register("delete_path", delete_tool_executor);
+
+        // Register list_directory tool
+        let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
+        registry.register("list_directory", list_tool_executor);
+
+        // Register copy_path tool
+        let copy_tool = CopyPathTool::new(self.working_dir.clone());
+        let copy_tool_executor: Arc<dyn ToolExecutor> = Arc::new(copy_tool);
+        registry.register("copy_path", copy_tool_executor);
+
+        // Register move_path tool
+        let move_tool = MovePathTool::new(self.working_dir.clone());
+        let move_tool_executor: Arc<dyn ToolExecutor> = Arc::new(move_tool);
+        registry.register("move_path", move_tool_executor);
+
+        // Register create_directory tool
+        let create_tool = CreateDirectoryTool::new(self.working_dir.clone());
+        let create_tool_executor: Arc<dyn ToolExecutor> = Arc::new(create_tool);
+        registry.register("create_directory", create_tool_executor);
+
+        // Register find_path tool
+        let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
+        registry.register("find_path", find_tool_executor);
 
         // Register edit_file tool for targeted edits and diffs
         let edit_tool = EditFileTool::new(
@@ -184,6 +249,14 @@ impl ToolRegistryBuilder {
         );
         let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
         registry.register("edit_file", edit_tool_executor);
+
+        // Register terminal tool with safety mode
+        let terminal_validator =
+            CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
+        let terminal_tool = TerminalTool::new(terminal_validator, self.terminal_config.clone())
+            .with_safety_mode(self.safety_mode);
+        let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
+        registry.register("terminal", terminal_tool_executor);
 
         Ok(registry)
     }
@@ -268,9 +341,12 @@ mod tests {
         let registry = builder
             .build_for_planning()
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 1);
-        assert!(registry.get("file_ops").is_some());
+        assert_eq!(registry.len(), 3);
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("list_directory").is_some());
+        assert!(registry.get("find_path").is_some());
         assert!(registry.get("terminal").is_none());
+        assert!(registry.get("write_file").is_none());
     }
 
     #[test]
@@ -282,8 +358,15 @@ mod tests {
         );
 
         let registry = builder.build_for_write().expect("Failed to build registry");
-        assert_eq!(registry.len(), 3);
-        assert!(registry.get("file_ops").is_some());
+        assert_eq!(registry.len(), 10);
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("write_file").is_some());
+        assert!(registry.get("delete_path").is_some());
+        assert!(registry.get("list_directory").is_some());
+        assert!(registry.get("copy_path").is_some());
+        assert!(registry.get("move_path").is_some());
+        assert!(registry.get("create_directory").is_some());
+        assert!(registry.get("find_path").is_some());
         assert!(registry.get("edit_file").is_some());
         assert!(registry.get("terminal").is_some());
     }
@@ -297,7 +380,7 @@ mod tests {
         );
 
         let planning_registry = planning_builder.build().expect("Failed to build registry");
-        assert_eq!(planning_registry.len(), 1);
+        assert_eq!(planning_registry.len(), 3);
 
         let write_builder = ToolRegistryBuilder::new(
             ChatMode::Write,
@@ -306,7 +389,7 @@ mod tests {
         );
 
         let write_registry = write_builder.build().expect("Failed to build registry");
-        assert_eq!(write_registry.len(), 3);
+        assert_eq!(write_registry.len(), 10);
     }
 
     #[test]

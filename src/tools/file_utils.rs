@@ -262,6 +262,67 @@ pub async fn check_file_size(path: &Path, max_size: u64) -> Result<u64, FileUtil
     Ok(file_size)
 }
 
+/// Generate a unified diff between two text strings
+///
+/// Creates a line-based unified diff showing changes between old and new content.
+/// Uses the `similar` crate's TextDiff for accurate diff generation.
+///
+/// # Arguments
+///
+/// * `old_text` - The original text content
+/// * `new_text` - The modified text content
+///
+/// # Returns
+///
+/// Returns a string containing the unified diff, or an error if generation fails
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::file_utils::generate_diff;
+///
+/// let old = "line 1\nline 2\n";
+/// let new = "line 1\nline 2 modified\n";
+/// let diff = generate_diff(old, new).unwrap();
+/// assert!(diff.contains("line 2 modified"));
+/// ```
+pub fn generate_diff(old_text: &str, new_text: &str) -> crate::error::Result<String> {
+    use similar::{ChangeTag, TextDiff};
+
+    let diff = TextDiff::from_lines(old_text, new_text);
+    let mut result = String::new();
+
+    for change in diff.iter_all_changes() {
+        let line = change.value();
+        match change.tag() {
+            ChangeTag::Delete => {
+                result.push_str(&format!("- {}", line));
+                if !line.ends_with('\n') {
+                    result.push('\n');
+                }
+            }
+            ChangeTag::Insert => {
+                result.push_str(&format!("+ {}", line));
+                if !line.ends_with('\n') {
+                    result.push('\n');
+                }
+            }
+            ChangeTag::Equal => {
+                result.push_str(&format!("  {}", line));
+                if !line.ends_with('\n') {
+                    result.push('\n');
+                }
+            }
+        }
+    }
+
+    if result.is_empty() {
+        result.push_str("(no changes)\n");
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

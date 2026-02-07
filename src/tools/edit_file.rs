@@ -303,7 +303,8 @@ mod tests {
         let file_path = td.path().join("new.txt");
         assert!(file_path.exists());
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "hello\nworld\n");
-        assert!(result.output.contains("+hello"));
+        // Standard diff format has space after prefix: "+ hello"
+        assert!(result.output.contains("+ hello") || result.output.contains("+hello"));
     }
 
     #[tokio::test]
@@ -344,8 +345,9 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "new\ncontent\n");
-        assert!(result.output.contains("-old"));
-        assert!(result.output.contains("+new"));
+        // Standard diff format: "- old" or "+ old" depending on spacing
+        assert!(result.output.contains("- old") || result.output.contains("-old"));
+        assert!(result.output.contains("+ new") || result.output.contains("+new"));
     }
 
     #[tokio::test]
@@ -386,8 +388,11 @@ mod tests {
         assert!(result.success);
         let final_contents = fs::read_to_string(&file_path).unwrap();
         assert!(final_contents.contains("REPLACED_LINE"));
-        assert!(result.output.contains("-TARGET_LINE"));
-        assert!(result.output.contains("+REPLACED_LINE"));
+        // Standard diff format with space: "- TARGET_LINE"
+        assert!(result.output.contains("- TARGET_LINE") || result.output.contains("-TARGET_LINE"));
+        assert!(
+            result.output.contains("+ REPLACED_LINE") || result.output.contains("+REPLACED_LINE")
+        );
     }
 
     #[tokio::test]
@@ -429,8 +434,11 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "completely new\n");
-        assert!(result.output.contains("-original"));
-        assert!(result.output.contains("+completely new"));
+        // Standard diff format with space: "- original"
+        assert!(result.output.contains("- original") || result.output.contains("-original"));
+        assert!(
+            result.output.contains("+ completely new") || result.output.contains("+completely new")
+        );
     }
 
     #[tokio::test]

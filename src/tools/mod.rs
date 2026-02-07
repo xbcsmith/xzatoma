@@ -13,7 +13,6 @@ pub mod delete_path;
 pub mod edit_file;
 pub mod fetch;
 pub mod file_metadata;
-pub mod file_ops;
 pub mod file_utils;
 pub mod find_path;
 pub mod grep;
@@ -48,11 +47,7 @@ pub use parallel_subagent::{
     ParallelSubagentInput, ParallelSubagentOutput, ParallelSubagentTool, ParallelTask, TaskResult,
 };
 
-// Re-export commonly used file operations and plan parser symbols for convenience
-pub use file_ops::{
-    generate_diff, list_files, read_file, search_files, write_file, FileOpsReadOnlyTool,
-    FileOpsTool,
-};
+// Re-export plan parser symbols for convenience
 pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
 pub use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
 pub use registry_builder::ToolRegistryBuilder;
@@ -62,7 +57,9 @@ pub use file_metadata::{
     detect_content_type, get_file_info, get_file_type, is_image_file, read_image_as_base64,
     FileInfo, FileMetadataError, FileType, ImageFormat, ImageMetadata,
 };
-pub use file_utils::{check_file_size, ensure_parent_dirs, FileUtilsError, PathValidator};
+pub use file_utils::{
+    check_file_size, ensure_parent_dirs, generate_diff, FileUtilsError, PathValidator,
+};
 
 use crate::error::Result;
 use async_trait::async_trait;
@@ -83,7 +80,6 @@ pub const TOOL_MOVE_PATH: &str = "move_path";
 pub const TOOL_CREATE_DIRECTORY: &str = "create_directory";
 pub const TOOL_FIND_PATH: &str = "find_path";
 pub const TOOL_EDIT_FILE: &str = "edit_file";
-pub const TOOL_FILE_OPS: &str = "file_ops";
 
 /// Tool definition structure
 ///
