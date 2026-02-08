@@ -420,7 +420,7 @@ impl SubagentTool {
 /// use xzatoma::tools::subagent::create_filtered_registry;
 ///
 /// let parent_registry = ToolRegistry::new();
-/// let allowed = Some(vec!["file_ops".to_string()]);
+/// let allowed = Some(vec!["read_file".to_string()]);
 /// let filtered = create_filtered_registry(&parent_registry, allowed)?;
 /// ```
 fn create_filtered_registry(
@@ -905,7 +905,7 @@ mod tests {
             "label": "test_agent",
             "task_prompt": "Do something",
             "summary_prompt": "Summarize",
-            "allowed_tools": ["file_ops", "terminal"],
+            "allowed_tools": ["read_file", "terminal"],
             "max_turns": 5
         });
 
@@ -915,7 +915,7 @@ mod tests {
         assert_eq!(input.summary_prompt, Some("Summarize".to_string()));
         assert_eq!(
             input.allowed_tools,
-            Some(vec!["file_ops".to_string(), "terminal".to_string()])
+            Some(vec!["read_file".to_string(), "terminal".to_string()])
         );
         assert_eq!(input.max_turns, Some(5));
     }
@@ -1315,7 +1315,7 @@ mod tests {
     #[tokio::test]
     async fn test_all_parent_tools_return_tool_result_error() {
         struct MockFetchTool;
-        struct MockFileOpsTool;
+        struct MockFileTool;
         struct MockGrepTool;
         struct MockTerminalTool;
 
@@ -1331,7 +1331,7 @@ mod tests {
         }
 
         #[async_trait]
-        impl ToolExecutor for MockFileOpsTool {
+        impl ToolExecutor for MockFileTool {
             fn tool_definition(&self) -> serde_json::Value {
                 serde_json::json!({"name": "file_ops", "description": "File operations"})
             }
@@ -1371,10 +1371,7 @@ mod tests {
             .as_ref()
             .is_some_and(|e| e.contains("404")));
 
-        let file_result = MockFileOpsTool
-            .execute(serde_json::json!({}))
-            .await
-            .unwrap();
+        let file_result = MockFileTool.execute(serde_json::json!({})).await.unwrap();
         assert!(!file_result.success);
         assert!(file_result
             .error

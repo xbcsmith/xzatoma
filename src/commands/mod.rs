@@ -28,7 +28,7 @@ use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::{FileOpsTool, SubagentTool, ToolExecutor, ToolRegistry};
+use crate::tools::{SubagentTool, ToolExecutor, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -943,8 +943,12 @@ pub mod chat {
             assert!(result.is_ok());
 
             let registry = result.unwrap();
-            assert!(registry.get("file_ops").is_some());
+            // Planning mode should have read-only file tools
+            assert!(registry.get("read_file").is_some());
+            assert!(registry.get("list_directory").is_some());
+            assert!(registry.get("find_path").is_some());
             assert!(registry.get("terminal").is_none());
+            assert!(registry.get("write_file").is_none());
         }
 
         #[test]
@@ -957,7 +961,16 @@ pub mod chat {
             assert!(result.is_ok());
 
             let registry = result.unwrap();
-            assert!(registry.get("file_ops").is_some());
+            // Write mode should have all file tools
+            assert!(registry.get("read_file").is_some());
+            assert!(registry.get("write_file").is_some());
+            assert!(registry.get("delete_path").is_some());
+            assert!(registry.get("list_directory").is_some());
+            assert!(registry.get("copy_path").is_some());
+            assert!(registry.get("move_path").is_some());
+            assert!(registry.get("create_directory").is_some());
+            assert!(registry.get("find_path").is_some());
+            assert!(registry.get("edit_file").is_some());
             assert!(registry.get("terminal").is_some());
         }
 
@@ -1224,32 +1237,30 @@ pub mod r#run {
         }
 
         // Build tools & agent
-        let mut tools = ToolRegistry::new();
         let working_dir = std::env::current_dir()?;
-
-        // Determine execution mode - if `allow_dangerous` is true, switch to FullAutonomous
-        let mode = if allow_dangerous {
-            ExecutionMode::FullAutonomous
-        } else {
-            config.agent.terminal.default_mode
-        };
 
         if allow_dangerous {
             tracing::warn!("Dangerous commands are allowed for this run: allow_dangerous=true");
         }
 
-        // Instantiate the validator with the resolved mode (reserved for use by a TerminalTool)
-        let validator = CommandValidator::new(mode, working_dir.clone());
+        // Build tools using registry builder for consistent tool selection based on mode
+        use crate::chat_mode::{ChatMode, SafetyMode};
+        use crate::tools::registry_builder::ToolRegistryBuilder;
 
-        // Register FileOps tool
-        let file_tool = FileOpsTool::new(working_dir.clone(), config.agent.tools.clone());
-        let file_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(file_tool);
-        tools.register("file_ops", file_tool_executor);
+        // Parse chat mode from config
+        let chat_mode =
+            ChatMode::parse_str(&config.agent.chat.default_mode).unwrap_or(ChatMode::Planning);
 
-        // Register Terminal tool (validated)
-        let terminal_tool = TerminalTool::new(validator, config.agent.terminal.clone());
-        let terminal_tool_executor: Arc<dyn crate::tools::ToolExecutor> = Arc::new(terminal_tool);
-        tools.register("terminal", terminal_tool_executor);
+        // Parse safety mode from config
+        let safety_mode = match config.agent.chat.default_safety.to_lowercase().as_str() {
+            "yolo" => SafetyMode::NeverConfirm,
+            _ => SafetyMode::AlwaysConfirm,
+        };
+
+        let tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.clone())
+            .with_tools_config(config.agent.tools.clone())
+            .with_terminal_config(config.agent.terminal.clone())
+            .build()?;
 
         // Create agent using concrete providers
         let mut agent = match config.provider.provider_type.as_str() {

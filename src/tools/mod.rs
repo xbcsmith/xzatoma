@@ -7,15 +7,25 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod copy_path;
+pub mod create_directory;
+pub mod delete_path;
+pub mod edit_file;
 pub mod fetch;
-pub mod file_ops;
+pub mod file_metadata;
+pub mod file_utils;
+pub mod find_path;
 pub mod grep;
+pub mod list_directory;
+pub mod move_path;
 pub mod parallel_subagent;
 pub mod plan;
 pub mod plan_format;
+pub mod read_file;
 pub mod registry_builder;
 pub mod subagent;
 pub mod terminal;
+pub mod write_file;
 
 // Re-export terminal functions for convenience
 pub use terminal::{
@@ -37,20 +47,39 @@ pub use parallel_subagent::{
     ParallelSubagentInput, ParallelSubagentOutput, ParallelSubagentTool, ParallelTask, TaskResult,
 };
 
-// Re-export commonly used file operations and plan parser symbols for convenience
-pub use file_ops::{
-    generate_diff, list_files, read_file, search_files, write_file, FileOpsReadOnlyTool,
-    FileOpsTool,
-};
+// Re-export plan parser symbols for convenience
 pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
 pub use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
 pub use registry_builder::ToolRegistryBuilder;
+
+// Re-export file utilities and metadata types
+pub use file_metadata::{
+    detect_content_type, get_file_info, get_file_type, is_image_file, read_image_as_base64,
+    FileInfo, FileMetadataError, FileType, ImageFormat, ImageMetadata,
+};
+pub use file_utils::{
+    check_file_size, ensure_parent_dirs, generate_diff, FileUtilsError, PathValidator,
+};
 
 use crate::error::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Tool name constants for file operations
+///
+/// These constants define the canonical names for file operation tools
+/// used throughout the system for tool selection and registry management.
+pub const TOOL_READ_FILE: &str = "read_file";
+pub const TOOL_WRITE_FILE: &str = "write_file";
+pub const TOOL_DELETE_PATH: &str = "delete_path";
+pub const TOOL_LIST_DIRECTORY: &str = "list_directory";
+pub const TOOL_COPY_PATH: &str = "copy_path";
+pub const TOOL_MOVE_PATH: &str = "move_path";
+pub const TOOL_CREATE_DIRECTORY: &str = "create_directory";
+pub const TOOL_FIND_PATH: &str = "find_path";
+pub const TOOL_EDIT_FILE: &str = "edit_file";
 
 /// Tool definition structure
 ///
