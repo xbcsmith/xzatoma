@@ -1315,7 +1315,7 @@ mod tests {
     #[tokio::test]
     async fn test_all_parent_tools_return_tool_result_error() {
         struct MockFetchTool;
-        struct MockFileOpsTool;
+        struct MockFileTool;
         struct MockGrepTool;
         struct MockTerminalTool;
 
@@ -1331,7 +1331,7 @@ mod tests {
         }
 
         #[async_trait]
-        impl ToolExecutor for MockFileOpsTool {
+        impl ToolExecutor for MockFileTool {
             fn tool_definition(&self) -> serde_json::Value {
                 serde_json::json!({"name": "file_ops", "description": "File operations"})
             }
@@ -1371,10 +1371,7 @@ mod tests {
             .as_ref()
             .is_some_and(|e| e.contains("404")));
 
-        let file_result = MockFileOpsTool
-            .execute(serde_json::json!({}))
-            .await
-            .unwrap();
+        let file_result = MockFileTool.execute(serde_json::json!({})).await.unwrap();
         assert!(!file_result.success);
         assert!(file_result
             .error
