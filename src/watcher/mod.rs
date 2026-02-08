@@ -27,5 +27,5 @@ pub mod plan_extractor;
 pub mod watcher;
 
 pub use filter::EventFilter;
-pub use plan_extractor::PlanExtractor;
+pub use plan_extractor::{PlanExtractor, PlanExtractorTrait};
 pub use watcher::Watcher;

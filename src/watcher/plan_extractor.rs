@@ -147,6 +147,26 @@ impl PlanExtractor {
     }
 }
 
+/// Trait-based abstraction for plan extraction.
+///
+/// This allows consumers to depend on the trait (e.g. in tests) and enables
+/// mocking or alternative implementations without changing the core
+/// `PlanExtractor` implementation.
+pub trait PlanExtractorTrait: Send + Sync {
+    /// Extract plan YAML/text from a CloudEvent message.
+    ///
+    /// Implementors should attempt to locate and return a plan string using
+    /// whatever strategy is appropriate.
+    fn extract(&self, event: &CloudEventMessage) -> Result<String>;
+}
+
+impl PlanExtractorTrait for PlanExtractor {
+    fn extract(&self, event: &CloudEventMessage) -> Result<String> {
+        // Delegate to the existing inherent method implementation.
+        PlanExtractor::extract(self, event)
+    }
+}
+
 impl Default for PlanExtractor {
     fn default() -> Self {
         Self::new()
@@ -218,6 +238,15 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "- task: setup\n  commands: echo hello");
+    }
+
+    #[test]
+    fn test_plan_extractor_trait_is_send_sync() {
+        // Compile-time assertion that the trait object is Send + Sync.
+        // If `PlanExtractorTrait` is not `Send + Sync`, this will not compile.
+        fn _assert_send_sync<T: Send + Sync>() {}
+        _assert_send_sync::<PlanExtractor>();
+        _assert_send_sync::<std::sync::Arc<dyn PlanExtractorTrait>>();
     }
 
     #[test]

@@ -79,6 +79,16 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - Deliverables validated: example YAML files parse correctly, environment override behavior covered by tests, and documentation files created in the correct Diataxis categories.
 
+  **Phase 4: Testing and Validation** - Complete
+
+- Unit tests: Added and expanded unit tests for watcher components (event filtering, plan extraction, and message handling). Key test cases include filter acceptance/rejection, plan extraction success/failure, dry-run behavior, and handling executor errors without propagating them.
+- Integration-style tests: Added tests that use the consumer stub (`XzeprConsumer::process_message`) together with a handler bridge to verify the end-to-end flow: consume -> filter -> extract -> execute.
+- Performance & Concurrency testing: Added `test_concurrent_execution_limits` to simulate multiple concurrent messages and validate semaphore-based throttling and throughput behavior.
+- Testable execution: Introduced a `PlanExecutor` abstraction and a `RealPlanExecutor` production implementation so tests can inject a `MockExecutor` to simulate execution success/failure/delays without invoking external providers.
+- Documentation: Added `docs/explanation/phase4_testing_and_validation.md` describing the test strategy, how to run environment-sensitive tests, and validation results.
+- Quality Gates: Confirmed formatting, compilation, lints (`cargo fmt`, `cargo check`, `cargo clippy -- -D warnings`) and `cargo test` pass with the updated test suite. Environment-sensitive tests remain ignored by default and can be run explicitly when needed.
+- Deliverables validated: Increased test coverage for watcher components; concurrency and error-handling behaviors validated through tests; documentation added describing testing approach and how to run tests.
+
   **Model Management Documentation** - Complete
 
 - API reference documentation for all model management features
