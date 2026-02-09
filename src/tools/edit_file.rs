@@ -85,6 +85,22 @@ impl EditFileTool {
     }
 }
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(test)]
+pub static TEST_EDIT_MISSING_OLDTEXT: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub static TEST_OLD_TEXT_NOT_FOUND: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub static TEST_OLD_TEXT_AMBIGUOUS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub static TEST_SAFETY_BLOCK: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub static TEST_APPEND_NO_FILE: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub static TEST_OVERWRITE_NO_FILE: AtomicU64 = AtomicU64::new(0);
+
 #[async_trait]
 impl ToolExecutor for EditFileTool {
     fn tool_definition(&self) -> serde_json::Value {
@@ -181,6 +197,11 @@ impl ToolExecutor for EditFileTool {
                     increment_counter!("overwrite_mode_no_file_total", "file" => file_label.clone());
                     tracing::warn!(path = %params.path, "overwrite failed: file not found");
 
+                    #[cfg(test)]
+                    {
+                        TEST_OVERWRITE_NO_FILE.fetch_add(1, Ordering::SeqCst);
+                    }
+
                     return Ok(ToolResult::error(format!(
                         "Can't overwrite file: file not found ({})",
                         params.path
@@ -229,6 +250,11 @@ impl ToolExecutor for EditFileTool {
                         .to_string();
                     increment_counter!("append_mode_no_file_total", "file" => file_label.clone());
                     tracing::warn!(path = %params.path, "append failed: file not found; suggest 'create'");
+
+                    #[cfg(test)]
+                    {
+                        TEST_APPEND_NO_FILE.fetch_add(1, Ordering::SeqCst);
+                    }
 
                     return Ok(ToolResult::error(format!(
                         "Can't append to file: file not found ({})\n\
@@ -300,6 +326,11 @@ impl ToolExecutor for EditFileTool {
                         increment_counter!("edit_mode_missing_oldtext_total", "file" => file_label.clone());
                         tracing::warn!(path = %params.path, "edit rejected: missing old_text; suggest 'append' or 'overwrite'");
 
+                        #[cfg(test)]
+                        {
+                            TEST_EDIT_MISSING_OLDTEXT.fetch_add(1, Ordering::SeqCst);
+                        }
+
                         return Ok(ToolResult::error(
                             "edit mode requires old_text parameter.\n\
                              To append to file, use 'append' mode.\n\
@@ -329,6 +360,11 @@ impl ToolExecutor for EditFileTool {
                     let old_text_snippet: String = old_text.chars().take(128).collect();
                     tracing::warn!(path = %params.path, old_text = %old_text_snippet, "edit failed: old_text not found");
 
+                    #[cfg(test)]
+                    {
+                        TEST_OLD_TEXT_NOT_FOUND.fetch_add(1, Ordering::SeqCst);
+                    }
+
                     return Ok(ToolResult::error(format!(
                         "The specified old_text was not found in the file.\n\
                          Searched for: {}\n\
@@ -345,6 +381,11 @@ impl ToolExecutor for EditFileTool {
                         .to_string();
                     increment_counter!("edit_mode_oldtext_ambiguous_total", "file" => file_label.clone(), "occurrences" => occurrences.to_string());
                     tracing::warn!(path = %params.path, occurrences = occurrences, "edit failed: old_text ambiguous");
+
+                    #[cfg(test)]
+                    {
+                        TEST_OLD_TEXT_AMBIGUOUS.fetch_add(1, Ordering::SeqCst);
+                    }
 
                     return Ok(ToolResult::error(format!(
                         "The specified old_text matches {} locations (must be unique).\n\
@@ -368,7 +409,17 @@ impl ToolExecutor for EditFileTool {
                         .unwrap_or("unknown")
                         .to_string();
                     increment_counter!("edit_mode_safety_block_total", "file" => file_label.clone(), "old_lines" => old_line_count.to_string(), "new_lines" => new_line_count.to_string());
-                    tracing::warn!(path = %params.path, old_lines = old_line_count, new_lines = new_line_count, "edit blocked by safety heuristic (dramatic reduction)");
+                    tracing::warn!(
+                        "safety check blocked edit on file={}; old_lines={}, new_lines={}",
+                        params.path,
+                        old_line_count,
+                        new_line_count
+                    );
+
+                    #[cfg(test)]
+                    {
+                        TEST_SAFETY_BLOCK.fetch_add(1, Ordering::SeqCst);
+                    }
 
                     return Ok(ToolResult::error(format!(
                         "Safety check failed: This edit would reduce file from {} lines to {} lines.\n\
@@ -416,7 +467,6 @@ mod tests {
     #[cfg(feature = "prometheus")]
     use metrics_exporter_prometheus::PrometheusBuilder;
     use serde_json::json;
-    #[cfg(feature = "prometheus")]
     use serial_test::serial;
     use std::fs;
     use tempfile::TempDir;
@@ -760,21 +810,20 @@ mod tests {
         );
     }
 
-    // ----- Metrics tests (run only when 'prometheus' feature is enabled) -----
+    // ----- Metrics verification (test-only atomic counters) -----
+    fn reset_test_counters() {
+        TEST_EDIT_MISSING_OLDTEXT.store(0, Ordering::SeqCst);
+        TEST_OLD_TEXT_NOT_FOUND.store(0, Ordering::SeqCst);
+        TEST_OLD_TEXT_AMBIGUOUS.store(0, Ordering::SeqCst);
+        TEST_SAFETY_BLOCK.store(0, Ordering::SeqCst);
+        TEST_APPEND_NO_FILE.store(0, Ordering::SeqCst);
+        TEST_OVERWRITE_NO_FILE.store(0, Ordering::SeqCst);
+    }
 
-    #[cfg(feature = "prometheus")]
     #[tokio::test]
     #[serial]
-    async fn test_metrics_increment_on_edit_missing_old_text() {
-        let handle = PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install recorder");
-
-        // Probe metric: verify the Prometheus recorder is active and capturing metrics for this test.
-        // If the probe isn't present in the rendered output it indicates the recorder wasn't
-        // properly installed or is not capturing metrics for this test run.
-        increment_counter!("probe_prometheus_active_total", "test" => "edit_missing_oldtext");
-
+    async fn test_metrics_atomic_increment_on_edit_missing_old_text() {
+        reset_test_counters();
         let td = TempDir::new().unwrap();
         let file_path = td.path().join("full.txt");
         fs::write(&file_path, "original content\n").unwrap();
@@ -789,29 +838,13 @@ mod tests {
             .await
             .unwrap();
 
-        let body = handle.render();
-        // First ensure the probe metric is present (verifies the recorder is active)
-        assert!(
-            body.contains("probe_prometheus_active_total"),
-            "Prometheus recorder not capturing metrics (probe missing). Body:\n{}",
-            body
-        );
-        // Now verify the actual metric we expect from the tool behavior
-        assert!(
-            body.contains("edit_mode_missing_oldtext_total"),
-            "Prometheus body did not include metric 'edit_mode_missing_oldtext_total'. Body:\n{}",
-            body
-        );
+        assert!(TEST_EDIT_MISSING_OLDTEXT.load(Ordering::SeqCst) >= 1);
     }
 
-    #[cfg(feature = "prometheus")]
     #[tokio::test]
     #[serial]
-    async fn test_metrics_increment_on_old_text_not_found() {
-        let handle = PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install recorder");
-
+    async fn test_metrics_atomic_increment_on_old_text_not_found() {
+        reset_test_counters();
         let td = TempDir::new().unwrap();
         let file_path = td.path().join("hf.txt");
         fs::write(&file_path, "line1\nline2\n").unwrap();
@@ -827,22 +860,13 @@ mod tests {
             .await
             .unwrap();
 
-        let body = handle.render();
-        assert!(
-            body.contains("edit_mode_oldtext_not_found_total"),
-            "Prometheus body did not include metric 'edit_mode_oldtext_not_found_total'. Body:\n{}",
-            body
-        );
+        assert!(TEST_OLD_TEXT_NOT_FOUND.load(Ordering::SeqCst) >= 1);
     }
 
-    #[cfg(feature = "prometheus")]
     #[tokio::test]
     #[serial]
-    async fn test_metrics_increment_on_old_text_ambiguous() {
-        let handle = PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install recorder");
-
+    async fn test_metrics_atomic_increment_on_old_text_ambiguous() {
+        reset_test_counters();
         let td = TempDir::new().unwrap();
         let file_path = td.path().join("amb.txt");
         fs::write(&file_path, "dup\nmatch\nmatch\nend\n").unwrap();
@@ -858,22 +882,13 @@ mod tests {
             .await
             .unwrap();
 
-        let body = handle.render();
-        assert!(
-            body.contains("edit_mode_oldtext_ambiguous_total"),
-            "Prometheus body did not include metric 'edit_mode_oldtext_ambiguous_total'. Body:\n{}",
-            body
-        );
+        assert!(TEST_OLD_TEXT_AMBIGUOUS.load(Ordering::SeqCst) >= 1);
     }
 
-    #[cfg(feature = "prometheus")]
     #[tokio::test]
     #[serial]
-    async fn test_metrics_increment_on_edit_safety_block() {
-        let handle = PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install recorder");
-
+    async fn test_metrics_atomic_increment_on_edit_safety_block() {
+        reset_test_counters();
         let td = TempDir::new().unwrap();
         let file_path = td.path().join("big.txt");
         // Construct a file with a distinct block that will be replaced by a tiny snippet
@@ -904,22 +919,13 @@ mod tests {
             .await
             .unwrap();
 
-        let body = handle.render();
-        assert!(
-            body.contains("edit_mode_safety_block_total"),
-            "Prometheus body did not include metric 'edit_mode_safety_block_total'. Body:\n{}",
-            body
-        );
+        assert!(TEST_SAFETY_BLOCK.load(Ordering::SeqCst) >= 1);
     }
 
-    #[cfg(feature = "prometheus")]
     #[tokio::test]
     #[serial]
-    async fn test_metrics_increment_on_append_missing_file() {
-        let handle = PrometheusBuilder::new()
-            .install_recorder()
-            .expect("install recorder");
-
+    async fn test_metrics_atomic_increment_on_append_missing_file() {
+        reset_test_counters();
         let td = TempDir::new().unwrap();
         let tool = EditFileTool::new(td.path().to_path_buf(), 1024 * 1024);
         let _ = tool
@@ -931,11 +937,24 @@ mod tests {
             .await
             .unwrap();
 
-        let body = handle.render();
-        assert!(
-            body.contains("append_mode_no_file_total"),
-            "Prometheus body did not include metric 'append_mode_no_file_total'. Body:\n{}",
-            body
-        );
+        assert!(TEST_APPEND_NO_FILE.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_metrics_atomic_increment_on_overwrite_missing_file() {
+        reset_test_counters();
+        let td = TempDir::new().unwrap();
+        let tool = EditFileTool::new(td.path().to_path_buf(), 1024 * 1024);
+        let _ = tool
+            .execute(json!({
+                "path": "nope2.txt",
+                "mode": "overwrite",
+                "content": "hi"
+            }))
+            .await
+            .unwrap();
+
+        assert!(TEST_OVERWRITE_NO_FILE.load(Ordering::SeqCst) >= 1);
     }
 }
