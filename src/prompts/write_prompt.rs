@@ -5,6 +5,41 @@
 
 use crate::chat_mode::SafetyMode;
 
+/// Instructions for file editing tools to prevent destructive operations
+const EDIT_FILE_USAGE_GUIDELINES: &str = r#"
+## File Editing Guidelines
+
+When modifying files, follow these rules strictly:
+
+### Rule 1: Choose the Correct Mode
+
+- **create**: ONLY for brand new files that don't exist yet
+  - Will fail if file already exists (safety feature)
+
+- **edit**: For targeted modifications to existing files
+  - STRICT MODE: REQUIRES `old_text` parameter with a unique snippet from the file. Calls to `edit` without `old_text` will be rejected — the tool no longer falls back to overwriting the file.
+  - Use `read_file` first to find a good anchor point
+  - Make `old_text` specific enough to match only once
+  - NEVER use edit mode without `old_text`
+
+- **append**: For adding content to the end of existing files
+  - Safe for adding new sections, functions, or targets
+  - Automatically handles newline separation
+  - Perfect for Makefiles, config files, documentation
+
+- **overwrite**: DANGEROUS - replaces entire file
+  - ONLY use when a user explicitly asks to replace the entire file
+  - NEVER use as a default or fallback
+
+### Rule 2: Workflow for Modifying Existing Files
+
+1. Use `read_file` to view current contents
+2. Identify a unique anchor point near where you want to make changes
+3. Use `edit` mode with `old_text` set to that anchor
+4. Review the diff in the response to verify changes
+
+"#;
+
 /// Generates the system prompt for write mode
 ///
 /// In write mode, the agent has full capabilities to read and write files,
@@ -87,6 +122,8 @@ IMPORTANT CAPABILITIES:
 
 {}
 
+{}
+
 EXECUTION GUIDELINES:
 1. Before major changes, review the affected files
 2. Make incremental, logical changes
@@ -101,7 +138,7 @@ AVOID:
 - Making risky changes without understanding the impact
 
 Remember: You have the power to make significant changes. Use it responsibly but effectively."#,
-        safety_instructions
+        safety_instructions, EDIT_FILE_USAGE_GUIDELINES
     )
 }
 
@@ -145,6 +182,22 @@ mod tests {
         assert!(prompt.contains("EXECUTION GUIDELINES"));
         assert!(prompt.contains("incremental"));
         assert!(prompt.contains("Test your changes"));
+        // Ensure edit-file safety guidelines are present
+        assert!(prompt.to_lowercase().contains("edit"));
+        assert!(prompt.to_lowercase().contains("append"));
+        assert!(
+            prompt.to_lowercase().contains("old_text")
+                || prompt.to_lowercase().contains("old text")
+        );
+    }
+
+    #[test]
+    fn test_write_prompt_mentions_strict_mode() {
+        let prompt = generate_write_prompt(SafetyMode::AlwaysConfirm);
+        let p = prompt.to_lowercase();
+        // Ensure the prompt communicates the strict-mode change to agents
+        assert!(p.contains("strict"));
+        assert!(p.contains("rejected") || p.contains("no longer") || p.contains("falls back"));
     }
 
     #[test]

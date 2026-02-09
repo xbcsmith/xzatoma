@@ -40,15 +40,15 @@ pub enum EditMode {
     /// Perform targeted replacement of unique old_text snippet.
     /// REQUIRES old_text parameter. Use this for modifications.
     Edit,
-    
+
     /// Create a new file. Fails if file already exists.
     /// Use this only for brand new files.
     Create,
-    
+
     /// Replace entire file contents. Requires file to exist.
     /// DANGEROUS: Only use when explicitly replacing entire file.
     Overwrite,
-    
+
     /// Append content to end of existing file.
     /// Safe for adding new content without replacement risk.
     Append,
@@ -67,7 +67,7 @@ EditMode::Edit => {
              To replace entire file, use 'overwrite' mode explicitly.".to_string()
         )
     })?;
-    
+
     // File must exist
     if !full_path.exists() {
         return Ok(ToolResult::error(format!(
@@ -75,12 +75,12 @@ EditMode::Edit => {
             params.path
         )));
     }
-    
+
     let old = fs::read_to_string(&full_path).await.map_err(XzatomaError::Io)?;
-    
+
     // Find and validate old_text occurrence
     let occurrences = old.matches(old_text.as_str()).count();
-    
+
     if occurrences == 0 {
         return Ok(ToolResult::error(format!(
             "The specified old_text was not found in the file.\n\
@@ -89,7 +89,7 @@ EditMode::Edit => {
             old_text
         )));
     }
-    
+
     if occurrences > 1 {
         return Ok(ToolResult::error(format!(
             "The specified old_text matches {} locations (must be unique).\n\
@@ -98,14 +98,14 @@ EditMode::Edit => {
             occurrences, old_text
         )));
     }
-    
+
     // Perform replacement
     let new_content = old.replacen(old_text.as_str(), &params.content, 1);
-    
+
     // SAFETY CHECK: Detect dramatic file reduction
     let old_line_count = old.lines().count();
     let new_line_count = new_content.lines().count();
-    
+
     if old_line_count >= 20 && new_line_count < (old_line_count / 3) {
         return Ok(ToolResult::error(format!(
             "Safety check failed: This edit would reduce file from {} lines to {} lines.\n\
@@ -115,7 +115,7 @@ EditMode::Edit => {
             old_line_count, new_line_count
         )));
     }
-    
+
     // Size check
     if new_content.len() as u64 > self.max_file_size {
         return Ok(ToolResult::error(format!(
@@ -123,11 +123,11 @@ EditMode::Edit => {
             new_content.len(), self.max_file_size
         )));
     }
-    
+
     // Write and generate diff
     fs::write(&full_path, &new_content).await.map_err(XzatomaError::Io)?;
     let diff = crate::tools::generate_diff(&old, &new_content)?;
-    
+
     Ok(ToolResult::success(format!(
         "Edited {} (replaced 1 occurrence):\n\n{}",
         params.path, diff
@@ -143,13 +143,13 @@ EditMode::Append => {
             params.path
         )));
     }
-    
+
     let old = fs::read_to_string(&full_path).await.map_err(XzatomaError::Io)?;
-    
+
     // Append content (add newline separator if original doesn't end with one)
     let separator = if old.ends_with('\n') { "" } else { "\n" };
     let new_content = format!("{}{}{}", old, separator, params.content);
-    
+
     // Size check
     if new_content.len() as u64 > self.max_file_size {
         return Ok(ToolResult::error(format!(
@@ -157,10 +157,10 @@ EditMode::Append => {
             new_content.len(), self.max_file_size
         )));
     }
-    
+
     fs::write(&full_path, &new_content).await.map_err(XzatomaError::Io)?;
     let diff = crate::tools::generate_diff(&old, &new_content)?;
-    
+
     Ok(ToolResult::success(format!(
         "Appended to {}:\n\n{}",
         params.path, diff
@@ -317,18 +317,18 @@ fn tool_definition(&self) -> serde_json::Value {
 async fn test_edit_without_old_text_returns_error() {
     let temp = TempDir::new().unwrap();
     let tool = EditFileTool::new(temp.path().to_path_buf(), 10_485_760);
-    
+
     // Create initial file
     let file_path = temp.path().join("test.txt");
     fs::write(&file_path, "original content").await.unwrap();
-    
+
     // Try to edit without old_text - should fail
     let result = tool.execute(json!({
         "path": "test.txt",
         "mode": "edit",
         "content": "new content"
     })).await.unwrap();
-    
+
     assert!(!result.success);
     assert!(result.output.contains("requires old_text parameter"));
     assert!(result.output.contains("append"));
@@ -339,7 +339,7 @@ async fn test_edit_without_old_text_returns_error() {
 async fn test_edit_dramatic_reduction_blocked() {
     let temp = TempDir::new().unwrap();
     let tool = EditFileTool::new(temp.path().to_path_buf(), 10_485_760);
-    
+
     // Create file with 50 lines
     let mut content = String::new();
     for i in 1..=50 {
@@ -347,7 +347,7 @@ async fn test_edit_dramatic_reduction_blocked() {
     }
     let file_path = temp.path().join("test.txt");
     fs::write(&file_path, &content).await.unwrap();
-    
+
     // Try to replace most of it with small content - should fail safety check
     let result = tool.execute(json!({
         "path": "test.txt",
@@ -355,7 +355,7 @@ async fn test_edit_dramatic_reduction_blocked() {
         "old_text": &content, // Entire file as old_text
         "content": "Just 3 lines\nof new\ncontent"
     })).await.unwrap();
-    
+
     assert!(!result.success);
     assert!(result.output.contains("Safety check failed"));
     assert!(result.output.contains("reduce file from"));
@@ -365,20 +365,20 @@ async fn test_edit_dramatic_reduction_blocked() {
 async fn test_append_mode_success() {
     let temp = TempDir::new().unwrap();
     let tool = EditFileTool::new(temp.path().to_path_buf(), 10_485_760);
-    
+
     // Create initial file
     let file_path = temp.path().join("Makefile");
     fs::write(&file_path, "build:\n\t@cargo build\n").await.unwrap();
-    
+
     // Append new target
     let result = tool.execute(json!({
         "path": "Makefile",
         "mode": "append",
         "content": "test:\n\t@cargo test\n"
     })).await.unwrap();
-    
+
     assert!(result.success);
-    
+
     // Verify both targets exist
     let final_content = fs::read_to_string(&file_path).await.unwrap();
     assert!(final_content.contains("build:"));
@@ -390,20 +390,20 @@ async fn test_append_mode_success() {
 async fn test_append_adds_separator_when_needed() {
     let temp = TempDir::new().unwrap();
     let tool = EditFileTool::new(temp.path().to_path_buf(), 10_485_760);
-    
+
     // Create file WITHOUT trailing newline
     let file_path = temp.path().join("test.txt");
     fs::write(&file_path, "line 1").await.unwrap();
-    
+
     // Append should add separator
     let result = tool.execute(json!({
         "path": "test.txt",
         "mode": "append",
         "content": "line 2"
     })).await.unwrap();
-    
+
     assert!(result.success);
-    
+
     let final_content = fs::read_to_string(&file_path).await.unwrap();
     assert_eq!(final_content, "line 1\nline 2");
 }
@@ -412,17 +412,17 @@ async fn test_append_adds_separator_when_needed() {
 async fn test_helpful_error_when_old_text_not_found() {
     let temp = TempDir::new().unwrap();
     let tool = EditFileTool::new(temp.path().to_path_buf(), 10_485_760);
-    
+
     let file_path = temp.path().join("test.txt");
     fs::write(&file_path, "actual content").await.unwrap();
-    
+
     let result = tool.execute(json!({
         "path": "test.txt",
         "mode": "edit",
         "old_text": "nonexistent text",
         "content": "replacement"
     })).await.unwrap();
-    
+
     assert!(!result.success);
     assert!(result.output.contains("not found in the file"));
     assert!(result.output.contains("Searched for:"));

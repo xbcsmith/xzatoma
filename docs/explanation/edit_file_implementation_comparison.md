@@ -26,7 +26,7 @@ back to overwrite behavior when `old_text` was not provided.
 ```rust
 EditMode::Edit => {
     let old = fs::read_to_string(&full_path).await?;
-    
+
     let new_content = if let Some(ref old_text) = params.old_text {
         // Targeted replacement if old_text provided
         let occurrences = old.matches(old_text).count();
@@ -36,7 +36,7 @@ EditMode::Edit => {
         // DANGEROUS: Falls back to full replacement
         params.content.clone()  // ⚠️ WIPES FILE
     };
-    
+
     fs::write(&full_path, &new_content).await?;
     // ...
 }
@@ -61,17 +61,17 @@ EditMode::Edit => {
              To replace entire file, use 'overwrite' mode explicitly."
         )
     })?;  // ✅ ERROR instead of fallback
-    
+
     let old = fs::read_to_string(&full_path).await?;
-    
+
     // Validate uniqueness
     let occurrences = old.matches(old_text.as_str()).count();
     if occurrences != 1 {
         return Ok(ToolResult::error(/* helpful message */));
     }
-    
+
     let new_content = old.replacen(old_text, &params.content, 1);
-    
+
     // SAFETY: Check for dramatic changes
     let old_lines = old.lines().count();
     let new_lines = new_content.lines().count();
@@ -81,7 +81,7 @@ EditMode::Edit => {
              Use 'overwrite' mode if intentional."
         ));  // ✅ BLOCKS suspicious changes
     }
-    
+
     fs::write(&full_path, &new_content).await?;
     // ...
 }
@@ -227,7 +227,7 @@ To append to file, use 'append' mode.
 To replace entire file, use 'overwrite' mode explicitly.
 ```
 
-**Agent Learns**: 
+**Agent Learns**:
 - Edit mode needs old_text
 - Append mode exists for adding content
 - Overwrite mode for full replacement
@@ -335,7 +335,7 @@ accidentally destroy data into a safe, guided experience. The key changes are:
 
 1. **Strict mode enforcement** - no dangerous fallbacks
 2. **Append mode** - safe way to add content
-3. **Safety validation** - prevents obviously wrong operations  
+3. **Safety validation** - prevents obviously wrong operations
 4. **Clear errors** - teach agents correct usage
 5. **Agent guidelines** - proactive instruction, not just reactive errors
 
