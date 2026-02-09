@@ -185,6 +185,8 @@ pub enum ModelCapability {
     LongContext,
     /// Model supports function calling/tool use
     FunctionCalling,
+    /// Model supports completion capability (basic completion support)
+    Completion,
     /// Model supports vision/image understanding
     Vision,
     /// Model supports streaming responses
@@ -198,6 +200,7 @@ impl std::fmt::Display for ModelCapability {
         match self {
             Self::LongContext => write!(f, "LongContext"),
             Self::FunctionCalling => write!(f, "FunctionCalling"),
+            Self::Completion => write!(f, "Completion"),
             Self::Vision => write!(f, "Vision"),
             Self::Streaming => write!(f, "Streaming"),
             Self::JsonMode => write!(f, "JsonMode"),
@@ -973,6 +976,7 @@ mod tests {
             ModelCapability::FunctionCalling.to_string(),
             "FunctionCalling"
         );
+        assert_eq!(ModelCapability::Completion.to_string(), "Completion");
         assert_eq!(ModelCapability::Vision.to_string(), "Vision");
         assert_eq!(ModelCapability::Streaming.to_string(), "Streaming");
         assert_eq!(ModelCapability::JsonMode.to_string(), "JsonMode");

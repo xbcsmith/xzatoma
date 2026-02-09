@@ -12,11 +12,11 @@
 //!
 //! # Examples
 //!
-//! ```ignore
+//! ```rust
 //! use xzatoma::mention_parser::{parse_mentions, Mention};
 //!
 //! let input = "Please check @config.yaml and search for @search:\"function_name\"";
-//! let (mentions, _cleaned) = parse_mentions(input)?;
+//! let (mentions, _cleaned) = parse_mentions(input).unwrap();
 //!
 //! assert_eq!(mentions.len(), 2);
 //! ```
@@ -292,11 +292,11 @@ impl Default for MentionCache {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use xzatoma::mention_parser::parse_mentions;
 ///
 /// let input = "Check @src/main.rs#L1-10 for details";
-/// let (mentions, cleaned) = parse_mentions(input)?;
+/// let (mentions, cleaned) = parse_mentions(input).unwrap();
 /// assert_eq!(mentions.len(), 1);
 /// ```
 pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String)> {
@@ -954,6 +954,8 @@ impl std::fmt::Display for LoadError {
     }
 }
 
+impl std::error::Error for LoadError {}
+
 /// Heuristic classification for file loading errors
 fn classify_file_error(e: &anyhow::Error) -> LoadErrorKind {
     let s = e.to_string().to_lowercase();
@@ -971,7 +973,7 @@ fn classify_file_error(e: &anyhow::Error) -> LoadErrorKind {
         || s.contains("absolute paths")
     {
         LoadErrorKind::PathOutsideWorkingDirectory
-    } else if s.contains("permission denied") {
+    } else if s.contains("permission denied") || s.contains("permission") {
         LoadErrorKind::PermissionDenied
     } else {
         LoadErrorKind::Unknown

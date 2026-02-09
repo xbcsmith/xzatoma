@@ -24,7 +24,7 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::config::WatcherLoggingConfig;
 /// use xzatoma::watcher::logging::init_watcher_logging;
 ///
@@ -99,9 +99,31 @@ pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// let event = /* CloudEventMessage */;
-/// let span = event_fields!(event);
+/// ```no_run
+/// # #![allow(clippy::needless_doctest_main)]
+/// fn main() {
+///     // Minimal, local dummy event type used only for documentation/testing.
+///     // The macro expects these fields to be present and displayable.
+///     struct DummyEvent {
+///         id: &'static str,
+///         event_type: &'static str,
+///         source: &'static str,
+///         platform_id: &'static str,
+///         package: &'static str,
+///         success: bool,
+///     }
+///
+///     let event = DummyEvent {
+///         id: "e1",
+///         event_type: "test.event",
+///         source: "test/source",
+///         platform_id: "p1",
+///         package: "pkg",
+///         success: true,
+///     };
+///
+///     let _span = xzatoma::event_fields!(event);
+/// }
 /// ```
 #[macro_export]
 macro_rules! event_fields {

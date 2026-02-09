@@ -50,7 +50,7 @@ pub enum WatcherError {
 ///
 /// # Example
 ///
-/// ```rust,no_run
+/// ```
 /// use xzatoma::config::Config;
 /// use xzatoma::watcher::Watcher;
 ///
@@ -91,7 +91,7 @@ impl Watcher {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```
     /// use xzatoma::config::Config;
     /// use xzatoma::watcher::Watcher;
     ///
@@ -178,7 +178,7 @@ impl Watcher {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```
     /// use xzatoma::config::Config;
     /// use xzatoma::watcher::Watcher;
     ///

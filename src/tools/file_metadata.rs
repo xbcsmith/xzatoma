@@ -130,13 +130,15 @@ pub struct ImageMetadata {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use xzatoma::tools::file_metadata::get_file_type;
+/// ```rust
+/// use xzatoma::tools::file_metadata::{get_file_type, FileType};
 /// use std::path::Path;
 ///
-/// # tokio_test::block_on(async {
-/// let file_type = get_file_type(Path::new("image.png")).await.unwrap();
-/// # });
+/// let file_type = tokio::runtime::Runtime::new()
+///     .unwrap()
+///     .block_on(get_file_type(Path::new(".")))
+///     .unwrap();
+/// assert!(matches!(file_type, FileType::Directory));
 /// ```
 pub async fn get_file_type(path: &Path) -> Result<FileType, FileMetadataError> {
     let metadata = tokio::fs::metadata(path).await?;
@@ -178,14 +180,15 @@ pub async fn get_file_type(path: &Path) -> Result<FileType, FileMetadataError> {
 ///
 /// # Examples
 ///
-/// ```ignore
-/// use xzatoma::tools::file_metadata::get_file_info;
+/// ```rust
+/// use xzatoma::tools::file_metadata::{get_file_info, FileType};
 /// use std::path::Path;
 ///
-/// # tokio_test::block_on(async {
-/// let info = get_file_info(Path::new("test.txt")).await.unwrap();
-/// println!("File size: {}", info.size);
-/// # });
+/// let info = tokio::runtime::Runtime::new()
+///     .unwrap()
+///     .block_on(get_file_info(Path::new(".")))
+///     .unwrap();
+/// assert!(matches!(info.file_type, FileType::Directory));
 /// ```
 pub async fn get_file_info(path: &Path) -> Result<FileInfo, FileMetadataError> {
     let metadata = tokio::fs::metadata(path).await?;
@@ -293,14 +296,15 @@ async fn detect_image_format(path: &Path) -> Result<ImageFormat, FileMetadataErr
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use xzatoma::tools::file_metadata::detect_content_type;
 /// use std::path::Path;
 ///
-/// # tokio_test::block_on(async {
-/// let mime = detect_content_type(Path::new("image.png")).await.unwrap();
-/// assert_eq!(mime, "image/png");
-/// # });
+/// let mime = tokio::runtime::Runtime::new()
+///     .unwrap()
+///     .block_on(detect_content_type(Path::new(".")))
+///     .unwrap();
+/// assert_eq!(mime, "application/octet-stream");
 /// ```
 pub async fn detect_content_type(path: &Path) -> Result<String, FileMetadataError> {
     // Check if it's an image file
@@ -336,15 +340,16 @@ pub async fn detect_content_type(path: &Path) -> Result<String, FileMetadataErro
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use xzatoma::tools::file_metadata::read_image_as_base64;
 /// use std::path::Path;
 ///
-/// # tokio_test::block_on(async {
-/// let (data, metadata) = read_image_as_base64(Path::new("test.png")).await.unwrap();
+/// let (data, metadata) = tokio::runtime::Runtime::new()
+///     .unwrap()
+///     .block_on(read_image_as_base64(Path::new("test.png")))
+///     .unwrap();
 /// assert!(!data.is_empty());
 /// assert!(metadata.width > 0);
-/// # });
 /// ```
 pub async fn read_image_as_base64(
     path: &Path,

@@ -86,11 +86,12 @@ impl ChatMode {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
     /// use xzatoma::chat_mode::ChatMode;
     ///
     /// let tag = ChatMode::Planning.colored_tag();
-    /// println!("{}", tag);  // Displays "[PLANNING]" in purple
+    /// // The tag should contain the mode name
+    /// assert!(tag.contains("PLANNING"));
     /// ```
     #[allow(dead_code)]
     pub fn colored_tag(&self) -> String {
@@ -178,11 +179,12 @@ impl SafetyMode {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
     /// use xzatoma::chat_mode::SafetyMode;
     ///
     /// let tag = SafetyMode::AlwaysConfirm.colored_tag();
-    /// println!("{}", tag);  // Displays "[SAFE]" in cyan
+    /// // The tag should contain the mode name
+    /// assert!(tag.contains("SAFE"));
     /// ```
     #[allow(dead_code)]
     pub fn colored_tag(&self) -> String {
@@ -291,12 +293,13 @@ impl ChatModeState {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
-    /// println!("{}", state.format_colored_prompt());
-    /// // Displays: [WRITE in green][SAFE in cyan] >>>
+    /// let prompt = state.format_colored_prompt();
+    /// assert!(prompt.contains("WRITE"));
+    /// assert!(prompt.contains("SAFE"));
     /// ```
     pub fn format_colored_prompt(&self) -> String {
         format!(

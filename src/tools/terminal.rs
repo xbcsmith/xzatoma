@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```no_run
+//! ```
 //! use xzatoma::tools::terminal::{execute_command, TerminalTool, CommandValidator};
 //! use xzatoma::config::{ExecutionMode, TerminalConfig};
 //!

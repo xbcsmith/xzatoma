@@ -141,6 +141,22 @@ pub mod chat {
             if let Some(storage) = &storage {
                 match storage.load_conversation(resume_id) {
                     Ok(Some((title, _model, messages))) => {
+                        // Diagnostic logging to help track resume issues (message counts, sample content)
+                        let user_count = messages.iter().filter(|m| m.role == "user").count();
+                        tracing::debug!(
+                            "Loaded conversation '{}' (resume_id={}) with {} total messages ({} user messages)",
+                            title,
+                            resume_id,
+                            messages.len(),
+                            user_count
+                        );
+                        if user_count > 0 {
+                            if let Some(first_user) = messages.iter().find(|m| m.role == "user") {
+                                let snippet = first_user.content.as_deref().unwrap_or("");
+                                tracing::debug!("First user message snippet: {}", snippet);
+                            }
+                        }
+
                         println!("Resuming conversation: {}", title.cyan());
                         let conversation = crate::agent::Conversation::with_history(
                             uuid::Uuid::parse_str(resume_id)
@@ -196,14 +212,21 @@ pub mod chat {
 
         // Populate readline history with previous user inputs when resuming
         if resume.is_some() {
+            let mut history_count = 0usize;
             for msg in agent.conversation().messages() {
                 if msg.role == "user" {
                     if let Some(content) = &msg.content {
                         // Add each user message to readline history so up/down arrows work
                         let _ = rl.add_history_entry(content);
+                        history_count += 1;
                     }
                 }
             }
+            tracing::debug!(
+                "Readline history populated with {} entries from resumed conversation (id={})",
+                history_count,
+                resume.as_deref().unwrap_or("<none>")
+            );
         }
 
         // Initialize mention cache for file content injection
@@ -532,10 +555,14 @@ pub mod chat {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
     ///
-    /// print_welcome_banner(&ChatMode::Planning, &SafetyMode::AlwaysConfirm);
+    /// let mode = ChatMode::Planning;
+    /// let safety = SafetyMode::AlwaysConfirm;
+    /// // Use public helpers for verification instead of internal display functions
+    /// assert!(mode.description().len() > 0);
+    /// assert!(safety.description().len() > 0);
     /// ```
     fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
         use colored::Colorize;
@@ -565,11 +592,14 @@ pub mod chat {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::AlwaysConfirm);
-    /// print_status_display(&state, 5, 10);
+    /// // Verify public accessors instead of calling internal display helpers
+    /// assert_eq!(state.chat_mode, ChatMode::Write);
+    /// assert_eq!(state.safety_mode, SafetyMode::AlwaysConfirm);
+    /// assert!(state.format_colored_prompt().len() > 0);
     /// ```
     fn print_status_display(
         mode_state: &ChatModeState,

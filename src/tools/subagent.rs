@@ -160,7 +160,7 @@ mod telemetry {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use xzatoma::tools::subagent::SubagentToolInput;
 ///
 /// let input = SubagentToolInput {
@@ -170,6 +170,7 @@ mod telemetry {
 ///     allowed_tools: Some(vec!["fetch".to_string(), "grep".to_string()]),
 ///     max_turns: Some(5),
 /// };
+/// assert_eq!(input.label, "research_docs");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubagentToolInput {
@@ -223,24 +224,24 @@ pub struct SubagentToolInput {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```no_run
 /// use xzatoma::tools::subagent::SubagentTool;
 /// use xzatoma::config::AgentConfig;
 /// use xzatoma::tools::ToolRegistry;
 /// use std::sync::Arc;
 ///
-/// # async fn example() -> xzatoma::error::Result<()> {
-/// # let provider = unimplemented!();
+/// // Provider is environment-specific; this example is illustrative and not executed in doctests
+/// # use xzatoma::config::CopilotConfig;
+/// # use xzatoma::providers::CopilotProvider;
+/// # let provider = CopilotProvider::new(CopilotConfig::default()).unwrap();
 /// let tools = ToolRegistry::new();
 /// let config = AgentConfig::default();
 /// let subagent_tool = SubagentTool::new(
 ///     Arc::new(provider),
 ///     config,
 ///     tools,
-///     0,  // Current recursion depth
+///     0,
 /// );
-/// # Ok(())
-/// # }
 /// ```
 pub struct SubagentTool {
     /// Shared provider instance (Arc for cheap cloning)
@@ -316,13 +317,15 @@ impl SubagentTool {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use xzatoma::tools::subagent::SubagentTool;
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     /// use std::sync::Arc;
     ///
-    /// # let provider = unimplemented!();
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default()).unwrap();
     /// let tool = SubagentTool::new(
     ///     Arc::new(provider),
     ///     AgentConfig::default(),
@@ -415,13 +418,11 @@ impl SubagentTool {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use xzatoma::tools::ToolRegistry;
-/// use xzatoma::tools::subagent::create_filtered_registry;
 ///
 /// let parent_registry = ToolRegistry::new();
-/// let allowed = Some(vec!["read_file".to_string()]);
-/// let filtered = create_filtered_registry(&parent_registry, allowed)?;
+/// let filtered = parent_registry.clone_with_filter(&["file_ops".to_string(), "terminal".to_string()]);
 /// ```
 fn create_filtered_registry(
     parent_registry: &ToolRegistry,

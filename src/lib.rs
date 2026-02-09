@@ -16,7 +16,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ```
 //! use xzatoma::{Config, Agent};
 //!
 //! #[tokio::main]

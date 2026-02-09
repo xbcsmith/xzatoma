@@ -29,14 +29,16 @@ use super::{ContextInfo, Conversation};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use xzatoma::agent::Agent;
 /// use xzatoma::config::AgentConfig;
 /// use xzatoma::tools::ToolRegistry;
 ///
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// // Requires a provider implementation
-/// # let provider = unimplemented!();
+/// # use xzatoma::config::CopilotConfig;
+/// # use xzatoma::providers::CopilotProvider;
+/// # let provider = CopilotProvider::new(CopilotConfig::default())?;
 /// let tools = ToolRegistry::new();
 /// let config = AgentConfig::default();
 ///
@@ -163,15 +165,17 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::Agent;
     /// use xzatoma::tools::ToolRegistry;
     /// use xzatoma::config::AgentConfig;
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let some_provider = unimplemented!();
-    /// let parent_provider = Arc::new(some_provider);
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let some_provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let parent_provider: Arc<dyn xzatoma::providers::Provider> = Arc::new(some_provider);
     /// let parent_agent = Agent::new_from_shared_provider(
     ///     Arc::clone(&parent_provider),
     ///     ToolRegistry::new(),
@@ -236,22 +240,31 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::{Agent, Conversation};
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider = unimplemented!();
-    /// # let old_agent = unimplemented!();
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # use xzatoma::agent::Agent;
+    /// # let provider_impl = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let old_agent = Agent::new(provider_impl, ToolRegistry::new(), AgentConfig::default())?;
     /// // Get existing conversation from old agent
-    /// # let old_agent: Agent = unimplemented!();
+    /// # let _ref = &old_agent;
     /// let conversation = old_agent.conversation().clone();
     ///
     /// // Create new agent with same conversation but different tools
     /// let new_tools = ToolRegistry::new();
     /// let config = AgentConfig::default();
-    /// let new_agent = Agent::with_conversation(provider, new_tools, config, conversation)?;
+    /// let new_agent = Agent::with_conversation(
+    ///     Box::new(CopilotProvider::new(CopilotConfig::default())?),
+    ///     new_tools,
+    ///     config,
+    ///     conversation,
+    /// )?;
     /// # Ok(())
     /// # }
     /// ```
@@ -299,15 +312,15 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::{Agent, Conversation};
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     /// use std::sync::Arc;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider_impl = unimplemented!();
-    /// let provider = Arc::new(provider_impl);
+    /// # let provider_impl = xzatoma::providers::CopilotProvider::new(xzatoma::config::CopilotConfig::default())?;
+    /// # let provider: Arc<dyn xzatoma::providers::Provider> = Arc::new(provider_impl);
     /// let conversation = Conversation::new(4096, 5, 0.8);
     ///
     /// let agent = Agent::with_conversation_and_shared_provider(
@@ -365,14 +378,14 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::Agent;
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider = unimplemented!();
+    /// # let provider: Box<dyn xzatoma::providers::Provider> = Box::new(xzatoma::providers::CopilotProvider::new(xzatoma::config::CopilotConfig::default())?);
     /// let tools = ToolRegistry::new();
     /// let config = AgentConfig::default();
     /// let mut agent = Agent::new_with_mode(
@@ -445,12 +458,14 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// # use xzatoma::agent::Agent;
     /// # use xzatoma::config::AgentConfig;
     /// # use xzatoma::tools::ToolRegistry;
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider = unimplemented!();
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
     /// # let tools = ToolRegistry::new();
     /// # let config = AgentConfig::default();
     /// # let mut agent = Agent::new(provider, tools, config)?;
@@ -694,13 +709,15 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::Agent;
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider = unimplemented!();
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
     /// # let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
     /// # agent.execute("test").await?;
     /// let usage = agent.get_token_usage();
@@ -730,13 +747,15 @@ impl Agent {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::Agent;
     /// use xzatoma::config::AgentConfig;
     /// use xzatoma::tools::ToolRegistry;
     ///
     /// # async fn example() -> xzatoma::error::Result<()> {
-    /// # let provider = unimplemented!();
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
     /// # let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
     /// # agent.execute("test").await?;
     /// let context = agent.get_context_info(8192);

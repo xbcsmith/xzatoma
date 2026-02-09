@@ -189,7 +189,7 @@ pub fn parse_special_command(input: &str) -> SpecialCommand {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::commands::special_commands::print_help;
 ///
 /// print_help();
@@ -255,7 +255,7 @@ NOTES:
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::commands::special_commands::print_models_help;
 ///
 /// print_models_help();
@@ -301,7 +301,7 @@ NOTES:
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::commands::special_commands::print_mention_help;
 ///
 /// print_mention_help();

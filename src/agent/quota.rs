@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use xzatoma::agent::quota::QuotaLimits;
 /// use std::time::Duration;
 ///
@@ -88,7 +88,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     /// use std::time::Duration;
     ///
@@ -127,7 +127,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     /// use std::time::Duration;
     ///
@@ -138,9 +138,10 @@ impl QuotaTracker {
     /// };
     /// let tracker = QuotaTracker::new(limits);
     ///
-    /// // First 5 executions should succeed
+    /// // First 5 executions should succeed (reserve + record)
     /// for _ in 0..5 {
     ///     tracker.check_and_reserve()?;
+    ///     tracker.record_execution(0)?;
     /// }
     ///
     /// // 6th execution should fail
@@ -194,7 +195,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     ///
     /// let limits = QuotaLimits {
@@ -238,7 +239,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     ///
     /// let tracker = QuotaTracker::new(QuotaLimits {
@@ -264,7 +265,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     ///
     /// let limits = QuotaLimits {
@@ -292,7 +293,7 @@ impl QuotaTracker {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::quota::{QuotaTracker, QuotaLimits};
     ///
     /// let limits = QuotaLimits {

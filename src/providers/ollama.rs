@@ -69,7 +69,8 @@ struct OllamaModelTag {
 /// Response from Ollama's /api/show endpoint
 #[derive(Debug, Deserialize)]
 struct OllamaShowResponse {
-    name: String,
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     model_info: serde_json::Value,
     #[serde(default)]
@@ -78,6 +79,8 @@ struct OllamaShowResponse {
     template: String,
     #[serde(default)]
     details: OllamaModelDetails,
+    #[serde(default)]
+    capabilities: Vec<String>,
 }
 
 /// Model details from /api/show
@@ -384,25 +387,35 @@ impl OllamaProvider {
             XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e))
         })?;
 
-        let models: Vec<ModelInfo> = ollama_response
-            .models
-            .into_iter()
-            .map(|tag| {
-                // Extract model family from name (e.g., "llama2:7b" -> "llama2")
-                let family = tag.name.split(':').next().unwrap_or(&tag.name);
-
-                let mut model_info = ModelInfo::new(
-                    &tag.name,
-                    format!("{} ({})", tag.name, format_size(tag.size)),
-                    get_context_window_for_model(&tag.name),
-                );
-
-                // Add capabilities based on model family
-                add_model_capabilities(&mut model_info, family);
-
-                model_info
-            })
-            .collect();
+        // Try to fetch richer model details for each tag via /api/show where possible.
+        // If fetching details fails for a model, fall back to tag-based heuristics.
+        let mut models: Vec<ModelInfo> = Vec::new();
+        for tag in ollama_response.models.into_iter() {
+            match self.fetch_model_details(&tag.name).await {
+                Ok(mut detailed_model) => {
+                    // Ensure display name includes size reported by tags
+                    detailed_model.display_name =
+                        format!("{} ({})", detailed_model.name, format_size(tag.size));
+                    detailed_model.set_provider_metadata("size", format_size(tag.size));
+                    models.push(detailed_model);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to fetch Ollama model details for {}: {}; falling back to tag data",
+                        tag.name,
+                        err
+                    );
+                    let family = tag.name.split(':').next().unwrap_or(&tag.name);
+                    let mut model_info = ModelInfo::new(
+                        &tag.name,
+                        format!("{} ({})", tag.name, format_size(tag.size)),
+                        get_context_window_for_model(&tag.name),
+                    );
+                    add_model_capabilities(&mut model_info, family);
+                    models.push(model_info);
+                }
+            }
+        }
 
         tracing::debug!("Fetched {} models from Ollama", models.len());
         Ok(models)
@@ -447,23 +460,45 @@ impl OllamaProvider {
             return Err(XzatomaError::Provider(format!("Model not found: {}", model_name)).into());
         }
 
-        let show_response: OllamaShowResponse = response.json().await.map_err(|e| {
+        // Read the response body as text first so we can handle varying response shapes
+        let body = response.text().await.map_err(|e| {
+            tracing::error!("Failed to read Ollama show response body: {}", e);
+            XzatomaError::Provider(format!("Failed to read model details: {}", e))
+        })?;
+
+        let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|e| {
             tracing::error!("Failed to parse Ollama show response: {}", e);
             XzatomaError::Provider(format!("Failed to parse model details: {}", e))
         })?;
 
-        let mut model_info = ModelInfo::new(
-            &show_response.name,
-            &show_response.name,
-            get_context_window_for_model(&show_response.name),
-        );
-
-        let family = show_response
+        // Use the name from the response when present; otherwise fall back to the requested model name
+        let name = show_response
             .name
-            .split(':')
-            .next()
-            .unwrap_or(&show_response.name);
-        add_model_capabilities(&mut model_info, family);
+            .clone()
+            .unwrap_or_else(|| model_name.to_string());
+
+        if show_response.name.is_none() {
+            tracing::debug!(
+                "Ollama show response missing 'name' field, falling back to requested model name: {}",
+                name
+            );
+        }
+
+        let mut model_info = build_model_info_from_show_response(&show_response, &name);
+
+        // Include reported parameter size and quantization in metadata if available
+        if !show_response.details.parameter_size.is_empty() {
+            model_info.set_provider_metadata(
+                "parameter_size",
+                show_response.details.parameter_size.clone(),
+            );
+        }
+        if !show_response.details.quantization_level.is_empty() {
+            model_info.set_provider_metadata(
+                "quantization_level",
+                show_response.details.quantization_level.clone(),
+            );
+        }
 
         Ok(model_info)
     }
@@ -521,6 +556,101 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
         }
         _ => {}
     }
+}
+
+/// Build a `ModelInfo` from an Ollama show response, falling back to the requested
+/// model name when the response does not include a `name` field.
+fn build_model_info_from_show_response(
+    show: &OllamaShowResponse,
+    requested_name: &str,
+) -> ModelInfo {
+    let name = show
+        .name
+        .clone()
+        .unwrap_or_else(|| requested_name.to_string());
+    let display_name = name.clone();
+
+    // Start with the heuristic but prefer explicit values from the show response
+    let mut context_window = get_context_window_for_model(&name);
+
+    if let Some(obj) = show.model_info.as_object() {
+        // Prefer architecture-specific context length (e.g., "granite.context_length")
+        if let Some(arch) = obj.get("general.architecture").and_then(|v| v.as_str()) {
+            let key = format!("{}.context_length", arch);
+            if let Some(val) = obj.get(&key).and_then(|v| v.as_u64()) {
+                context_window = val as usize;
+            } else if let Some(val) = obj.get("context_length").and_then(|v| v.as_u64()) {
+                context_window = val as usize;
+            } else {
+                // Fallback: find any field that ends with 'context_length'
+                for (k, v) in obj.iter() {
+                    if k.ends_with("context_length") {
+                        if let Some(val) = v.as_u64() {
+                            context_window = val as usize;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut model_info = ModelInfo::new(&name, &display_name, context_window);
+
+    // Map explicit capabilities from the show response into our ModelCapability flags
+    if !show.capabilities.is_empty() {
+        // keep the raw list for inspection
+        let caps_joined = show.capabilities.join(", ");
+        model_info.set_provider_metadata("capabilities", caps_joined.clone());
+
+        for cap in &show.capabilities {
+            match cap.to_lowercase().as_str() {
+                "tools" => model_info.add_capability(ModelCapability::FunctionCalling),
+                "vision" => model_info.add_capability(ModelCapability::Vision),
+                "streaming" => model_info.add_capability(ModelCapability::Streaming),
+                "json" | "json_mode" | "json-mode" => {
+                    model_info.add_capability(ModelCapability::JsonMode)
+                }
+                "long_context" | "longcontext" | "long-context" => {
+                    model_info.add_capability(ModelCapability::LongContext)
+                }
+                "completion" => model_info.add_capability(ModelCapability::Completion),
+                _ => {
+                    // Unknown capability: preserve via provider metadata (already added)
+                }
+            }
+        }
+    }
+
+    // Prefer the family reported in details if present, otherwise derive from the name
+    let family = if !show.details.family.is_empty() {
+        show.details.family.clone()
+    } else {
+        name.split(':').next().unwrap_or(&name).to_string()
+    };
+
+    // Add family-based heuristics as a fallback
+    add_model_capabilities(&mut model_info, &family);
+
+    // Record some helpful provider-specific metadata
+    if let Some(arch) = show
+        .model_info
+        .get("general.architecture")
+        .and_then(|v| v.as_str())
+    {
+        model_info.set_provider_metadata("architecture", arch);
+    }
+    if !show.details.parameter_size.is_empty() {
+        model_info.set_provider_metadata("parameter_size", show.details.parameter_size.clone());
+    }
+    if !show.details.quantization_level.is_empty() {
+        model_info.set_provider_metadata(
+            "quantization_level",
+            show.details.quantization_level.clone(),
+        );
+    }
+
+    model_info
 }
 
 /// Format byte size for display
@@ -971,6 +1101,74 @@ mod tests {
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model().unwrap(), "test-model");
+    }
+
+    #[test]
+    fn test_parse_show_response_missing_name() {
+        let json = r#"{
+            "model_info": { "description": "Test model" },
+            "parameters": "",
+            "template": "",
+            "details": { "parameter_size": "", "quantization_level": "", "family": "granite4" }
+        }"#;
+
+        let show: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        assert!(show.name.is_none());
+        assert_eq!(show.details.family, "granite4");
+    }
+
+    #[test]
+    fn test_build_model_info_from_show_response_missing_name() {
+        let show = OllamaShowResponse {
+            name: None,
+            model_info: serde_json::json!({"description": "Test model"}),
+            parameters: String::new(),
+            template: String::new(),
+            details: OllamaModelDetails {
+                parameter_size: String::new(),
+                quantization_level: String::new(),
+                family: "granite4".to_string(),
+            },
+            capabilities: Vec::new(),
+        };
+
+        let model_info = build_model_info_from_show_response(&show, "granite4:latest");
+        assert_eq!(model_info.name, "granite4:latest");
+        assert_eq!(model_info.display_name, "granite4:latest");
+        assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
+    }
+
+    #[test]
+    fn test_build_model_info_from_show_response_parses_context_and_capabilities() {
+        let json = r#"{
+            "name": "granite4:latest",
+            "model_info": {
+                "general.architecture": "granite",
+                "granite.context_length": 131072
+            },
+            "capabilities": ["completion", "tools"],
+            "parameters": "",
+            "template": "",
+            "details": { "parameter_size": "3.4B", "quantization_level": "Q4_K", "family": "granite" }
+        }"#;
+
+        let show: OllamaShowResponse = serde_json::from_str(json).unwrap();
+        let model_info = build_model_info_from_show_response(&show, "granite4:latest");
+        assert_eq!(model_info.context_window, 131072);
+        assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
+        assert!(model_info.supports_capability(ModelCapability::Completion));
+        assert_eq!(
+            model_info.provider_specific.get("capabilities").unwrap(),
+            "completion, tools"
+        );
+        assert_eq!(
+            model_info.provider_specific.get("architecture").unwrap(),
+            "granite"
+        );
+        assert_eq!(
+            model_info.provider_specific.get("parameter_size").unwrap(),
+            "3.4B"
+        );
     }
 
     #[test]

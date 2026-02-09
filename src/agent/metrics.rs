@@ -341,7 +341,7 @@ mod tests {
     fn test_metrics_double_record_prevention() {
         let metrics = SubagentMetrics::new("test".to_string(), 0);
         metrics.record_completion(5, 1500, "success");
-        // Second call should be ignored
+        // Second call should be d
         metrics.record_completion(10, 3000, "timeout");
         // Only first completion should be recorded
         assert!(metrics.recorded.get());
@@ -402,10 +402,10 @@ mod tests {
     }
 
     #[test]
-    fn test_metrics_error_then_completion_ignored() {
+    fn test_metrics_error_then_completion_d() {
         let metrics = SubagentMetrics::new("test".to_string(), 1);
         metrics.record_error("quota_exceeded");
-        // Second call ignored
+        // Second call d
         metrics.record_completion(3, 1000, "success");
         // Only error should be recorded
         assert!(metrics.recorded.get());

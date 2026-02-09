@@ -45,7 +45,7 @@ pub fn temp_dir() -> TempDir {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::test_utils::{temp_dir, create_test_file};
 ///
 /// let dir = temp_dir();
