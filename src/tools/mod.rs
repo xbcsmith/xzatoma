@@ -234,7 +234,7 @@ impl ToolResult {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::tools::ToolExecutor;
 /// use xzatoma::error::Result;
 /// use async_trait::async_trait;
@@ -325,7 +325,7 @@ impl ToolRegistry {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// use xzatoma::tools::ToolRegistry;
     /// // let mut registry = ToolRegistry::new();
     /// // registry.register("my_tool", Box::new(MyToolExecutor));
@@ -414,8 +414,11 @@ impl ToolRegistry {
     ///
     /// # Examples
     ///
-    /// ```ignore
-    /// let filtered = registry.clone_with_filter(&["file_ops", "terminal"]);
+    /// ```rust
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// let registry = ToolRegistry::new();
+    /// let filtered = registry.clone_with_filter(&["file_ops".to_string(), "terminal".to_string()]);
     /// ```
     pub fn clone_with_filter(&self, allowed: &[String]) -> Self {
         let mut filtered = ToolRegistry::new();

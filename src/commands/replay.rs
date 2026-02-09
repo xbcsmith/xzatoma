@@ -51,12 +51,20 @@ pub struct ReplayArgs {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
 /// use xzatoma::commands::replay;
-/// use clap::Parser;
+/// use std::path::PathBuf;
 ///
-/// let args = replay::ReplayArgs::parse_from(&["replay", "--list"]);
-/// replay::run_replay(args).await?;
+/// // Construct the args directly for documentation/testing purposes
+/// let args = replay::ReplayArgs {
+///     id: None,
+///     list: true,
+///     db_path: PathBuf::from("~/.xzatoma/conversations.db"),
+///     limit: 10,
+///     offset: 0,
+///     tree: false,
+/// };
+/// assert!(args.list);
 /// ```
 pub async fn run_replay(args: ReplayArgs) -> Result<()> {
     // Expand tilde in path

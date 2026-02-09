@@ -18,7 +18,7 @@ use ulid::Ulid;
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use xzatoma::agent::ConversationRecord;
 ///
 /// let record = ConversationRecord {
@@ -111,10 +111,13 @@ impl ConversationStore {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```
     /// use xzatoma::agent::ConversationStore;
     ///
+    /// # fn main() -> xzatoma::error::Result<()> {
     /// let store = ConversationStore::new("/tmp/conversations.db")?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let db = sled::open(path)
@@ -262,7 +265,7 @@ impl ConversationStore {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use xzatoma::agent::new_conversation_id;
 ///
 /// let id = new_conversation_id();
@@ -283,11 +286,13 @@ pub fn new_conversation_id() -> String {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```
 /// use xzatoma::agent::now_rfc3339;
 ///
 /// let timestamp = now_rfc3339();
-/// assert!(timestamp.ends_with("Z"));
+/// // RFC3339 format: should contain the 'T' separator and be parseable
+/// assert!(timestamp.contains("T"));
+/// assert!(chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok());
 /// ```
 pub fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()

@@ -77,12 +77,46 @@ impl PlanExtractor {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
     /// use xzatoma::watcher::PlanExtractor;
-    /// use xzatoma::xzepr::CloudEventMessage;
+    /// use xzatoma::xzepr::consumer::message::CloudEventMessage;
     ///
     /// let extractor = PlanExtractor::new();
-    /// let plan = extractor.extract(&event)?;
+    /// let json = r#"{
+    ///   "success": true,
+    ///   "id": "01JTEST1234567890123456",
+    ///   "specversion": "1.0.1",
+    ///   "type": "test.event",
+    ///   "source": "test/source",
+    ///   "api_version": "v1",
+    ///   "name": "test",
+    ///   "version": "1.0.0",
+    ///   "release": "1.0.0",
+    ///   "platform_id": "test-platform",
+    ///   "package": "test-package",
+    ///   "data": {
+    ///     "events": [
+    ///       {
+    ///         "id": "event-1",
+    ///         "name": "evt",
+    ///         "version": "1.0",
+    ///         "release": "1.0.0",
+    ///         "platform_id": "test-platform",
+    ///         "package": "test-package",
+    ///         "description": "desc",
+    ///         "payload": { "plan": "- task: setup\n  commands: echo hello" },
+    ///         "success": true,
+    ///         "event_receiver_id": "receiver-1",
+    ///         "created_at": "2025-01-01T00:00:00Z"
+    ///       }
+    ///     ],
+    ///     "event_receivers": [],
+    ///     "event_receiver_groups": []
+    ///   }
+    /// }"#;
+    /// let event: CloudEventMessage = serde_json::from_str(json).unwrap();
+    /// let plan = extractor.extract(&event).unwrap();
+    /// assert!(plan.contains("setup"));
     /// ```
     pub fn extract(&self, event: &CloudEventMessage) -> Result<String> {
         for strategy in &self.strategies {

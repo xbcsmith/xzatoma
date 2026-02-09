@@ -913,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_tool_results_for_call_ignores_other_roles() {
+    fn test_find_tool_results_for_call_s_other_roles() {
         let mut conv = Conversation::new(8000, 10, 0.8);
         conv.add_message(Message::user("call_123")); // Not a tool message
         conv.add_message(Message::tool_result("call_123", "result"));

@@ -31,7 +31,7 @@ use crate::tools::{ToolExecutor, ToolRegistry};
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use xzatoma::tools::registry_builder::ToolRegistryBuilder;
 /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
 /// use std::path::PathBuf;
