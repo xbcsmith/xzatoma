@@ -34,7 +34,6 @@ use std::path::{Component, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::time::Duration;
 
-use anyhow::Context;
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{json, Value};
@@ -45,6 +44,31 @@ use crate::chat_mode::SafetyMode;
 use crate::config::{ExecutionMode, TerminalConfig};
 use crate::error::{Result, XzatomaError};
 use crate::tools::{ToolExecutor, ToolResult};
+
+/// Parsed command line with program and arguments
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::terminal::parse_command_line;
+///
+/// let parsed = parse_command_line("echo hello").unwrap();
+/// assert_eq!(parsed.program, "echo");
+/// assert_eq!(parsed.args, vec!["hello".to_string()]);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ParsedCommand {
+    /// Program name or path
+    pub program: String,
+    /// Arguments for the program
+    pub args: Vec<String>,
+}
+
+impl ParsedCommand {
+    fn tokens(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.program.as_str()).chain(self.args.iter().map(String::as_str))
+    }
+}
 
 /// Convenience wrapper to execute a single command using TerminalTool with a default config
 pub async fn execute_command(
@@ -154,6 +178,7 @@ impl CommandValidator {
     /// - Err(XzatomaError::DangerousCommand(_)) if command matches denylist
     /// - Err(XzatomaError::PathOutsideWorkingDirectory(_)) if path escapes the working directory
     pub fn validate(&self, command: &str) -> std::result::Result<(), XzatomaError> {
+        let parsed = parse_command_line(command)?;
         // Denylist first - block always
         for r in &self.denylist {
             if r.is_match(command) {
@@ -164,21 +189,13 @@ impl CommandValidator {
             }
         }
 
-        // Empty command: treat as a tool error
-        if command.trim().is_empty() {
-            return Err(XzatomaError::Tool("Empty command".to_string()));
-        }
-
         match self.mode {
             ExecutionMode::Interactive => Err(XzatomaError::CommandRequiresConfirmation(
                 command.to_string(),
             )),
             ExecutionMode::RestrictedAutonomous => {
                 // Get first token i.e. command name
-                let name = command
-                    .split_whitespace()
-                    .next()
-                    .ok_or_else(|| XzatomaError::Tool("Empty command".to_string()))?;
+                let name = parsed.program.as_str();
                 if !self.allowlist.contains(&name.to_string()) {
                     return Err(XzatomaError::CommandRequiresConfirmation(format!(
                         "Command '{}' not in allowlist",
@@ -186,12 +203,12 @@ impl CommandValidator {
                     )));
                 }
 
-                self.validate_paths(command)?;
+                self.validate_paths(&parsed)?;
                 Ok(())
             }
             ExecutionMode::FullAutonomous => {
                 // Full autonomous still must validate paths
-                self.validate_paths(command)?;
+                self.validate_paths(&parsed)?;
                 Ok(())
             }
         }
@@ -240,17 +257,12 @@ impl CommandValidator {
     ///
     /// Performs a conservative lexical check for non-existent files and canonicalized
     /// verification for existing ones (following symlinks).
-    fn validate_paths(&self, command: &str) -> std::result::Result<(), XzatomaError> {
-        let tokens = command.split_whitespace().collect::<Vec<&str>>();
+    fn validate_paths(&self, parsed: &ParsedCommand) -> std::result::Result<(), XzatomaError> {
         let canonical_working = self.resolve_canonical_working();
 
-        for token in tokens {
-            let t = token.trim().trim_matches(|c| c == '"' || c == '\'');
+        for token in parsed.tokens() {
+            let t = token.trim();
             if t.is_empty() {
-                continue;
-            }
-            // Skip common shell tokens
-            if matches!(t, "|" | "||" | "&&" | ">" | ">>" | "<" | ";" | "&") {
                 continue;
             }
 
@@ -314,6 +326,112 @@ impl CommandValidator {
     }
 }
 
+/// Parse a command string into program and arguments without shell features
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::terminal::parse_command_line;
+///
+/// let parsed = parse_command_line("echo \"hello world\"").unwrap();
+/// assert_eq!(parsed.program, "echo");
+/// assert_eq!(parsed.args, vec!["hello world".to_string()]);
+/// ```
+pub fn parse_command_line(command: &str) -> std::result::Result<ParsedCommand, XzatomaError> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut saw_non_ws = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                saw_non_ws = true;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+                saw_non_ws = true;
+            }
+            '\\' if !in_single => {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                    saw_non_ws = true;
+                } else {
+                    return Err(XzatomaError::Tool(
+                        "Invalid escape at end of command".to_string(),
+                    ));
+                }
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
+            }
+            '|' | '&' | ';' | '<' | '>' if !in_single && !in_double => {
+                return Err(XzatomaError::Tool(
+                    "Shell operators are not allowed in terminal commands".to_string(),
+                ));
+            }
+            '`' if !in_single && !in_double => {
+                return Err(XzatomaError::Tool(
+                    "Command substitution is not allowed".to_string(),
+                ));
+            }
+            '$' if !in_single && !in_double => {
+                if matches!(chars.peek(), Some('(')) {
+                    return Err(XzatomaError::Tool(
+                        "Command substitution is not allowed".to_string(),
+                    ));
+                }
+                current.push(ch);
+                saw_non_ws = true;
+            }
+            _ => {
+                current.push(ch);
+                if !ch.is_whitespace() {
+                    saw_non_ws = true;
+                }
+            }
+        }
+    }
+
+    if in_single || in_double {
+        return Err(XzatomaError::Tool(
+            "Unterminated quoted string in command".to_string(),
+        ));
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    if tokens.is_empty() && !saw_non_ws {
+        return Err(XzatomaError::Tool("Empty command".to_string()));
+    }
+
+    if tokens.is_empty() {
+        return Err(XzatomaError::Tool(
+            "Command parsing produced no tokens".to_string(),
+        ));
+    }
+
+    let program = tokens.remove(0);
+    if program.contains('=') && !program.contains('/') && !program.starts_with(".") {
+        return Err(XzatomaError::Tool(
+            "Environment assignments are not supported in terminal commands".to_string(),
+        ));
+    }
+
+    Ok(ParsedCommand {
+        program,
+        args: tokens,
+    })
+}
+
 /// Terminal tool implementing `ToolExecutor`
 ///
 /// Accepts:
@@ -367,7 +485,7 @@ impl ToolExecutor for TerminalTool {
     fn tool_definition(&self) -> Value {
         json!({
             "name": "terminal",
-            "description": "Execute validated shell commands in the working directory",
+            "description": "Execute validated commands in the working directory (no shell operators)",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -391,6 +509,8 @@ impl ToolExecutor for TerminalTool {
                 ))
             })?
             .to_string();
+
+        let parsed = parse_command_line(&command).map_err(|e| anyhow::anyhow!(e))?;
 
         let confirm = params["confirm"].as_bool().unwrap_or(false);
         let timeout_seconds = params["timeout_seconds"]
@@ -429,16 +549,9 @@ impl ToolExecutor for TerminalTool {
             }
         }
 
-        // Build the shell invocation
-        let mut cmd = if cfg!(unix) {
-            let mut c = Command::new("sh");
-            c.arg("-c").arg(&command);
-            c
-        } else {
-            let mut c = Command::new("cmd");
-            c.arg("/C").arg(&command);
-            c
-        };
+        // Build the program invocation without shell parsing
+        let mut cmd = Command::new(&parsed.program);
+        cmd.args(&parsed.args);
 
         cmd.current_dir(self.validator.working_dir.clone());
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -552,7 +665,13 @@ pub fn is_dangerous_command(command: &str, mode: ExecutionMode, working_dir: Pat
 
 /// Simple parser that splits a command line on whitespace
 pub fn parse_command(command: &str) -> Vec<String> {
-    command.split_whitespace().map(|s| s.to_string()).collect()
+    parse_command_line(command)
+        .map(|parsed| {
+            std::iter::once(parsed.program)
+                .chain(parsed.args)
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -632,6 +751,19 @@ mod tests {
             v_full.validate("rm -rf /").unwrap_err(),
             XzatomaError::DangerousCommand(_)
         ));
+    }
+
+    #[test]
+    fn test_parse_command_line_with_quotes() {
+        let parsed = parse_command_line("echo \"hello world\"").unwrap();
+        assert_eq!(parsed.program, "echo");
+        assert_eq!(parsed.args, vec!["hello world".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_command_line_rejects_shell_operators() {
+        let err = parse_command_line("echo hi | grep h").unwrap_err();
+        assert!(err.to_string().contains("Shell operators"));
     }
 
     #[tokio::test]

@@ -30,12 +30,12 @@ impl SqliteStorage {
         }
 
         let proj_dirs = ProjectDirs::from("com", "xbcsmith", "xzatoma")
-            .ok_or_else(|| XzatomaError::Config("Could not determine data directory".into()))?;
+            .ok_or_else(|| XzatomaError::Storage("Could not determine data directory".into()))?;
 
         let data_dir = proj_dirs.data_dir();
         std::fs::create_dir_all(data_dir)
             .context("Failed to create data directory")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let db_path = data_dir.join("history.db");
         let storage = Self { db_path };
@@ -64,7 +64,7 @@ impl SqliteStorage {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
                 .context("Failed to create parent directory for database")
-                .map_err(|e| XzatomaError::Config(e.to_string()))?;
+                .map_err(|e| XzatomaError::Storage(e.to_string()))?;
         }
 
         let storage = Self { db_path };
@@ -76,7 +76,7 @@ impl SqliteStorage {
     fn init(&self) -> Result<()> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS conversations (
@@ -90,7 +90,7 @@ impl SqliteStorage {
             [],
         )
         .context("Failed to create tables")
-        .map_err(|e| XzatomaError::Config(e.to_string()))?;
+        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         Ok(())
     }
@@ -105,18 +105,18 @@ impl SqliteStorage {
     ) -> Result<()> {
         let mut conn = Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let messages_json = serde_json::to_string(messages)
             .context("Failed to serialize messages")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let now = Utc::now().to_rfc3339();
 
         let tx = conn
             .transaction()
             .context("Failed to start transaction")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         // Check if exists to preserve created_at
         let exists: bool = tx
@@ -140,7 +140,7 @@ impl SqliteStorage {
                 params![title, now, model, messages_json, id],
             )
             .context("Failed to update conversation")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
         } else {
             tx.execute(
                 "INSERT INTO conversations (id, title, created_at, updated_at, model, messages)
@@ -148,12 +148,12 @@ impl SqliteStorage {
                 params![id, title, now, now, model, messages_json],
             )
             .context("Failed to insert conversation")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
         }
 
         tx.commit()
             .context("Failed to commit transaction")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         Ok(())
     }
@@ -162,7 +162,7 @@ impl SqliteStorage {
     pub fn load_conversation(&self, id: &str) -> Result<Option<LoadedConversation>> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         // Support both full UUID and 8-char prefix matching
         let query = if id.len() == 36 {
@@ -188,13 +188,13 @@ impl SqliteStorage {
             })
             .optional()
             .context("Failed to query conversation")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         match result {
             Some((title, model, messages_json)) => {
                 let messages: Vec<Message> = serde_json::from_str(&messages_json)
                     .context("Failed to deserialize messages")
-                    .map_err(|e| XzatomaError::Config(e.to_string()))?;
+                    .map_err(|e| XzatomaError::Storage(e.to_string()))?;
                 Ok(Some((title, model, messages)))
             }
             None => Ok(None),
@@ -205,7 +205,7 @@ impl SqliteStorage {
     pub fn list_sessions(&self) -> Result<Vec<StoredSession>> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let mut stmt = conn
             .prepare(
@@ -214,7 +214,7 @@ impl SqliteStorage {
                 ORDER BY updated_at DESC",
             )
             .context("Failed to prepare statement")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let sessions_iter = stmt
             .query_map([], |row| {
@@ -256,7 +256,7 @@ impl SqliteStorage {
                 })
             })
             .context("Failed to query sessions")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         let mut sessions = Vec::new();
         for s in sessions_iter.flatten() {
@@ -270,7 +270,7 @@ impl SqliteStorage {
     pub fn delete_conversation(&self, id: &str) -> Result<()> {
         let conn = Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         // Support both full UUID and 8-char prefix matching
         let (query, param) = if id.len() == 36 {
@@ -286,7 +286,7 @@ impl SqliteStorage {
 
         conn.execute(query, params![param])
             .context("Failed to delete conversation")
-            .map_err(|e| XzatomaError::Config(e.to_string()))?;
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         Ok(())
     }

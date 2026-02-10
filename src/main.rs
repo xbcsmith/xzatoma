@@ -3,7 +3,7 @@
 #![doc = "XZatoma - Autonomous AI agent CLI"]
 #![doc = "Main entry point for the XZatoma agent application."]
 
-use anyhow::Result;
+use xzatoma::error::Result;
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 

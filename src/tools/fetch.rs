@@ -8,7 +8,7 @@
 //! - Caching support
 
 use crate::error::Result;
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
@@ -196,9 +196,33 @@ impl SsrfValidator {
             return self.validate_ip(ip);
         }
 
-        // For hostnames, we'll do a basic check and rely on actual DNS resolution
-        // during the HTTP request to be more restrictive
+        let resolved_ips = self.resolve_host_ips(host)?;
+        for ip in resolved_ips {
+            self.validate_ip(ip)?;
+        }
+
         Ok(())
+    }
+
+    /// Resolve a hostname to IP addresses for SSRF validation
+    fn resolve_host_ips(&self, host: &str) -> Result<Vec<IpAddr>> {
+        let addrs = (host, 80)
+            .to_socket_addrs()
+            .map_err(|e| anyhow::anyhow!("Failed to resolve host '{}': {}", host, e))?;
+
+        let mut ips = Vec::new();
+        for addr in addrs {
+            ips.push(addr.ip());
+        }
+
+        if ips.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to resolve host '{}': no addresses",
+                host
+            ));
+        }
+
+        Ok(ips)
     }
 
     /// Validate IP address
@@ -625,13 +649,13 @@ mod tests {
     #[test]
     fn test_ssrf_validator_https_allowed() {
         let validator = SsrfValidator::new();
-        assert!(validator.validate("https://example.com").is_ok());
+        assert!(validator.validate("https://93.184.216.34").is_ok());
     }
 
     #[test]
     fn test_ssrf_validator_http_allowed() {
         let validator = SsrfValidator::new();
-        assert!(validator.validate("http://example.com").is_ok());
+        assert!(validator.validate("http://1.1.1.1").is_ok());
     }
 
     #[test]
