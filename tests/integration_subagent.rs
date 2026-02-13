@@ -6,22 +6,16 @@
 /// They focus on config schema validation rather than end-to-end execution.
 use assert_cmd::Command;
 use predicates::prelude::*;
-use std::fs;
-use tempfile::TempDir;
+mod common;
 
 /// Test 1: Valid subagent config with custom values
 ///
 /// Validates that custom subagent configuration is accepted and parsed
 #[test]
 fn test_subagent_config_valid_custom_values() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 5\n    default_max_turns: 20\n    output_max_size: 8192\n    telemetry_enabled: false\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
@@ -35,14 +29,9 @@ fn test_subagent_config_valid_custom_values() {
 /// Validates that zero max_depth is rejected
 #[test]
 fn test_invalid_config_subagent_depth_zero() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 0\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config")
@@ -62,14 +51,9 @@ fn test_invalid_config_subagent_depth_zero() {
 /// Validates that excessive max_depth is rejected
 #[test]
 fn test_invalid_config_subagent_depth_too_large() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 15\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config")
@@ -88,14 +72,9 @@ fn test_invalid_config_subagent_depth_too_large() {
 /// Validates that minimum output size is enforced
 #[test]
 fn test_invalid_config_subagent_output_size_too_small() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    output_max_size: 512\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config")
@@ -114,14 +93,9 @@ fn test_invalid_config_subagent_output_size_too_small() {
 /// Validates that zero max_turns is rejected
 #[test]
 fn test_invalid_config_subagent_default_max_turns_zero() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    default_max_turns: 0\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config")
@@ -140,14 +114,9 @@ fn test_invalid_config_subagent_default_max_turns_zero() {
 /// Validates that excessively large max_turns is rejected
 #[test]
 fn test_invalid_config_subagent_default_max_turns_too_large() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    default_max_turns: 200\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config")
@@ -166,14 +135,9 @@ fn test_invalid_config_subagent_default_max_turns_too_large() {
 /// Validates that telemetry_enabled flag is accepted
 #[test]
 fn test_subagent_config_telemetry_disabled() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    telemetry_enabled: false\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
@@ -186,14 +150,9 @@ fn test_subagent_config_telemetry_disabled() {
 /// Validates that persistence_enabled flag is accepted
 #[test]
 fn test_subagent_config_persistence_enabled() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
-    fs::write(
-        &config_path,
+    let (_temp_dir, config_path) = common::temp_config_file(
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    persistence_enabled: true\n",
-    )
-    .unwrap();
+    );
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
@@ -218,9 +177,6 @@ fn test_default_subagent_config_works() {
 /// Validates complete subagent configuration YAML parsing
 #[test]
 fn test_subagent_config_complete_yaml_fields() {
-    let temp_dir = TempDir::new().unwrap();
-    let config_path = temp_dir.path().join("config.yaml");
-
     let yaml_content = r#"
 provider:
   type: ollama
@@ -234,7 +190,7 @@ agent:
     persistence_enabled: false
 "#;
 
-    fs::write(&config_path, yaml_content).unwrap();
+    let (_temp_dir, config_path) = common::temp_config_file(yaml_content);
 
     let mut cmd = Command::cargo_bin("xzatoma").unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");

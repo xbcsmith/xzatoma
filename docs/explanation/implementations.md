@@ -36,6 +36,7 @@ This directory contains detailed implementation documentation for XZatoma featur
 
 - **[phase1_security_refactor_implementation.md](phase1_security_refactor_implementation.md)** - Phase 1: Security Refactor - Shell-less terminal execution, SSRF hostname resolution, and updated unit tests
 - **[phase2_security_refactor_implementation.md](phase2_security_refactor_implementation.md)** - Phase 2: Security Refactor - Quota lock safety, storage error consistency, and error boundary alignment
+- **[phase3_refactor_implementation.md](phase3_refactor_implementation.md)** - Phase 3: Refactor - Shared integration-test helpers and reduced duplicate setup
 
 - **[history_and_tool_integrity_implementation.md](history_and_tool_integrity_implementation.md)** - Chat History and Tool Integrity: Complete four-phase implementation covering core validation (orphan tool message prevention), history UX enhancements (message-level inspection with `history show` command), pruning integrity (atomic tool-call pair removal), and cross-provider consistency with integration tests. Includes orphan message sanitization in both Copilot and Ollama providers, special command persistence configuration, and 30+ tests validating all scenarios
 

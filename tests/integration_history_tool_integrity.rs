@@ -7,12 +7,11 @@
 
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
-use tempfile::TempDir;
+mod common;
 
 use xzatoma::agent::{Agent, Conversation};
 use xzatoma::config::AgentConfig;
 use xzatoma::providers::{CompletionResponse, Message, Provider, ToolCall};
-use xzatoma::storage::SqliteStorage;
 use xzatoma::tools::ToolRegistry;
 
 /// Mock provider that tracks all messages received during completion
@@ -52,18 +51,10 @@ impl Provider for TrackingMockProvider {
     }
 }
 
-/// Helper to create a temporary storage instance
-fn create_temp_storage() -> (SqliteStorage, TempDir) {
-    let tmp = TempDir::new().expect("failed to create tempdir");
-    let db_path = tmp.path().join("history.db");
-    let storage = SqliteStorage::new_with_path(db_path).expect("failed to create sqlite storage");
-    (storage, tmp)
-}
-
 #[tokio::test]
 async fn test_save_load_resume_with_orphan_sanitized() {
     // Setup: Create storage and mock provider
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
     let mock_response = Message::assistant("Resumed response");
     let provider = Arc::new(TrackingMockProvider::new(mock_response));
 
@@ -151,7 +142,7 @@ async fn test_save_load_resume_with_orphan_sanitized() {
 #[tokio::test]
 async fn test_save_load_resume_preserves_valid_tool_pair() {
     // Setup: Create storage and mock provider
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
     let mock_response = Message::assistant("Calculation confirmed");
     let provider = Arc::new(TrackingMockProvider::new(mock_response));
 
@@ -245,7 +236,7 @@ async fn test_save_load_resume_preserves_valid_tool_pair() {
 #[tokio::test]
 async fn test_pruning_during_resume_maintains_integrity() {
     // Setup: Create storage and mock provider
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
     let mock_response = Message::assistant("Pruned and continuing");
     let provider = Arc::new(TrackingMockProvider::new(mock_response));
 
