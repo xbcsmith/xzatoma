@@ -255,7 +255,7 @@ pub mod chat {
 
                     // Check for special commands first
                     match parse_special_command(trimmed) {
-                        SpecialCommand::SwitchMode(new_mode) => {
+                        Ok(SpecialCommand::SwitchMode(new_mode)) => {
                             handle_mode_switch(
                                 &mut agent,
                                 &mut mode_state,
@@ -266,34 +266,51 @@ pub mod chat {
                             )?;
                             continue;
                         }
-                        SpecialCommand::SwitchSafety(new_safety) => {
+                        Ok(SpecialCommand::SwitchSafety(new_safety)) => {
                             let old_safety = mode_state.switch_safety(new_safety);
                             println!("Switched from {} to {} mode\n", old_safety, new_safety);
                             continue;
                         }
-                        SpecialCommand::ShowStatus => {
+                        Ok(SpecialCommand::ShowStatus) => {
                             let tool_count = agent.num_tools();
                             let conversation_len = agent.conversation().len();
                             print_status_display(&mode_state, tool_count, conversation_len);
                             continue;
                         }
-                        SpecialCommand::Help => {
+                        Ok(SpecialCommand::Help) => {
                             print_help();
                             continue;
                         }
-                        SpecialCommand::ModelsHelp => {
+                        Ok(SpecialCommand::ModelsHelp) => {
                             print_models_help();
                             continue;
                         }
-                        SpecialCommand::Mentions => {
+                        Ok(SpecialCommand::Mentions) => {
                             special_commands::print_mention_help();
                             continue;
                         }
-                        SpecialCommand::ListModels => {
+                        Ok(SpecialCommand::ListModels) => {
                             handle_list_models(&agent).await;
                             continue;
                         }
-                        SpecialCommand::Auth(provider_opt) => {
+                        Ok(SpecialCommand::ShowModelInfo(model_name)) => {
+                            match models::show_model_info(
+                                &config,
+                                &model_name,
+                                Some(provider_type),
+                                false,
+                                false,
+                            )
+                            .await
+                            {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    eprintln!("Failed to show model info: {}", e);
+                                }
+                            }
+                            continue;
+                        }
+                        Ok(SpecialCommand::Auth(provider_opt)) => {
                             let provider_to_auth =
                                 provider_opt.unwrap_or_else(|| provider_type.to_string());
                             println!("Starting authentication for provider: {}", provider_to_auth);
@@ -308,7 +325,7 @@ pub mod chat {
                             }
                             continue;
                         }
-                        SpecialCommand::SwitchModel(model_name) => {
+                        Ok(SpecialCommand::SwitchModel(model_name)) => {
                             handle_switch_model(
                                 &mut agent,
                                 &model_name,
@@ -320,13 +337,20 @@ pub mod chat {
                             .await?;
                             continue;
                         }
-                        SpecialCommand::ShowContextInfo => {
+                        Ok(SpecialCommand::ShowContextInfo) => {
                             handle_show_context_info(&agent).await;
                             continue;
                         }
-                        SpecialCommand::Exit => break,
-                        SpecialCommand::None => {
+                        Ok(SpecialCommand::Exit) => break,
+                        Ok(SpecialCommand::None) => {
                             // Regular agent prompt
+                        }
+                        Err(e) => {
+                            // Display command error
+                            use colored::Colorize;
+                            eprintln!("{}", e.to_string().red());
+                            println!();
+                            continue;
                         }
                     }
 

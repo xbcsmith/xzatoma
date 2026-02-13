@@ -11,6 +11,23 @@
 //! Commands are prefixed with `/` and are case-insensitive.
 
 use crate::chat_mode::{ChatMode, SafetyMode};
+use thiserror::Error;
+
+/// Errors that can occur when parsing special commands
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum CommandError {
+    /// Unknown command was entered
+    #[error("Unknown command: {0}\n\nType '/help' to see available commands")]
+    UnknownCommand(String),
+
+    /// Command was given an unsupported argument
+    #[error("Unsupported argument for {command}: {arg}\n\nType '/help' to see valid usage")]
+    UnsupportedArgument { command: String, arg: String },
+
+    /// Command requires an argument but none was provided
+    #[error("Command {command} requires an argument\n\nUsage: {usage}")]
+    MissingArgument { command: String, usage: String },
+}
 
 /// Special commands that can be executed during interactive chat
 ///
@@ -61,6 +78,11 @@ pub enum SpecialCommand {
     /// Useful when users type `/models` without any subcommand.
     ModelsHelp,
 
+    /// Show detailed information about a specific model
+    ///
+    /// Displays model capabilities, context window size, and other details.
+    ShowModelInfo(String),
+
     /// Switch to a different model
     ///
     /// Changes the active model for the provider.
@@ -94,9 +116,14 @@ pub enum SpecialCommand {
 ///
 /// # Returns
 ///
-/// Returns a SpecialCommand enum variant:
-/// - SwitchMode, SwitchSafety, ShowStatus, Help, or Exit for special commands
-/// - None if the input is not a special command
+/// Returns Ok(SpecialCommand) for valid commands or SpecialCommand::None for non-commands.
+/// Returns Err(CommandError) for invalid commands or invalid arguments.
+///
+/// # Errors
+///
+/// Returns CommandError::UnknownCommand if input starts with "/" but is not a valid command.
+/// Returns CommandError::UnsupportedArgument if a command receives an invalid argument.
+/// Returns CommandError::MissingArgument if a command requires an argument but none was provided.
 ///
 /// # Command Examples
 ///
@@ -119,66 +146,152 @@ pub enum SpecialCommand {
 /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
 /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
 ///
-/// let cmd = parse_special_command("/mode planning");
+/// let cmd = parse_special_command("/mode planning").unwrap();
 /// assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Planning));
 ///
-/// let cmd = parse_special_command("/yolo");
+/// let cmd = parse_special_command("/yolo").unwrap();
 /// assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm));
 ///
-/// let cmd = parse_special_command("hello agent");
+/// let cmd = parse_special_command("hello agent").unwrap();
 /// assert_eq!(cmd, SpecialCommand::None);
+///
+/// // Invalid command returns error
+/// assert!(parse_special_command("/foo").is_err());
 /// ```
-pub fn parse_special_command(input: &str) -> SpecialCommand {
-    let trimmed = input.trim().to_lowercase();
+pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError> {
+    let trimmed = input.trim();
+    let lower = trimmed.to_lowercase();
 
-    match trimmed.as_str() {
+    // If input doesn't start with "/", it's not a command (except exit/quit)
+    if !trimmed.starts_with('/') && lower != "exit" && lower != "quit" {
+        return Ok(SpecialCommand::None);
+    }
+
+    match lower.as_str() {
         // Chat mode switching
-        "/mode planning" | "/planning" => SpecialCommand::SwitchMode(ChatMode::Planning),
-        "/mode write" | "/write" => SpecialCommand::SwitchMode(ChatMode::Write),
+        "/mode planning" | "/planning" => Ok(SpecialCommand::SwitchMode(ChatMode::Planning)),
+        "/mode write" | "/write" => Ok(SpecialCommand::SwitchMode(ChatMode::Write)),
+
+        // Handle /mode with no argument or invalid argument
+        "/mode" => Err(CommandError::MissingArgument {
+            command: "/mode".to_string(),
+            usage: "/mode <planning|write>".to_string(),
+        }),
+        input if input.starts_with("/mode ") => {
+            let arg = input[6..].trim();
+            Err(CommandError::UnsupportedArgument {
+                command: "/mode".to_string(),
+                arg: arg.to_string(),
+            })
+        }
 
         // Safety mode switching
-        "/safe" | "/safety on" => SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm),
-        "/yolo" | "/safety off" => SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm),
+        "/safe" | "/safety on" => Ok(SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm)),
+        "/yolo" | "/safety off" => Ok(SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm)),
+
+        // Handle /safety with no argument or invalid argument
+        "/safety" => Err(CommandError::MissingArgument {
+            command: "/safety".to_string(),
+            usage: "/safety <on|off>".to_string(),
+        }),
+        input if input.starts_with("/safety ") => {
+            let arg = input[8..].trim();
+            if arg != "on" && arg != "off" {
+                Err(CommandError::UnsupportedArgument {
+                    command: "/safety".to_string(),
+                    arg: arg.to_string(),
+                })
+            } else {
+                // Should not reach here due to earlier matches
+                Ok(SpecialCommand::None)
+            }
+        }
 
         // Status and help
-        "/status" => SpecialCommand::ShowStatus,
-        "/help" | "/?" => SpecialCommand::Help,
-        "/mentions" => SpecialCommand::Mentions,
+        "/status" => Ok(SpecialCommand::ShowStatus),
+        "/help" | "/?" => Ok(SpecialCommand::Help),
+        "/mentions" => Ok(SpecialCommand::Mentions),
 
         // Model management commands and provider auth
-        // `/models` with no subcommand prints help for model-management usage
-        "/models" => SpecialCommand::ModelsHelp,
-        "/models list" => SpecialCommand::ListModels,
-        "/context" => SpecialCommand::ShowContextInfo,
-        "/auth" => SpecialCommand::Auth(None),
+        "/models" => Ok(SpecialCommand::ModelsHelp),
+        "/models list" => Ok(SpecialCommand::ListModels),
+
+        // Handle /models info with model name
+        input if input.starts_with("/models info ") => {
+            let model_name = input[13..].trim();
+            if model_name.is_empty() {
+                Err(CommandError::MissingArgument {
+                    command: "/models info".to_string(),
+                    usage: "/models info <model_name>".to_string(),
+                })
+            } else {
+                Ok(SpecialCommand::ShowModelInfo(model_name.to_string()))
+            }
+        }
+
+        // Handle /models info without model name
+        "/models info" => Err(CommandError::MissingArgument {
+            command: "/models info".to_string(),
+            usage: "/models info <model_name>".to_string(),
+        }),
+
+        // Handle /models with invalid subcommand
+        input if input.starts_with("/models ") => {
+            let rest = input[8..].trim();
+            let subcommand = rest.split_whitespace().next().unwrap_or(rest);
+            if subcommand != "list" && subcommand != "info" {
+                Err(CommandError::UnsupportedArgument {
+                    command: "/models".to_string(),
+                    arg: subcommand.to_string(),
+                })
+            } else {
+                // Should not reach here due to earlier matches
+                Ok(SpecialCommand::None)
+            }
+        }
+
+        "/context" => Ok(SpecialCommand::ShowContextInfo),
+        "/auth" => Ok(SpecialCommand::Auth(None)),
         input if input.starts_with("/auth ") => {
             let rest = input[6..].trim();
             if !rest.is_empty() {
-                SpecialCommand::Auth(Some(rest.to_string()))
+                Ok(SpecialCommand::Auth(Some(rest.to_string())))
             } else {
-                SpecialCommand::None
+                Err(CommandError::MissingArgument {
+                    command: "/auth".to_string(),
+                    usage: "/auth [provider]".to_string(),
+                })
             }
         }
 
         // Model switching with arguments
+        "/model" => Err(CommandError::MissingArgument {
+            command: "/model".to_string(),
+            usage: "/model <model_name>".to_string(),
+        }),
         input if input.starts_with("/model ") => {
             let rest = input[7..].trim();
-            if rest == "info" {
-                // For now, treat /model info as unsupported
-                // (would need additional argument for specific model)
-                SpecialCommand::None
-            } else if !rest.is_empty() {
-                SpecialCommand::SwitchModel(rest.to_string())
+            if rest.is_empty() {
+                Err(CommandError::MissingArgument {
+                    command: "/model".to_string(),
+                    usage: "/model <model_name>".to_string(),
+                })
             } else {
-                SpecialCommand::None
+                Ok(SpecialCommand::SwitchModel(rest.to_string()))
             }
         }
 
         // Exit commands
-        "exit" | "quit" | "/exit" | "/quit" => SpecialCommand::Exit,
+        "exit" | "quit" | "/exit" | "/quit" => Ok(SpecialCommand::Exit),
+
+        // Unknown command starting with "/"
+        input if input.starts_with('/') => {
+            let cmd = input.split_whitespace().next().unwrap_or(input);
+            Err(CommandError::UnknownCommand(cmd.to_string()))
+        }
 
         // Not a special command
-        _ => SpecialCommand::None,
+        _ => Ok(SpecialCommand::None),
     }
 }
 
@@ -466,232 +579,335 @@ mod tests {
 
     #[test]
     fn test_parse_special_command_models_bare_returns_models_help() {
-        assert_eq!(parse_special_command("/models"), SpecialCommand::ModelsHelp);
+        assert_eq!(
+            parse_special_command("/models").unwrap(),
+            SpecialCommand::ModelsHelp
+        );
     }
 
     #[test]
     fn test_parse_special_command_models_list_returns_list_models() {
         assert_eq!(
-            parse_special_command("/models list"),
+            parse_special_command("/models list").unwrap(),
             SpecialCommand::ListModels
         );
     }
 
     #[test]
     fn test_parse_switch_mode_planning() {
-        let cmd = parse_special_command("/mode planning");
+        let cmd = parse_special_command("/mode planning").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Planning));
     }
 
     #[test]
     fn test_parse_switch_mode_planning_shorthand() {
-        let cmd = parse_special_command("/planning");
+        let cmd = parse_special_command("/planning").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Planning));
     }
 
     #[test]
     fn test_parse_switch_mode_write() {
-        let cmd = parse_special_command("/mode write");
+        let cmd = parse_special_command("/mode write").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Write));
     }
 
     #[test]
     fn test_parse_switch_mode_write_shorthand() {
-        let cmd = parse_special_command("/write");
+        let cmd = parse_special_command("/write").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Write));
     }
 
     #[test]
     fn test_parse_auth_without_provider() {
-        let cmd = parse_special_command("/auth");
+        let cmd = parse_special_command("/auth").unwrap();
         assert_eq!(cmd, SpecialCommand::Auth(None));
     }
 
     #[test]
     fn test_parse_auth_with_provider() {
-        let cmd = parse_special_command("/auth copilot");
+        let cmd = parse_special_command("/auth copilot").unwrap();
         assert_eq!(cmd, SpecialCommand::Auth(Some("copilot".to_string())));
     }
 
     #[test]
     fn test_parse_switch_safety_always_confirm() {
-        let cmd = parse_special_command("/safe");
+        let cmd = parse_special_command("/safe").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm));
     }
 
     #[test]
     fn test_parse_switch_safety_always_confirm_alt() {
-        let cmd = parse_special_command("/safety on");
+        let cmd = parse_special_command("/safety on").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm));
     }
 
     #[test]
     fn test_parse_switch_safety_never_confirm() {
-        let cmd = parse_special_command("/yolo");
+        let cmd = parse_special_command("/yolo").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm));
     }
 
     #[test]
     fn test_parse_switch_safety_never_confirm_alt() {
-        let cmd = parse_special_command("/safety off");
+        let cmd = parse_special_command("/safety off").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm));
     }
 
     #[test]
     fn test_parse_show_status() {
-        let cmd = parse_special_command("/status");
+        let cmd = parse_special_command("/status").unwrap();
         assert_eq!(cmd, SpecialCommand::ShowStatus);
     }
 
     #[test]
     fn test_parse_help() {
-        let cmd = parse_special_command("/help");
+        let cmd = parse_special_command("/help").unwrap();
         assert_eq!(cmd, SpecialCommand::Help);
     }
 
     #[test]
     fn test_parse_help_shorthand() {
-        let cmd = parse_special_command("/?");
+        let cmd = parse_special_command("/?").unwrap();
         assert_eq!(cmd, SpecialCommand::Help);
     }
 
     #[test]
     fn test_parse_exit() {
-        let cmd = parse_special_command("exit");
+        let cmd = parse_special_command("exit").unwrap();
         assert_eq!(cmd, SpecialCommand::Exit);
     }
 
     #[test]
     fn test_parse_exit_with_slash() {
-        let cmd = parse_special_command("/exit");
+        let cmd = parse_special_command("/exit").unwrap();
         assert_eq!(cmd, SpecialCommand::Exit);
     }
 
     #[test]
     fn test_parse_quit() {
-        let cmd = parse_special_command("quit");
+        let cmd = parse_special_command("quit").unwrap();
         assert_eq!(cmd, SpecialCommand::Exit);
     }
 
     #[test]
     fn test_parse_quit_with_slash() {
-        let cmd = parse_special_command("/quit");
+        let cmd = parse_special_command("/quit").unwrap();
         assert_eq!(cmd, SpecialCommand::Exit);
     }
 
     #[test]
     fn test_parse_case_insensitive() {
         assert_eq!(
-            parse_special_command("/MODE PLANNING"),
+            parse_special_command("/MODE PLANNING").unwrap(),
             SpecialCommand::SwitchMode(ChatMode::Planning)
         );
         assert_eq!(
-            parse_special_command("/WRITE"),
+            parse_special_command("/WRITE").unwrap(),
             SpecialCommand::SwitchMode(ChatMode::Write)
         );
         assert_eq!(
-            parse_special_command("/SAFE"),
+            parse_special_command("/SAFE").unwrap(),
             SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm)
         );
         assert_eq!(
-            parse_special_command("/YOLO"),
+            parse_special_command("/YOLO").unwrap(),
             SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm)
         );
     }
 
     #[test]
     fn test_parse_with_whitespace() {
-        let cmd = parse_special_command("  /mode planning  ");
+        let cmd = parse_special_command("  /mode planning  ").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchMode(ChatMode::Planning));
     }
 
     #[test]
     fn test_parse_regular_text_returns_none() {
-        let cmd = parse_special_command("hello agent");
+        let cmd = parse_special_command("hello agent").unwrap();
         assert_eq!(cmd, SpecialCommand::None);
     }
 
     #[test]
     fn test_parse_partial_command_returns_none() {
-        let cmd = parse_special_command("/mode");
-        assert_eq!(cmd, SpecialCommand::None);
+        let result = parse_special_command("/mod");
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_invalid_mode_returns_none() {
-        let cmd = parse_special_command("/mode invalid");
-        assert_eq!(cmd, SpecialCommand::None);
+        let result = parse_special_command("/mode invalid");
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_empty_string_returns_none() {
-        let cmd = parse_special_command("");
+        let cmd = parse_special_command("").unwrap();
         assert_eq!(cmd, SpecialCommand::None);
     }
 
     #[test]
     fn test_parse_whitespace_only_returns_none() {
-        let cmd = parse_special_command("   ");
+        let cmd = parse_special_command("   ").unwrap();
         assert_eq!(cmd, SpecialCommand::None);
     }
 
     #[test]
     fn test_parse_random_command_returns_none() {
-        let cmd = parse_special_command("/random");
-        assert_eq!(cmd, SpecialCommand::None);
+        let result = parse_special_command("/randomcommand");
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_mentions() {
-        let cmd = parse_special_command("/mentions");
+        let cmd = parse_special_command("/mentions").unwrap();
         assert_eq!(cmd, SpecialCommand::Mentions);
     }
 
     #[test]
     fn test_parse_list_models() {
-        let cmd = parse_special_command("/models list");
+        let cmd = parse_special_command("/models list").unwrap();
         assert_eq!(cmd, SpecialCommand::ListModels);
     }
 
     #[test]
     fn test_parse_switch_model() {
-        let cmd = parse_special_command("/model gpt-4");
+        let cmd = parse_special_command("/model gpt-4").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
     }
 
     #[test]
     fn test_parse_switch_model_with_hyphen() {
-        let cmd = parse_special_command("/model gemini-2.0");
+        let cmd = parse_special_command("/model gemini-2.0").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchModel("gemini-2.0".to_string()));
     }
 
     #[test]
     fn test_parse_switch_model_case_insensitive() {
-        let cmd = parse_special_command("/MODEL GPT-4");
+        let cmd = parse_special_command("/MODEL gpt-4").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
     }
 
     #[test]
     fn test_parse_show_context_info() {
-        let cmd = parse_special_command("/context");
+        let cmd = parse_special_command("/context").unwrap();
         assert_eq!(cmd, SpecialCommand::ShowContextInfo);
     }
 
     #[test]
-    fn test_parse_model_command_no_args_returns_none() {
-        let cmd = parse_special_command("/model");
-        assert_eq!(cmd, SpecialCommand::None);
+    fn test_parse_model_command_no_args_returns_error() {
+        let result = parse_special_command("/model");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, .. }) = result {
+            assert_eq!(command, "/model");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
     }
 
     #[test]
     fn test_parse_model_command_with_spaces() {
-        let cmd = parse_special_command("/model  gpt-4  ");
+        let cmd = parse_special_command("/model   gpt-4  ").unwrap();
         assert_eq!(cmd, SpecialCommand::SwitchModel("gpt-4".to_string()));
     }
 
     #[test]
     fn test_parse_model_info_not_supported() {
-        let cmd = parse_special_command("/model info");
-        assert_eq!(cmd, SpecialCommand::None);
+        let cmd = parse_special_command("/model info").unwrap();
+        assert_eq!(cmd, SpecialCommand::SwitchModel("info".to_string()));
+    }
+
+    #[test]
+    fn test_parse_unknown_command_returns_error() {
+        let result = parse_special_command("/foo");
+        assert!(result.is_err());
+        if let Err(CommandError::UnknownCommand(cmd)) = result {
+            assert_eq!(cmd, "/foo");
+        } else {
+            panic!("Expected UnknownCommand error");
+        }
+    }
+
+    #[test]
+    fn test_parse_unsupported_mode_arg_returns_error() {
+        let result = parse_special_command("/mode invalid");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/mode");
+            assert_eq!(arg, "invalid");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_mode_no_arg_returns_error() {
+        let result = parse_special_command("/mode");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, usage }) = result {
+            assert_eq!(command, "/mode");
+            assert_eq!(usage, "/mode <planning|write>");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_safety_no_arg_returns_error() {
+        let result = parse_special_command("/safety");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, usage }) = result {
+            assert_eq!(command, "/safety");
+            assert_eq!(usage, "/safety <on|off>");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_safety_invalid_arg_returns_error() {
+        let result = parse_special_command("/safety maybe");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/safety");
+            assert_eq!(arg, "maybe");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_models_invalid_subcommand_returns_error() {
+        let result = parse_special_command("/models invalid");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/models");
+            assert_eq!(arg, "invalid");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_models_info_with_model_name() {
+        let cmd = parse_special_command("/models info gpt-4").unwrap();
+        assert_eq!(cmd, SpecialCommand::ShowModelInfo("gpt-4".to_string()));
+    }
+
+    #[test]
+    fn test_parse_models_info_without_model_name() {
+        let result = parse_special_command("/models info");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, usage }) = result {
+            assert_eq!(command, "/models info");
+            assert_eq!(usage, "/models info <model_name>");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_models_info_with_complex_model_name() {
+        let cmd = parse_special_command("/models info gpt-5-mini").unwrap();
+        assert_eq!(cmd, SpecialCommand::ShowModelInfo("gpt-5-mini".to_string()));
     }
 }
