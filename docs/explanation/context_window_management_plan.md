@@ -86,7 +86,7 @@ Add new method to `Conversation`:
 ```rust
 pub fn check_context_status(&self) -> ContextStatus {
     let percentage = self.token_count as f64 / self.max_tokens as f64;
-    
+
     if percentage >= auto_summary_threshold {
         ContextStatus::Critical
     } else if percentage >= warning_threshold {
@@ -172,14 +172,14 @@ let context_status = conversation.check_context_status();
 
 match context_status {
     ContextStatus::Warning { percentage, tokens_remaining } => {
-        println!("\n⚠️  Warning: Context window is {}% full", 
+        println!("\n⚠️  Warning: Context window is {}% full",
                  (percentage * 100.0) as u8);
-        println!("   {} tokens remaining. Consider running '/context summary'", 
+        println!("   {} tokens remaining. Consider running '/context summary'",
                  tokens_remaining);
         println!();
     }
     ContextStatus::Critical { percentage, tokens_remaining } => {
-        println!("\n🔴 Critical: Context window is {}% full!", 
+        println!("\n🔴 Critical: Context window is {}% full!",
                  (percentage * 100.0) as u8);
         println!("   Only {} tokens remaining!", tokens_remaining);
         println!("   Run '/context summary' to free up space or risk losing context.");
@@ -197,10 +197,10 @@ Extend `SpecialCommand` enum:
 ```rust
 pub enum SpecialCommand {
     // ... existing variants ...
-    
+
     /// Display context window information
     ContextInfo,
-    
+
     /// Summarize current context and start fresh
     /// Optional model parameter to override summarization model
     ContextSummary { model: Option<String> },
@@ -211,11 +211,11 @@ Update `parse_special_command()`:
 ```rust
 fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError> {
     // ... existing parsing ...
-    
+
     if input == "/context" || input == "/context info" {
         return Ok(SpecialCommand::ContextInfo);
     }
-    
+
     if input.starts_with("/context summary") {
         let model = input.strip_prefix("/context summary")
             .and_then(|rest| {
@@ -239,7 +239,7 @@ SpecialCommand::ContextInfo => {
     let info = conversation.get_context_info(model_context_window);
     println!("\nContext Window Status:");
     println!("  Total: {} tokens", info.max_tokens);
-    println!("  Used: {} tokens ({}%)", 
+    println!("  Used: {} tokens ({}%)",
              info.used_tokens, info.percentage_used);
     println!("  Remaining: {} tokens\n", info.remaining_tokens);
     continue;
@@ -250,25 +250,25 @@ SpecialCommand::ContextSummary { model } => {
     let summary_model = model
         .or(config.agent.conversation.summary_model.clone())
         .unwrap_or_else(|| current_model.clone());
-    
+
     // Create provider for summary if different model
     let summary_provider = if summary_model != current_model {
         create_provider_for_model(&config, &summary_model).await?
     } else {
         provider.clone()
     };
-    
+
     // Perform summarization
     let summary_text = perform_context_summary(
         &mut conversation,
         summary_provider,
         &summary_model
     ).await?;
-    
+
     println!("\n✅ Context summarized using model: {}", summary_model);
     println!("   Previous conversation: {} messages", previous_count);
     println!("   New conversation: {} messages\n", conversation.messages().len());
-    
+
     continue;
 }
 ```
@@ -286,27 +286,27 @@ async fn perform_context_summary(
 ) -> Result<String, XzatomaError> {
     // 1. Get current messages
     let messages_to_summarize = conversation.messages().to_vec();
-    
+
     // 2. Create summarization prompt
     let summary_prompt = create_summary_prompt(&messages_to_summarize);
-    
+
     // 3. Call provider with summary prompt
     let (response, _usage) = provider.complete(
         &[Message::user(summary_prompt)],
         &[],
     ).await?;
-    
+
     // 4. Extract summary from response
     let summary_text = response.content
         .unwrap_or_else(|| "Unable to generate summary".to_string());
-    
+
     // 5. Reset conversation with summary
     conversation.clear();
     conversation.add_system_message(format!(
-        "Previous conversation summary:\n\n{}", 
+        "Previous conversation summary:\n\n{}",
         summary_text
     ));
-    
+
     Ok(summary_text)
 }
 
@@ -370,26 +370,26 @@ if conversation.should_auto_summarize(config.agent.conversation.auto_summary_thr
         "Context window critical (>{}%), triggering automatic summarization",
         (config.agent.conversation.auto_summary_threshold * 100.0) as u8
     );
-    
+
     // Get summarization model
     let summary_model = config.agent.conversation.summary_model
         .clone()
         .unwrap_or_else(|| get_current_model_name(&provider));
-    
+
     // Create summary provider if needed
     let summary_provider = create_summary_provider_if_needed(
         &config,
         &provider,
         &summary_model
     ).await?;
-    
+
     // Perform summarization
     let summary_result = perform_context_summary(
         &mut conversation,
         summary_provider,
         &summary_model
     ).await;
-    
+
     match summary_result {
         Ok(_) => {
             tracing::info!(
@@ -421,7 +421,7 @@ async fn create_summary_provider_if_needed(
     summary_model: &str,
 ) -> Result<Arc<dyn Provider>, XzatomaError> {
     let current_model = current_provider.get_current_model();
-    
+
     if summary_model == current_model {
         // Use existing provider
         Ok(current_provider.clone())
@@ -467,12 +467,12 @@ async fn create_provider_for_model(
 In `Config::validate()`, add checks:
 ```rust
 // Validate conversation thresholds
-if config.agent.conversation.warning_threshold < 0.0 
+if config.agent.conversation.warning_threshold < 0.0
     || config.agent.conversation.warning_threshold > 1.0 {
     return Err("warning_threshold must be between 0.0 and 1.0".into());
 }
 
-if config.agent.conversation.auto_summary_threshold < 0.0 
+if config.agent.conversation.auto_summary_threshold < 0.0
     || config.agent.conversation.auto_summary_threshold > 1.0 {
     return Err("auto_summary_threshold must be between 0.0 and 1.0".into());
 }
@@ -592,11 +592,11 @@ agent:
     max_tokens: 100000
     min_retain_turns: 5
     prune_threshold: 0.8
-    
+
     # Context window management
     warning_threshold: 0.85      # Warn at 85% full
     auto_summary_threshold: 0.90  # Auto-summarize at 90% full
-    
+
     # Use cheaper model for summaries (optional)
     # summary_model: "gpt-4o-mini"
 ```

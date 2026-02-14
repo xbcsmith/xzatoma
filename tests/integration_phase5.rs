@@ -318,6 +318,9 @@ mod tests {
             max_executions: Some(5),
             max_total_tokens: Some(50000),
             max_total_time: Some(300),
+            provider: None,
+            model: None,
+            chat_enabled: false,
         };
 
         let limits = QuotaLimits {

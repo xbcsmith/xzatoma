@@ -222,6 +222,30 @@ pub struct SubagentConfig {
     /// None means unlimited time.
     #[serde(default = "default_max_total_time")]
     pub max_total_time: Option<u64>,
+
+    /// Optional provider override for subagents
+    ///
+    /// If None, subagents use the parent agent's provider.
+    /// If Some("copilot" | "ollama"), creates a dedicated provider instance
+    /// for subagents with separate model configuration.
+    #[serde(default)]
+    pub provider: Option<String>,
+
+    /// Optional model override for subagents
+    ///
+    /// If None, uses the provider's default model.
+    /// If Some("model-name"), overrides the model for the subagent provider.
+    /// Only applicable when provider is also specified.
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Enable subagents in chat mode by default
+    ///
+    /// If false (default), subagents are disabled in chat mode unless explicitly
+    /// enabled via prompt pattern detection or special commands.
+    /// If true, subagents are available immediately in chat mode.
+    #[serde(default = "default_chat_enabled")]
+    pub chat_enabled: bool,
 }
 
 fn default_subagent_max_depth() -> usize {
@@ -267,6 +291,10 @@ fn default_max_total_time() -> Option<u64> {
     None
 }
 
+fn default_chat_enabled() -> bool {
+    false
+}
+
 impl Default for SubagentConfig {
     fn default() -> Self {
         Self {
@@ -279,6 +307,9 @@ impl Default for SubagentConfig {
             max_executions: default_max_executions(),
             max_total_tokens: default_max_total_tokens(),
             max_total_time: default_max_total_time(),
+            provider: None,
+            model: None,
+            chat_enabled: default_chat_enabled(),
         }
     }
 }
@@ -945,6 +976,19 @@ impl Config {
             .into());
         }
 
+        // Validate subagent provider override if specified
+        if let Some(ref provider) = self.agent.subagent.provider {
+            let valid_providers = ["copilot", "ollama"];
+            if !valid_providers.contains(&provider.as_str()) {
+                return Err(XzatomaError::Config(format!(
+                    "Invalid subagent provider override: {}. Must be one of: {}",
+                    provider,
+                    valid_providers.join(", ")
+                ))
+                .into());
+            }
+        }
+
         Ok(())
     }
 
@@ -1234,6 +1278,105 @@ persistence_enabled: true
         assert_eq!(config.subagent.max_depth, 3);
         assert_eq!(config.subagent.default_max_turns, 10);
         assert!(config.subagent.telemetry_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_with_provider_override() {
+        let yaml = r#"
+max_depth: 5
+provider: copilot
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 5);
+        assert_eq!(config.provider, Some("copilot".to_string()));
+        assert_eq!(config.model, None);
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_with_model_override() {
+        let yaml = r#"
+max_depth: 5
+model: gpt-5-mini
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 5);
+        assert_eq!(config.provider, None);
+        assert_eq!(config.model, Some("gpt-5-mini".to_string()));
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_with_both_overrides() {
+        let yaml = r#"
+provider: ollama
+model: llama3.2:latest
+chat_enabled: true
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.provider, Some("ollama".to_string()));
+        assert_eq!(config.model, Some("llama3.2:latest".to_string()));
+        assert!(config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_backward_compatibility() {
+        let yaml = r#"
+max_depth: 3
+default_max_turns: 10
+output_max_size: 4096
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 3);
+        assert_eq!(config.provider, None);
+        assert_eq!(config.model, None);
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_validation_invalid_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("invalid_provider".to_string());
+        let result = config.validate();
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid subagent provider override"));
+    }
+
+    #[test]
+    fn test_subagent_config_validation_copilot_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("copilot".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_subagent_config_validation_ollama_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("ollama".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_subagent_config_default_chat_enabled() {
+        let config = SubagentConfig::default();
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_chat_enabled_in_yaml() {
+        let yaml = r#"
+chat_enabled: true
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_provider_none_is_valid() {
+        let config = Config::default();
+        assert_eq!(config.agent.subagent.provider, None);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
