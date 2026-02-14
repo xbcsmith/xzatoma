@@ -222,6 +222,30 @@ pub struct SubagentConfig {
     /// None means unlimited time.
     #[serde(default = "default_max_total_time")]
     pub max_total_time: Option<u64>,
+
+    /// Optional provider override for subagents
+    ///
+    /// If None, subagents use the parent agent's provider.
+    /// If Some("copilot" | "ollama"), creates a dedicated provider instance
+    /// for subagents with separate model configuration.
+    #[serde(default)]
+    pub provider: Option<String>,
+
+    /// Optional model override for subagents
+    ///
+    /// If None, uses the provider's default model.
+    /// If Some("model-name"), overrides the model for the subagent provider.
+    /// Only applicable when provider is also specified.
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Enable subagents in chat mode by default
+    ///
+    /// If false (default), subagents are disabled in chat mode unless explicitly
+    /// enabled via prompt pattern detection or special commands.
+    /// If true, subagents are available immediately in chat mode.
+    #[serde(default = "default_chat_enabled")]
+    pub chat_enabled: bool,
 }
 
 fn default_subagent_max_depth() -> usize {
@@ -267,6 +291,10 @@ fn default_max_total_time() -> Option<u64> {
     None
 }
 
+fn default_chat_enabled() -> bool {
+    false
+}
+
 impl Default for SubagentConfig {
     fn default() -> Self {
         Self {
@@ -279,6 +307,9 @@ impl Default for SubagentConfig {
             max_executions: default_max_executions(),
             max_total_tokens: default_max_total_tokens(),
             max_total_time: default_max_total_time(),
+            provider: None,
+            model: None,
+            chat_enabled: default_chat_enabled(),
         }
     }
 }
@@ -945,6 +976,19 @@ impl Config {
             .into());
         }
 
+        // Validate subagent provider override if specified
+        if let Some(ref provider) = self.agent.subagent.provider {
+            let valid_providers = ["copilot", "ollama"];
+            if !valid_providers.contains(&provider.as_str()) {
+                return Err(XzatomaError::Config(format!(
+                    "Invalid subagent provider override: {}. Must be one of: {}",
+                    provider,
+                    valid_providers.join(", ")
+                ))
+                .into());
+            }
+        }
+
         Ok(())
     }
 
@@ -1237,6 +1281,105 @@ persistence_enabled: true
     }
 
     #[test]
+    fn test_subagent_config_deserialize_with_provider_override() {
+        let yaml = r#"
+max_depth: 5
+provider: copilot
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 5);
+        assert_eq!(config.provider, Some("copilot".to_string()));
+        assert_eq!(config.model, None);
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_with_model_override() {
+        let yaml = r#"
+max_depth: 5
+model: gpt-5-mini
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 5);
+        assert_eq!(config.provider, None);
+        assert_eq!(config.model, Some("gpt-5-mini".to_string()));
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_with_both_overrides() {
+        let yaml = r#"
+provider: ollama
+model: llama3.2:latest
+chat_enabled: true
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.provider, Some("ollama".to_string()));
+        assert_eq!(config.model, Some("llama3.2:latest".to_string()));
+        assert!(config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_deserialize_backward_compatibility() {
+        let yaml = r#"
+max_depth: 3
+default_max_turns: 10
+output_max_size: 4096
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.max_depth, 3);
+        assert_eq!(config.provider, None);
+        assert_eq!(config.model, None);
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_validation_invalid_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("invalid_provider".to_string());
+        let result = config.validate();
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Invalid subagent provider override"));
+    }
+
+    #[test]
+    fn test_subagent_config_validation_copilot_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("copilot".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_subagent_config_validation_ollama_provider() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("ollama".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_subagent_config_default_chat_enabled() {
+        let config = SubagentConfig::default();
+        assert!(!config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_chat_enabled_in_yaml() {
+        let yaml = r#"
+chat_enabled: true
+"#;
+        let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_provider_none_is_valid() {
+        let config = Config::default();
+        assert_eq!(config.agent.subagent.provider, None);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
     fn test_example_watcher_config_parses() {
         // Ensure the example configuration file is valid YAML and maps to `Config`.
         let contents = std::fs::read_to_string("config/watcher.yaml")
@@ -1374,6 +1517,583 @@ persistence_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_JSON_LOGS");
             std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
         }
+    }
+
+    // Phase 5: Enhanced subagent configuration tests
+
+    #[test]
+    fn test_subagent_config_provider_override_copilot() {
+        let config = r#"
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    provider: copilot
+    model: gpt-3.5-turbo
+    chat_enabled: false
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.provider, Some("copilot".to_string()));
+        assert_eq!(cfg.agent.subagent.model, Some("gpt-3.5-turbo".to_string()));
+        assert!(!cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_provider_override_ollama() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+
+agent:
+  max_turns: 10
+  subagent:
+    provider: ollama
+    model: gemma2:2b
+    chat_enabled: true
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
+        assert_eq!(cfg.agent.subagent.model, Some("gemma2:2b".to_string()));
+        assert!(cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_model_override_no_provider() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    model: gpt-3.5-turbo
+    chat_enabled: false
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.provider, None);
+        assert_eq!(cfg.agent.subagent.model, Some("gpt-3.5-turbo".to_string()));
+    }
+
+    #[test]
+    fn test_subagent_config_chat_enabled_true() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    chat_enabled: true
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert!(cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_chat_enabled_false() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    chat_enabled: false
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert!(!cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_chat_enabled_defaults_to_false() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert!(!cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_all_fields_valid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+
+agent:
+  max_turns: 20
+  subagent:
+    max_depth: 5
+    default_max_turns: 15
+    output_max_size: 8192
+    telemetry_enabled: true
+    persistence_enabled: false
+    persistence_path: /tmp/conversations.db
+    max_executions: 100
+    max_total_tokens: 50000
+    max_total_time: 3600
+    provider: ollama
+    model: llama3.2:latest
+    chat_enabled: true
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_depth, 5);
+        assert_eq!(cfg.agent.subagent.default_max_turns, 15);
+        assert_eq!(cfg.agent.subagent.output_max_size, 8192);
+        assert!(cfg.agent.subagent.telemetry_enabled);
+        assert!(!cfg.agent.subagent.persistence_enabled);
+        assert_eq!(cfg.agent.subagent.max_executions, Some(100));
+        assert_eq!(cfg.agent.subagent.max_total_tokens, Some(50000));
+        assert_eq!(cfg.agent.subagent.max_total_time, Some(3600));
+        assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
+        assert_eq!(
+            cfg.agent.subagent.model,
+            Some("llama3.2:latest".to_string())
+        );
+        assert!(cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_invalid_provider_type() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    provider: invalid_provider
+    chat_enabled: false
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid subagent provider"));
+    }
+
+    #[test]
+    fn test_subagent_config_max_depth_boundary_valid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    max_depth: 10
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_depth, 10);
+    }
+
+    #[test]
+    fn test_subagent_config_max_depth_zero_invalid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    max_depth: 0
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("max_depth must be greater than 0"));
+    }
+
+    #[test]
+    fn test_subagent_config_max_depth_exceeds_limit_invalid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    max_depth: 11
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot exceed 10"));
+    }
+
+    #[test]
+    fn test_subagent_config_default_max_turns_boundary_valid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    default_max_turns: 100
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.default_max_turns, 100);
+    }
+
+    #[test]
+    fn test_subagent_config_default_max_turns_zero_invalid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    default_max_turns: 0
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("default_max_turns must be greater than 0"));
+    }
+
+    #[test]
+    fn test_subagent_config_default_max_turns_exceeds_limit_invalid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    default_max_turns: 101
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 100"));
+    }
+
+    #[test]
+    fn test_subagent_config_output_max_size_boundary_valid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    output_max_size: 1024
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.output_max_size, 1024);
+    }
+
+    #[test]
+    fn test_subagent_config_output_max_size_too_small_invalid() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    output_max_size: 512
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        let result = cfg.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("at least 1024 bytes"));
+    }
+
+    #[test]
+    fn test_subagent_config_empty_section_uses_defaults() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent: {}
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_depth, 3);
+        assert_eq!(cfg.agent.subagent.default_max_turns, 10);
+        assert_eq!(cfg.agent.subagent.output_max_size, 4096);
+        assert!(cfg.agent.subagent.telemetry_enabled);
+        assert!(!cfg.agent.subagent.persistence_enabled);
+        assert_eq!(cfg.agent.subagent.provider, None);
+        assert_eq!(cfg.agent.subagent.model, None);
+        assert!(!cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_no_section_uses_defaults() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_depth, 3);
+        assert_eq!(cfg.agent.subagent.default_max_turns, 10);
+        assert!(!cfg.agent.subagent.chat_enabled);
+    }
+
+    #[test]
+    fn test_subagent_config_optional_quota_fields() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    max_executions: 50
+    max_total_tokens: 500000
+    max_total_time: 7200
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_executions, Some(50));
+        assert_eq!(cfg.agent.subagent.max_total_tokens, Some(500000));
+        assert_eq!(cfg.agent.subagent.max_total_time, Some(7200));
+    }
+
+    #[test]
+    fn test_subagent_config_optional_quota_none_defaults() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_executions, None);
+        assert_eq!(cfg.agent.subagent.max_total_tokens, None);
+        assert_eq!(cfg.agent.subagent.max_total_time, None);
+    }
+
+    #[test]
+    fn test_subagent_config_persistence_fields() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    persistence_enabled: true
+    persistence_path: /tmp/xzatoma_conversations.db
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert!(cfg.agent.subagent.persistence_enabled);
+        assert_eq!(
+            cfg.agent.subagent.persistence_path,
+            "/tmp/xzatoma_conversations.db"
+        );
+    }
+
+    #[test]
+    fn test_subagent_config_telemetry_fields() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 10
+  subagent:
+    telemetry_enabled: false
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert!(!cfg.agent.subagent.telemetry_enabled);
+    }
+
+    #[test]
+    fn test_cost_optimized_example_from_plan() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+
+agent:
+  max_turns: 50
+  subagent:
+    provider: ollama
+    model: llama3.2:latest
+    chat_enabled: true
+    max_executions: 10
+    max_total_tokens: 50000
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.provider.provider_type, "copilot");
+        assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
+        assert_eq!(
+            cfg.agent.subagent.model,
+            Some("llama3.2:latest".to_string())
+        );
+    }
+
+    #[test]
+    fn test_provider_mixing_example_from_plan() {
+        let config = r#"
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+
+agent:
+  max_turns: 15
+  subagent:
+    provider: ollama
+    model: llama3.2:latest
+    chat_enabled: false
+    max_depth: 2
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.max_depth, 2);
+    }
+
+    #[test]
+    fn test_speed_optimized_example_from_plan() {
+        let config = r#"
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+
+agent:
+  max_turns: 10
+  subagent:
+    model: gemma2:2b
+    chat_enabled: true
+    default_max_turns: 5
+"#;
+
+        let cfg: Config = serde_yaml::from_str(config).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.agent.subagent.model, Some("gemma2:2b".to_string()));
+        assert_eq!(cfg.agent.subagent.default_max_turns, 5);
     }
 }
 

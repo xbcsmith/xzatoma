@@ -43,19 +43,19 @@ Add new fields to `SubagentConfig`:
 ```rust
 pub struct SubagentConfig {
     // ... existing fields ...
-    
+
     /// Optional provider override for subagents
     /// If None, subagents use parent agent's provider
     /// If Some("copilot" | "ollama"), creates dedicated provider instance
     #[serde(default)]
     pub provider: Option<String>,
-    
+
     /// Optional model override for subagents
     /// If None, uses provider's default model
     /// If Some("model-name"), overrides the model for subagent provider
     #[serde(default)]
     pub model: Option<String>,
-    
+
     /// Enable subagents in chat mode by default
     /// If false, requires explicit prompt pattern or command to enable
     #[serde(default = "default_chat_enabled")]
@@ -83,13 +83,13 @@ Add subagent provider/model configuration section:
 agent:
   subagent:
     # ... existing fields ...
-    
+
     # Optional: Override provider for subagents
     # provider: copilot  # or "ollama"
-    
+
     # Optional: Override model for subagents
     # model: gpt-5-mini
-    
+
     # Enable subagents in chat mode by default
     chat_enabled: false
 ```
@@ -109,7 +109,7 @@ Add validation logic in `Config::validate()`:
 impl Config {
     pub fn validate(&self) -> Result<()> {
         // ... existing validation ...
-        
+
         // Validate subagent provider if specified
         if let Some(ref provider) = self.agent.subagent.provider {
             if provider != "copilot" && provider != "ollama" {
@@ -118,10 +118,10 @@ impl Config {
                 ));
             }
         }
-        
+
         // Validate model is specified if provider is set
         // (or use provider defaults)
-        
+
         Ok(())
     }
 }
@@ -248,7 +248,7 @@ impl SubagentTool {
             // Use parent's provider
             Arc::clone(&provider)
         };
-        
+
         // ... rest of initialization with subagent_provider ...
     }
 }
@@ -326,7 +326,7 @@ impl ToolRegistryBuilder {
         subagents_enabled: bool,
     ) -> ToolRegistry {
         let mut tools = ToolRegistry::new();
-        
+
         // Add mode-appropriate tools
         match chat_mode {
             ChatMode::Planning => {
@@ -338,13 +338,13 @@ impl ToolRegistryBuilder {
                 // All tools
             }
         }
-        
+
         // Conditionally add subagent tools
         if subagents_enabled {
             tools.register("subagent", ...);
             tools.register("parallel_subagent", ...);
         }
-        
+
         tools
     }
 }
@@ -371,15 +371,15 @@ impl ChatModeState {
             subagents_enabled: false, // Disabled by default
         }
     }
-    
+
     pub fn enable_subagents(&mut self) {
         self.subagents_enabled = true;
     }
-    
+
     pub fn disable_subagents(&mut self) {
         self.subagents_enabled = false;
     }
-    
+
     pub fn toggle_subagents(&mut self) -> bool {
         self.subagents_enabled = !self.subagents_enabled;
         self.subagents_enabled
@@ -403,7 +403,7 @@ Add prompt analysis for subagent keywords:
 /// - "delegate to subagents..."
 fn should_enable_subagents(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
-    lower.contains("subagent") 
+    lower.contains("subagent")
         || lower.contains("delegate to")
         || lower.contains("spawn agent")
         || lower.contains("parallel task")
@@ -413,7 +413,7 @@ fn should_enable_subagents(prompt: &str) -> bool {
 if !mode_state.subagents_enabled && should_enable_subagents(&trimmed) {
     mode_state.enable_subagents();
     println!("Enabling subagent delegation for this request");
-    
+
     // Rebuild tool registry with subagents
     agent = rebuild_agent_with_subagents(...)?;
 }
@@ -428,7 +428,7 @@ Add `/subagents` command:
 ```rust
 pub enum SpecialCommand {
     // ... existing variants ...
-    
+
     /// Enable or disable subagent delegation
     ToggleSubagents(bool), // true = enable, false = disable
 }
@@ -466,10 +466,10 @@ fn rebuild_agent_tools(
         working_dir,
         mode_state.subagents_enabled,
     )?;
-    
+
     // Update agent's tool registry
     agent.set_tools(tools)?;
-    
+
     Ok(())
 }
 ```
@@ -576,14 +576,14 @@ fn print_status_display(
     } else {
         "Disabled"
     });
-    
+
     if let Some(ref provider) = subagent_config.provider {
         println!("Subagent Provider: {}", provider);
     }
     if let Some(ref model) = subagent_config.model {
         println!("Subagent Model: {}", model);
     }
-    
+
     // ... rest of status ...
 }
 ```

@@ -339,6 +339,108 @@ impl SubagentTool {
         parent_registry: ToolRegistry,
         current_depth: usize,
     ) -> Self {
+        Self::new_internal(provider, config, parent_registry, current_depth)
+    }
+
+    /// Creates a new subagent tool executor with provider override support
+    ///
+    /// This constructor creates a SubagentTool with optional provider and model
+    /// overrides based on the subagent configuration. If the subagent config
+    /// specifies a provider override, a new dedicated provider instance is created.
+    /// Otherwise, the parent provider is shared.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_provider` - Parent's provider instance (used if no override)
+    /// * `provider_config` - Full provider configuration for creating override instances
+    /// * `agent_config` - Agent configuration template for subagent instances
+    /// * `parent_registry` - Parent's tool registry for filtering
+    /// * `current_depth` - Current recursion depth (0 for root)
+    ///
+    /// # Returns
+    ///
+    /// Returns a new SubagentTool instance with appropriate provider
+    ///
+    /// # Errors
+    ///
+    /// Returns error if provider override creation fails
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xzatoma::tools::subagent::SubagentTool;
+    /// use xzatoma::config::{AgentConfig, ProviderConfig, CopilotConfig, OllamaConfig};
+    /// use xzatoma::tools::ToolRegistry;
+    /// use std::sync::Arc;
+    ///
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # fn example() -> xzatoma::error::Result<()> {
+    /// # let provider = CopilotProvider::new(CopilotConfig::default()).unwrap();
+    /// let provider_config = ProviderConfig {
+    ///     provider_type: "copilot".to_string(),
+    ///     copilot: CopilotConfig::default(),
+    ///     ollama: OllamaConfig::default(),
+    /// };
+    /// let tool = SubagentTool::new_with_config(
+    ///     Arc::new(provider),
+    ///     &provider_config,
+    ///     AgentConfig::default(),
+    ///     ToolRegistry::new(),
+    ///     0,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new_with_config(
+        parent_provider: Arc<dyn Provider>,
+        provider_config: &crate::config::ProviderConfig,
+        agent_config: AgentConfig,
+        parent_registry: ToolRegistry,
+        current_depth: usize,
+    ) -> Result<Self> {
+        // Check if subagent config has provider override
+        let provider = if let Some(provider_type) = &agent_config.subagent.provider {
+            // Create dedicated provider instance for subagent
+            let model_override = agent_config.subagent.model.as_deref();
+            let new_provider = crate::providers::create_provider_with_override(
+                provider_config,
+                Some(provider_type),
+                model_override,
+            )?;
+            Arc::from(new_provider)
+        } else {
+            // No override - share parent provider
+            parent_provider
+        };
+
+        Ok(Self::new_internal(
+            provider,
+            agent_config,
+            parent_registry,
+            current_depth,
+        ))
+    }
+
+    /// Internal constructor for SubagentTool
+    ///
+    /// Shared implementation used by both `new()` and `new_with_config()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Provider instance to use
+    /// * `config` - Agent configuration template
+    /// * `parent_registry` - Parent's tool registry
+    /// * `current_depth` - Current recursion depth
+    ///
+    /// # Returns
+    ///
+    /// Returns a new SubagentTool instance
+    fn new_internal(
+        provider: Arc<dyn Provider>,
+        config: AgentConfig,
+        parent_registry: ToolRegistry,
+        current_depth: usize,
+    ) -> Self {
         let subagent_config = config.subagent.clone();
 
         // Initialize conversation store if persistence enabled

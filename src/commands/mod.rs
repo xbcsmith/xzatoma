@@ -47,6 +47,43 @@ pub mod history;
 // Replay command for conversation debugging
 pub mod replay;
 
+/// Detect if a user prompt requests subagent functionality
+///
+/// Analyzes the prompt for keywords and patterns that suggest the user
+/// wants to enable subagent delegation. This is used in chat mode to
+/// automatically enable subagents when appropriate without explicit user command.
+///
+/// # Arguments
+///
+/// * `prompt` - The user's input prompt
+///
+/// # Returns
+///
+/// Returns true if the prompt contains subagent-related keywords or patterns
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::should_enable_subagents;
+///
+/// assert!(should_enable_subagents("use subagents to organize the files"));
+/// assert!(should_enable_subagents("delegate this to subagents"));
+/// assert!(should_enable_subagents("spawn agents in parallel"));
+/// assert!(!should_enable_subagents("read the file"));
+/// ```
+pub fn should_enable_subagents(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+
+    // Check for subagent-related keywords and phrases
+    lower.contains("subagent")
+        || lower.contains("delegate")
+        || lower.contains("spawn agent")
+        || lower.contains("parallel task")
+        || lower.contains("parallel agent")
+        || lower.contains("agent delegation")
+        || lower.contains("use agent")
+}
+
 // Chat command handler
 pub mod chat {
     //! Interactive chat mode handler.
@@ -128,12 +165,14 @@ pub mod chat {
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
         // Register subagent tool for task delegation
-        let subagent_tool = SubagentTool::new(
-            Arc::clone(&provider), // Share provider with main agent
-            config.agent.clone(),  // Use same config as template
+        // Use new_with_config to support provider/model overrides
+        let subagent_tool = SubagentTool::new_with_config(
+            Arc::clone(&provider), // Parent provider (used if no override)
+            &config.provider,      // Provider config for override instantiation
+            config.agent.clone(),  // Agent config with subagent settings
             tools.clone(),         // Parent registry for filtering
             0,                     // Root depth (main agent is depth 0)
-        );
+        )?;
         tools.register("subagent", Arc::new(subagent_tool));
 
         // Initialize agent with conversation
@@ -339,6 +378,17 @@ pub mod chat {
                         }
                         Ok(SpecialCommand::ShowContextInfo) => {
                             handle_show_context_info(&agent).await;
+                            continue;
+                        }
+                        Ok(SpecialCommand::ToggleSubagents(enable)) => {
+                            if enable {
+                                mode_state.enable_subagents();
+                                println!("Subagent delegation enabled for subsequent requests");
+                            } else {
+                                mode_state.disable_subagents();
+                                println!("Subagent delegation disabled");
+                            }
+                            println!();
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,
@@ -645,6 +695,15 @@ pub mod chat {
             mode_state.safety_mode.colored_tag(),
             mode_state.safety_mode.description()
         );
+
+        // Display subagent status
+        let subagent_status = if mode_state.subagents_enabled {
+            "ENABLED".green().to_string()
+        } else {
+            "disabled".normal().to_string()
+        };
+        println!("Subagents:        {}", subagent_status);
+
         println!("Available Tools:   {}", tool_count);
         println!("Conversation Size: {} messages", conversation_len);
         println!("Prompt Format:     {}", mode_state.format_colored_prompt());
@@ -1785,5 +1844,63 @@ mod tests {
     fn sanity_check_compile() {
         // Ensure the module builds and default config compiles
         let _ = Config::default();
+    }
+
+    #[test]
+    fn test_should_enable_subagents_with_subagent_keyword() {
+        assert!(should_enable_subagents("use subagents to organize files"));
+        assert!(should_enable_subagents("delegate this task with subagents"));
+        assert!(should_enable_subagents("Subagent delegation is needed"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_with_delegate_phrase() {
+        assert!(should_enable_subagents(
+            "delegate to subagents for parallel work"
+        ));
+        assert!(should_enable_subagents("please delegate this task"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_with_spawn_keyword() {
+        assert!(should_enable_subagents("spawn agent processes"));
+        assert!(should_enable_subagents("spawn agents in parallel"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_with_parallel_keywords() {
+        assert!(should_enable_subagents("run this as a parallel task"));
+        assert!(should_enable_subagents("parallel agent execution needed"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_with_agent_delegation() {
+        assert!(should_enable_subagents("agent delegation please"));
+        assert!(should_enable_subagents("use agent delegation"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_case_insensitive() {
+        assert!(should_enable_subagents("USE SUBAGENTS"));
+        assert!(should_enable_subagents("Delegate To Agents"));
+        assert!(should_enable_subagents("PARALLEL TASK"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_returns_false_for_regular_prompts() {
+        assert!(!should_enable_subagents("read the file"));
+        assert!(!should_enable_subagents("list the directory"));
+        assert!(!should_enable_subagents("write a hello world program"));
+        assert!(!should_enable_subagents("find all rust files"));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_empty_string() {
+        assert!(!should_enable_subagents(""));
+    }
+
+    #[test]
+    fn test_should_enable_subagents_whitespace_only() {
+        assert!(!should_enable_subagents("   "));
     }
 }

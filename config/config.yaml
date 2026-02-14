@@ -61,3 +61,44 @@ agent:
     default_safety: confirm
     # Allow switching between modes during a session
     allow_mode_switching: true
+
+  # Subagent configuration
+  subagent:
+    # Maximum recursion depth for nested subagents (1-10)
+    max_depth: 3
+
+    # Default maximum turns per subagent execution
+    default_max_turns: 10
+
+    # Maximum output size in bytes before truncation
+    output_max_size: 4096
+
+    # Enable subagent execution telemetry
+    telemetry_enabled: true
+
+    # Enable conversation persistence for debugging
+    persistence_enabled: false
+
+    # Optional: Override provider for subagents
+    # If specified, subagents will use this provider instead of the parent provider
+    # Valid values: "copilot", "ollama"
+    # provider: copilot
+
+    # Optional: Override model for subagents
+    # If specified, subagents will use this model instead of the provider's default
+    # Example: "gpt-5-mini" for Copilot, "llama3.2:latest" for Ollama
+    # model: gpt-5-mini
+
+    # Enable subagents in chat mode by default
+    # If false (default), requires explicit prompt pattern or command to enable
+    # If true, subagents are available immediately in chat mode
+    chat_enabled: false
+
+    # Maximum total subagent executions per session (optional)
+    # max_executions: 100
+
+    # Maximum total tokens for all subagents (optional)
+    # max_total_tokens: 1000000
+
+    # Maximum wall-clock time for all subagents in seconds (optional)
+    # max_total_time: 3600

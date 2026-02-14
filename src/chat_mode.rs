@@ -205,6 +205,8 @@ pub struct ChatModeState {
     pub chat_mode: ChatMode,
     /// The current safety mode
     pub safety_mode: SafetyMode,
+    /// Whether subagent delegation is enabled in chat mode
+    pub subagents_enabled: bool,
 }
 
 #[allow(dead_code)]
@@ -232,6 +234,7 @@ impl ChatModeState {
         Self {
             chat_mode,
             safety_mode,
+            subagents_enabled: false,
         }
     }
 
@@ -263,6 +266,26 @@ impl ChatModeState {
         let old_safety = self.safety_mode;
         self.safety_mode = new_safety;
         old_safety
+    }
+
+    /// Enable subagent delegation
+    pub fn enable_subagents(&mut self) {
+        self.subagents_enabled = true;
+    }
+
+    /// Disable subagent delegation
+    pub fn disable_subagents(&mut self) {
+        self.subagents_enabled = false;
+    }
+
+    /// Toggle subagent delegation on or off
+    ///
+    /// # Returns
+    ///
+    /// The new state after toggling (true = enabled, false = disabled)
+    pub fn toggle_subagents(&mut self) -> bool {
+        self.subagents_enabled = !self.subagents_enabled;
+        self.subagents_enabled
     }
 
     /// Format a prompt string with mode indicators
@@ -401,11 +424,16 @@ impl ChatModeState {
     /// A multi-line status string
     pub fn status(&self) -> String {
         format!(
-            "Mode: {} ({})\nSafety: {} ({})",
+            "Mode: {} ({})\nSafety: {} ({})\nSubagents: {}",
             self.chat_mode,
             self.chat_mode.description(),
             self.safety_mode,
-            self.safety_mode.description()
+            self.safety_mode.description(),
+            if self.subagents_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
         )
     }
 }
@@ -531,6 +559,34 @@ mod tests {
         let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
         assert_eq!(state.chat_mode, ChatMode::Planning);
         assert_eq!(state.safety_mode, SafetyMode::AlwaysConfirm);
+        assert!(!state.subagents_enabled);
+    }
+
+    #[test]
+    fn test_chat_mode_state_enable_subagents() {
+        let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        state.enable_subagents();
+        assert!(state.subagents_enabled);
+    }
+
+    #[test]
+    fn test_chat_mode_state_disable_subagents() {
+        let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        state.enable_subagents();
+        state.disable_subagents();
+        assert!(!state.subagents_enabled);
+    }
+
+    #[test]
+    fn test_chat_mode_state_toggle_subagents() {
+        let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        assert!(!state.subagents_enabled);
+        let result = state.toggle_subagents();
+        assert!(result);
+        assert!(state.subagents_enabled);
+        let result = state.toggle_subagents();
+        assert!(!result);
+        assert!(!state.subagents_enabled);
     }
 
     #[test]
@@ -569,6 +625,16 @@ mod tests {
         assert!(status.contains("SAFE"));
         assert!(status.contains("Read-only mode"));
         assert!(status.contains("Confirm dangerous operations"));
+        assert!(status.contains("disabled"));
+    }
+
+    #[test]
+    fn test_chat_mode_state_status_with_subagents() {
+        let mut state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
+        state.enable_subagents();
+        let status = state.status();
+        assert!(status.contains("WRITE"));
+        assert!(status.contains("enabled"));
     }
 
     #[test]

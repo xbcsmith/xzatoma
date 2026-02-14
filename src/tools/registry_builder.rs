@@ -9,6 +9,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tracing::debug;
+
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{TerminalConfig, ToolsConfig};
 use crate::error::Result;
@@ -126,6 +128,65 @@ impl ToolRegistryBuilder {
             ChatMode::Planning => self.build_for_planning(),
             ChatMode::Write => self.build_for_write(),
         }
+    }
+
+    /// Build a tool registry for chat mode with optional subagent support
+    ///
+    /// This method builds a registry appropriate for chat mode, optionally including
+    /// subagent tools if `subagents_enabled` is true. The base tools are determined
+    /// by the builder's chat mode setting:
+    /// - Planning: read-only tools only
+    /// - Write: all tools
+    ///
+    /// When subagents are enabled, this method would register subagent tools.
+    /// Currently, this is a placeholder that calls the standard build method,
+    /// but can be extended to include subagent-specific tool registration.
+    ///
+    /// # Arguments
+    ///
+    /// * `subagents_enabled` - Whether to include subagent tools in the registry
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured ToolRegistry
+    ///
+    /// # Errors
+    ///
+    /// Returns error if tool initialization fails
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::registry_builder::ToolRegistryBuilder;
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+    /// use std::path::PathBuf;
+    ///
+    /// let builder = ToolRegistryBuilder::new(
+    ///     ChatMode::Write,
+    ///     SafetyMode::NeverConfirm,
+    ///     PathBuf::from("."),
+    /// );
+    ///
+    /// let registry = builder.build_for_chat(false).expect("Failed to build registry");
+    /// assert_eq!(registry.len(), 10); // All standard Write mode tools
+    /// ```
+    pub fn build_for_chat(&self, subagents_enabled: bool) -> Result<ToolRegistry> {
+        // Build the base registry for the current mode
+        let registry = self.build()?;
+
+        // Note: Subagent tool registration would be handled here if needed.
+        // Currently, subagent tools are registered separately in the agent/command layer
+        // to allow for dynamic enablement/disablement during chat sessions.
+        // This method serves as a placeholder for future integration of subagent tools
+        // directly into the registry builder.
+
+        if subagents_enabled {
+            // Placeholder for future subagent tool registration
+            // When implemented, this would register subagent-specific tools
+            debug!("Building registry with subagent support enabled");
+        }
+
+        Ok(registry)
     }
 
     /// Build a tool registry for Planning mode (read-only)
@@ -403,5 +464,51 @@ mod tests {
         assert_eq!(builder.mode(), ChatMode::Write);
         assert_eq!(builder.safety_mode(), SafetyMode::NeverConfirm);
         assert_eq!(builder.working_dir(), &PathBuf::from("/test"));
+    }
+
+    #[test]
+    fn test_build_for_chat_planning_no_subagents() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Planning,
+            SafetyMode::AlwaysConfirm,
+            PathBuf::from("."),
+        );
+
+        let registry = builder
+            .build_for_chat(false)
+            .expect("Failed to build registry");
+        assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("list_directory").is_some());
+        assert!(registry.get("find_path").is_some());
+    }
+
+    #[test]
+    fn test_build_for_chat_write_no_subagents() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::NeverConfirm,
+            PathBuf::from("."),
+        );
+
+        let registry = builder
+            .build_for_chat(false)
+            .expect("Failed to build registry");
+        assert_eq!(registry.len(), 10); // All standard Write mode tools
+    }
+
+    #[test]
+    fn test_build_for_chat_write_with_subagents_flag() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::AlwaysConfirm,
+            PathBuf::from("."),
+        );
+
+        let registry = builder
+            .build_for_chat(true)
+            .expect("Failed to build registry");
+        // Currently returns the same tools, but flag is passed and logged
+        assert_eq!(registry.len(), 10);
     }
 }
