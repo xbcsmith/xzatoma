@@ -128,12 +128,14 @@ pub mod chat {
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
         // Register subagent tool for task delegation
-        let subagent_tool = SubagentTool::new(
-            Arc::clone(&provider), // Share provider with main agent
-            config.agent.clone(),  // Use same config as template
+        // Use new_with_config to support provider/model overrides
+        let subagent_tool = SubagentTool::new_with_config(
+            Arc::clone(&provider), // Parent provider (used if no override)
+            &config.provider,      // Provider config for override instantiation
+            config.agent.clone(),  // Agent config with subagent settings
             tools.clone(),         // Parent registry for filtering
             0,                     // Root depth (main agent is depth 0)
-        );
+        )?;
         tools.register("subagent", Arc::new(subagent_tool));
 
         // Initialize agent with conversation
