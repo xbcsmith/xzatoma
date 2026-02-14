@@ -14,7 +14,7 @@ pub mod metrics;
 pub mod persistence;
 pub mod quota;
 
-pub use conversation::{ContextInfo, Conversation};
+pub use conversation::{ContextInfo, ContextStatus, Conversation};
 pub use core::Agent;
 pub use metrics::{init_metrics_exporter, SubagentMetrics};
 pub use persistence::{

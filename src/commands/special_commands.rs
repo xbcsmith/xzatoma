@@ -92,7 +92,15 @@ pub enum SpecialCommand {
     /// Display context window information
     ///
     /// Shows current token usage, context window size, remaining tokens, and usage percentage.
-    ShowContextInfo,
+    ContextInfo,
+
+    /// Summarize current context and start fresh conversation
+    ///
+    /// Summarizes all messages in the conversation and resets the history,
+    /// optionally using a specified model for summarization.
+    /// Use `/context summary` to use the configured summary model or current model.
+    /// Use `/context summary --model <name>` to use a specific model for summarization.
+    ContextSummary { model: Option<String> },
 
     /// Toggle subagent delegation on or off
     ///
@@ -256,7 +264,52 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             }
         }
 
-        "/context" => Ok(SpecialCommand::ShowContextInfo),
+        "/context" | "/context info" => Ok(SpecialCommand::ContextInfo),
+
+        // Handle /context summary with optional model parameter
+        input if input.starts_with("/context summary") => {
+            let rest = input[16..].trim();
+
+            // Parse optional model parameter: --model <name> or -m <name>
+            let model = if rest.is_empty() {
+                None
+            } else if let Some(after_flag) = rest.strip_prefix("--model") {
+                let after_flag = after_flag.trim();
+                if after_flag.is_empty() {
+                    return Err(CommandError::MissingArgument {
+                        command: "/context summary".to_string(),
+                        usage: "/context summary [--model <model_name>]".to_string(),
+                    });
+                }
+                Some(after_flag.to_string())
+            } else if let Some(after_flag) = rest.strip_prefix("-m") {
+                let after_flag = after_flag.trim();
+                if after_flag.is_empty() {
+                    return Err(CommandError::MissingArgument {
+                        command: "/context summary".to_string(),
+                        usage: "/context summary [-m <model_name>]".to_string(),
+                    });
+                }
+                Some(after_flag.to_string())
+            } else {
+                return Err(CommandError::UnsupportedArgument {
+                    command: "/context summary".to_string(),
+                    arg: rest.to_string(),
+                });
+            };
+
+            Ok(SpecialCommand::ContextSummary { model })
+        }
+
+        // Handle invalid /context subcommands
+        input if input.starts_with("/context ") => {
+            let rest = input[9..].trim();
+            let subcommand = rest.split_whitespace().next().unwrap_or(rest);
+            Err(CommandError::UnsupportedArgument {
+                command: "/context".to_string(),
+                arg: subcommand.to_string(),
+            })
+        }
         "/auth" => Ok(SpecialCommand::Auth(None)),
         input if input.starts_with("/auth ") => {
             let rest = input[6..].trim();
@@ -817,9 +870,100 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_show_context_info() {
+    fn test_parse_context_info() {
         let cmd = parse_special_command("/context").unwrap();
-        assert_eq!(cmd, SpecialCommand::ShowContextInfo);
+        assert_eq!(cmd, SpecialCommand::ContextInfo);
+    }
+
+    #[test]
+    fn test_parse_context_info_explicit() {
+        let cmd = parse_special_command("/context info").unwrap();
+        assert_eq!(cmd, SpecialCommand::ContextInfo);
+    }
+
+    #[test]
+    fn test_parse_context_summary_no_model() {
+        let cmd = parse_special_command("/context summary").unwrap();
+        assert_eq!(cmd, SpecialCommand::ContextSummary { model: None });
+    }
+
+    #[test]
+    fn test_parse_context_summary_with_model_long_flag() {
+        let cmd = parse_special_command("/context summary --model gpt-4").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::ContextSummary {
+                model: Some("gpt-4".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_context_summary_with_model_short_flag() {
+        let cmd = parse_special_command("/context summary -m claude-3").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::ContextSummary {
+                model: Some("claude-3".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_context_summary_with_complex_model_name() {
+        let cmd = parse_special_command("/context summary --model gpt-4-turbo-preview").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::ContextSummary {
+                model: Some("gpt-4-turbo-preview".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_context_summary_invalid_flag() {
+        let result = parse_special_command("/context summary --invalid");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/context summary");
+            assert_eq!(arg, "--invalid");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_context_summary_flag_no_model() {
+        let result = parse_special_command("/context summary --model");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, .. }) = result {
+            assert_eq!(command, "/context summary");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_context_summary_short_flag_no_model() {
+        let result = parse_special_command("/context summary -m");
+        assert!(result.is_err());
+        if let Err(CommandError::MissingArgument { command, .. }) = result {
+            assert_eq!(command, "/context summary");
+        } else {
+            panic!("Expected MissingArgument error");
+        }
+    }
+
+    #[test]
+    fn test_parse_context_invalid_subcommand() {
+        let result = parse_special_command("/context invalid");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/context");
+            assert_eq!(arg, "invalid");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
     }
 
     #[test]

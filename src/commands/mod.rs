@@ -376,8 +376,40 @@ pub mod chat {
                             .await?;
                             continue;
                         }
-                        Ok(SpecialCommand::ShowContextInfo) => {
+                        Ok(SpecialCommand::ContextInfo) => {
                             handle_show_context_info(&agent).await;
+                            continue;
+                        }
+                        Ok(SpecialCommand::ContextSummary { model }) => {
+                            // Determine which model to use for summarization
+                            let summary_model = model
+                                .clone()
+                                .or_else(|| config.agent.conversation.summary_model.clone())
+                                .unwrap_or_else(|| {
+                                    current_model
+                                        .clone()
+                                        .unwrap_or_else(|| provider_type.to_string())
+                                });
+
+                            println!("Summarizing conversation using model: {}...", summary_model);
+
+                            // Perform summarization
+                            match perform_context_summary(
+                                &mut agent,
+                                Arc::clone(&provider),
+                                &summary_model,
+                            )
+                            .await
+                            {
+                                Ok(_summary_text) => {
+                                    println!(
+                                        "\nContext summarized. New conversation started with summary in context.\n"
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to summarize context: {}\n", e);
+                                }
+                            }
                             continue;
                         }
                         Ok(SpecialCommand::ToggleSubagents(enable)) => {
@@ -548,6 +580,69 @@ pub mod chat {
                     match agent.execute(augmented_prompt).await {
                         Ok(response) => {
                             println!("\n{}\n", response);
+
+                            // Check context status and display warnings if needed
+                            let warning_threshold =
+                                config.agent.conversation.warning_threshold as f64;
+                            let auto_summary_threshold =
+                                config.agent.conversation.auto_summary_threshold as f64;
+
+                            if let Ok(model_name) = agent.provider().get_current_model() {
+                                if let Ok(_model_info) =
+                                    agent.provider().get_model_info(&model_name).await
+                                {
+                                    let context_status = agent.conversation().check_context_status(
+                                        warning_threshold,
+                                        auto_summary_threshold,
+                                    );
+
+                                    use colored::Colorize;
+                                    match context_status {
+                                        crate::agent::ContextStatus::Warning {
+                                            percentage,
+                                            tokens_remaining,
+                                        } => {
+                                            println!(
+                                                "{}",
+                                                format!(
+                                                    "WARNING: Context window is {:.0}% full",
+                                                    percentage * 100.0
+                                                )
+                                                .yellow()
+                                            );
+                                            println!(
+                                                "   {} tokens remaining. Consider running '/context summary' to free up space.",
+                                                tokens_remaining
+                                            );
+                                            println!();
+                                        }
+                                        crate::agent::ContextStatus::Critical {
+                                            percentage,
+                                            tokens_remaining,
+                                        } => {
+                                            println!(
+                                                "{}",
+                                                format!(
+                                                    "CRITICAL: Context window is {:.0}% full!",
+                                                    percentage * 100.0
+                                                )
+                                                .red()
+                                            );
+                                            println!(
+                                                "   Only {} tokens remaining!",
+                                                tokens_remaining
+                                            );
+                                            println!(
+                                                "   Run '/context summary' to free up space or risk losing context."
+                                            );
+                                            println!();
+                                        }
+                                        crate::agent::ContextStatus::Normal => {
+                                            // No warning needed
+                                        }
+                                    }
+                                }
+                            }
 
                             // Save conversation
                             if let Some(storage) = &storage {
@@ -914,6 +1009,89 @@ pub mod chat {
         }
 
         Ok(())
+    }
+
+    /// Perform context summarization and reset conversation
+    ///
+    /// Summarizes the conversation using the specified model and resets the conversation
+    /// history while preserving the summary in a system message.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - Mutable reference to the agent
+    /// * `provider` - The provider to use for summarization
+    /// * `model_name` - Name of the model to use for summarization
+    ///
+    /// # Returns
+    ///
+    /// Returns the summary text or an error
+    async fn perform_context_summary(
+        agent: &mut Agent,
+        provider: Arc<dyn crate::providers::Provider>,
+        _model_name: &str,
+    ) -> Result<String> {
+        use crate::providers::Message;
+
+        // Get current messages to summarize
+        let messages = agent.conversation().messages().to_vec();
+
+        if messages.is_empty() {
+            return Err(anyhow::anyhow!("No messages to summarize"));
+        }
+
+        // Create summarization prompt
+        let summary_prompt = create_summary_prompt(&messages);
+
+        // Call provider to generate summary
+        let response = provider
+            .complete(&[Message::user(summary_prompt)], &[])
+            .await?;
+
+        let summary_text = response
+            .message
+            .content
+            .unwrap_or_else(|| "Unable to generate summary".to_string());
+
+        // Reset conversation while preserving summary
+        let conv = agent.conversation_mut();
+        conv.clear();
+        conv.add_system_message(format!(
+            "Previous conversation summary:\n\n{}",
+            summary_text
+        ));
+
+        Ok(summary_text)
+    }
+
+    /// Create a summarization prompt for conversation history
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The messages to summarize
+    ///
+    /// # Returns
+    ///
+    /// Returns a prompt string for summarization
+    fn create_summary_prompt(messages: &[crate::providers::Message]) -> String {
+        use crate::providers::Message;
+
+        // Format messages for the summary prompt
+        let conversation_text = messages
+            .iter()
+            .filter_map(|msg| {
+                msg.content
+                    .as_ref()
+                    .map(|content| format!("{}: {}", msg.role, content))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        format!(
+            "Please provide a concise summary of the following conversation, \
+             focusing on key topics, decisions made, and important context. \
+             Keep the summary under 500 words.\n\nConversation:\n{}",
+            conversation_text
+        )
     }
 
     /// Handle displaying context window information
