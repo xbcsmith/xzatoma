@@ -94,6 +94,12 @@ pub enum SpecialCommand {
     /// Shows current token usage, context window size, remaining tokens, and usage percentage.
     ShowContextInfo,
 
+    /// Toggle subagent delegation on or off
+    ///
+    /// Enables or disables subagent tools in chat mode.
+    /// Use `/subagents on` to enable, `/subagents off` to disable, or `/subagents` to toggle.
+    ToggleSubagents(bool), // true = enable, false = disable
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -279,6 +285,20 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             } else {
                 Ok(SpecialCommand::SwitchModel(rest.to_string()))
             }
+        }
+
+        // Subagent delegation commands
+        "/subagents" => Ok(SpecialCommand::ToggleSubagents(true)),
+        "/subagents on" | "/subagents enable" => Ok(SpecialCommand::ToggleSubagents(true)),
+        "/subagents off" | "/subagents disable" => Ok(SpecialCommand::ToggleSubagents(false)),
+
+        // Handle /subagents with invalid argument
+        input if input.starts_with("/subagents ") => {
+            let arg = input[11..].trim();
+            Err(CommandError::UnsupportedArgument {
+                command: "/subagents".to_string(),
+                arg: arg.to_string(),
+            })
         }
 
         // Exit commands
@@ -909,5 +929,47 @@ mod tests {
     fn test_parse_models_info_with_complex_model_name() {
         let cmd = parse_special_command("/models info gpt-5-mini").unwrap();
         assert_eq!(cmd, SpecialCommand::ShowModelInfo("gpt-5-mini".to_string()));
+    }
+
+    #[test]
+    fn test_parse_subagents_toggle() {
+        let cmd = parse_special_command("/subagents").unwrap();
+        assert_eq!(cmd, SpecialCommand::ToggleSubagents(true));
+    }
+
+    #[test]
+    fn test_parse_subagents_on() {
+        let cmd = parse_special_command("/subagents on").unwrap();
+        assert_eq!(cmd, SpecialCommand::ToggleSubagents(true));
+    }
+
+    #[test]
+    fn test_parse_subagents_enable() {
+        let cmd = parse_special_command("/subagents enable").unwrap();
+        assert_eq!(cmd, SpecialCommand::ToggleSubagents(true));
+    }
+
+    #[test]
+    fn test_parse_subagents_off() {
+        let cmd = parse_special_command("/subagents off").unwrap();
+        assert_eq!(cmd, SpecialCommand::ToggleSubagents(false));
+    }
+
+    #[test]
+    fn test_parse_subagents_disable() {
+        let cmd = parse_special_command("/subagents disable").unwrap();
+        assert_eq!(cmd, SpecialCommand::ToggleSubagents(false));
+    }
+
+    #[test]
+    fn test_parse_subagents_invalid_arg() {
+        let result = parse_special_command("/subagents invalid");
+        assert!(result.is_err());
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/subagents");
+            assert_eq!(arg, "invalid");
+        } else {
+            panic!("Expected UnsupportedArgument error");
+        }
     }
 }
