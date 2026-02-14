@@ -345,6 +345,13 @@ SAFETY MODE SWITCHING:
   /yolo           - Disable safety mode (YOLO mode)
   /safety off     - Same as /yolo
 
+SUBAGENT DELEGATION:
+  /subagents      - Show subagent enablement status
+  /subagents on   - Enable subagent delegation
+  /subagents off  - Disable subagent delegation
+  /subagents enable  - Same as /subagents on
+  /subagents disable - Same as /subagents off
+
 CONTEXT MENTIONS (Quick Reference):
   @file.rs              - Include file contents
   @file.rs#L10-20       - Include specific lines
@@ -376,6 +383,8 @@ NOTES:
   - Mentions (@file, @search, etc.) inject context into prompts
   - Switching to Write mode enables powerful file and terminal tools
   - Use /safe in Write mode to require confirmation for dangerous operations
+  - Subagents allow delegating tasks to separate agent instances
+  - Mention "subagent", "delegate", or "parallel agent" in your prompt to auto-enable subagents
   - See /mentions for complete mention syntax and examples
 "#
     );

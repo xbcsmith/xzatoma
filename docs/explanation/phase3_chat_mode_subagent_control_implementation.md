@@ -330,13 +330,13 @@ Extend `build_for_chat()` to register actual subagent tools:
 ```rust
 pub fn build_for_chat(&self, subagents_enabled: bool) -> Result<ToolRegistry> {
     let mut registry = self.build()?;
-    
+
     if subagents_enabled {
         // Register subagent and parallel_subagent tools
         registry.register("subagent", ...);
         registry.register("parallel_subagent", ...);
     }
-    
+
     Ok(registry)
 }
 ```

@@ -695,6 +695,15 @@ pub mod chat {
             mode_state.safety_mode.colored_tag(),
             mode_state.safety_mode.description()
         );
+
+        // Display subagent status
+        let subagent_status = if mode_state.subagents_enabled {
+            "ENABLED".green().to_string()
+        } else {
+            "disabled".normal().to_string()
+        };
+        println!("Subagents:        {}", subagent_status);
+
         println!("Available Tools:   {}", tool_count);
         println!("Conversation Size: {} messages", conversation_len);
         println!("Prompt Format:     {}", mode_state.format_colored_prompt());
