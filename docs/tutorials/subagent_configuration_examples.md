@@ -685,5 +685,5 @@ agent:
 
 ---
 
-**Last updated**: 2024  
+**Last updated**: 2024
 **Have questions?**: Check the configuration guide or troubleshooting sections

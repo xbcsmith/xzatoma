@@ -196,7 +196,7 @@ Use subagents to process each CSV file separately, then combine results
 Request parallel execution across subagents:
 
 ```
-Analyze these 10 log files for patterns. 
+Analyze these 10 log files for patterns.
 Use separate subagents for each file to run in parallel,
 then combine findings into a unified report.
 ```
@@ -475,7 +475,7 @@ You can't override config in chat mode, but you can:
    ```
    # Edit config
    nano ~/.xzatoma/config.yaml
-   
+
    # Restart chat
    xzatoma chat
    ```
@@ -587,7 +587,7 @@ To reset, explicitly disable:
 
 ---
 
-**Last updated**: 2024  
+**Last updated**: 2024
 **Feedback**: Check project issues or documentation for questions
 ```
 

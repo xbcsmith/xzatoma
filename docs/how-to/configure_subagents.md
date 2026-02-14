@@ -450,7 +450,7 @@ xzatoma chat
 
 ---
 
-**Last updated**: 2024  
+**Last updated**: 2024
 **For questions**: See the troubleshooting section above or check project issues
 ```
 
