@@ -11,7 +11,7 @@ This document summarizes the testing infrastructure, test coverage, and validati
 ### 1. Integration Test Suite
 - **File**: `tests/subagent_configuration_integration.rs` (1,035 lines)
 - **Coverage**: 33 comprehensive integration tests
-- **Categories**: 
+- **Categories**:
   - Provider override tests (5 tests)
   - Model override tests (6 tests)
   - Chat mode integration tests (5 tests)
