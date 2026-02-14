@@ -37,20 +37,20 @@ pub use terminal::{
 pub use grep::{GrepTool, SearchMatch};
 
 // Re-export fetch tool and types
-pub use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
+pub(crate) use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
 
 // Re-export subagent tool and types
-pub use subagent::{SubagentTool, SubagentToolInput};
+pub(crate) use subagent::{SubagentTool, SubagentToolInput};
 
 // Re-export parallel subagent tool and types
-pub use parallel_subagent::{
+pub(crate) use parallel_subagent::{
     ParallelSubagentInput, ParallelSubagentOutput, ParallelSubagentTool, ParallelTask, TaskResult,
 };
 
 // Re-export plan parser symbols for convenience
-pub use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
-pub use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
-pub use registry_builder::ToolRegistryBuilder;
+pub(crate) use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
+pub(crate) use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
+pub(crate) use registry_builder::ToolRegistryBuilder;
 
 // Re-export file utilities and metadata types
 pub use file_metadata::{

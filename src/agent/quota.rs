@@ -4,7 +4,7 @@
 //! including limits on executions, tokens, and wall-clock time.
 
 use crate::error::{Result, XzatomaError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 /// Resource quota limits for subagent execution
@@ -110,6 +110,19 @@ impl QuotaTracker {
         }
     }
 
+    fn lock_usage(&self) -> Result<MutexGuard<'_, QuotaUsage>> {
+        self.usage
+            .lock()
+            .map_err(|e| XzatomaError::Internal(format!("Quota usage lock poisoned: {}", e)).into())
+    }
+
+    fn recover_usage(&self) -> QuotaUsage {
+        match self.usage.lock() {
+            Ok(usage) => usage.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
     /// Checks if quota is available and reserves one execution slot
     ///
     /// This should be called before executing a subagent to verify
@@ -149,7 +162,7 @@ impl QuotaTracker {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn check_and_reserve(&self) -> Result<()> {
-        let usage = self.usage.lock().unwrap();
+        let usage = self.lock_usage()?;
 
         // Check execution limit
         if let Some(max) = self.limits.max_executions {
@@ -214,7 +227,7 @@ impl QuotaTracker {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn record_execution(&self, tokens: usize) -> Result<()> {
-        let mut usage = self.usage.lock().unwrap();
+        let mut usage = self.lock_usage()?;
         usage.executions += 1;
         usage.total_tokens += tokens;
 
@@ -253,7 +266,7 @@ impl QuotaTracker {
     /// assert_eq!(usage.total_tokens, 0);
     /// ```
     pub fn get_usage(&self) -> QuotaUsage {
-        self.usage.lock().unwrap().clone()
+        self.recover_usage()
     }
 
     /// Calculates remaining execution budget
@@ -278,7 +291,7 @@ impl QuotaTracker {
     /// assert_eq!(tracker.remaining_executions(), Some(10));
     /// ```
     pub fn remaining_executions(&self) -> Option<usize> {
-        let usage = self.usage.lock().unwrap();
+        let usage = self.recover_usage();
         self.limits
             .max_executions
             .map(|max| max.saturating_sub(usage.executions))
@@ -306,7 +319,7 @@ impl QuotaTracker {
     /// assert_eq!(tracker.remaining_tokens(), Some(100000));
     /// ```
     pub fn remaining_tokens(&self) -> Option<usize> {
-        let usage = self.usage.lock().unwrap();
+        let usage = self.recover_usage();
         self.limits
             .max_total_tokens
             .map(|max| max.saturating_sub(usage.total_tokens))
@@ -319,7 +332,7 @@ impl QuotaTracker {
     /// The remaining duration before hitting the time limit,
     /// or None if time quota is unlimited
     pub fn remaining_time(&self) -> Option<Duration> {
-        let usage = self.usage.lock().unwrap();
+        let usage = self.recover_usage();
         self.limits.max_total_time.map(|max| {
             let elapsed = usage.start_time.elapsed();
             if elapsed >= max {

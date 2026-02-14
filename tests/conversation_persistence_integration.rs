@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use std::time::Duration;
-use tempfile::tempdir;
+mod common;
 use tokio::time::sleep;
 use uuid::Uuid;
 
 use xzatoma::agent::Agent;
 use xzatoma::config::AgentConfig;
 use xzatoma::providers::{CompletionResponse, Message, Provider};
-use xzatoma::storage::SqliteStorage;
 use xzatoma::tools::ToolRegistry;
 
 /// Simple mock provider that returns predetermined messages (in order).
@@ -45,18 +44,9 @@ impl Provider for MockProvider {
     }
 }
 
-/// Helper to create a storage instance backed by a temporary directory.
-fn create_temp_storage() -> (SqliteStorage, tempfile::TempDir) {
-    let tmp = tempdir().expect("failed to create tempdir");
-    let db_path = tmp.path().join("history.db");
-    let storage =
-        SqliteStorage::new_with_path(db_path).expect("failed to create sqlite storage with path");
-    (storage, tmp)
-}
-
 #[tokio::test]
 async fn test_conversation_auto_saves_after_message() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     // Provider returns a single assistant message
     let provider = MockProvider::new(vec![Message::assistant("Hello from provider")]);
@@ -103,7 +93,7 @@ async fn test_conversation_auto_saves_after_message() {
 
 #[tokio::test]
 async fn test_resume_loads_conversation_history() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     let id = Uuid::new_v4().to_string();
     let title = "Saved session";
@@ -137,7 +127,7 @@ async fn test_resume_loads_conversation_history() {
 
 #[tokio::test]
 async fn test_resume_invalid_id_starts_new() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     // Use a random id which was not saved
     let random_id = Uuid::new_v4().to_string();
@@ -154,7 +144,7 @@ async fn test_resume_invalid_id_starts_new() {
 
 #[tokio::test]
 async fn test_title_generated_from_first_user_message() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     let provider = MockProvider::new(vec![Message::assistant("Reply")]);
     let tools = ToolRegistry::new();
@@ -187,7 +177,7 @@ async fn test_title_generated_from_first_user_message() {
 
 #[tokio::test]
 async fn test_title_truncates_long_first_message() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     let provider = MockProvider::new(vec![Message::assistant("Reply")]);
     let tools = ToolRegistry::new();
@@ -218,7 +208,7 @@ async fn test_title_truncates_long_first_message() {
 
 #[tokio::test]
 async fn test_history_list_displays_sessions() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     let id1 = Uuid::new_v4().to_string();
     let id2 = Uuid::new_v4().to_string();
@@ -257,7 +247,7 @@ async fn test_history_list_displays_sessions() {
 
 #[tokio::test]
 async fn test_history_delete_removes_session() {
-    let (storage, _tmp) = create_temp_storage();
+    let (storage, _tmp) = common::create_temp_storage();
 
     let id = Uuid::new_v4().to_string();
     storage

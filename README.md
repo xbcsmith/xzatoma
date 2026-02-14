@@ -179,6 +179,45 @@ Instead of having the agent discover content through tool calls, mentions pre-lo
 
 For complete guide, see [Using Context Mentions](docs/how-to/use_context_mentions.md).
 
+## File Editing Safety
+
+XZatoma includes intelligent file editing with multiple safety mechanisms to prevent accidental data loss:
+
+### Editing Modes
+
+- **create**: Create new files (fails if file exists)
+- **edit**: Targeted replacement using unique anchor text (SAFEST for modifications)
+- **append**: Add content to end of file (SAFEST for additions)
+- **overwrite**: Replace entire file (USE WITH CAUTION)
+
+### Safety Features
+
+1. **Required anchor text**: Edit mode requires `old_text` parameter
+2. **Uniqueness validation**: Anchor text must match exactly once
+3. **Change magnitude detection**: Blocks edits that dramatically reduce file size
+4. **Diff preview**: All changes shown before being applied
+5. **Clear error messages**: Guidance on correct usage when errors occur
+
+### Example: Safely Adding to a Makefile
+
+Instead of risking file replacement, use append mode:
+
+```bash
+xzatoma --write "Add a release-linux target to the Makefile that runs cargo build --release for x86_64-unknown-linux-gnu"
+```
+
+The agent will use append mode to safely add content:
+
+```json
+{
+  "path": "Makefile",
+  "mode": "append",
+  "content": "\nrelease-linux:\n\t@cargo build --release --target x86_64-unknown-linux-gnu\n"
+}
+```
+
+This safely adds to the file without touching existing content.
+
 ## Project Documentation
 
 ### For Users

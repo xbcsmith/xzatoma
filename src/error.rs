@@ -112,6 +112,10 @@ pub enum XzatomaError {
     /// Resource quota exceeded
     #[error("Resource quota exceeded: {0}")]
     QuotaExceeded(String),
+
+    /// Internal runtime error
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Result type alias for XZatoma operations
@@ -268,5 +272,11 @@ mod tests {
             error.to_string(),
             "Storage error: database connection failed"
         );
+    }
+
+    #[test]
+    fn test_internal_error_display() {
+        let error = XzatomaError::Internal("poisoned lock".to_string());
+        assert_eq!(error.to_string(), "Internal error: poisoned lock");
     }
 }
