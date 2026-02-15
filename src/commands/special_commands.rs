@@ -417,8 +417,12 @@ MODEL MANAGEMENT:
   /models list    - Show available models from current provider
   /models info <name> - Show detailed info about a specific model
   /model <name>   - Switch to a different model
-  /context        - Show context window and token usage information
   /auth [provider] - Start authentication for the provider; use `/auth` for the configured provider
+
+CONTEXT WINDOW MANAGEMENT:
+  /context info              - Show context window usage and token statistics
+  /context summary           - Summarize conversation and reset context window
+  /context summary -m MODEL  - Summarize using a specific model (for cost optimization)
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status

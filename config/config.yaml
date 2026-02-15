@@ -35,6 +35,13 @@ agent:
     # Token threshold to trigger pruning (0.0-1.0)
     prune_threshold: 0.8
 
+    # Context window management
+    warning_threshold: 0.85 # Warn at 85% full
+    auto_summary_threshold: 0.90 # Auto-summarize at 90% full
+
+    # Use cheaper model for summaries (optional)
+    # summary_model: "gpt-4o-mini"
+
   # Tool execution settings
   tools:
     # Maximum size of tool output (bytes)
