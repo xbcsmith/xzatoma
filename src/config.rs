@@ -257,7 +257,7 @@ fn default_subagent_max_turns() -> usize {
 }
 
 fn default_subagent_output_max_size() -> usize {
-    4096
+    1_048_576 // 1 MB
 }
 
 fn default_subagent_telemetry_enabled() -> bool {
@@ -477,7 +477,7 @@ pub struct ToolsConfig {
 }
 
 fn default_max_output() -> usize {
-    1_048_576 // 1 MB
+    5_242_880 // 5 MB
 }
 
 fn default_max_file_read() -> usize {
@@ -1270,7 +1270,7 @@ agent:
     #[test]
     fn test_tools_config_defaults() {
         let config = ToolsConfig::default();
-        assert_eq!(config.max_output_size, 1_048_576);
+        assert_eq!(config.max_output_size, 5_242_880);
         assert_eq!(config.max_file_read_size, 10_485_760);
     }
 
@@ -1316,7 +1316,7 @@ allow_mode_switching: false
         let config = SubagentConfig::default();
         assert_eq!(config.max_depth, 3);
         assert_eq!(config.default_max_turns, 10);
-        assert_eq!(config.output_max_size, 4096);
+        assert_eq!(config.output_max_size, 1_048_576);
         assert!(config.telemetry_enabled);
         assert!(!config.persistence_enabled);
     }
@@ -1999,7 +1999,7 @@ agent:
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.agent.subagent.max_depth, 3);
         assert_eq!(cfg.agent.subagent.default_max_turns, 10);
-        assert_eq!(cfg.agent.subagent.output_max_size, 4096);
+        assert_eq!(cfg.agent.subagent.output_max_size, 1_048_576);
         assert!(cfg.agent.subagent.telemetry_enabled);
         assert!(!cfg.agent.subagent.persistence_enabled);
         assert_eq!(cfg.agent.subagent.provider, None);
