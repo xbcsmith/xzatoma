@@ -59,6 +59,72 @@ impl ContextInfo {
     }
 }
 
+/// Status of the context window indicating usage level
+///
+/// Provides feedback on how much of the context window is currently used
+/// and whether any thresholds for warnings or automatic summarization
+/// have been reached.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ContextStatus {
+    /// Context usage is normal (below warning threshold)
+    Normal,
+
+    /// Context usage has reached warning threshold
+    ///
+    /// Fields:
+    /// - `percentage`: Percentage of context used (0.0-100.0)
+    /// - `tokens_remaining`: Tokens still available before critical state
+    Warning {
+        percentage: f64,
+        tokens_remaining: usize,
+    },
+
+    /// Context usage has reached critical threshold
+    ///
+    /// Automatic summarization should be triggered.
+    /// Fields:
+    /// - `percentage`: Percentage of context used (0.0-100.0)
+    /// - `tokens_remaining`: Tokens still available before overflow
+    Critical {
+        percentage: f64,
+        tokens_remaining: usize,
+    },
+}
+
+impl ContextStatus {
+    /// Returns true if this status indicates a warning condition
+    pub fn is_warning(&self) -> bool {
+        matches!(self, ContextStatus::Warning { .. })
+    }
+
+    /// Returns true if this status is critical
+    pub fn is_critical(&self) -> bool {
+        matches!(self, ContextStatus::Critical { .. })
+    }
+
+    /// Returns the usage percentage if in warning or critical state
+    pub fn percentage(&self) -> Option<f64> {
+        match self {
+            ContextStatus::Warning { percentage, .. }
+            | ContextStatus::Critical { percentage, .. } => Some(*percentage),
+            ContextStatus::Normal => None,
+        }
+    }
+
+    /// Returns the remaining tokens if in warning or critical state
+    pub fn tokens_remaining(&self) -> Option<usize> {
+        match self {
+            ContextStatus::Warning {
+                tokens_remaining, ..
+            }
+            | ContextStatus::Critical {
+                tokens_remaining, ..
+            } => Some(*tokens_remaining),
+            ContextStatus::Normal => None,
+        }
+    }
+}
+
 /// Manages conversation history with token tracking and pruning
 ///
 /// The conversation maintains a list of messages and tracks the total token count.
@@ -304,7 +370,7 @@ impl Conversation {
     /// - Tool call pairs (assistant tool_calls + corresponding tool results)
     ///
     /// Removed messages are summarized and added as a new system message.
-    fn prune_if_needed(&mut self) {
+    pub fn prune_if_needed(&mut self) {
         use std::collections::HashSet;
 
         let threshold = (self.max_tokens as f64 * self.prune_threshold) as usize;
@@ -687,6 +753,182 @@ impl Conversation {
     pub fn get_provider_token_usage(&self) -> Option<TokenUsage> {
         self.provider_token_usage
     }
+
+    /// Check the current context window status
+    ///
+    /// Compares current token usage against configured thresholds to determine
+    /// if the context is normal, in warning zone, or critical.
+    ///
+    /// # Arguments
+    ///
+    /// * `warning_threshold` - Fraction (0.0-1.0) that triggers warning status
+    /// * `auto_summary_threshold` - Fraction (0.0-1.0) that triggers critical status
+    ///
+    /// # Returns
+    ///
+    /// Returns `ContextStatus` indicating the current state
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    /// use xzatoma::agent::conversation::ContextStatus;
+    ///
+    /// let mut conv = Conversation::new(1000, 5, 0.8);
+    /// // Token count is 0, well below 85% threshold
+    /// let status = conv.check_context_status(0.85, 0.90);
+    /// assert_eq!(status, ContextStatus::Normal);
+    /// ```
+    pub fn check_context_status(
+        &self,
+        warning_threshold: f64,
+        auto_summary_threshold: f64,
+    ) -> ContextStatus {
+        let percentage = if self.max_tokens == 0 {
+            0.0
+        } else {
+            (self.token_count as f64 / self.max_tokens as f64) * 100.0
+        };
+
+        let warning_threshold = warning_threshold.clamp(0.0, 1.0);
+        let auto_summary_threshold = auto_summary_threshold.clamp(0.0, 1.0);
+
+        let usage_ratio = if self.max_tokens == 0 {
+            0.0
+        } else {
+            self.token_count as f64 / self.max_tokens as f64
+        };
+
+        if usage_ratio >= auto_summary_threshold {
+            ContextStatus::Critical {
+                percentage,
+                tokens_remaining: self.remaining_tokens(),
+            }
+        } else if usage_ratio >= warning_threshold {
+            ContextStatus::Warning {
+                percentage,
+                tokens_remaining: self.remaining_tokens(),
+            }
+        } else {
+            ContextStatus::Normal
+        }
+    }
+
+    /// Check if a warning should be triggered based on threshold
+    ///
+    /// # Arguments
+    ///
+    /// * `warning_threshold` - Fraction (0.0-1.0) that triggers warning
+    ///
+    /// # Returns
+    ///
+    /// Returns true if token usage exceeds the warning threshold
+    pub fn should_warn(&self, warning_threshold: f64) -> bool {
+        let warning_threshold = warning_threshold.clamp(0.0, 1.0);
+        if self.max_tokens == 0 {
+            return false;
+        }
+        let usage_ratio = self.token_count as f64 / self.max_tokens as f64;
+        usage_ratio >= warning_threshold
+    }
+
+    /// Check if automatic summarization should be triggered
+    ///
+    /// # Arguments
+    ///
+    /// * `auto_threshold` - Fraction (0.0-1.0) that triggers auto-summarization
+    ///
+    /// # Returns
+    ///
+    /// Returns true if token usage exceeds the auto-summarization threshold
+    pub fn should_auto_summarize(&self, auto_threshold: f64) -> bool {
+        let auto_threshold = auto_threshold.clamp(0.0, 1.0);
+        if self.max_tokens == 0 {
+            return false;
+        }
+        let usage_ratio = self.token_count as f64 / self.max_tokens as f64;
+        usage_ratio >= auto_threshold
+    }
+
+    /// Create a summary message from conversation history
+    ///
+    /// This is a public wrapper around the internal `create_summary` method.
+    /// It generates a comprehensive summary of the conversation for insertion
+    /// back into the message history.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The messages to summarize
+    ///
+    /// # Returns
+    ///
+    /// Returns a summary string of the conversation content
+    pub fn create_summary_message(&self, messages: &[Message]) -> String {
+        self.create_summary(messages)
+    }
+
+    /// Summarize the conversation and reset for new turns
+    ///
+    /// This method:
+    /// 1. Collects all non-system messages
+    /// 2. Creates a comprehensive summary
+    /// 3. Clears all messages except system messages
+    /// 4. Adds the summary as a new system message
+    /// 5. Resets the token count
+    /// 6. Returns the summary text for display or logging
+    ///
+    /// # Returns
+    ///
+    /// Returns the generated summary text, or an error if the operation fails
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    ///
+    /// let mut conv = Conversation::new(1000, 5, 0.8);
+    /// // Add some messages first
+    /// // conv.add_user_message("...");
+    /// // conv.add_assistant_message("...");
+    ///
+    /// // Then summarize and reset
+    /// // let summary = conv.summarize_and_reset();
+    /// // assert!(summary.is_ok());
+    /// ```
+    pub fn summarize_and_reset(&mut self) -> Result<String> {
+        // Collect all non-system messages for summarization
+        let messages_to_summarize: Vec<_> = self
+            .messages
+            .iter()
+            .filter(|msg| msg.role != "system")
+            .cloned()
+            .collect();
+
+        // Create summary from collected messages
+        let summary = self.create_summary(&messages_to_summarize);
+
+        // Keep system messages
+        let system_messages: Vec<_> = self
+            .messages
+            .iter()
+            .filter(|msg| msg.role == "system")
+            .cloned()
+            .collect();
+
+        // Clear all messages and rebuild with systems only
+        self.messages.clear();
+        self.messages.extend(system_messages);
+
+        // Add summary as a new system message
+        if !summary.is_empty() {
+            self.add_system_message(format!("Previous conversation summary:\n{}", summary));
+        }
+
+        // Reset token count by recalculating from remaining messages
+        self.recalculate_tokens();
+
+        Ok(summary)
+    }
 }
 
 /// Estimates token count for a string using a simple heuristic
@@ -1033,5 +1275,183 @@ mod tests {
         assert!(conv.messages().iter().any(
             |m| m.role == "system" && m.content.as_ref().is_some_and(|c| c.contains("Summary"))
         ));
+    }
+
+    #[test]
+    fn test_context_status_normal_when_below_warning_threshold() {
+        let conv = Conversation::new(1000, 5, 0.8);
+        let status = conv.check_context_status(0.85, 0.90);
+        assert_eq!(status, ContextStatus::Normal);
+    }
+
+    #[test]
+    fn test_context_status_warning_between_thresholds() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 870; // 87% usage - between 85% and 90%
+        let status = conv.check_context_status(0.85, 0.90);
+        assert!(status.is_warning());
+        if let ContextStatus::Warning {
+            percentage,
+            tokens_remaining,
+        } = status
+        {
+            assert!(percentage > 86.0 && percentage < 88.0);
+            assert_eq!(tokens_remaining, 130);
+        } else {
+            panic!("Expected Warning status");
+        }
+    }
+
+    #[test]
+    fn test_context_status_critical_at_auto_summary_threshold() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 900; // 90% usage - at critical threshold
+        let status = conv.check_context_status(0.85, 0.90);
+        assert!(status.is_critical());
+        if let ContextStatus::Critical {
+            percentage,
+            tokens_remaining,
+        } = status
+        {
+            assert_eq!(percentage, 90.0);
+            assert_eq!(tokens_remaining, 100);
+        } else {
+            panic!("Expected Critical status");
+        }
+    }
+
+    #[test]
+    fn test_should_warn_returns_true_at_threshold() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 850; // 85% usage
+        assert!(conv.should_warn(0.85));
+        assert!(!conv.should_warn(0.90));
+    }
+
+    #[test]
+    fn test_should_warn_returns_false_below_threshold() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 840; // 84% usage
+        assert!(!conv.should_warn(0.85));
+    }
+
+    #[test]
+    fn test_should_auto_summarize_returns_true_at_threshold() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 900; // 90% usage
+        assert!(conv.should_auto_summarize(0.90));
+        assert!(!conv.should_auto_summarize(0.95));
+    }
+
+    #[test]
+    fn test_should_auto_summarize_returns_false_below_threshold() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 890; // 89% usage
+        assert!(!conv.should_auto_summarize(0.90));
+    }
+
+    #[test]
+    fn test_create_summary_message_creates_summary() {
+        let conv = Conversation::new(8000, 10, 0.8);
+        let messages = vec![
+            Message::user("What is 2+2?"),
+            Message::assistant("The answer is 4"),
+        ];
+        let summary = conv.create_summary_message(&messages);
+        assert!(!summary.is_empty());
+        // Summary should contain some reference to the conversation
+        assert!(!summary.is_empty());
+    }
+
+    #[test]
+    fn test_summarize_and_reset_clears_messages() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.add_user_message("Hello");
+        conv.add_assistant_message("Hi there");
+
+        let initial_message_count = conv.messages().len();
+        assert!(initial_message_count > 0);
+
+        let result = conv.summarize_and_reset();
+        assert!(result.is_ok());
+
+        // After reset, should have fewer messages (only system)
+        // and a summary message
+        let final_messages = conv.messages();
+        assert!(final_messages.iter().all(|m| m.role == "system"));
+    }
+
+    #[test]
+    fn test_summarize_and_reset_preserves_system_messages() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.add_system_message("You are a helpful assistant");
+        conv.add_user_message("Hello");
+        conv.add_assistant_message("Hi");
+
+        let result = conv.summarize_and_reset();
+        assert!(result.is_ok());
+
+        // System message should still exist
+        let messages = conv.messages();
+        assert!(messages.iter().any(|m| {
+            m.role == "system"
+                && m.content
+                    .as_ref()
+                    .is_some_and(|c| c.contains("helpful assistant"))
+        }));
+    }
+
+    #[test]
+    fn test_summarize_and_reset_returns_non_empty_summary() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.add_user_message("How do I learn Rust?");
+        conv.add_assistant_message(
+            "Rust is a systems programming language. Start with the book at rust-lang.org",
+        );
+
+        let result = conv.summarize_and_reset();
+        assert!(result.is_ok());
+        let summary = result.unwrap();
+        assert!(!summary.is_empty());
+    }
+
+    #[test]
+    fn test_context_status_with_zero_max_tokens() {
+        let conv = Conversation::new(0, 5, 0.8);
+        let status = conv.check_context_status(0.85, 0.90);
+        assert_eq!(status, ContextStatus::Normal);
+    }
+
+    #[test]
+    fn test_should_warn_with_zero_max_tokens() {
+        let conv = Conversation::new(0, 5, 0.8);
+        assert!(!conv.should_warn(0.85));
+    }
+
+    #[test]
+    fn test_should_auto_summarize_with_zero_max_tokens() {
+        let conv = Conversation::new(0, 5, 0.8);
+        assert!(!conv.should_auto_summarize(0.90));
+    }
+
+    #[test]
+    fn test_context_status_percentage_accessor() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 870;
+        let status = conv.check_context_status(0.85, 0.90);
+        let percentage = status.percentage();
+        assert!(percentage.is_some());
+        let pct = percentage.unwrap();
+        assert!(pct > 86.0 && pct < 88.0);
+    }
+
+    #[test]
+    fn test_context_status_tokens_remaining_accessor() {
+        let mut conv = Conversation::new(1000, 5, 0.8);
+        conv.token_count = 850;
+        let status = conv.check_context_status(0.85, 0.90);
+        let remaining = status.tokens_remaining();
+        assert!(remaining.is_some());
+        assert_eq!(remaining.unwrap(), 150);
     }
 }

@@ -376,8 +376,40 @@ pub mod chat {
                             .await?;
                             continue;
                         }
-                        Ok(SpecialCommand::ShowContextInfo) => {
+                        Ok(SpecialCommand::ContextInfo) => {
                             handle_show_context_info(&agent).await;
+                            continue;
+                        }
+                        Ok(SpecialCommand::ContextSummary { model }) => {
+                            // Determine which model to use for summarization
+                            let summary_model = model
+                                .clone()
+                                .or_else(|| config.agent.conversation.summary_model.clone())
+                                .unwrap_or_else(|| {
+                                    current_model
+                                        .clone()
+                                        .unwrap_or_else(|| provider_type.to_string())
+                                });
+
+                            println!("Summarizing conversation using model: {}...", summary_model);
+
+                            // Perform summarization
+                            match perform_context_summary(
+                                &mut agent,
+                                Arc::clone(&provider),
+                                &summary_model,
+                            )
+                            .await
+                            {
+                                Ok(_summary_text) => {
+                                    println!(
+                                        "\nContext summarized. New conversation started with summary in context.\n"
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to summarize context: {}\n", e);
+                                }
+                            }
                             continue;
                         }
                         Ok(SpecialCommand::ToggleSubagents(enable)) => {
@@ -548,6 +580,69 @@ pub mod chat {
                     match agent.execute(augmented_prompt).await {
                         Ok(response) => {
                             println!("\n{}\n", response);
+
+                            // Check context status and display warnings if needed
+                            let warning_threshold =
+                                config.agent.conversation.warning_threshold as f64;
+                            let auto_summary_threshold =
+                                config.agent.conversation.auto_summary_threshold as f64;
+
+                            if let Ok(model_name) = agent.provider().get_current_model() {
+                                if let Ok(_model_info) =
+                                    agent.provider().get_model_info(&model_name).await
+                                {
+                                    let context_status = agent.conversation().check_context_status(
+                                        warning_threshold,
+                                        auto_summary_threshold,
+                                    );
+
+                                    use colored::Colorize;
+                                    match context_status {
+                                        crate::agent::ContextStatus::Warning {
+                                            percentage,
+                                            tokens_remaining,
+                                        } => {
+                                            println!(
+                                                "{}",
+                                                format!(
+                                                    "WARNING: Context window is {:.0}% full",
+                                                    percentage * 100.0
+                                                )
+                                                .yellow()
+                                            );
+                                            println!(
+                                                "   {} tokens remaining. Consider running '/context summary' to free up space.",
+                                                tokens_remaining
+                                            );
+                                            println!();
+                                        }
+                                        crate::agent::ContextStatus::Critical {
+                                            percentage,
+                                            tokens_remaining,
+                                        } => {
+                                            println!(
+                                                "{}",
+                                                format!(
+                                                    "CRITICAL: Context window is {:.0}% full!",
+                                                    percentage * 100.0
+                                                )
+                                                .red()
+                                            );
+                                            println!(
+                                                "   Only {} tokens remaining!",
+                                                tokens_remaining
+                                            );
+                                            println!(
+                                                "   Run '/context summary' to free up space or risk losing context."
+                                            );
+                                            println!();
+                                        }
+                                        crate::agent::ContextStatus::Normal => {
+                                            // No warning needed
+                                        }
+                                    }
+                                }
+                            }
 
                             // Save conversation
                             if let Some(storage) = &storage {
@@ -914,6 +1009,89 @@ pub mod chat {
         }
 
         Ok(())
+    }
+
+    /// Perform context summarization and reset conversation
+    ///
+    /// Summarizes the conversation using the specified model and resets the conversation
+    /// history while preserving the summary in a system message.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - Mutable reference to the agent
+    /// * `provider` - The provider to use for summarization
+    /// * `model_name` - Name of the model to use for summarization
+    ///
+    /// # Returns
+    ///
+    /// Returns the summary text or an error
+    async fn perform_context_summary(
+        agent: &mut Agent,
+        provider: Arc<dyn crate::providers::Provider>,
+        _model_name: &str,
+    ) -> Result<String> {
+        use crate::providers::Message;
+
+        // Get current messages to summarize
+        let messages = agent.conversation().messages().to_vec();
+
+        if messages.is_empty() {
+            return Err(anyhow::anyhow!("No messages to summarize"));
+        }
+
+        // Create summarization prompt
+        let summary_prompt = create_summary_prompt(&messages);
+
+        // Call provider to generate summary
+        let response = provider
+            .complete(&[Message::user(summary_prompt)], &[])
+            .await?;
+
+        let summary_text = response
+            .message
+            .content
+            .unwrap_or_else(|| "Unable to generate summary".to_string());
+
+        // Reset conversation while preserving summary
+        let conv = agent.conversation_mut();
+        conv.clear();
+        conv.add_system_message(format!(
+            "Previous conversation summary:\n\n{}",
+            summary_text
+        ));
+
+        Ok(summary_text)
+    }
+
+    /// Create a summarization prompt for conversation history
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - The messages to summarize
+    ///
+    /// # Returns
+    ///
+    /// Returns a prompt string for summarization
+    fn create_summary_prompt(messages: &[crate::providers::Message]) -> String {
+        use crate::providers::Message;
+
+        // Format messages for the summary prompt
+        let conversation_text = messages
+            .iter()
+            .filter_map(|msg| {
+                msg.content
+                    .as_ref()
+                    .map(|content| format!("{}: {}", msg.role, content))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        format!(
+            "Please provide a concise summary of the following conversation, \
+             focusing on key topics, decisions made, and important context. \
+             Keep the summary under 500 words.\n\nConversation:\n{}",
+            conversation_text
+        )
     }
 
     /// Handle displaying context window information
@@ -1420,6 +1598,90 @@ pub mod r#run {
             Err(e) => {
                 eprintln!("Execution failed: {}", e);
                 Err(e)
+            }
+        }
+    }
+
+    /// Creates a provider instance for a specific model
+    ///
+    /// This helper function creates a new provider configured to use the specified model.
+    /// It's used for automatic summarization when a different summary model is configured.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The global configuration
+    /// * `model_name` - The model name to configure the provider with
+    ///
+    /// # Returns
+    ///
+    /// Returns an Arc-wrapped provider instance
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Provider type is unsupported
+    /// - Provider initialization fails
+    pub async fn create_provider_for_model(
+        config: &Config,
+        model_name: &str,
+    ) -> Result<Arc<dyn crate::providers::Provider>> {
+        match config.provider.provider_type.as_str() {
+            "copilot" => {
+                let mut copilot_config = config.provider.copilot.clone();
+                copilot_config.model = model_name.to_string();
+                let provider = CopilotProvider::new(copilot_config)?;
+                Ok(Arc::new(provider))
+            }
+            "ollama" => {
+                let mut ollama_config = config.provider.ollama.clone();
+                ollama_config.model = model_name.to_string();
+                let provider = OllamaProvider::new(ollama_config)?;
+                Ok(Arc::new(provider))
+            }
+            _ => Err(XzatomaError::Provider(format!(
+                "Unsupported provider type: {}",
+                config.provider.provider_type
+            ))
+            .into()),
+        }
+    }
+
+    /// Creates a summary provider if needed for a different model
+    ///
+    /// Checks if the summary model differs from the current provider's model.
+    /// If they're the same, returns the current provider. Otherwise creates
+    /// a new provider for the summary model.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The global configuration
+    /// * `current_provider` - The current provider instance
+    /// * `summary_model` - The model to use for summarization
+    ///
+    /// # Returns
+    ///
+    /// Returns the provider to use for summarization
+    ///
+    /// # Errors
+    ///
+    /// Returns error if creating a new provider fails
+    pub async fn create_summary_provider_if_needed(
+        config: &Config,
+        current_provider: &Arc<dyn crate::providers::Provider>,
+        summary_model: &str,
+    ) -> Result<Arc<dyn crate::providers::Provider>> {
+        match current_provider.get_current_model() {
+            Ok(current_model) if current_model == summary_model => {
+                // Same model, use existing provider
+                Ok(Arc::clone(current_provider))
+            }
+            _ => {
+                // Different model or unknown current model, create new provider
+                tracing::debug!(
+                    "Creating separate provider for summarization model: {}",
+                    summary_model
+                );
+                create_provider_for_model(config, summary_model).await
             }
         }
     }

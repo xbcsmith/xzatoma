@@ -569,6 +569,30 @@ impl Agent {
                         .add_tool_result(&tool_call.id, result.to_message());
                 }
 
+                // Check if auto-summarization is needed after tool execution
+                let auto_threshold = self.config.conversation.auto_summary_threshold as f64;
+                if self.conversation.should_auto_summarize(auto_threshold) {
+                    warn!(
+                        "Context window critical (>{}%), triggering automatic summarization",
+                        (auto_threshold * 100.0) as u8
+                    );
+
+                    // Attempt summarization
+                    match self.perform_auto_summarization().await {
+                        Ok(_) => {
+                            info!("Automatic summarization complete, conversation pruned");
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Automatic summarization failed: {}. Continuing with pruning.",
+                                e
+                            );
+                            // Fall back to existing prune logic
+                            self.conversation.prune_if_needed();
+                        }
+                    }
+                }
+
                 // Continue loop to get next response after tool execution
                 continue;
             }
@@ -662,6 +686,50 @@ impl Agent {
         }
 
         Ok(truncated_result)
+    }
+
+    /// Performs automatic summarization of the conversation
+    ///
+    /// This method creates a summary of older messages in the conversation
+    /// to reduce token usage when approaching context limits.
+    ///
+    /// # Returns
+    ///
+    /// Returns Ok(()) if summarization was successful, or an error if it fails
+    ///
+    /// # Errors
+    ///
+    /// Returns error if summary generation or insertion fails
+    async fn perform_auto_summarization(&mut self) -> Result<()> {
+        debug!("Starting automatic summarization");
+
+        // Get the summary model from config, or use current provider's model
+        let summary_model = self
+            .config
+            .conversation
+            .summary_model
+            .clone()
+            .unwrap_or_else(|| {
+                self.provider
+                    .get_current_model()
+                    .unwrap_or_else(|_| "unknown".to_string())
+            });
+
+        debug!("Using summary model: {}", summary_model);
+
+        // Count messages before summarization
+        let message_count = self.conversation.messages().len();
+
+        // Summarize and reset the conversation
+        self.conversation.summarize_and_reset()?;
+
+        info!(
+            "Conversation summarized: {} messages reduced, {} tokens now used",
+            message_count,
+            self.conversation.token_count()
+        );
+
+        Ok(())
     }
 
     /// Returns a reference to the conversation

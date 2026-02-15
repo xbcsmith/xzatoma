@@ -378,6 +378,21 @@ pub struct ConversationConfig {
     /// Token threshold to trigger pruning (percentage of max_tokens)
     #[serde(default = "default_prune_threshold")]
     pub prune_threshold: f32,
+
+    /// Token percentage threshold for warning status (0.0-1.0)
+    /// Default: 0.85 (warn at 85% context usage)
+    #[serde(default = "default_warning_threshold")]
+    pub warning_threshold: f32,
+
+    /// Token percentage threshold for automatic summarization (0.0-1.0)
+    /// Default: 0.90 (auto-summarize at 90% context usage)
+    #[serde(default = "default_auto_summary_threshold")]
+    pub auto_summary_threshold: f32,
+
+    /// Model to use for automatic summarization (e.g., "gpt-4", "claude-3")
+    /// If None, uses the default provider model
+    #[serde(default)]
+    pub summary_model: Option<String>,
 }
 
 fn default_max_tokens() -> usize {
@@ -392,12 +407,23 @@ fn default_prune_threshold() -> f32 {
     0.8
 }
 
+fn default_warning_threshold() -> f32 {
+    0.85
+}
+
+fn default_auto_summary_threshold() -> f32 {
+    0.90
+}
+
 impl Default for ConversationConfig {
     fn default() -> Self {
         Self {
             max_tokens: default_max_tokens(),
             min_retain_turns: default_min_retain(),
             prune_threshold: default_prune_threshold(),
+            warning_threshold: default_warning_threshold(),
+            auto_summary_threshold: default_auto_summary_threshold(),
+            summary_model: None,
         }
     }
 }
@@ -926,6 +952,33 @@ impl Config {
             .into());
         }
 
+        if self.agent.conversation.warning_threshold <= 0.0
+            || self.agent.conversation.warning_threshold > 1.0
+        {
+            return Err(XzatomaError::Config(
+                "conversation.warning_threshold must be between 0.0 and 1.0".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.conversation.auto_summary_threshold <= 0.0
+            || self.agent.conversation.auto_summary_threshold > 1.0
+        {
+            return Err(XzatomaError::Config(
+                "conversation.auto_summary_threshold must be between 0.0 and 1.0".to_string(),
+            )
+            .into());
+        }
+
+        if self.agent.conversation.auto_summary_threshold
+            < self.agent.conversation.warning_threshold
+        {
+            return Err(XzatomaError::Config(
+                "conversation.auto_summary_threshold must be >= warning_threshold".to_string(),
+            )
+            .into());
+        }
+
         if self.agent.tools.max_output_size == 0 {
             return Err(XzatomaError::Config(
                 "tools.max_output_size must be greater than 0".to_string(),
@@ -1171,6 +1224,47 @@ agent:
         assert_eq!(config.max_tokens, 100_000);
         assert_eq!(config.min_retain_turns, 5);
         assert_eq!(config.prune_threshold, 0.8);
+        assert_eq!(config.warning_threshold, 0.85);
+        assert_eq!(config.auto_summary_threshold, 0.90);
+        assert_eq!(config.summary_model, None);
+    }
+
+    #[test]
+    fn test_conversation_config_warning_threshold_validation() {
+        let mut config = Config::default();
+        config.agent.conversation.warning_threshold = 0.0;
+        assert!(config.validate().is_err());
+
+        config.agent.conversation.warning_threshold = 1.5;
+        assert!(config.validate().is_err());
+
+        config.agent.conversation.warning_threshold = 0.85;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_conversation_config_auto_summary_threshold_validation() {
+        let mut config = Config::default();
+        config.agent.conversation.auto_summary_threshold = 0.0;
+        assert!(config.validate().is_err());
+
+        config.agent.conversation.auto_summary_threshold = 1.5;
+        assert!(config.validate().is_err());
+
+        config.agent.conversation.auto_summary_threshold = 0.90;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_conversation_config_threshold_ordering_validation() {
+        let mut config = Config::default();
+        config.agent.conversation.warning_threshold = 0.90;
+        config.agent.conversation.auto_summary_threshold = 0.85;
+        assert!(config.validate().is_err());
+
+        config.agent.conversation.warning_threshold = 0.85;
+        config.agent.conversation.auto_summary_threshold = 0.90;
+        assert!(config.validate().is_ok());
     }
 
     #[test]
