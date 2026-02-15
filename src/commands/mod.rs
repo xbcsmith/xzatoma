@@ -1602,6 +1602,90 @@ pub mod r#run {
         }
     }
 
+    /// Creates a provider instance for a specific model
+    ///
+    /// This helper function creates a new provider configured to use the specified model.
+    /// It's used for automatic summarization when a different summary model is configured.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The global configuration
+    /// * `model_name` - The model name to configure the provider with
+    ///
+    /// # Returns
+    ///
+    /// Returns an Arc-wrapped provider instance
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Provider type is unsupported
+    /// - Provider initialization fails
+    pub async fn create_provider_for_model(
+        config: &Config,
+        model_name: &str,
+    ) -> Result<Arc<dyn crate::providers::Provider>> {
+        match config.provider.provider_type.as_str() {
+            "copilot" => {
+                let mut copilot_config = config.provider.copilot.clone();
+                copilot_config.model = model_name.to_string();
+                let provider = CopilotProvider::new(copilot_config)?;
+                Ok(Arc::new(provider))
+            }
+            "ollama" => {
+                let mut ollama_config = config.provider.ollama.clone();
+                ollama_config.model = model_name.to_string();
+                let provider = OllamaProvider::new(ollama_config)?;
+                Ok(Arc::new(provider))
+            }
+            _ => Err(XzatomaError::Provider(format!(
+                "Unsupported provider type: {}",
+                config.provider.provider_type
+            ))
+            .into()),
+        }
+    }
+
+    /// Creates a summary provider if needed for a different model
+    ///
+    /// Checks if the summary model differs from the current provider's model.
+    /// If they're the same, returns the current provider. Otherwise creates
+    /// a new provider for the summary model.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The global configuration
+    /// * `current_provider` - The current provider instance
+    /// * `summary_model` - The model to use for summarization
+    ///
+    /// # Returns
+    ///
+    /// Returns the provider to use for summarization
+    ///
+    /// # Errors
+    ///
+    /// Returns error if creating a new provider fails
+    pub async fn create_summary_provider_if_needed(
+        config: &Config,
+        current_provider: &Arc<dyn crate::providers::Provider>,
+        summary_model: &str,
+    ) -> Result<Arc<dyn crate::providers::Provider>> {
+        match current_provider.get_current_model() {
+            Ok(current_model) if current_model == summary_model => {
+                // Same model, use existing provider
+                Ok(Arc::clone(current_provider))
+            }
+            _ => {
+                // Different model or unknown current model, create new provider
+                tracing::debug!(
+                    "Creating separate provider for summarization model: {}",
+                    summary_model
+                );
+                create_provider_for_model(config, summary_model).await
+            }
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;

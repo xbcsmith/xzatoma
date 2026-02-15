@@ -370,7 +370,7 @@ impl Conversation {
     /// - Tool call pairs (assistant tool_calls + corresponding tool results)
     ///
     /// Removed messages are summarized and added as a new system message.
-    fn prune_if_needed(&mut self) {
+    pub fn prune_if_needed(&mut self) {
         use std::collections::HashSet;
 
         let threshold = (self.max_tokens as f64 * self.prune_threshold) as usize;
