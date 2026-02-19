@@ -1,0 +1,5 @@
+name: ""
+description: A plan with an empty name — should fail validation
+steps:
+  - name: Step One
+    action: Do something

@@ -1,0 +1,6 @@
+name: Simple Plan
+description: A basic single-step plan for eval testing
+steps:
+  - name: Echo Hello
+    action: Print a greeting message
+    context: echo hello

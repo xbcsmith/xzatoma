@@ -1,0 +1,5 @@
+name: Bad Step Plan
+description: A plan where a step is missing its action — should fail validation
+steps:
+  - name: Missing Action Step
+    action: ""
