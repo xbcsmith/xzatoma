@@ -119,14 +119,14 @@ flowchart TD
     ResolveContent --> ConstructPrompt[Construct System Prompt]
     ConstructPrompt --> LLMCall[LLM Provider Call]
     LLMCall --> Response{LLM Response}
-    
+
     Response -- "Final Answer" --> End([Return to User])
     Response -- "Tool Call" --> ExecuteTool[Execute Tool]
-    
+
     ExecuteTool --> ToolResult[Tool Result]
     ToolResult --> AddToHistory[Add to Conversation History]
     AddToHistory --> LLMCall
-    
+
     subgraph "Agent Loop"
         LLMCall
         Response
@@ -134,7 +134,7 @@ flowchart TD
         ToolResult
         AddToHistory
     end
-    
+
     subgraph "Context Mentions"
         ParseMentions
         ResolveContent
@@ -375,7 +375,7 @@ pub enum SafetyMode {
 
 **Mode Characteristics**:
 
-| Aspect | Planning Mode | Write Mode |  
+| Aspect | Planning Mode | Write Mode |
 | Aspect | Planning Mode | Write Mode |
 | :--------------- | :------------------------------ | :------------------------ |
 | Read files | ✓ | ✓ |

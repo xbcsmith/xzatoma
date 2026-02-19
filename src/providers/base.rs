@@ -1240,8 +1240,8 @@ mod tests {
         assert!(summary.state.is_none());
         assert!(summary.max_prompt_tokens.is_none());
         assert!(summary.max_completion_tokens.is_none());
-        assert!(summary.supports_tool_calls.is_none());
-        assert!(summary.supports_vision.is_none());
+        assert_eq!(summary.supports_tool_calls, Some(false));
+        assert_eq!(summary.supports_vision, Some(false));
         assert_eq!(summary.raw_data, serde_json::Value::Null);
     }
 
