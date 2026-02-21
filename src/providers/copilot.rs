@@ -11,9 +11,11 @@ use crate::providers::{
 };
 
 use async_trait::async_trait;
+use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -95,6 +97,9 @@ impl ModelEndpoint {
 
 /// Default context window size when not provided by API
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
+
+/// Pinned boxed stream of response events
+type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
 /// GitHub Copilot provider
 ///
@@ -873,6 +878,57 @@ pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
             },
         },
     })
+}
+
+/// Parse SSE (Server-Sent Events) line
+///
+/// # Arguments
+///
+/// * `line` - Line from SSE stream
+///
+/// # Returns
+///
+/// Returns optional parsed event data
+fn parse_sse_line(line: &str) -> Option<String> {
+    let line = line.trim();
+
+    if line.is_empty() {
+        return None;
+    }
+
+    // Handle data: lines
+    if let Some(data) = line.strip_prefix("data: ") {
+        // Check for [DONE] sentinel
+        if data.trim() == "[DONE]" {
+            return Some("[DONE]".to_string());
+        }
+        return Some(data.to_string());
+    }
+
+    // Ignore event:, id:, and other SSE fields
+    if line.starts_with("event:") || line.starts_with("id:") || line.starts_with(":") {
+        return None;
+    }
+
+    None
+}
+
+/// Parse SSE data line to StreamEvent
+///
+/// # Arguments
+///
+/// * `data` - JSON data from SSE event
+///
+/// # Returns
+///
+/// Returns parsed StreamEvent or error
+fn parse_sse_event(data: &str) -> Result<StreamEvent> {
+    if data == "[DONE]" {
+        return Ok(StreamEvent::Done);
+    }
+
+    serde_json::from_str(data)
+        .map_err(|e| anyhow::anyhow!(XzatomaError::SseParseError(format!("Invalid JSON: {}", e))))
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
@@ -1657,6 +1713,249 @@ impl CopilotProvider {
             supports_vision,
             raw_data,
         )
+    }
+
+    /// Stream responses from GitHub Copilot responses endpoint
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Model identifier
+    /// * `input` - Converted message input items
+    /// * `tools` - Tool definitions
+    ///
+    /// # Returns
+    ///
+    /// Returns pinned boxed stream of StreamEvent items
+    ///
+    /// # Errors
+    ///
+    /// Returns `SseParseError` if SSE parsing fails
+    /// Returns `StreamInterrupted` if connection drops
+    async fn stream_response(
+        &self,
+        model: &str,
+        input: Vec<ResponseInputItem>,
+        tools: Vec<ToolDefinition>,
+    ) -> crate::error::Result<ResponseStream> {
+        let url = self.endpoint_url(ModelEndpoint::Responses);
+        let token = self.authenticate().await?;
+
+        // Build request
+        let request = ResponsesRequest {
+            model: model.to_string(),
+            input,
+            stream: true,
+            temperature: None,
+            tools: if tools.is_empty() { None } else { Some(tools) },
+            tool_choice: None,
+            reasoning: None,
+            include: None,
+        };
+
+        // Make HTTP request with streaming
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Editor-Version", "xzatoma/0.1.0")
+            .header("Accept", "text/event-stream")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
+                "HTTP {}: {}",
+                status, body
+            ))));
+        }
+
+        // Create async stream from response body
+        let stream = response.bytes_stream();
+
+        // Build stream using boxed closure
+        let event_stream = futures::stream::unfold(
+            (stream.boxed(), String::new()),
+            |(mut byte_stream, mut buffer)| async move {
+                loop {
+                    match byte_stream.next().await {
+                        Some(Ok(chunk)) => {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                            // Look for complete lines
+                            if let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].to_string();
+                                buffer.drain(..=pos);
+
+                                // Parse SSE line
+                                if let Some(data) = parse_sse_line(&line) {
+                                    let result = parse_sse_event(&data);
+                                    return Some((result, (byte_stream, buffer)));
+                                }
+                                // Continue loop to find next line
+                                continue;
+                            }
+                            // No complete line yet, wait for more chunks
+                            continue;
+                        }
+                        Some(Err(e)) => {
+                            return Some((
+                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
+                                    e.to_string()
+                                ))),
+                                (byte_stream, buffer),
+                            ))
+                        }
+                        None => {
+                            // Stream ended
+                            if !buffer.is_empty() {
+                                // Try to parse any remaining content
+                                if let Some(data) = parse_sse_line(&buffer) {
+                                    let result = parse_sse_event(&data);
+                                    buffer.clear();
+                                    return Some((result, (byte_stream, buffer)));
+                                }
+                            }
+                            // Stream complete
+                            return None;
+                        }
+                    }
+                }
+            },
+        );
+
+        Ok(Box::pin(event_stream))
+    }
+
+    /// Stream completions from chat/completions endpoint
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Model identifier
+    /// * `messages` - Message history
+    /// * `tools` - Tool definitions
+    ///
+    /// # Returns
+    ///
+    /// Returns pinned boxed stream of completion chunks
+    ///
+    /// # Errors
+    ///
+    /// Returns `SseParseError` if SSE parsing fails
+    async fn stream_completion(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[crate::tools::Tool],
+    ) -> crate::error::Result<ResponseStream> {
+        let url = self.endpoint_url(ModelEndpoint::ChatCompletions);
+        let token = self.authenticate().await?;
+
+        // Build completions request (existing format)
+        let copilot_messages = self.convert_messages(messages);
+        let copilot_tools = self.convert_tools_legacy(tools);
+
+        let request = CopilotRequest {
+            model: model.to_string(),
+            messages: copilot_messages,
+            tools: copilot_tools,
+            stream: true,
+        };
+
+        // Make HTTP request
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Editor-Version", "xzatoma/0.1.0")
+            .header("Accept", "text/event-stream")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
+                "HTTP {}: {}",
+                status, body
+            ))));
+        }
+
+        // Create stream (similar to stream_response but for completions format)
+        let stream = response.bytes_stream();
+
+        // Build stream using boxed closure
+        let event_stream = futures::stream::unfold(
+            (stream.boxed(), String::new()),
+            |(mut byte_stream, mut buffer)| async move {
+                loop {
+                    match byte_stream.next().await {
+                        Some(Ok(chunk)) => {
+                            buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                            // Look for complete lines
+                            if let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].to_string();
+                                buffer.drain(..=pos);
+
+                                // Parse SSE line
+                                if let Some(data) = parse_sse_line(&line) {
+                                    let result = parse_sse_event(&data);
+                                    return Some((result, (byte_stream, buffer)));
+                                }
+                                // Continue loop to find next line
+                                continue;
+                            }
+                            // No complete line yet, wait for more chunks
+                            continue;
+                        }
+                        Some(Err(e)) => {
+                            return Some((
+                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
+                                    e.to_string()
+                                ))),
+                                (byte_stream, buffer),
+                            ))
+                        }
+                        None => {
+                            // Stream ended
+                            if !buffer.is_empty() {
+                                // Try to parse any remaining content
+                                if let Some(data) = parse_sse_line(&buffer) {
+                                    let result = parse_sse_event(&data);
+                                    buffer.clear();
+                                    return Some((result, (byte_stream, buffer)));
+                                }
+                            }
+                            // Stream complete
+                            return None;
+                        }
+                    }
+                }
+            },
+        );
+
+        Ok(Box::pin(event_stream))
+    }
+
+    /// Convert XZatoma tools to Copilot format (legacy for completions endpoint)
+    fn convert_tools_legacy(&self, tools: &[crate::tools::Tool]) -> Vec<CopilotTool> {
+        tools
+            .iter()
+            .map(|tool| CopilotTool {
+                r#type: "function".to_string(),
+                function: CopilotFunction {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.parameters.clone(),
+                },
+            })
+            .collect()
     }
 }
 
@@ -3287,5 +3586,178 @@ mod tests {
     fn test_convert_tool_choice_option_none() {
         let choice = convert_tool_choice(None);
         assert!(choice.is_none());
+    }
+
+    // Phase 3: SSE Parsing Tests
+
+    #[test]
+    fn test_parse_sse_data_line() {
+        let line = r#"data: {"type":"message"}"#;
+        let result = parse_sse_line(line);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), r#"{"type":"message"}"#);
+    }
+
+    #[test]
+    fn test_parse_sse_done_sentinel() {
+        let line = "data: [DONE]";
+        let result = parse_sse_line(line);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "[DONE]");
+    }
+
+    #[test]
+    fn test_parse_sse_ignore_metadata() {
+        assert!(parse_sse_line("event: message").is_none());
+        assert!(parse_sse_line("id: 123").is_none());
+        assert!(parse_sse_line(": comment").is_none());
+    }
+
+    #[test]
+    fn test_parse_sse_empty_lines() {
+        assert!(parse_sse_line("").is_none());
+        assert!(parse_sse_line("   ").is_none());
+        assert!(parse_sse_line("\n").is_none());
+    }
+
+    #[test]
+    fn test_parse_sse_event_message() {
+        let data = r#"{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}"#;
+        let event = parse_sse_event(data).expect("Parse failed");
+
+        match event {
+            StreamEvent::Message { role, content } => {
+                assert_eq!(role, "assistant");
+                assert_eq!(content.len(), 1);
+            }
+            _ => panic!("Expected Message variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_sse_event_done() {
+        let event = parse_sse_event("[DONE]").expect("Parse failed");
+        match event {
+            StreamEvent::Done => {}
+            _ => panic!("Expected Done variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_sse_event_invalid_json() {
+        let result = parse_sse_event("invalid json");
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result);
+        assert!(err_msg.contains("SseParseError") || err_msg.contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_parse_sse_event_function_call() {
+        let data = r#"{"type":"function_call","call_id":"c1","name":"tool","arguments":"{}"}"#;
+        let event = parse_sse_event(data).expect("Parse failed");
+
+        match event {
+            StreamEvent::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                assert_eq!(call_id, "c1");
+                assert_eq!(name, "tool");
+                assert_eq!(arguments, "{}");
+            }
+            _ => panic!("Expected FunctionCall variant"),
+        }
+    }
+
+    // Phase 3: Stream Response Tests
+
+    #[test]
+    fn test_build_responses_request() {
+        let input = vec![ResponseInputItem::Message {
+            role: "user".to_string(),
+            content: vec![ResponseInputContent::InputText {
+                text: "Test".to_string(),
+            }],
+        }];
+
+        let request = ResponsesRequest {
+            model: "gpt-5-mini".to_string(),
+            input,
+            stream: true,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            reasoning: Some(ReasoningConfig {
+                effort: Some("medium".to_string()),
+            }),
+            include: None,
+        };
+
+        let json = serde_json::to_string(&request).expect("Serialize failed");
+        assert!(json.contains("\"stream\":true"));
+        assert!(json.contains("\"model\":\"gpt-5-mini\""));
+    }
+
+    #[test]
+    fn test_responses_request_with_tools() {
+        let tools = vec![ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: "test".to_string(),
+                description: "Test tool".to_string(),
+                parameters: serde_json::json!({}),
+                strict: None,
+            },
+        }];
+
+        let request = ResponsesRequest {
+            model: "gpt-5-mini".to_string(),
+            input: vec![],
+            stream: true,
+            temperature: None,
+            tools: Some(tools),
+            tool_choice: None,
+            reasoning: None,
+            include: None,
+        };
+
+        let json = serde_json::to_string(&request).expect("Serialize failed");
+        assert!(json.contains("\"tools\""));
+        assert!(json.contains("\"test\""));
+    }
+
+    #[test]
+    fn test_sse_buffer_accumulation() {
+        let mut buffer = String::new();
+
+        // Partial line
+        buffer.push_str("data: {\"type\":");
+        assert!(buffer.find('\n').is_none());
+
+        // Complete line
+        buffer.push_str("\"message\"}\n");
+        let pos = buffer.find('\n').unwrap();
+        let line = &buffer[..pos];
+        assert!(line.contains("data:"));
+    }
+
+    #[test]
+    fn test_build_completions_request() {
+        let messages = vec![Message::user("Hello")];
+
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+        let copilot_messages = provider.convert_messages(&messages);
+
+        let request = CopilotRequest {
+            model: "gpt-5-mini".to_string(),
+            messages: copilot_messages,
+            tools: vec![],
+            stream: true,
+        };
+
+        let json = serde_json::to_string(&request).expect("Serialize failed");
+        assert!(json.contains("\"stream\":true"));
+        assert!(json.contains("\"messages\""));
     }
 }
