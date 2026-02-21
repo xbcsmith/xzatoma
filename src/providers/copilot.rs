@@ -479,6 +479,402 @@ pub struct ReasoningConfig {
     pub effort: Option<String>,
 }
 
+// ============================================================================
+// MESSAGE FORMAT CONVERSION FUNCTIONS
+// ============================================================================
+
+/// Convert XZatoma messages to responses endpoint input format
+///
+/// Transforms a slice of XZatoma Message objects into ResponseInputItem format
+/// suitable for the Copilot /responses endpoint. Each message is converted based
+/// on its role and content, preserving all necessary information for proper
+/// endpoint communication.
+///
+/// # Arguments
+///
+/// * `messages` - Vector of XZatoma Message objects
+///
+/// # Returns
+///
+/// Returns vector of ResponseInputItem for responses endpoint
+///
+/// # Errors
+///
+/// Returns error if message format is invalid or missing required fields
+///
+/// # Examples
+///
+/// ```ignore
+/// use xzatoma::providers::Message;
+///
+/// let messages = vec![Message::user("Hello")];
+/// let input = convert_messages_to_response_input(&messages)?;
+/// assert_eq!(input.len(), 1);
+/// ```
+pub(crate) fn convert_messages_to_response_input(
+    messages: &[Message],
+) -> Result<Vec<ResponseInputItem>> {
+    let mut result = Vec::new();
+
+    for message in messages {
+        match message.role.as_str() {
+            "user" => {
+                let content = message.content.as_ref().unwrap_or(&String::new()).clone();
+                result.push(ResponseInputItem::Message {
+                    role: "user".to_string(),
+                    content: vec![ResponseInputContent::InputText { text: content }],
+                });
+            }
+            "assistant" => {
+                if let Some(tool_calls) = &message.tool_calls {
+                    // Assistant message with tool calls
+                    for tool_call in tool_calls {
+                        result.push(ResponseInputItem::FunctionCall {
+                            call_id: tool_call.id.clone(),
+                            name: tool_call.function.name.clone(),
+                            arguments: tool_call.function.arguments.clone(),
+                        });
+                    }
+                    // Also add the text content if present
+                    if let Some(content) = &message.content {
+                        result.push(ResponseInputItem::Message {
+                            role: "assistant".to_string(),
+                            content: vec![ResponseInputContent::OutputText {
+                                text: content.clone(),
+                            }],
+                        });
+                    }
+                } else {
+                    // Regular assistant message
+                    let content = message.content.as_ref().unwrap_or(&String::new()).clone();
+                    result.push(ResponseInputItem::Message {
+                        role: "assistant".to_string(),
+                        content: vec![ResponseInputContent::OutputText { text: content }],
+                    });
+                }
+            }
+            "system" => {
+                let content = message.content.as_ref().unwrap_or(&String::new()).clone();
+                result.push(ResponseInputItem::Message {
+                    role: "system".to_string(),
+                    content: vec![ResponseInputContent::InputText { text: content }],
+                });
+            }
+            "tool" => {
+                // Tool result message
+                if let Some(call_id) = &message.tool_call_id {
+                    let output = message.content.as_ref().unwrap_or(&String::new()).clone();
+                    result.push(ResponseInputItem::FunctionCallOutput {
+                        call_id: call_id.clone(),
+                        output,
+                    });
+                } else {
+                    return Err(XzatomaError::MessageConversionError(
+                        "Tool message missing tool_call_id".to_string(),
+                    )
+                    .into());
+                }
+            }
+            role => {
+                return Err(XzatomaError::MessageConversionError(format!(
+                    "Unknown message role: {}",
+                    role
+                ))
+                .into());
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Convert responses endpoint input items back to XZatoma messages
+///
+/// Transforms ResponseInputItem objects from the Copilot /responses endpoint
+/// back into XZatoma Message format. This is useful for processing API responses
+/// and converting them to the standard message format used throughout the agent.
+///
+/// # Arguments
+///
+/// * `input` - Slice of ResponseInputItem from responses endpoint
+///
+/// # Returns
+///
+/// Returns vector of XZatoma Message objects
+///
+/// # Errors
+///
+/// Returns `MessageConversionError` if format is invalid or unknown role is encountered
+///
+/// # Examples
+///
+/// ```ignore
+/// use xzatoma::providers::ResponseInputItem;
+///
+/// let input = vec![
+///     ResponseInputItem::Message {
+///         role: "user".to_string(),
+///         content: vec![ResponseInputContent::InputText {
+///             text: "Hello".to_string(),
+///         }],
+///     },
+/// ];
+/// let messages = convert_response_input_to_messages(&input)?;
+/// assert_eq!(messages.len(), 1);
+/// ```
+pub(crate) fn convert_response_input_to_messages(
+    input: &[ResponseInputItem],
+) -> Result<Vec<Message>> {
+    let mut result = Vec::new();
+
+    for item in input {
+        match item {
+            ResponseInputItem::Message { role, content } => {
+                // Extract text from content items
+                let text = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ResponseInputContent::InputText { text } => Some(text.clone()),
+                        ResponseInputContent::OutputText { text } => Some(text.clone()),
+                        ResponseInputContent::InputImage { .. } => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                match role.as_str() {
+                    "user" => {
+                        result.push(Message {
+                            role: "user".to_string(),
+                            content: Some(text),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
+                    "assistant" => {
+                        result.push(Message {
+                            role: "assistant".to_string(),
+                            content: Some(text),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
+                    "system" => {
+                        result.push(Message {
+                            role: "system".to_string(),
+                            content: Some(text),
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
+                    }
+                    unknown_role => {
+                        return Err(XzatomaError::MessageConversionError(format!(
+                            "Unknown role in response: {}",
+                            unknown_role
+                        ))
+                        .into());
+                    }
+                }
+            }
+            ResponseInputItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                result.push(Message {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: call_id.clone(),
+                        function: FunctionCall {
+                            name: name.clone(),
+                            arguments: arguments.clone(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                });
+            }
+            ResponseInputItem::FunctionCallOutput { call_id, output } => {
+                result.push(Message {
+                    role: "tool".to_string(),
+                    content: Some(output.clone()),
+                    tool_calls: None,
+                    tool_call_id: Some(call_id.clone()),
+                });
+            }
+            ResponseInputItem::Reasoning { .. } => {
+                // Reasoning content is not stored in Message, skip for now
+                // Could be extended in future to add reasoning metadata
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Convert StreamEvent to Message
+///
+/// Converts a single SSE stream event into an optional Message. Returns None
+/// for status and done events, which don't represent actual message content.
+///
+/// # Arguments
+///
+/// * `event` - StreamEvent from SSE stream
+///
+/// # Returns
+///
+/// Returns optional Message (None for status/done events)
+///
+/// # Examples
+///
+/// ```ignore
+/// use xzatoma::providers::StreamEvent;
+///
+/// let event = StreamEvent::Message {
+///     role: "assistant".to_string(),
+///     content: vec![ResponseInputContent::OutputText {
+///         text: "Response".to_string(),
+///     }],
+/// };
+/// let message = convert_stream_event_to_message(&event);
+/// assert!(message.is_some());
+/// ```
+pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Message> {
+    match event {
+        StreamEvent::Message { role, content } => {
+            let text = content
+                .iter()
+                .filter_map(|c| match c {
+                    ResponseInputContent::InputText { text } => Some(text.clone()),
+                    ResponseInputContent::OutputText { text } => Some(text.clone()),
+                    ResponseInputContent::InputImage { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            match role.as_str() {
+                "user" => Some(Message {
+                    role: "user".to_string(),
+                    content: Some(text),
+                    tool_calls: None,
+                    tool_call_id: None,
+                }),
+                "assistant" => Some(Message {
+                    role: "assistant".to_string(),
+                    content: Some(text),
+                    tool_calls: None,
+                    tool_call_id: None,
+                }),
+                "system" => Some(Message {
+                    role: "system".to_string(),
+                    content: Some(text),
+                    tool_calls: None,
+                    tool_call_id: None,
+                }),
+                _ => None,
+            }
+        }
+        StreamEvent::FunctionCall {
+            call_id,
+            name,
+            arguments,
+        } => Some(Message {
+            role: "assistant".to_string(),
+            content: None,
+            tool_calls: Some(vec![ToolCall {
+                id: call_id.clone(),
+                function: FunctionCall {
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                },
+            }]),
+            tool_call_id: None,
+        }),
+        StreamEvent::Reasoning { .. } | StreamEvent::Status { .. } | StreamEvent::Done => None,
+    }
+}
+
+/// Convert XZatoma tool definitions to responses endpoint format
+///
+/// Transforms Tool objects into ToolDefinition format suitable for the
+/// Copilot /responses endpoint. Preserves all tool metadata including
+/// parameters and strict mode settings.
+///
+/// # Arguments
+///
+/// * `tools` - Slice of tool definitions in XZatoma format
+///
+/// # Returns
+///
+/// Returns vector of ToolDefinition for responses endpoint
+///
+/// # Examples
+///
+/// ```ignore
+/// use xzatoma::tools::Tool;
+///
+/// let tools = vec![Tool {
+///     name: "read_file".to_string(),
+///     description: "Read file contents".to_string(),
+///     parameters: serde_json::json!({}),
+/// }];
+/// let result = convert_tools_to_response_format(&tools);
+/// assert_eq!(result.len(), 1);
+/// ```
+pub(crate) fn convert_tools_to_response_format(
+    tools: &[crate::tools::Tool],
+) -> Vec<ToolDefinition> {
+    tools
+        .iter()
+        .map(|tool| ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.parameters.clone(),
+                strict: Some(false),
+            },
+        })
+        .collect()
+}
+
+/// Convert tool choice to responses endpoint format
+///
+/// Maps a tool choice specification string to the appropriate ToolChoice enum
+/// variant for the Copilot /responses endpoint. Supports auto, any, none, and
+/// named tool choice strategies.
+///
+/// # Arguments
+///
+/// * `choice` - Optional tool choice specification ("auto", "any", "required", "none", or tool name)
+///
+/// # Returns
+///
+/// Returns optional ToolChoice for responses endpoint
+///
+/// # Examples
+///
+/// ```ignore
+/// let choice = convert_tool_choice(Some("auto"));
+/// assert!(choice.is_some());
+///
+/// let choice = convert_tool_choice(Some("specific_tool"));
+/// assert!(choice.is_some()); // Named variant
+///
+/// let choice = convert_tool_choice(None);
+/// assert!(choice.is_none());
+/// ```
+pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
+    choice.map(|c| match c {
+        "auto" => ToolChoice::Auto { auto: true },
+        "any" | "required" => ToolChoice::Any { any: true },
+        "none" => ToolChoice::None { none: true },
+        name => ToolChoice::Named {
+            function: FunctionName {
+                name: name.to_string(),
+            },
+        },
+    })
+}
+
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         XzatomaError::Authentication(format!(
@@ -2461,5 +2857,435 @@ mod tests {
             provider.endpoint_url(ModelEndpoint::Responses),
             "https://custom.api.com/responses"
         );
+    }
+
+    // ========================================================================
+    // PHASE 2: MESSAGE FORMAT CONVERSION TESTS
+    // ========================================================================
+
+    // --- Task 2.1: Message to Response Input Conversion Tests ---
+
+    #[test]
+    fn test_convert_user_message() {
+        let messages = vec![Message::user("Hello, world!")];
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "user");
+                assert_eq!(content.len(), 1);
+                match &content[0] {
+                    ResponseInputContent::InputText { text } => {
+                        assert_eq!(text, "Hello, world!");
+                    }
+                    _ => panic!("Expected InputText"),
+                }
+            }
+            _ => panic!("Expected Message variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_assistant_message() {
+        let messages = vec![Message::assistant("I'm here to help")];
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "assistant");
+                match &content[0] {
+                    ResponseInputContent::OutputText { text } => {
+                        assert_eq!(text, "I'm here to help");
+                    }
+                    _ => panic!("Expected OutputText"),
+                }
+            }
+            _ => panic!("Expected Message variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_system_message() {
+        let messages = vec![Message::system("You are a helpful assistant")];
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "system");
+                match &content[0] {
+                    ResponseInputContent::InputText { text } => {
+                        assert_eq!(text, "You are a helpful assistant");
+                    }
+                    _ => panic!("Expected InputText"),
+                }
+            }
+            _ => panic!("Expected Message variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_call_message() {
+        let tool_call = ToolCall {
+            id: "call_123".to_string(),
+            function: FunctionCall {
+                name: "get_weather".to_string(),
+                arguments: r#"{"location":"SF"}"#.to_string(),
+            },
+        };
+        let messages = vec![Message::assistant_with_tools(vec![tool_call])];
+
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseInputItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                assert_eq!(call_id, "call_123");
+                assert_eq!(name, "get_weather");
+                assert!(arguments.contains("location"));
+            }
+            _ => panic!("Expected FunctionCall variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_result_message() {
+        let messages = vec![Message::tool_result("call_123", r#"{"temperature":72}"#)];
+
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            ResponseInputItem::FunctionCallOutput { call_id, output } => {
+                assert_eq!(call_id, "call_123");
+                assert!(output.contains("temperature"));
+            }
+            _ => panic!("Expected FunctionCallOutput variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_conversation() {
+        let messages = vec![
+            Message::system("You are helpful"),
+            Message::user("Hi"),
+            Message::assistant("Hello!"),
+            Message::user("How are you?"),
+        ];
+
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+        assert_eq!(result.len(), 4);
+
+        // Verify order preserved
+        match &result[0] {
+            ResponseInputItem::Message { role, .. } => assert_eq!(role, "system"),
+            _ => panic!("Wrong type"),
+        }
+        match &result[1] {
+            ResponseInputItem::Message { role, .. } => assert_eq!(role, "user"),
+            _ => panic!("Wrong type"),
+        }
+    }
+
+    #[test]
+    fn test_convert_empty_messages() {
+        let messages: Vec<Message> = vec![];
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_convert_assistant_message_with_content_and_tools() {
+        let tool_call = ToolCall {
+            id: "call_456".to_string(),
+            function: FunctionCall {
+                name: "search".to_string(),
+                arguments: r#"{"q":"test"}"#.to_string(),
+            },
+        };
+        let messages = vec![Message {
+            role: "assistant".to_string(),
+            content: Some("Let me search for that".to_string()),
+            tool_calls: Some(vec![tool_call]),
+            tool_call_id: None,
+        }];
+
+        let result = convert_messages_to_response_input(&messages).expect("Conversion failed");
+        assert_eq!(result.len(), 2);
+
+        // First should be FunctionCall
+        match &result[0] {
+            ResponseInputItem::FunctionCall { call_id, name, .. } => {
+                assert_eq!(call_id, "call_456");
+                assert_eq!(name, "search");
+            }
+            _ => panic!("Expected FunctionCall first"),
+        }
+
+        // Second should be Message with content
+        match &result[1] {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "assistant");
+                assert!(!content.is_empty());
+            }
+            _ => panic!("Expected Message second"),
+        }
+    }
+
+    // --- Task 2.2: Response Input to Message Conversion Tests ---
+
+    #[test]
+    fn test_convert_response_message_to_message() {
+        let input = vec![ResponseInputItem::Message {
+            role: "user".to_string(),
+            content: vec![ResponseInputContent::InputText {
+                text: "Hello".to_string(),
+            }],
+        }];
+
+        let result = convert_response_input_to_messages(&input).expect("Conversion failed");
+        assert_eq!(result.len(), 1);
+        let msg = &result[0];
+        assert_eq!(msg.role, "user");
+        assert_eq!(msg.content.as_ref().unwrap(), "Hello");
+    }
+
+    #[test]
+    fn test_convert_function_call_to_message() {
+        let input = vec![ResponseInputItem::FunctionCall {
+            call_id: "call_456".to_string(),
+            name: "search".to_string(),
+            arguments: r#"{"query":"test"}"#.to_string(),
+        }];
+
+        let result = convert_response_input_to_messages(&input).expect("Conversion failed");
+        assert_eq!(result.len(), 1);
+        let msg = &result[0];
+        assert_eq!(msg.role, "assistant");
+        assert!(msg.tool_calls.is_some());
+        let tool_calls = msg.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_456");
+        assert_eq!(tool_calls[0].function.name, "search");
+        assert!(tool_calls[0].function.arguments.contains("query"));
+    }
+
+    #[test]
+    fn test_convert_function_output_to_message() {
+        let input = vec![ResponseInputItem::FunctionCallOutput {
+            call_id: "call_456".to_string(),
+            output: r#"{"result":"found"}"#.to_string(),
+        }];
+
+        let result = convert_response_input_to_messages(&input).expect("Conversion failed");
+        assert_eq!(result.len(), 1);
+        let msg = &result[0];
+        assert_eq!(msg.role, "tool");
+        assert_eq!(msg.tool_call_id.as_ref().unwrap(), "call_456");
+        assert!(msg.content.as_ref().unwrap().contains("result"));
+    }
+
+    #[test]
+    fn test_convert_multiple_content_items() {
+        let input = vec![ResponseInputItem::Message {
+            role: "assistant".to_string(),
+            content: vec![
+                ResponseInputContent::OutputText {
+                    text: "Part 1".to_string(),
+                },
+                ResponseInputContent::OutputText {
+                    text: "Part 2".to_string(),
+                },
+            ],
+        }];
+
+        let result = convert_response_input_to_messages(&input).expect("Conversion failed");
+        assert_eq!(result.len(), 1);
+        let msg = &result[0];
+        let content = msg.content.as_ref().unwrap();
+        assert!(content.contains("Part 1"));
+        assert!(content.contains("Part 2"));
+    }
+
+    #[test]
+    fn test_convert_unknown_role_error() {
+        let input = vec![ResponseInputItem::Message {
+            role: "unknown_role".to_string(),
+            content: vec![ResponseInputContent::InputText {
+                text: "test".to_string(),
+            }],
+        }];
+
+        let result = convert_response_input_to_messages(&input);
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.err().unwrap());
+        assert!(err_msg.contains("Unknown role"));
+    }
+
+    #[test]
+    fn test_convert_stream_event_message() {
+        let event = StreamEvent::Message {
+            role: "assistant".to_string(),
+            content: vec![ResponseInputContent::OutputText {
+                text: "Response".to_string(),
+            }],
+        };
+
+        let message = convert_stream_event_to_message(&event);
+        assert!(message.is_some());
+        let msg = message.unwrap();
+        assert_eq!(msg.role, "assistant");
+        assert_eq!(msg.content.as_ref().unwrap(), "Response");
+    }
+
+    #[test]
+    fn test_convert_stream_event_function_call() {
+        let event = StreamEvent::FunctionCall {
+            call_id: "call_789".to_string(),
+            name: "tool".to_string(),
+            arguments: "{}".to_string(),
+        };
+
+        let message = convert_stream_event_to_message(&event);
+        assert!(message.is_some());
+        let msg = message.unwrap();
+        assert_eq!(msg.role, "assistant");
+        assert!(msg.tool_calls.is_some());
+        let tool_calls = msg.tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls[0].id, "call_789");
+        assert_eq!(tool_calls[0].function.name, "tool");
+    }
+
+    #[test]
+    fn test_convert_stream_event_status_none() {
+        let event = StreamEvent::Status {
+            status: "processing".to_string(),
+        };
+
+        let message = convert_stream_event_to_message(&event);
+        assert!(message.is_none());
+
+        let done = StreamEvent::Done;
+        let message = convert_stream_event_to_message(&done);
+        assert!(message.is_none());
+    }
+
+    // --- Task 2.3: Tool Definition Conversion Tests ---
+
+    #[test]
+    fn test_convert_tool_to_response_format() {
+        let tools = vec![crate::tools::Tool {
+            name: "get_weather".to_string(),
+            description: "Get current weather".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                }
+            }),
+        }];
+
+        let result = convert_tools_to_response_format(&tools);
+        assert_eq!(result.len(), 1);
+
+        match &result[0] {
+            ToolDefinition::Function { function } => {
+                assert_eq!(function.name, "get_weather");
+                assert_eq!(function.description, "Get current weather");
+                assert_eq!(function.strict, Some(false));
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_without_strict() {
+        let tools = vec![crate::tools::Tool {
+            name: "search".to_string(),
+            description: "Search".to_string(),
+            parameters: serde_json::json!({}),
+        }];
+
+        let result = convert_tools_to_response_format(&tools);
+        match &result[0] {
+            ToolDefinition::Function { function } => {
+                assert_eq!(function.strict, Some(false));
+            }
+        }
+    }
+
+    #[test]
+    fn test_convert_multiple_tools() {
+        let tools = vec![
+            crate::tools::Tool {
+                name: "tool1".to_string(),
+                description: "First".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            crate::tools::Tool {
+                name: "tool2".to_string(),
+                description: "Second".to_string(),
+                parameters: serde_json::json!({}),
+            },
+        ];
+
+        let result = convert_tools_to_response_format(&tools);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_convert_tool_choice_auto() {
+        let choice = convert_tool_choice(Some("auto"));
+        assert!(choice.is_some());
+        match choice.unwrap() {
+            ToolChoice::Auto { auto } => assert!(auto),
+            _ => panic!("Expected Auto variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_choice_required() {
+        let choice = convert_tool_choice(Some("required"));
+        match choice.unwrap() {
+            ToolChoice::Any { any } => assert!(any),
+            _ => panic!("Expected Any variant"),
+        }
+
+        let choice = convert_tool_choice(Some("any"));
+        match choice.unwrap() {
+            ToolChoice::Any { any } => assert!(any),
+            _ => panic!("Expected Any variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_choice_none() {
+        let choice = convert_tool_choice(Some("none"));
+        match choice.unwrap() {
+            ToolChoice::None { none } => assert!(none),
+            _ => panic!("Expected None variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_choice_named() {
+        let choice = convert_tool_choice(Some("specific_tool"));
+        match choice.unwrap() {
+            ToolChoice::Named { function } => {
+                assert_eq!(function.name, "specific_tool");
+            }
+            _ => panic!("Expected Named variant"),
+        }
+    }
+
+    #[test]
+    fn test_convert_tool_choice_option_none() {
+        let choice = convert_tool_choice(None);
+        assert!(choice.is_none());
     }
 }
