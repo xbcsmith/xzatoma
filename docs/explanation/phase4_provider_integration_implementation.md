@@ -38,17 +38,17 @@ Added four new fields to `CopilotConfig`:
 pub struct CopilotConfig {
     pub model: String,
     pub api_base: Option<String>,
-    
+
     // New Phase 4 fields:
     #[serde(default = "default_enable_streaming")]
     pub enable_streaming: bool,
-    
+
     #[serde(default = "default_enable_endpoint_fallback")]
     pub enable_endpoint_fallback: bool,
-    
+
     #[serde(default)]
     pub reasoning_effort: Option<String>,
-    
+
     #[serde(default = "default_include_reasoning")]
     pub include_reasoning: bool,
 }
@@ -315,10 +315,10 @@ async fn test_complete_with_responses_endpoint() {
         ..Default::default()
     };
     let provider = CopilotProvider::new(config)?;
-    
+
     let messages = vec![Message::user("Hello")];
     let response = provider.complete(&messages, &[]).await?;
-    
+
     assert_eq!(response.message.role, "assistant");
 }
 ```
