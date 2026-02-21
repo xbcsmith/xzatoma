@@ -37,7 +37,7 @@ fn parse_sse_line(line: &str) -> Option<String> {
     if line.is_empty() {
         return None;
     }
-    
+
     // Handle data: lines
     if let Some(data) = line.strip_prefix("data: ") {
         if data.trim() == "[DONE]" {
@@ -45,7 +45,7 @@ fn parse_sse_line(line: &str) -> Option<String> {
         }
         return Some(data.to_string());
     }
-    
+
     // Ignore other SSE metadata (event:, id:, :comment)
     None
 }
@@ -69,7 +69,7 @@ fn parse_sse_event(data: &str) -> Result<StreamEvent> {
     if data == "[DONE]" {
         return Ok(StreamEvent::Done);
     }
-    
+
     serde_json::from_str(data)
         .map_err(|e| anyhow::anyhow!(XzatomaError::SseParseError(
             format!("Invalid JSON: {}", e)
@@ -97,7 +97,7 @@ async fn stream_response(
 ) -> Result<ResponseStream> {
     let url = self.endpoint_url(ModelEndpoint::Responses);
     let token = self.authenticate().await?;
-    
+
     // Build request with stream=true
     let request = ResponsesRequest {
         model: model.to_string(),
@@ -109,7 +109,7 @@ async fn stream_response(
         reasoning: None,
         include: None,
     };
-    
+
     // Make HTTP request
     let response = self.client
         .post(&url)
@@ -119,12 +119,12 @@ async fn stream_response(
         .json(&request)
         .send()
         .await?;
-    
+
     // Check status
     if !response.status().is_success() {
         return Err(/* error handling */);
     }
-    
+
     // Build stream with buffering and line parsing
     let stream = response.bytes_stream();
     let event_stream = futures::stream::unfold(
@@ -135,11 +135,11 @@ async fn stream_response(
                 match byte_stream.next().await {
                     Some(Ok(chunk)) => {
                         buffer.push_str(&String::from_utf8_lossy(&chunk));
-                        
+
                         if let Some(pos) = buffer.find('\n') {
                             let line = buffer[..pos].to_string();
                             buffer.drain(..=pos);
-                            
+
                             if let Some(data) = parse_sse_line(&line) {
                                 let result = parse_sse_event(&data);
                                 return Some((result, (byte_stream, buffer)));
@@ -170,7 +170,7 @@ async fn stream_response(
             }
         },
     );
-    
+
     Ok(Box::pin(event_stream))
 }
 ```
@@ -208,18 +208,18 @@ async fn stream_completion(
 ) -> Result<ResponseStream> {
     let url = self.endpoint_url(ModelEndpoint::ChatCompletions);
     let token = self.authenticate().await?;
-    
+
     // Convert to legacy format
     let copilot_messages = self.convert_messages(messages);
     let copilot_tools = self.convert_tools_legacy(tools);
-    
+
     let request = CopilotRequest {
         model: model.to_string(),
         messages: copilot_messages,
         tools: copilot_tools,
         stream: true,
     };
-    
+
     // Make request and process stream (identical pattern to stream_response)
     // ...
 }
@@ -293,7 +293,7 @@ fn test_parse_sse_empty_lines() {
 fn test_parse_sse_event_message() {
     let data = r#"{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}"#;
     let event = parse_sse_event(data).expect("Parse failed");
-    
+
     match event {
         StreamEvent::Message { role, content } => {
             assert_eq!(role, "assistant");
@@ -319,7 +319,7 @@ fn test_parse_sse_event_invalid_json() {
 fn test_parse_sse_event_function_call() {
     let data = r#"{"type":"function_call","call_id":"c1","name":"tool","arguments":"{}"}"#;
     let event = parse_sse_event(data).expect("Parse failed");
-    
+
     match event {
         StreamEvent::FunctionCall { call_id, name, .. } => {
             assert_eq!(call_id, "c1");

@@ -1183,9 +1183,6 @@ impl CopilotProvider {
         Ok(response.token)
     }
 
-    // parse_github_token_poll moved to module scope (see function below)
-    // (kept a short placeholder here so impl remains readable)
-
     /// Get cached token from system keyring
     fn get_cached_token(&self) -> Result<CachedToken> {
         let entry = keyring::Entry::new(&self.keyring_service, &self.keyring_user)?;
@@ -1957,6 +1954,491 @@ impl CopilotProvider {
             })
             .collect()
     }
+
+    /// Complete using /responses endpoint with streaming support
+    ///
+    /// Uses the new /responses endpoint which supports extended features
+    /// like reasoning and improved tool calling.
+    async fn complete_with_responses_endpoint(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        _token: &str,
+        enable_streaming: bool,
+    ) -> Result<CompletionResponse> {
+        // Convert messages to responses format
+        let input = convert_messages_to_response_input(messages)?;
+
+        // Convert tools if any
+        let response_tools = if !tools.is_empty() {
+            let xzatoma_tools: Vec<crate::tools::Tool> = tools
+                .iter()
+                .filter_map(|t| serde_json::from_value(t.clone()).ok())
+                .collect();
+            convert_tools_to_response_format(&xzatoma_tools)
+        } else {
+            Vec::new()
+        };
+
+        if enable_streaming {
+            self.complete_responses_streaming(model, input, response_tools)
+                .await
+        } else {
+            self.complete_responses_blocking(model, input, response_tools)
+                .await
+        }
+    }
+
+    /// Complete using /chat/completions endpoint (legacy)
+    ///
+    /// Falls back to the legacy chat completions endpoint for compatibility
+    /// with older model versions.
+    async fn complete_with_completions_endpoint(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        _token: &str,
+        enable_streaming: bool,
+    ) -> Result<CompletionResponse> {
+        // Convert tools to Tool objects for stream_completion
+        let xzatoma_tools: Vec<crate::tools::Tool> = tools
+            .iter()
+            .filter_map(|t| serde_json::from_value(t.clone()).ok())
+            .collect();
+
+        if enable_streaming {
+            self.complete_completions_streaming(model, messages, &xzatoma_tools)
+                .await
+        } else {
+            self.complete_completions_blocking(model, messages, &xzatoma_tools)
+                .await
+        }
+    }
+
+    /// Complete responses endpoint request with streaming
+    ///
+    /// Sends a streaming request to the /responses endpoint and collects
+    /// all events into a final completion response.
+    async fn complete_responses_streaming(
+        &self,
+        model: &str,
+        input: Vec<ResponseInputItem>,
+        tools: Vec<ToolDefinition>,
+    ) -> Result<CompletionResponse> {
+        tracing::debug!("Sending streaming /responses request");
+
+        let stream = self.stream_response(model, input, tools).await?;
+
+        // Collect all stream events
+        let mut final_message: Option<Message> = None;
+
+        futures::pin_mut!(stream);
+        while let Some(event_result) = stream.next().await {
+            let event = event_result?;
+
+            if let Some(msg) = convert_stream_event_to_message(&event) {
+                if msg.role == "assistant" {
+                    final_message = Some(msg);
+                }
+            }
+        }
+
+        let response_message = final_message.unwrap_or_else(|| Message::assistant(""));
+
+        tracing::debug!("Responses streaming completed");
+
+        Ok(CompletionResponse::new(response_message))
+    }
+
+    /// Complete responses endpoint request without streaming
+    ///
+    /// Sends a non-streaming request to the /responses endpoint.
+    async fn complete_responses_blocking(
+        &self,
+        model: &str,
+        input: Vec<ResponseInputItem>,
+        tools: Vec<ToolDefinition>,
+    ) -> Result<CompletionResponse> {
+        let token = self.authenticate().await?;
+
+        tracing::debug!(
+            "Sending blocking /responses request: {} input items",
+            input.len()
+        );
+
+        let (reasoning, include) = {
+            let config = self
+                .config
+                .read()
+                .map_err(|_| XzatomaError::Provider("Failed to acquire config lock".to_string()))?;
+
+            let reasoning = config
+                .reasoning_effort
+                .as_ref()
+                .map(|effort| ReasoningConfig {
+                    effort: Some(effort.clone()),
+                });
+
+            let include = if config.include_reasoning {
+                Some(vec!["reasoning".to_string()])
+            } else {
+                None
+            };
+
+            (reasoning, include)
+        }; // Drop the read guard here
+
+        let has_tools = !tools.is_empty();
+        let request = ResponsesRequest {
+            model: model.to_string(),
+            input,
+            stream: false,
+            temperature: None,
+            tools: if has_tools { Some(tools) } else { None },
+            tool_choice: if has_tools {
+                Some(ToolChoice::Auto { auto: true })
+            } else {
+                None
+            },
+            reasoning,
+            include,
+        };
+
+        let url = self.endpoint_url(ModelEndpoint::Responses);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Editor-Version", "vscode/1.85.0")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!("/responses request failed: {}", e);
+                XzatomaError::Provider(format!("/responses request failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!("/responses returned error {}: {}", status, error_text);
+            return Err(format_copilot_api_error(status, &error_text).into());
+        }
+
+        // Parse response - for /responses endpoint, we expect a message-like response
+        #[derive(Deserialize)]
+        struct ResponsesResponse {
+            #[serde(default)]
+            message: Option<ResponseInputItem>,
+            #[serde(default)]
+            choices: Vec<ResponsesChoice>,
+        }
+
+        #[derive(Deserialize)]
+        struct ResponsesChoice {
+            message: ResponseInputItem,
+        }
+
+        let responses_resp: ResponsesResponse = response.json().await.map_err(|e| {
+            tracing::error!("Failed to parse /responses response: {}", e);
+            XzatomaError::Provider(format!("Failed to parse /responses response: {}", e))
+        })?;
+
+        // Extract message from response
+        let response_item = responses_resp
+            .message
+            .or_else(|| responses_resp.choices.into_iter().next().map(|c| c.message))
+            .ok_or_else(|| {
+                XzatomaError::Provider("No message in /responses response".to_string())
+            })?;
+
+        let messages = convert_response_input_to_messages(&[response_item])?;
+        let message = messages
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| Message::assistant(""));
+
+        tracing::debug!("/responses request completed successfully");
+
+        Ok(CompletionResponse::new(message))
+    }
+
+    /// Complete chat completions endpoint request with streaming
+    ///
+    /// Sends a streaming request to the /chat/completions endpoint.
+    async fn complete_completions_streaming(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[crate::tools::Tool],
+    ) -> Result<CompletionResponse> {
+        tracing::debug!("Sending streaming /chat/completions request");
+
+        let stream = self.stream_completion(model, messages, tools).await?;
+
+        // Collect all stream events
+        let mut final_message: Option<Message> = None;
+
+        futures::pin_mut!(stream);
+        while let Some(event_result) = stream.next().await {
+            let event = event_result?;
+
+            if let Some(msg) = convert_stream_event_to_message(&event) {
+                if msg.role == "assistant" {
+                    final_message = Some(msg);
+                }
+            }
+        }
+
+        let response_message = final_message.unwrap_or_else(|| Message::assistant(""));
+
+        tracing::debug!("Completions streaming completed");
+
+        Ok(CompletionResponse::new(response_message))
+    }
+
+    /// Complete chat completions endpoint request without streaming
+    ///
+    /// Sends a non-streaming request to the /chat/completions endpoint.
+    async fn complete_completions_blocking(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[crate::tools::Tool],
+    ) -> Result<CompletionResponse> {
+        let token = self.authenticate().await?;
+
+        let copilot_request = CopilotRequest {
+            model: model.to_string(),
+            messages: self.convert_messages(messages),
+            tools: self.convert_tools_legacy(tools),
+            stream: false,
+        };
+
+        tracing::debug!(
+            "Sending blocking /chat/completions request: {} messages, {} tools",
+            copilot_request.messages.len(),
+            copilot_request.tools.len()
+        );
+
+        let url = self.endpoint_url(ModelEndpoint::ChatCompletions);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Editor-Version", "vscode/1.85.0")
+            .json(&copilot_request)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!("/chat/completions request failed: {}", e);
+                XzatomaError::Provider(format!("/chat/completions request failed: {}", e))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "/chat/completions returned error {}: {}",
+                status,
+                error_text
+            );
+
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                tracing::warn!("Attempting token refresh");
+                if let Ok(cached) = self.get_cached_token() {
+                    if let Ok(new_token) = self.get_copilot_token(&cached.github_token).await {
+                        let refreshed = CachedToken {
+                            github_token: cached.github_token.clone(),
+                            copilot_token: new_token.clone(),
+                            expires_at: SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs()
+                                + 3600,
+                        };
+                        if let Err(e) = self.cache_token(&refreshed) {
+                            tracing::warn!("Failed to cache refreshed token: {}", e);
+                        }
+
+                        // Retry with new token
+                        let retry_response = self
+                            .client
+                            .post(&url)
+                            .header("Authorization", format!("Bearer {}", new_token))
+                            .header("Editor-Version", "vscode/1.85.0")
+                            .json(&copilot_request)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                tracing::error!("Retry failed: {}", e);
+                                XzatomaError::Provider(format!("Retry failed: {}", e))
+                            })?;
+
+                        let retry_status = retry_response.status();
+                        if !retry_status.is_success() {
+                            let error_text = retry_response.text().await.unwrap_or_default();
+                            tracing::error!(
+                                "/chat/completions retry returned error {}: {}",
+                                retry_status,
+                                error_text
+                            );
+                            return Err(format_copilot_api_error(retry_status, &error_text).into());
+                        }
+
+                        let copilot_response: CopilotResponse =
+                            retry_response.json().await.map_err(|e| {
+                                tracing::error!("Failed to parse response: {}", e);
+                                XzatomaError::Provider(format!("Failed to parse response: {}", e))
+                            })?;
+
+                        let choice =
+                            copilot_response.choices.into_iter().next().ok_or_else(|| {
+                                XzatomaError::Provider("No choices in response".to_string())
+                            })?;
+
+                        let message = self.convert_response_message(choice.message);
+                        let usage = copilot_response
+                            .usage
+                            .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
+
+                        return Ok(match usage {
+                            Some(u) => CompletionResponse::with_usage(message, u),
+                            None => CompletionResponse::new(message),
+                        });
+                    }
+                }
+                if let Err(e) = self.clear_cached_token() {
+                    tracing::warn!("Failed to clear cached token: {}", e);
+                }
+            }
+
+            return Err(format_copilot_api_error(status, &error_text).into());
+        }
+
+        let copilot_response: CopilotResponse = response.json().await.map_err(|e| {
+            tracing::error!("Failed to parse response: {}", e);
+            XzatomaError::Provider(format!("Failed to parse response: {}", e))
+        })?;
+
+        let choice = copilot_response
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| XzatomaError::Provider("No choices in response".to_string()))?;
+
+        let message = self.convert_response_message(choice.message);
+        let usage = copilot_response
+            .usage
+            .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
+
+        tracing::debug!("/chat/completions request completed successfully");
+
+        Ok(match usage {
+            Some(u) => CompletionResponse::with_usage(message, u),
+            None => CompletionResponse::new(message),
+        })
+    }
+
+    /// Select the best endpoint for the model
+    ///
+    /// Checks model capabilities and configuration to determine which endpoint
+    /// to use for completion requests. Prefers /responses endpoint but falls
+    /// back to /chat/completions if needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_name` - Name of the model to check
+    ///
+    /// # Returns
+    ///
+    /// Returns the preferred ModelEndpoint, or error if no suitable endpoint found
+    ///
+    /// # Errors
+    ///
+    /// Returns error if model is not found or no compatible endpoint is available
+    async fn select_endpoint(&self, model_name: &str) -> Result<ModelEndpoint> {
+        // Get the enable_endpoint_fallback setting, drop the guard before awaits
+        let enable_endpoint_fallback = self
+            .config
+            .read()
+            .map_err(|_| XzatomaError::Provider("Failed to acquire config lock".to_string()))?
+            .enable_endpoint_fallback;
+
+        // Check if model supports responses endpoint
+        if self
+            .model_supports_endpoint(model_name, ModelEndpoint::Responses)
+            .await?
+        {
+            tracing::debug!(
+                "Model {} supports /responses endpoint, using it",
+                model_name
+            );
+            return Ok(ModelEndpoint::Responses);
+        }
+
+        // If fallback is enabled and responses not supported, try completions
+        if enable_endpoint_fallback
+            && self
+                .model_supports_endpoint(model_name, ModelEndpoint::ChatCompletions)
+                .await?
+        {
+            tracing::debug!(
+                "Model {} does not support /responses; falling back to /chat/completions",
+                model_name
+            );
+            return Ok(ModelEndpoint::ChatCompletions);
+        }
+
+        // No suitable endpoint found
+        Err(XzatomaError::Provider(format!(
+            "No supported endpoint found for model: {}",
+            model_name
+        ))
+        .into())
+    }
+
+    /// Check if a model supports a specific endpoint
+    ///
+    /// Queries the models API to determine if the given model supports
+    /// the specified endpoint.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_name` - Name of the model to check
+    /// * `endpoint` - Endpoint to verify support for
+    ///
+    /// # Returns
+    ///
+    /// Returns true if model supports the endpoint
+    ///
+    /// # Errors
+    ///
+    /// Returns error if models API is unreachable or model not found
+    async fn model_supports_endpoint(
+        &self,
+        model_name: &str,
+        endpoint: ModelEndpoint,
+    ) -> Result<bool> {
+        let models_data = self.fetch_copilot_models_raw().await?;
+
+        let model = models_data
+            .iter()
+            .find(|m| m.id == model_name || m.name == model_name)
+            .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))?;
+
+        // If supported_endpoints is empty, assume all legacy endpoints are supported
+        if model.supported_endpoints.is_empty() {
+            return Ok(endpoint == ModelEndpoint::ChatCompletions);
+        }
+
+        let endpoint_name = endpoint.as_str();
+        Ok(model.supports_endpoint(endpoint_name))
+    }
 }
 
 #[async_trait]
@@ -1966,183 +2448,49 @@ impl Provider for CopilotProvider {
         messages: &[Message],
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
-        let token = self.authenticate().await?;
-
-        let model = self
-            .config
-            .read()
-            .map_err(|_| {
+        let (model, enable_streaming) = {
+            let config = self.config.read().map_err(|_| {
                 XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?
-            .model
-            .clone();
-        let copilot_request = CopilotRequest {
-            model,
-            messages: self.convert_messages(messages),
-            tools: self.convert_tools(tools),
-            stream: false,
-        };
-
-        tracing::debug!(
-            "Sending Copilot request: {} messages, {} tools",
-            copilot_request.messages.len(),
-            copilot_request.tools.len()
-        );
-
-        let completions_url = self.api_endpoint("chat/completions");
-        let response = self
-            .client
-            .post(&completions_url)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "vscode/1.85.0")
-            .json(&copilot_request)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!("Copilot request failed: {}", e);
-                XzatomaError::Provider(format!("Copilot request failed: {}", e))
             })?;
+            (config.model.clone(), config.enable_streaming)
+        }; // Drop the read guard before awaits
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("Copilot returned error {}: {}", status, error_text);
+        // Determine which endpoint to use
+        let endpoint = self.select_endpoint(&model).await?;
 
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                tracing::warn!("Copilot returned 401 Unauthorized; attempting non-interactive refresh using cached GitHub token");
-                if let Ok(cached) = self.get_cached_token() {
-                    match self.get_copilot_token(&cached.github_token).await {
-                        Ok(new_token) => {
-                            let now = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                            let refreshed = CachedToken {
-                                github_token: cached.github_token.clone(),
-                                copilot_token: new_token.clone(),
-                                expires_at: now + 3600,
-                            };
-                            if let Err(e) = self.cache_token(&refreshed) {
-                                tracing::warn!("Failed to cache refreshed Copilot token: {}", e);
-                            } else {
-                                tracing::info!("Successfully refreshed Copilot token using cached GitHub token");
-                            }
+        tracing::debug!("Using endpoint {:?} for model: {}", endpoint, model);
 
-                            // Retry the original completion request with refreshed token
-                            let retry_response = self
-                                .client
-                                .post(&completions_url)
-                                .header("Authorization", format!("Bearer {}", new_token))
-                                .header("Editor-Version", "vscode/1.85.0")
-                                .json(&copilot_request)
-                                .send()
-                                .await
-                                .map_err(|e| {
-                                    tracing::error!("Copilot request retry failed: {}", e);
-                                    XzatomaError::Provider(format!(
-                                        "Copilot request retry failed: {}",
-                                        e
-                                    ))
-                                })?;
-
-                            let status2 = retry_response.status();
-                            if !status2.is_success() {
-                                let error_text2 = retry_response.text().await.unwrap_or_default();
-                                tracing::error!(
-                                    "Copilot retry returned error {}: {}",
-                                    status2,
-                                    error_text2
-                                );
-                                if status2 == reqwest::StatusCode::UNAUTHORIZED {
-                                    if let Err(e) = self.clear_cached_token() {
-                                        tracing::warn!(
-                                            "Failed to clear cached Copilot token: {}",
-                                            e
-                                        );
-                                    }
-                                }
-                                return Err(format_copilot_api_error(status2, &error_text2).into());
-                            }
-
-                            // Parse and return the completion from retry_response
-                            let copilot_response: CopilotResponse =
-                                retry_response.json().await.map_err(|e| {
-                                    tracing::error!(
-                                        "Failed to parse Copilot response on retry: {}",
-                                        e
-                                    );
-                                    XzatomaError::Provider(format!(
-                                        "Failed to parse Copilot response: {}",
-                                        e
-                                    ))
-                                })?;
-
-                            let choice =
-                                copilot_response.choices.into_iter().next().ok_or_else(|| {
-                                    XzatomaError::Provider(
-                                        "No choices in Copilot response".to_string(),
-                                    )
-                                })?;
-
-                            tracing::debug!("Copilot response received successfully (retry)");
-
-                            let message = self.convert_response_message(choice.message);
-
-                            // Extract token usage if available
-                            let usage = copilot_response
-                                .usage
-                                .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
-
-                            let response = match usage {
-                                Some(u) => CompletionResponse::with_usage(message, u),
-                                None => CompletionResponse::new(message),
-                            };
-                            return Ok(response);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Non-interactive refresh failed: {}", e);
-                            if let Err(e) = self.clear_cached_token() {
-                                tracing::warn!("Failed to clear cached Copilot token: {}", e);
-                            }
-                            return Err(format_copilot_api_error(status, &error_text).into());
-                        }
-                    }
-                } else {
-                    // No cached GitHub token available; invalidate cache and return auth error
-                    if let Err(e) = self.clear_cached_token() {
-                        tracing::warn!("Failed to clear cached Copilot token: {}", e);
-                    }
-                    return Err(format_copilot_api_error(status, &error_text).into());
-                }
+        // Route to appropriate implementation based on endpoint
+        match endpoint {
+            ModelEndpoint::Responses => {
+                self.complete_with_responses_endpoint(&model, messages, tools, "", enable_streaming)
+                    .await
             }
-
-            return Err(format_copilot_api_error(status, &error_text).into());
+            ModelEndpoint::ChatCompletions => {
+                self.complete_with_completions_endpoint(
+                    &model,
+                    messages,
+                    tools,
+                    "",
+                    enable_streaming,
+                )
+                .await
+            }
+            ModelEndpoint::Messages => {
+                // Messages endpoint not yet implemented, fall back to completions
+                self.complete_with_completions_endpoint(
+                    &model,
+                    messages,
+                    tools,
+                    "",
+                    enable_streaming,
+                )
+                .await
+            }
+            ModelEndpoint::Unknown => {
+                Err(XzatomaError::Provider("Unknown endpoint selected".to_string()).into())
+            }
         }
-
-        let copilot_response: CopilotResponse = response.json().await.map_err(|e| {
-            tracing::error!("Failed to parse Copilot response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse Copilot response: {}", e))
-        })?;
-
-        let choice =
-            copilot_response.choices.into_iter().next().ok_or_else(|| {
-                XzatomaError::Provider("No choices in Copilot response".to_string())
-            })?;
-
-        tracing::debug!("Copilot response received successfully");
-
-        let message = self.convert_response_message(choice.message);
-
-        // Extract token usage if available
-        let usage = copilot_response
-            .usage
-            .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
-
-        let response = match usage {
-            Some(u) => CompletionResponse::with_usage(message, u),
-            None => CompletionResponse::new(message),
-        };
-        Ok(response)
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
@@ -2176,7 +2524,7 @@ impl Provider for CopilotProvider {
             supports_model_details: true,
             supports_model_switching: true,
             supports_token_counts: true,
-            supports_streaming: false,
+            supports_streaming: true,
         }
     }
 
@@ -2524,7 +2872,7 @@ mod tests {
         assert!(caps.supports_model_details);
         assert!(caps.supports_model_switching);
         assert!(caps.supports_token_counts);
-        assert!(!caps.supports_streaming);
+        assert!(caps.supports_streaming);
     }
 
     #[tokio::test]
@@ -3129,6 +3477,10 @@ mod tests {
         let config = CopilotConfig {
             model: "gpt-5-mini".to_string(),
             api_base: None,
+            enable_streaming: true,
+            enable_endpoint_fallback: true,
+            reasoning_effort: None,
+            include_reasoning: false,
         };
 
         let provider = CopilotProvider::new(config).expect("Failed to create provider");
@@ -3148,6 +3500,10 @@ mod tests {
         let config = CopilotConfig {
             model: "gpt-5-mini".to_string(),
             api_base: Some("https://custom.api.com".to_string()),
+            enable_streaming: true,
+            enable_endpoint_fallback: true,
+            reasoning_effort: None,
+            include_reasoning: false,
         };
 
         let provider = CopilotProvider::new(config).expect("Failed to create provider");
@@ -3759,5 +4115,88 @@ mod tests {
         let json = serde_json::to_string(&request).expect("Serialize failed");
         assert!(json.contains("\"stream\":true"));
         assert!(json.contains("\"messages\""));
+    }
+
+    // --- Task 4.1: Endpoint Selection Tests ---
+
+    #[tokio::test]
+    async fn test_select_endpoint_prefers_responses() {
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            enable_endpoint_fallback: true,
+            ..Default::default()
+        };
+        let _provider = CopilotProvider::new(config).unwrap();
+
+        // We can't easily test this without mocking the models API
+        // This test documents the expected behavior
+        // In real usage: if model supports /responses, it should be selected
+    }
+
+    #[tokio::test]
+    async fn test_select_endpoint_fallback_to_completions() {
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            enable_endpoint_fallback: true,
+            ..Default::default()
+        };
+        let _provider = CopilotProvider::new(config).unwrap();
+
+        // Expected: if /responses not supported but fallback enabled,
+        // should select /chat/completions
+    }
+
+    #[test]
+    fn test_copilot_config_defaults() {
+        let config = CopilotConfig::default();
+        assert_eq!(config.model, "gpt-5-mini");
+        assert!(config.enable_streaming);
+        assert!(config.enable_endpoint_fallback);
+        assert!(!config.include_reasoning);
+        assert_eq!(config.reasoning_effort, None);
+    }
+
+    #[test]
+    fn test_copilot_config_serialization() {
+        let config = CopilotConfig {
+            model: "claude-3.5-sonnet".to_string(),
+            api_base: Some("http://localhost:8000".to_string()),
+            enable_streaming: true,
+            enable_endpoint_fallback: false,
+            reasoning_effort: Some("high".to_string()),
+            include_reasoning: true,
+        };
+
+        let yaml = serde_yaml::to_string(&config).expect("Serialize failed");
+        assert!(yaml.contains("model: claude-3.5-sonnet"));
+        assert!(yaml.contains("enable_streaming: true"));
+        assert!(yaml.contains("enable_endpoint_fallback: false"));
+        assert!(yaml.contains("reasoning_effort: high"));
+        assert!(yaml.contains("include_reasoning: true"));
+    }
+
+    #[test]
+    fn test_copilot_config_deserialization() {
+        let yaml = r#"
+model: gpt-5-mini
+enable_streaming: true
+enable_endpoint_fallback: true
+reasoning_effort: medium
+include_reasoning: true
+"#;
+
+        let config: CopilotConfig = serde_yaml::from_str(yaml).expect("Deserialize failed");
+        assert_eq!(config.model, "gpt-5-mini");
+        assert!(config.enable_streaming);
+        assert!(config.enable_endpoint_fallback);
+        assert_eq!(config.reasoning_effort, Some("medium".to_string()));
+        assert!(config.include_reasoning);
+    }
+
+    #[test]
+    fn test_provider_cache_ttl() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+        assert_eq!(provider.models_cache_ttl_secs, 300);
     }
 }
