@@ -71,7 +71,7 @@ pub async fn list_models(
 
         if json {
             // JSON output with summary data
-            output_models_summary_json(&models_summary)?;
+            output_models_summary_json(&models_summary, provider_type)?;
         } else {
             // Human-readable output with summary data
             output_models_summary_table(&models_summary, provider_type);
@@ -91,7 +91,7 @@ pub async fn list_models(
 
         if json {
             // JSON output with basic data
-            output_models_json(&models)?;
+            output_models_json(&models, provider_type)?;
         } else {
             // Human-readable output (refactored)
             output_models_table(&models, provider_type);
@@ -156,7 +156,7 @@ pub async fn show_model_info(
 
         if json {
             // JSON output with summary data
-            output_model_summary_json(&model_summary)?;
+            output_model_summary_json(&model_summary, provider_type)?;
         } else {
             // Human-readable output with summary data
             output_model_summary_detailed(&model_summary);
@@ -167,7 +167,7 @@ pub async fn show_model_info(
 
         if json {
             // JSON output with basic data
-            output_model_info_json(&model_info)?;
+            output_model_info_json(&model_info, provider_type)?;
         } else {
             // Human-readable output (refactored)
             output_model_info_detailed(&model_info);
@@ -231,7 +231,19 @@ fn serialize_pretty<T: serde::Serialize + ?Sized>(
 /// # Errors
 ///
 /// Returns `XzatomaError::Serialization` if serialization fails
-fn output_models_json(models: &[ModelInfo]) -> Result<()> {
+fn output_models_json(models: &[ModelInfo], provider_type: &str) -> Result<()> {
+    if provider_type == "ollama" {
+        // For Ollama, dump the full raw JSON if available
+        let raw_models: Vec<&serde_json::Value> =
+            models.iter().filter_map(|m| m.raw_data.as_ref()).collect();
+
+        if !raw_models.is_empty() {
+            let json = serialize_pretty(&raw_models).map_err(XzatomaError::Serialization)?;
+            println!("{}", json);
+            return Ok(());
+        }
+    }
+
     let json = serialize_pretty(models).map_err(XzatomaError::Serialization)?;
     println!("{}", json);
     Ok(())
@@ -242,7 +254,44 @@ fn output_models_json(models: &[ModelInfo]) -> Result<()> {
 /// # Errors
 ///
 /// Returns `XzatomaError::Serialization` if serialization fails
-fn output_models_summary_json(models: &[ModelInfoSummary]) -> Result<()> {
+fn output_models_summary_json(models: &[ModelInfoSummary], provider_type: &str) -> Result<()> {
+    if provider_type == "ollama" {
+        // For Ollama, provide the specific summary fields requested
+        let ollama_summaries: Vec<serde_json::Value> = models
+            .iter()
+            .map(|m| {
+                let details = m
+                    .raw_data
+                    .get("details")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let capabilities = m
+                    .raw_data
+                    .get("capabilities")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(Vec::new()));
+                let modified_at = m
+                    .info
+                    .provider_specific
+                    .get("modified_at")
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                serde_json::json!({
+                    "name": m.info.name,
+                    "details": details,
+                    "context_length": m.info.context_window,
+                    "capabilities": capabilities,
+                    "modified_at": modified_at
+                })
+            })
+            .collect();
+
+        let json = serialize_pretty(&ollama_summaries).map_err(XzatomaError::Serialization)?;
+        println!("{}", json);
+        return Ok(());
+    }
+
     let json = serialize_pretty(models).map_err(XzatomaError::Serialization)?;
     println!("{}", json);
     Ok(())
@@ -327,28 +376,97 @@ pub fn render_table_to_string(table: &Table) -> String {
 /// ```
 pub fn render_models_summary_table(models: &[ModelInfoSummary], provider_type: &str) -> String {
     let mut table = Table::new();
-    table.add_row(row![
-        "Model Name",
-        "Display Name",
-        "Context Window",
-        "State",
-        "Tool Calls",
-        "Vision"
-    ]);
 
-    for model in models {
-        let state = model.state.as_deref().unwrap_or("unknown");
-        let tool_calls = format_optional_bool(model.supports_tool_calls);
-        let vision = format_optional_bool(model.supports_vision);
+    // Use markdown-compatible formatting
+    let mut format = *prettytable::format::consts::FORMAT_NO_BORDER_LINE_SEPARATOR;
+    format.padding(1, 1);
+    table.set_format(format);
 
+    if provider_type == "ollama" {
         table.add_row(row![
-            model.info.name,
-            model.info.display_name,
-            format!("{} tokens", model.info.context_window),
-            state,
-            tool_calls,
-            vision
+            "Model Name",
+            "Family",
+            "Format",
+            "Param Size",
+            "Quantization",
+            "Context",
+            "Capabilities",
+            "Modified At"
         ]);
+
+        for model in models {
+            let details = model.raw_data.get("details");
+            let family = details
+                .and_then(|d| d.get("family"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("N/A");
+            let format = details
+                .and_then(|d| d.get("format"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("N/A");
+            let param_size = details
+                .and_then(|d| d.get("parameter_size"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("N/A");
+            let quantization = details
+                .and_then(|d| d.get("quantization_level"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("N/A");
+
+            let capabilities = if let Some(caps) = model
+                .raw_data
+                .get("capabilities")
+                .and_then(|c| c.as_array())
+            {
+                caps.iter()
+                    .map(|c| c.as_str().unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            } else {
+                "None".to_string()
+            };
+            let modified_at = model
+                .info
+                .provider_specific
+                .get("modified_at")
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+
+            table.add_row(row![
+                model.info.name,
+                family,
+                format,
+                param_size,
+                quantization,
+                format!("{} tokens", model.info.context_window),
+                capabilities,
+                modified_at
+            ]);
+        }
+    } else {
+        table.add_row(row![
+            "Model Name",
+            "Display Name",
+            "Context Window",
+            "State",
+            "Tool Calls",
+            "Vision"
+        ]);
+
+        for model in models {
+            let state = model.state.as_deref().unwrap_or("unknown");
+            let tool_calls = format_optional_bool(model.supports_tool_calls);
+            let vision = format_optional_bool(model.supports_vision);
+
+            table.add_row(row![
+                model.info.name,
+                model.info.display_name,
+                format!("{} tokens", model.info.context_window),
+                state,
+                tool_calls,
+                vision
+            ]);
+        }
     }
 
     let mut output = String::new();
@@ -447,14 +565,50 @@ pub fn render_model_summary_detailed(model: &ModelInfoSummary) -> String {
 }
 
 /// Output model info in JSON format (basic data)
-fn output_model_info_json(model: &ModelInfo) -> Result<()> {
+fn output_model_info_json(model: &ModelInfo, provider_type: &str) -> Result<()> {
+    if provider_type == "ollama" {
+        if let Some(raw) = &model.raw_data {
+            let json = serialize_pretty(raw).map_err(XzatomaError::Serialization)?;
+            println!("{}", json);
+            return Ok(());
+        }
+    }
     let json = serialize_pretty(model).map_err(XzatomaError::Serialization)?;
     println!("{}", json);
     Ok(())
 }
 
 /// Output model summary in JSON format
-fn output_model_summary_json(model: &ModelInfoSummary) -> Result<()> {
+fn output_model_summary_json(model: &ModelInfoSummary, provider_type: &str) -> Result<()> {
+    if provider_type == "ollama" {
+        let details = model
+            .raw_data
+            .get("details")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let capabilities = model
+            .raw_data
+            .get("capabilities")
+            .cloned()
+            .unwrap_or(serde_json::Value::Array(Vec::new()));
+        let modified_at = model
+            .info
+            .provider_specific
+            .get("modified_at")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let ollama_summary = serde_json::json!({
+            "name": model.info.name,
+            "details": details,
+            "capabilities": capabilities,
+            "modified_at": modified_at
+        });
+
+        let json = serialize_pretty(&ollama_summary).map_err(XzatomaError::Serialization)?;
+        println!("{}", json);
+        return Ok(());
+    }
     let json = serialize_pretty(model).map_err(XzatomaError::Serialization)?;
     println!("{}", json);
     Ok(())
@@ -592,7 +746,7 @@ mod tests {
     fn test_output_models_json_returns_ok() {
         let model = ModelInfo::new("gpt-test", "GPT Test", 4096);
         let models = vec![model];
-        assert!(output_models_json(&models).is_ok());
+        assert!(output_models_json(&models, "copilot").is_ok());
     }
 
     #[test]
@@ -608,13 +762,13 @@ mod tests {
             json!({"version": "2024-01"}),
         );
         let summaries = vec![summary];
-        assert!(output_models_summary_json(&summaries).is_ok());
+        assert!(output_models_summary_json(&summaries, "copilot").is_ok());
     }
 
     #[test]
     fn test_output_model_info_json_returns_ok() {
         let model = ModelInfo::new("gpt-test", "GPT Test", 4096);
-        assert!(output_model_info_json(&model).is_ok());
+        assert!(output_model_info_json(&model, "copilot").is_ok());
     }
 
     #[test]
@@ -629,7 +783,7 @@ mod tests {
             Some(false),
             json!({"meta": "value"}),
         );
-        assert!(output_model_summary_json(&summary).is_ok());
+        assert!(output_model_summary_json(&summary, "copilot").is_ok());
     }
 
     #[test]

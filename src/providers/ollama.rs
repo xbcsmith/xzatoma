@@ -397,6 +397,7 @@ impl OllamaProvider {
                     detailed_model.display_name =
                         format!("{} ({})", detailed_model.name, format_size(tag.size));
                     detailed_model.set_provider_metadata("size", format_size(tag.size));
+                    detailed_model.set_provider_metadata("modified_at", tag.modified_at.clone());
                     models.push(detailed_model);
                 }
                 Err(err) => {
@@ -466,6 +467,9 @@ impl OllamaProvider {
             XzatomaError::Provider(format!("Failed to read model details: {}", e))
         })?;
 
+        let raw_json: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+
         let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|e| {
             tracing::error!("Failed to parse Ollama show response: {}", e);
             XzatomaError::Provider(format!("Failed to parse model details: {}", e))
@@ -484,7 +488,8 @@ impl OllamaProvider {
             );
         }
 
-        let mut model_info = build_model_info_from_show_response(&show_response, &name);
+        let mut model_info =
+            build_model_info_from_show_response(&show_response, &name, Some(raw_json));
 
         // Include reported parameter size and quantization in metadata if available
         if !show_response.details.parameter_size.is_empty() {
@@ -563,6 +568,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
 fn build_model_info_from_show_response(
     show: &OllamaShowResponse,
     requested_name: &str,
+    raw_json: Option<serde_json::Value>,
 ) -> ModelInfo {
     let name = show
         .name
@@ -649,6 +655,8 @@ fn build_model_info_from_show_response(
             show.details.quantization_level.clone(),
         );
     }
+
+    model_info.raw_data = raw_json;
 
     model_info
 }
@@ -1132,7 +1140,7 @@ mod tests {
             capabilities: Vec::new(),
         };
 
-        let model_info = build_model_info_from_show_response(&show, "granite4:latest");
+        let model_info = build_model_info_from_show_response(&show, "granite4:latest", None);
         assert_eq!(model_info.name, "granite4:latest");
         assert_eq!(model_info.display_name, "granite4:latest");
         assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
@@ -1153,7 +1161,11 @@ mod tests {
         }"#;
 
         let show: OllamaShowResponse = serde_json::from_str(json).unwrap();
-        let model_info = build_model_info_from_show_response(&show, "granite4:latest");
+        let model_info = build_model_info_from_show_response(
+            &show,
+            "granite4:latest",
+            Some(serde_json::from_str(json).unwrap()),
+        );
         assert_eq!(model_info.context_window, 131072);
         assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
         assert!(model_info.supports_capability(ModelCapability::Completion));

@@ -1,0 +1,12 @@
+name: Multi-Step Plan
+description: A plan with multiple steps for eval testing
+steps:
+  - name: Step One
+    action: List files in the current directory
+    context: ls -la
+  - name: Step Two
+    action: Check disk usage
+    context: df -h
+  - name: Step Three
+    action: Show system uptime
+    context: uptime

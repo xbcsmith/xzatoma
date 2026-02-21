@@ -1,0 +1,3 @@
+name: Empty Plan
+description: A plan with no steps — should fail validation
+steps: []

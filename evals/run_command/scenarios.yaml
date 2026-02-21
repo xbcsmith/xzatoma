@@ -1,0 +1,89 @@
+# Eval scenarios for the `xzatoma run` command.
+#
+# Each scenario has:
+#   id            - unique identifier (used in test output)
+#   description   - human-readable description of what is being tested
+#   test_mode     - optional; "parse_only" calls PlanParser directly (skips provider)
+#   input         - plan_file (relative to plans/), prompt, and/or allow_dangerous
+#   expect        - outcome ("error" or "ok") and optional error_contains substring
+#
+# Scenarios that reach agent execution use an invalid provider so they remain
+# deterministic and offline. Scenarios with test_mode: parse_only exercise the
+# plan parsing and validation layer directly, independent of the provider.
+
+scenarios:
+  - id: no_input
+    description: "run with neither --plan nor --prompt should fail immediately"
+    input: {}
+    expect:
+      outcome: error
+      error_contains: "Either --plan or --prompt must be provided"
+
+  - id: prompt_only
+    description: "run with --prompt reaches provider instantiation, fails with invalid provider"
+    input:
+      prompt: "echo hello world"
+    expect:
+      outcome: error
+      error_contains: "Unknown provider"
+
+  - id: simple_plan
+    description: "valid single-step plan parses successfully and reaches provider"
+    input:
+      plan_file: "simple_plan.yaml"
+    expect:
+      outcome: error
+      error_contains: "Unknown provider"
+
+  - id: multi_step_plan
+    description: "valid multi-step plan parses successfully and reaches provider"
+    input:
+      plan_file: "multi_step_plan.yaml"
+    expect:
+      outcome: error
+      error_contains: "Unknown provider"
+
+  - id: plan_invalid_no_steps
+    description: "plan with no steps fails validation before reaching provider"
+    test_mode: parse_only
+    input:
+      plan_file: "invalid_no_steps.yaml"
+    expect:
+      outcome: error
+      error_contains: "Plan must have at least one step"
+
+  - id: plan_invalid_no_name
+    description: "plan with empty name fails validation before reaching provider"
+    test_mode: parse_only
+    input:
+      plan_file: "invalid_no_name.yaml"
+    expect:
+      outcome: error
+      error_contains: "Plan name cannot be empty"
+
+  - id: plan_invalid_step_no_action
+    description: "plan with a step missing action fails step-level validation"
+    test_mode: parse_only
+    input:
+      plan_file: "invalid_step_no_action.yaml"
+    expect:
+      outcome: error
+      error_contains: "has no action"
+
+  - id: plan_file_not_found
+    description: "referencing a non-existent plan file returns a read error"
+    test_mode: parse_only
+    input:
+      plan_file: "does_not_exist.yaml"
+    expect:
+      outcome: error
+      error_contains: "Failed to read plan file"
+
+  - id: allow_dangerous_with_prompt
+    description: "--allow-dangerous flag with prompt still fails at invalid provider"
+    input:
+      prompt: "do something dangerous"
+      allow_dangerous: true
+    expect:
+      outcome: error
+      error_contains: "Unknown provider"

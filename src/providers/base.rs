@@ -269,6 +269,9 @@ pub struct ModelInfo {
     pub capabilities: Vec<ModelCapability>,
     /// Provider-specific metadata (key-value pairs)
     pub provider_specific: HashMap<String, String>,
+    /// Raw provider-specific data (fallback for unknown fields)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_data: Option<serde_json::Value>,
 }
 
 impl ModelInfo {
@@ -300,6 +303,7 @@ impl ModelInfo {
             context_window,
             capabilities: Vec::new(),
             provider_specific: HashMap::new(),
+            raw_data: None,
         }
     }
 
@@ -438,15 +442,19 @@ impl ModelInfoSummary {
     /// assert_eq!(summary.info.name, "gpt-4");
     /// assert!(summary.state.is_none());
     /// ```
-    pub fn from_model_info(info: ModelInfo) -> Self {
+    pub fn from_model_info(mut info: ModelInfo) -> Self {
+        let raw_data = info.raw_data.take().unwrap_or(serde_json::Value::Null);
+        let supports_tool_calls = Some(info.supports_capability(ModelCapability::FunctionCalling));
+        let supports_vision = Some(info.supports_capability(ModelCapability::Vision));
+
         Self {
             info,
             state: None,
             max_prompt_tokens: None,
             max_completion_tokens: None,
-            supports_tool_calls: None,
-            supports_vision: None,
-            raw_data: serde_json::Value::Null,
+            supports_tool_calls,
+            supports_vision,
+            raw_data,
         }
     }
 
@@ -1232,8 +1240,8 @@ mod tests {
         assert!(summary.state.is_none());
         assert!(summary.max_prompt_tokens.is_none());
         assert!(summary.max_completion_tokens.is_none());
-        assert!(summary.supports_tool_calls.is_none());
-        assert!(summary.supports_vision.is_none());
+        assert_eq!(summary.supports_tool_calls, Some(false));
+        assert_eq!(summary.supports_vision, Some(false));
         assert_eq!(summary.raw_data, serde_json::Value::Null);
     }
 

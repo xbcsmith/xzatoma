@@ -50,7 +50,7 @@ Override the model for subagent instances. Must be available in the configured p
 ```yaml
 agent:
   subagent:
-    model: "gpt-3.5-turbo"  # Cheaper model for cost optimization
+    model: "gpt-5-mini"  # Cheaper model for cost optimization
 ```
 
 #### `chat_enabled` (Optional)
@@ -132,7 +132,7 @@ provider:
 
 agent:
   subagent:
-    model: gpt-3.5-turbo        # 10x cheaper
+    model: gpt-5-mini        # 10x cheaper
     chat_enabled: false
     max_executions: 10
 ```
@@ -180,7 +180,7 @@ provider:
 
 agent:
   subagent:
-    model: gemma2:2b              # Smaller, faster model
+    model: granite3.2:2b              # Smaller, faster model
     chat_enabled: true
     default_max_turns: 3          # Quick operations only
     max_depth: 1                  # Keep it simple
@@ -247,7 +247,7 @@ agent:
 agent:
   subagent:
     # provider: ollama   <- Remove if using main provider
-    model: gpt-3.5-turbo
+    model: gpt-5-mini
     chat_enabled: true
 ```
 
@@ -297,7 +297,7 @@ agent:
 ```yaml
 agent:
   subagent:
-    model: gemma2:2b              # Faster, smaller
+    model: granite3.2:2b              # Faster, smaller
     max_executions: 2             # Reduce parallelism
     max_depth: 1                  # Simpler delegation
 ```
@@ -343,9 +343,9 @@ Default `max_executions: 5` balances parallelism vs. resource usage:
 
 | Model | Speed | Quality | Cost | Best For |
 |-------|-------|---------|------|----------|
-| gemma2:2b | Very Fast | Basic | Free | Quick tasks |
+| granite3.2:2b | Very Fast | Basic | Free | Quick tasks |
 | llama3.2 | Fast | Good | Free | General work |
-| gpt-3.5-turbo | Moderate | Excellent | $0.0005/1K tokens | Analysis |
+| gpt-5-mini | Moderate | Excellent | $0.0005/1K tokens | Analysis |
 | gpt-4 | Slow | Best | $0.03/1K tokens | Complex reasoning |
 
 ## Best Practices
@@ -383,8 +383,8 @@ xzatoma /status
 
 ### 4. Match Model to Task
 
-- **Quick tasks**: Small, fast models (gemma2:2b)
-- **General work**: Medium models (llama3.2, gpt-3.5-turbo)
+- **Quick tasks**: Small, fast models (granite3.2:2b)
+- **General work**: Medium models (llama3.2, gpt-5-mini)
 - **Complex analysis**: Larger models (gpt-4)
 
 ### 5. Set Clear Limits
@@ -456,4 +456,3 @@ xzatoma chat
 
 ---
 
-### Task 4.2: Create Chat Mode Usage Guide

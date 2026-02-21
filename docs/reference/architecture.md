@@ -10,34 +10,54 @@ Think of it as a command-line version of Zed's agent chat - you give it a goal (
 
 ### High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│           XZatoma CLI             │
-├─────────────────────────────────────────────────────────┤
-│                             │
-│ ┌──────────────┐   ┌─────────────┐        │
-│ │  CLI Layer │────▶ │ Agent Core │        │
-│ │  (clap)   │   │       │        │
-│ └──────────────┘   └─────────────┘        │
-│                │             │
-│                ▼             │
-│ ┌──────────────────────────────────────────────────┐ │
-│ │     Provider Abstraction Layer        │ │
-│ │ ┌─────────────────┐  ┌─────────────────┐   │ │
-│ │ │ Copilot Provider│  │ Ollama Provider │   │ │
-│ │ └─────────────────┘  └─────────────────┘   │ │
-│ └──────────────────────────────────────────────────┘ │
-│                │             │
-│                ▼             │
-│ ┌──────────────────────────────────────────────────┐ │
-│ │       Basic Tools             │ │
-│ │ ┌──────────┐ ┌──────────┐ ┌──────────┐   │ │
-│ │ │File Ops │ │Terminal │ │ Plan   │   │ │
-│ │ │(CRUD)  │ │Executor │ │ Parser  │   │ │
-│ │ └──────────┘ └──────────┘ └──────────┘   │ │
-│ └──────────────────────────────────────────────────┘ │
-│                             │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph CLI ["XZatoma CLI"]
+        direction LR
+        CLILayer["CLI Layer (clap)"] --> AgentCore["Agent Core + Persistence"]
+        AgentCore --> ChatModes["Chat Modes (Plan/Write)"]
+    end
+
+    CLILayer --> PAL
+    AgentCore --> PAL
+    ChatModes --> PAL
+
+    subgraph PAL ["Provider Abstraction Layer"]
+        direction LR
+        Copilot["Copilot Provider"]
+        Ollama["Ollama Provider"]
+    end
+
+    PAL --> Tools
+
+    subgraph Tools ["Enhanced Tools"]
+        direction TB
+        subgraph FileOpsGroup ["File & Context"]
+            direction LR
+            FileOps["File Ops (Enhanced)"]
+            ContextMentions["Context Mentions"]
+        end
+        subgraph ExecutionGroup ["Execution & Search"]
+            direction LR
+            Terminal["Terminal Executor"]
+            Fetch["Fetch Tool"]
+            Grep["Grep Tool"]
+        end
+        Subagent["Subagent Tool"]
+    end
+
+    Tools --> Integrations
+
+    subgraph Integrations ["Optional Integrations"]
+        direction LR
+        XZepr["XZepr (Kafka)"]
+        Watcher["Watcher Module"]
+    end
+
+    style CLI fill:#f9f,stroke:#333,stroke-width:2px
+    style PAL fill:#ccf,stroke:#333,stroke-width:2px
+    style Tools fill:#cfc,stroke:#333,stroke-width:2px
+    style Integrations fill:#fcc,stroke:#333,stroke-width:2px
 ```
 
 ## Core Components
@@ -92,14 +112,41 @@ xzatoma run --prompt "List all Rust files and count lines"
 
 **Execution Loop**:
 
+```mermaid
+flowchart TD
+    Start([User Input / Plan]) --> ParseMentions[Parse @mentions]
+    ParseMentions --> ResolveContent[Resolve File/URL/Search Content]
+    ResolveContent --> ConstructPrompt[Construct System Prompt]
+    ConstructPrompt --> LLMCall[LLM Provider Call]
+    LLMCall --> Response{LLM Response}
+
+    Response -- "Final Answer" --> End([Return to User])
+    Response -- "Tool Call" --> ExecuteTool[Execute Tool]
+
+    ExecuteTool --> ToolResult[Tool Result]
+    ToolResult --> AddToHistory[Add to Conversation History]
+    AddToHistory --> LLMCall
+
+    subgraph "Agent Loop"
+        LLMCall
+        Response
+        ExecuteTool
+        ToolResult
+        AddToHistory
+    end
+
+    subgraph "Context Mentions"
+        ParseMentions
+        ResolveContent
+    end
 ```
+
 1. User provides goal/instruction
 2. Agent sends conversation to AI provider
 3. AI responds with:
-  - Tool call → Execute tool → Add result → Loop to step 2
-  - Final answer → Return to user
+   - Tool call → Execute tool → Add result → Loop to step 2
+   - Final answer → Return to user
 4. Done
-```
 
 **Architecture Pattern**:
 
@@ -166,12 +213,12 @@ The agent enforces a maximum iteration limit (configured via `agent.max_turns`, 
 
 **Token Limits by Provider**:
 
-| Provider | Model    | Context Window | Safe Limit (80%) |
+| Provider | Model       | Context Window | Safe Limit (80%) |
 | -------- | ----------- | -------------- | ---------------- |
-| Copilot | gpt-5-mini | 128,000 tokens | 102,400 tokens  |
-| Copilot | gpt-4o-mini | 128,000 tokens | 102,400 tokens  |
-| Ollama  | qwen3    | 32,768 tokens | 26,214 tokens  |
-| Ollama  | llama3   | 8,192 tokens  | 6,553 tokens   |
+| Copilot  | gpt-5-mini  | 128,000 tokens | 102,400 tokens   |
+| Copilot  | gpt-4o-mini | 128,000 tokens | 102,400 tokens   |
+| Ollama   | qwen3       | 32,768 tokens  | 26,214 tokens    |
+| Ollama   | llama3      | 8,192 tokens   | 6,553 tokens     |
 
 **Pruning Strategy**:
 
@@ -179,20 +226,21 @@ When conversation approaches token limit:
 
 1. **Always Retain**:
 
-  - System message (tool definitions)
-  - Original user instruction
-  - Last 5 turns of conversation
+- System message (tool definitions)
+- Original user instruction
+- Last 5 turns of conversation
 
 2. **Prune in Order**:
 
-  - Oldest tool call/result pairs first
-  - Keep most recent tool results (more relevant)
-  - Summarize pruned content in special message
+- Oldest tool call/result pairs first
+- Keep most recent tool results (more relevant)
+- Summarize pruned content in special message
 
 3. **Pruning Example**:
-  ```
-  [PRUNED: 15 tool calls between turn 3-18. Summary: Listed files, read configuration, searched for TODO comments]
-  ```
+
+```
+[PRUNED: 15 tool calls between turn 3-18. Summary: Listed files, read configuration, searched for TODO comments]
+```
 
 **Implementation Pattern**:
 
@@ -284,16 +332,313 @@ impl Conversation {
 }
 ```
 
+```yaml
+agent:
+  max_turns: 100
+  conversation:
+    max_tokens: 100000 # Provider-specific limit
+    min_retain_turns: 5 # Always keep last N turns
+    prune_threshold: 0.8 # Prune when 80% of max_tokens
+```
+
+### 2.6. Chat Modes System
+
+**Purpose**: Fine-grained control over agent capabilities and safety
+
+**Responsibilities**:
+
+- Define what tools are available (read-only vs read/write)
+- Control confirmation requirements for dangerous operations
+- Preserve conversation across mode switches
+- Guide agent behavior through mode-specific prompts
+
+**Key Modules**:
+
+- `chat_mode.rs` - ChatMode and SafetyMode enums
+- `commands/chat_mode.rs` - Mode switching logic
+- `tools/registry_builder.rs` - Mode-aware tool filtering
+- `prompts/` - Mode-specific system prompts
+
+**Chat Modes**:
+
+```rust
+pub enum ChatMode {
+  Planning, // Read-only analysis and planning
+  Write,   // Full read/write access
+}
+
+pub enum SafetyMode {
+  AlwaysConfirm, // Confirm dangerous operations
+  NeverConfirm,  // Execute without confirmation (YOLO mode)
+}
+```
+
+**Mode Characteristics**:
+
+| Aspect | Planning Mode | Write Mode |
+| Aspect | Planning Mode | Write Mode |
+| :--------------- | :------------------------------ | :------------------------ |
+| Read files | ✓ | ✓ |
+| Write files | ✗ | ✓ |
+| Delete files | ✗ | ✓ |
+| Terminal access | ✗ | ✓ |
+| Typical use case | Analysis, exploration, creation | Implementation, execution |
+
+**Tool Registry Filtering**:
+
+```text
+┌── Agent ──┐   ┌─ Tool Registry ─┐
+│           │   │                 │
+│  ChatMode ├─► │  Tool Filtering ├─► [Available Tools]
+│           │   │                 │
+└───────────┘   └─────────────────┘
+```
+
+**Filtering**:
+
+```rust
+impl ToolRegistryBuilder {
+  pub fn build_for_planning(&self) -> ToolRegistry {
+    // Only read-only tools available
+    // - list_directory, read_file, grep, fetch
+    // - BLOCKED: write_file, edit_file, delete_path, terminal
+  }
+
+  pub fn build_for_write(&self) -> ToolRegistry {
+    // All tools available
+    // Safety mode controls confirmation requirements
+  }
+}
+```
+
+**Mode Switching**:
+
+Users can switch modes mid-conversation with full conversation preservation:
+
+```text
+[PLANNING][SAFE] >> /mode write
+Switched to WRITE mode. All tools now available.
+
+[WRITE][SAFE] >> /yolo
+Switched to YOLO safety mode. Operations will execute without confirmation.
+
+[WRITE][YOLO] >>
+```
+
+**Benefits**:
+
+- **Safety**: Planning mode is inherently safe for exploration
+- **Flexibility**: Switch modes as workflow evolves
+- **Context preservation**: Conversation history retained across switches
+- **Clear visibility**: Prompt indicator shows current mode at all times
+
+For detailed information, see [Chat Modes Architecture](../explanation/chat_modes_architecture.md).
+
+### 2.7. Context Mention System
+
+**Purpose**: Seamless injection of file contents, search results, and web content into agent prompts
+
+**Responsibilities**:
+
+- Parse `@mention` patterns from user input
+- Load content from various sources (files, searches, URLs)
+- Augment prompts with loaded content
+- Handle errors gracefully
+- Prevent security issues (SSRF, path traversal)
+
+**Key Modules**:
+
+- `mention_parser.rs` - Mention parsing and content loading
+- `tools/fetch.rs` - HTTP fetching with security validation
+- `tools/grep.rs` - Content search across files
+
+**Mention Types**:
+
+```rust
+pub enum Mention {
+  File(FileMention),   // @config.yaml#L10-20
+  Search(SearchMention), // @search:"pattern"
+  Grep(GrepMention),   // @grep:"regex"
+  Url(UrlMention),    // @url:https://example.com
+}
+```
+
+**Usage Examples**:
+
+```text
+User: Review @src/config.rs and check for @search:"TODO"
+
+Agent receives augmented prompt with:
+- Full contents of src/config.rs
+- Search results showing all TODO comments
+```
+
+**Content Injection Pipeline**:
+
+```text
+1. Parse user input → Extract @mentions
+2. For each mention:
+   - Resolve path/URL
+   - Load content
+   - Apply filters (line ranges, etc.)
+3. Augment original prompt with content
+4. Send to AI provider
+```
+
+**Security Features**:
+
+- **SSRF Prevention**: Blocks private IPs (10.0.0.0/8, 192.168.0.0/16, 127.0.0.1)
+- **Path Validation**: Prevents `..` traversal beyond working directory
+- **Rate Limiting**: Per-domain limits on URL fetches
+- **Size Limits**: 10 MB max for files, 1 MB max for fetched URLs
+- **Timeouts**: 60-second timeout per HTTP request
+
+**Caching**:
+
+- **File content**: Cached for session duration
+- **URL content**: Cached for 24 hours
+- **Search results**: Not cached (always fresh)
+
+**Error Handling**:
+
+When mention loading fails, execution continues with placeholder:
+
+```text
+Failed to include @nonexistent.rs:
+
+<file not found>
+
+Suggestion: Check path or use full path: src/nonexistent.rs
+```
+
+For detailed information, see [Context Mention Architecture](../explanation/context_mention_architecture.md).
+
+### 2.8. Conversation Persistence
+
+**Purpose**: Store and retrieve conversation history for debugging and replay
+
+**Responsibilities**:
+
+- Persist subagent conversations to embedded database
+- Generate unique conversation IDs (ULIDs)
+- Link parent-child conversations
+- Support conversation replay and analysis
+
+**Key Modules**:
+
+- `agent/persistence.rs` - ConversationStore implementation
+- `storage/` - Storage types and abstractions
+
+**Storage Architecture**:
+
+```rust
+pub struct ConversationStore {
+  db: sled::Db, // Embedded key-value database
+}
+
+pub struct ConversationRecord {
+  pub id: String,        // ULID
+  pub parent_id: Option<String>, // For subagent chains
+  pub label: String,
+  pub depth: usize,
+  pub messages: Vec<Message>,
+  pub metadata: ConversationMetadata,
+  pub started_at: String,   // RFC-3339 timestamp
+  pub completed_at: Option<String>,
+}
+```
+
+**Features**:
+
+- **ULID IDs**: Sortable by timestamp for easy querying
+- **Parent-child linking**: Reconstruct subagent conversation trees
+- **Metadata tracking**: Turns, tokens, allowed tools, completion status
+- **RFC-3339 timestamps**: Standard time format for analysis
+
+**Database Location**: `~/.xzatoma/conversations.db`
+
+**Use Cases**:
+
+- Debug subagent execution failures
+- Replay conversations to understand decisions
+- Analyze token usage and performance
+- Audit agent actions
+
+### 2.9. Metrics and Quota Management
+
+**Purpose**: Track performance and enforce resource limits
+
+**Responsibilities**:
+
+- Record subagent execution metrics (duration, tokens, turns)
+- Enforce quota limits (max executions, tokens, time)
+- Export metrics to Prometheus (optional)
+- Provide real-time quota visibility
+
+**Key Modules**:
+
+- `agent/metrics.rs` - SubagentMetrics implementation
+- `agent/quota.rs` - QuotaTracker implementation
+
+**Metrics Collection**:
+
+```rust
+pub struct SubagentMetrics {
+  label: String,
+  depth: usize,
+  start_time: Instant,
+  recorded: Cell<bool>,
+}
+
+impl SubagentMetrics {
+  pub fn record_completion(&self, turns: usize, tokens: usize, status: &str) {
+    // Records: duration, turns, tokens, completion status
+    // Labeled by depth for analysis
+  }
+}
+```
+
+**Quota Enforcement**:
+
+```rust
+pub struct QuotaLimits {
+  pub max_executions: Option<usize>,
+  pub max_total_tokens: Option<usize>,
+  pub max_total_time: Option<Duration>,
+}
+
+pub struct QuotaTracker {
+  limits: QuotaLimits,
+  usage: Mutex<QuotaUsage>,
+}
+
+impl QuotaTracker {
+  pub fn check_and_reserve(&self) -> Result<()> {
+    // Check if quota available before execution
+  }
+
+  pub fn record_execution(&self, tokens: usize) -> Result<()> {
+    // Update usage after execution
+  }
+}
+```
+
 **Configuration**:
 
 ```yaml
 agent:
- max_turns: 100
- conversation:
-  max_tokens: 100000 # Provider-specific limit
-  min_retain_turns: 5 # Always keep last N turns
-  prune_threshold: 0.8 # Prune when 80% of max_tokens
+  quota:
+    max_executions: 100
+    max_total_tokens: 1000000
+    max_total_time_seconds: 3600
 ```
+
+**Benefits**:
+
+- **Resource control**: Prevent runaway subagent usage
+- **Performance visibility**: Track execution patterns
+- **Cost management**: Monitor token consumption
+- **Prometheus integration**: Standard metrics export for monitoring
 
 ### 3. Provider Abstraction
 
@@ -370,26 +715,51 @@ pub struct ResponseChunk {
 
 **Note**: Phase 1 implementation uses simplified `Provider` trait. Streaming support and advanced features added in later phases.
 
-### 4. Basic Tools
+### 4. Enhanced Tools
 
-**Purpose**: Generic file and terminal operations
+**Purpose**: Comprehensive file, terminal, and delegation operations
+
+XZatoma now provides an extensive toolkit beyond basic CRUD operations:
 
 **File Operations**:
 
-- `list_files` - List files in directory
-- `read_file` - Read file content
+- `list_directory` - List files and directories with filtering
+- `read_file` - Read file content with line range support
 - `write_file` - Create or overwrite file
-- `create_directory` - Create directory
+- `edit_file` - Targeted file editing with search/replace
+- `copy_path` - Copy files or directories recursively
+- `move_path` - Move or rename files/directories
 - `delete_path` - Delete file or directory
-- `diff_files` - Show diff between two files
+- `create_directory` - Create directory (with parents)
+- `file_metadata` - Get detailed file information (size, timestamps, permissions)
+- `find_path` - Filesystem search with glob patterns
+
+**Content Search Tools**:
+
+- `grep` - Regex-based content search across files with context
+- Search supports include/exclude patterns and line context
+
+**HTTP Tools**:
+
+- `fetch` - HTTP GET requests with HTML-to-text conversion
+- SSRF prevention and rate limiting
+- Response caching (24-hour TTL)
 
 **Terminal Operations**:
 
-- `execute_command` - Run shell command
+- `terminal` - Execute shell commands with safety controls
+- Output size limits and timeouts
+- Safety mode integration for confirmations
 
 **Plan Operations**:
 
-- `parse_plan` - Parse JSON/YAML/Markdown plan
+- `plan` - Parse JSON/YAML/Markdown plan files
+- Extract goals, context, and instructions
+
+**Delegation Tools**:
+
+- `subagent` - Spawn recursive agent instances with isolated contexts
+- `parallel_subagent` - Execute multiple subagents concurrently
 
 **Tool Definition**:
 
@@ -403,6 +773,7 @@ pub struct Tool {
 #[async_trait]
 pub trait ToolExecutor {
   async fn execute(&self, params: serde_json::Value) -> Result<ToolResult>;
+
 }
 ```
 
@@ -478,34 +849,156 @@ impl ToolResult {
 }
 ```
 
+#### Subagent Tool
+
+The `subagent` tool is a major feature enabling task delegation to recursive agent instances.
+
+**Purpose**: Delegate complex sub-tasks to isolated agent instances
+
+**Key Features**:
+
+- **Isolated contexts**: Each subagent has independent conversation history
+- **Tool filtering**: Restrict what tools subagents can access via `allowed_tools`
+- **Recursion limits**: Configurable `max_depth` prevents infinite nesting
+- **Turn limits**: Each subagent has `max_turns` budget
+- **Metrics integration**: Track performance (duration, tokens, turns)
+- **Persistence**: Conversations stored with parent-child linking
+
+**Input Parameters**:
+
+```rust
+pub struct SubagentToolInput {
+  pub label: String,          // Identifier for this execution
+  pub task: String,           // Explicit task description
+  pub summary_prompt: Option<String>, // How to summarize results
+  pub allowed_tools: Option<Vec<String>>, // Tool whitelist
+  pub max_turns: Option<usize>,   // Turn limit for this execution
+}
+```
+
+**Example Usage**:
+
+```json
+{
+  "label": "research_api_docs",
+  "task": "Research the API documentation at https://example.com/api/docs and summarize the authentication methods",
+  "allowed_tools": ["fetch", "grep"],
+  "max_turns": 5
+}
+```
+
+**Recursion Control**:
+
+- **Max depth**: Default 3, configurable up to 10
+- **Subagent nesting**: Subagent at depth N can spawn child at depth N+1
+- **Tool inheritance**: Child subagents cannot access more tools than parent
+- **Quota enforcement**: All subagents share parent's quota pool
+
+**Use Cases**:
+
+1. **Parallel research**: Spawn multiple subagents to research different topics
+2. **Focused analysis**: Delegate specific analysis tasks with restricted toolsets
+3. **Modular workflows**: Break complex tasks into manageable sub-tasks
+4. **Safety isolation**: Use subagents with restricted tools for untrusted operations
+
+**Output**:
+
+```json
+{
+  "success": true,
+  "output": "Summary of findings from subagent execution",
+  "metadata": {
+    "subagent_label": "research_api_docs",
+    "depth": 1,
+    "turns_used": 4,
+    "tokens_used": 2500,
+    "max_turns_exceeded": false
+  }
+}
+```
+
+For complete API details, see [Subagent API Reference](subagent_api.md).
+
 ## Module Structure
 
-```
+```text
 xzatoma/
 ├── src/
-│  ├── main.rs       # Entry point
-│  ├── lib.rs        # Library root
-│  ├── cli.rs        # CLI parser
-│  ├── config.rs      # Configuration
-│  ├── error.rs       # Error types
+│  ├── main.rs
+│  ├── lib.rs
+│  ├── cli.rs
+│  ├── config.rs
+│  ├── error.rs
+│  ├── chat_mode.rs      # NEW: Chat mode definitions
+│  ├── mention_parser.rs  # NEW: @mention parsing
 │  │
-│  ├── agent/        # Agent core
+│  ├── agent/         # Agent core (expanded)
 │  │  ├── mod.rs
-│  │  ├── agent.rs     # Main agent logic
-│  │  ├── conversation.rs # Message history and token management
-│  │  └── executor.rs   # Tool execution and registry
+│  │  ├── core.rs       # Main agent logic
+│  │  ├── conversation.rs  # Message history
+│  │  ├── executor.rs    # Tool execution
+│  │  ├── persistence.rs  # NEW: Conversation storage
+│  │  ├── metrics.rs     # NEW: Performance metrics
+│  │  └── quota.rs      # NEW: Resource quotas
 │  │
-│  ├── providers/      # AI providers
+│  ├── providers/       # AI providers
 │  │  ├── mod.rs
-│  │  ├── base.rs     # Provider trait
-│  │  ├── copilot.rs    # GitHub Copilot
-│  │  └── ollama.rs    # Ollama
+│  │  ├── base.rs
+│  │  ├── copilot.rs
+│  │  └── ollama.rs
 │  │
-│  └── tools/        # Basic tools
+│  ├── tools/         # Tools (greatly expanded)
+│  │  ├── mod.rs
+│  │  ├── registry_builder.rs # NEW: Mode-aware tool registry
+│  │  ├── read_file.rs
+│  │  ├── write_file.rs
+│  │  ├── edit_file.rs    # NEW: File editing
+│  │  ├── copy_path.rs    # NEW: Copy operations
+│  │  ├── move_path.rs    # NEW: Move operations
+│  │  ├── delete_path.rs
+│  │  ├── create_directory.rs
+│  │  ├── list_directory.rs
+│  │  ├── file_metadata.rs  # NEW: Metadata queries
+│  │  ├── find_path.rs    # NEW: Filesystem search
+│  │  ├── grep.rs       # NEW: Content search
+│  │  ├── fetch.rs      # NEW: HTTP fetching
+│  │  ├── terminal.rs
+│  │  ├── subagent.rs     # NEW: Subagent delegation
+│  │  ├── parallel_subagent.rs # NEW: Parallel execution
+│  │  ├── plan.rs
+│  │  ├── plan_format.rs
+│  │  └── file_utils.rs   # Utilities
+│  │
+│  ├── commands/        # NEW: CLI command handlers
+│  │  ├── mod.rs
+│  │  ├── chat_mode.rs
+│  │  ├── history.rs
+│  │  ├── models.rs
+│  │  ├── replay.rs
+│  │  └── special_commands.rs
+│  │
+│  ├── prompts/        # NEW: System prompts
+│  │  └── mod.rs
+│  │
+│  ├── storage/        # NEW: Persistence layer
+│  │  ├── mod.rs
+│  │  └── types.rs
+│  │
+│  ├── watcher/        # NEW: Kafka watcher
+│  │  ├── mod.rs
+│  │  ├── watcher.rs
+│  │  ├── filter.rs
+│  │  ├── plan_extractor.rs
+│  │  └── logging.rs
+│  │
+│  └── xzepr/         # NEW: XZepr integration
 │    ├── mod.rs
-│    ├── file_ops.rs   # File operations
-│    ├── terminal.rs   # Terminal execution
-│    └── plan.rs     # Plan parsing
+│    └── consumer/
+│      ├── mod.rs
+│      ├── kafka.rs
+│      ├── client.rs
+│      ├── config.rs
+│      └── types.rs
 │
 ├── tests/          # Tests
 └── docs/          # Documentation
@@ -547,6 +1040,137 @@ The `agent/` directory contains three focused modules:
 
 This keeps each module under 300 lines and focused on a single responsibility.
 
+### 5. XZepr Integration
+
+**Purpose**: Connect XZatoma to event-driven workflows via CloudEvents and Kafka
+
+The XZepr integration module enables XZatoma to consume CloudEvents 1.0.1 messages from Kafka topics and interact with the XZepr platform API.
+
+**Key Features**:
+
+- **CloudEvents consumption**: Read standardized event messages from Kafka
+- **XZepr API client**: Post events and manage event receivers
+- **Event receiver management**: Configure downstream event subscriptions
+- **Type-safe message handling**: Strongly-typed CloudEvent structures
+
+**Key Modules**:
+
+- `xzepr/consumer/kafka.rs` - Kafka consumer with CloudEvents support
+- `xzepr/consumer/client.rs` - XZeprClient for API interactions
+- `xzepr/consumer/config.rs` - Configuration types for Kafka and XZepr
+- `xzepr/consumer/types.rs` - CloudEvent and API response types
+
+**Use Cases**:
+
+1. **Event-driven automation**: Trigger agent workflows from platform events
+2. **Work status reporting**: Post work lifecycle events back to XZepr
+3. **Downstream integration**: Register as event receiver for specific event types
+4. **Event processing pipelines**: Consume, process, and forward events
+
+**Example Configuration**:
+
+```yaml
+xzepr:
+  api_url: "https://xzepr.example.com"
+  kafka:
+    bootstrap_servers: "kafka.example.com:9092"
+    topic: "xzepr.events"
+    group_id: "xzatoma-consumer"
+    security_protocol: "SASL_SSL"
+    sasl_mechanism: "PLAIN"
+```
+
+**CloudEvent Structure**:
+
+```rust
+pub struct CloudEventMessage {
+  pub specversion: String,  // "1.0.1"
+  pub id: String,
+  pub source: String,
+  pub type_: String,
+  pub datacontenttype: String,
+  pub time: String,
+  pub data: CloudEventData,
+}
+```
+
+The XZepr integration is optional and can be enabled via feature flags.
+
+### 6. Watcher Module
+
+**Purpose**: Autonomous monitoring of Kafka topics for automated plan execution
+
+The Watcher module provides a standalone service that monitors Kafka topics, filters events, extracts execution plans, and automatically executes them via the agent.
+
+**Key Features**:
+
+- **Topic monitoring**: Continuous consumption of CloudEvents from Kafka
+- **Event filtering**: Filter by event type, source, platform, or custom criteria
+- **Plan extraction**: Extract agent execution plans from event payloads
+- **Automatic execution**: Execute extracted plans through the agent core
+- **Logging and telemetry**: Structured logging of all watcher actions
+
+**Key Modules**:
+
+- `watcher/watcher.rs` - Core watcher service implementation
+- `watcher/filter.rs` - Event filtering logic by type/source/platform
+- `watcher/plan_extractor.rs` - Extract plans from CloudEvent data
+- `watcher/logging.rs` - Structured logging configuration
+
+**Event Filtering**:
+
+```rust
+pub struct EventFilter {
+  pub event_types: Option<Vec<String>>,
+  pub sources: Option<Vec<String>>,
+  pub platforms: Option<Vec<String>>,
+}
+
+impl EventFilter {
+  pub fn should_process(&self, event: &CloudEventMessage) -> bool {
+    // Match against configured criteria
+  }
+}
+```
+
+**Workflow**:
+
+```text
+1. Connect to Kafka topic
+2. Consume CloudEvent messages
+3. Apply event filters
+4. For matching events:
+   a. Extract plan from event.data
+   b. Validate plan structure
+   c. Execute plan via Agent
+   d. Log results
+5. Continue monitoring
+```
+
+**Example Configuration**:
+
+```yaml
+watcher:
+  enabled: true
+  kafka:
+    bootstrap_servers: "kafka.example.com:9092"
+    topic: "xzepr.events"
+    group_id: "xzatoma-watcher"
+  filter:
+    event_types: ["work.created", "work.updated"]
+    sources: ["platform.api", "platform.webhook"]
+    platforms: ["github", "gitlab"]
+```
+
+**Use Cases**:
+
+1. **CI/CD automation**: Trigger analysis/testing on merge events
+2. **Issue triage**: Automatically investigate and comment on new issues
+3. **Alert response**: React to monitoring alerts with diagnostic workflows
+4. **Scheduled tasks**: Execute periodic maintenance via timed events
+
+The Watcher module enables fully autonomous operation without human intervention.
+
 ## Data Flow
 
 ### Interactive Mode
@@ -572,48 +1196,129 @@ Plan File → Parse Plan → Extract Goal → Agent → AI Provider
 
 ### Configuration Structure
 
-```yaml
+````yaml
 # ~/.config/xzatoma/config.yaml
 
-provider:
- type: copilot # or 'ollama'
-
- copilot:
-  model: gpt-5-mini
-
- ollama:
-  host: localhost:11434
-  model: qwen3
-
+# Agent configuration
 agent:
  max_turns: 100
- timeout_seconds: 600
+ chat_mode: planning  # or 'write'
+ safety_mode: safe   # or 'yolo'
  conversation:
-  max_tokens: 100000
-  min_retain_turns: 5
-  prune_threshold: 0.8
- tools:
-  max_output_size: 1048576 # 1 MB per tool result
-  max_file_read_size: 10485760 # 10 MB for read_file
+  max_tokens: 100000 # Provider-specific limit
+  min_retain_turns: 5 # Always keep last N turns
+  prune_threshold: 0.8 # Prune when 80% of max_tokens
+
+ # Subagent configuration
+ subagent:
+  max_depth: 3
+  default_max_turns: 10
+  output_max_size: 4096
+  telemetry_enabled: true
+  persistence_enabled: true
+  provider_override: false
+
+ # Resource quotas
+ quota:
+  max_executions: 100
+  max_total_tokens: 1000000
+  max_total_time_seconds: 3600
+
+ # Context mentions
+ mentions:
+  max_file_size: 10485760  # 10 MB
+  url_cache_ttl_seconds: 86400 # 24 hours
+  max_urls_per_request: 10
+
+ # Conversation persistence
+ persistence:
+  enabled: true
+  db_path: "~/.xzatoma/conversations.db"
+
+# AI Provider configuration
+provider:
+ type: copilot     # or 'ollama'
+ model: "claude-3.5-sonnet"  # Provider-specific model name
+
+ # Copilot-specific (OAuth + VSCode API)
+ copilot:
+  api_url: "https://api.githubcopilot.com"
+
+ # Ollama-specific
+ ollama:
+  base_url: "http://localhost:11434"
+  model: "llama2"
+
+# Tool configuration
+tools:
+ working_directory: "."
+ max_output_size: 10000  # Max bytes per tool result
+ command_timeout_seconds: 60
+
+ # File operations
+ file_ops:
+  max_file_size: 10485760  # 10 MB
+
+ # Terminal execution
  terminal:
-  default_mode: restricted_autonomous
-  timeout_seconds: 30
-  max_stdout_bytes: 10485760
-  max_stderr_bytes: 1048576
-```
+  shell: "bash"
+  allow_list: []   # If specified, only these commands allowed
+  deny_list: ["rm -rf /", "sudo rm"]
+  unsafe_patterns: ["rm", "mv"]
+
+ # HTTP fetching
+ fetch:
+  timeout_seconds: 60
+  max_response_size: 1048576  # 1 MB
+  user_agent: "xzatoma/1.0"
+  cache_ttl_seconds: 86400
+
+# XZepr integration (optional)
+xzepr:
+ enabled: false
+ api_url: "https://xzepr.example.com"
+ api_key: "${XZEPR_API_KEY}"  # From environment
+ kafka:
+  bootstrap_servers: "kafka.example.com:9092"
+  topic: "xzepr.events"
+  group_id: "xzatoma-consumer"
+  security_protocol: "SASL_SSL"
+  sasl_mechanism: "PLAIN"
+  sasl_username: "${KAFKA_USERNAME}"
+  sasl_password: "${KAFKA_PASSWORD}"
+
+# Watcher module (optional)
+watcher:
+ enabled: false
+ kafka:
+  bootstrap_servers: "kafka.example.com:9092"
+  topic: "xzepr.events"
+  group_id: "xzatoma-watcher"
+  security_protocol: "PLAINTEXT"
+ filter:
+  event_types: []  # Empty = all types
+  sources: []    # Empty = all sources
+  platforms: []   # Empty = all platforms
+
+# Logging
+logging:
+ level: info     # debug, info, warn, error
+ format: json    # or 'text'
 
 ### Configuration Precedence
 
-Configuration is merged from multiple sources with the following precedence (highest to lowest):
+1. Command-line arguments (highest priority)
+2. Environment variables
+3. Config file (`~/.config/xzatoma/config.yaml`)
+4. Defaults (lowest priority)
 
-1. **Command-line arguments** - Highest priority
-  - Example: `xzatoma --provider ollama`
-2. **Environment variables** - Override config file
-  - Example: `XZATOMA_PROVIDER=ollama`
-3. **Configuration file** - `~/.config/xzatoma/config.yaml`
-  - Loaded if present
-4. **Default values** - Built-in defaults
-  - Example: `provider: copilot`, `max_turns: 100`
+**Environment Variable Support**:
+
+- `XZATOMA_PROVIDER_TYPE` - Override provider type
+- `XZATOMA_MODEL` - Override model name
+- `COPILOT_API_TOKEN` - Copilot authentication
+- `XZEPR_API_KEY` - XZepr API authentication
+- `KAFKA_USERNAME` / `KAFKA_PASSWORD` - Kafka SASL credentials
 
 **Example Priority Resolution**:
 
@@ -621,7 +1326,7 @@ Configuration is merged from multiple sources with the following precedence (hig
 # config.yaml
 provider:
  type: copilot
-```
+````
 
 ```bash
 # Environment variable overrides config.yaml
@@ -650,29 +1355,29 @@ Plans are just structured instructions for the agent. The agent decides how to a
 goal: "Scan the repository and generate a README"
 
 context:
- repository: /path/to/repo
+  repository: /path/to/repo
 
 instructions:
- - List all source files in the repository
- - Identify the main components
- - Read key files to understand functionality
- - Create a comprehensive README.md with sections for overview, installation, and usage
+  - List all source files in the repository
+  - Identify the main components
+  - Read key files to understand functionality
+  - Create a comprehensive README.md with sections for overview, installation, and usage
 ```
 
 ### JSON Example
 
 ```json
 {
- "goal": "Refactor function names in all Python files",
- "context": {
-  "directory": "src/"
- },
- "instructions": [
-  "Find all .py files",
-  "Identify functions with camelCase naming",
-  "Rename to snake_case",
-  "Update all references"
- ]
+  "goal": "Refactor function names in all Python files",
+  "context": {
+    "directory": "src/"
+  },
+  "instructions": [
+    "Find all .py files",
+    "Identify functions with camelCase naming",
+    "Rename to snake_case",
+    "Update all references"
+  ]
 }
 ```
 
@@ -721,11 +1426,11 @@ Plans provide structured guidance to the agent but don't strictly constrain its 
 ```yaml
 goal: "Generate API documentation"
 context:
- directory: "src/api/"
+  directory: "src/api/"
 instructions:
- - List all API endpoint files
- - Extract function signatures
- - Create OpenAPI spec
+  - List all API endpoint files
+  - Extract function signatures
+  - Create OpenAPI spec
 ```
 
 **Translated to Agent Prompt**:
@@ -748,12 +1453,12 @@ Use the available tools to accomplish this goal. You may adapt your approach as 
 
 ### Plan vs Interactive Mode
 
-| Aspect  | Plan Mode           | Interactive Mode    |
+| Aspect   | Plan Mode                      | Interactive Mode        |
 | -------- | ------------------------------ | ----------------------- |
-| Input  | Structured file        | Natural language prompt |
-| Guidance | Explicit instructions     | Open-ended       |
-| Tracking | Can track instruction progress | Free-form conversation |
-| Use Case | Repeatable tasks        | Exploratory tasks    |
+| Input    | Structured file                | Natural language prompt |
+| Guidance | Explicit instructions          | Open-ended              |
+| Tracking | Can track instruction progress | Free-form conversation  |
+| Use Case | Repeatable tasks               | Exploratory tasks       |
 
 ## Error Handling
 
@@ -823,20 +1528,21 @@ pub enum XzatomaError {
 
 1. **Interactive Mode** (default for `xzatoma chat`)
 
-  - Requires user confirmation before executing each command
-  - Shows full command to user
-  - User can approve, modify, or reject
+- Requires user confirmation before executing each command
+- Shows full command to user
+- User can approve, modify, or reject
 
 2. **Restricted Autonomous Mode** (default for `xzatoma run`)
 
-  - Only safe read-only commands allowed without confirmation
-  - Allowlist: `ls`, `cat`, `head`, `tail`, `grep`, `find`, `echo`, `pwd`, `which`, `type`
-  - Other commands require confirmation or are blocked
+- Only safe read-only commands allowed without confirmation
+- Allowlist: `ls`, `cat`, `head`, `tail`, `grep`, `find`, `echo`, `pwd`, `which`, `type`
+- Other commands require confirmation or are blocked
 
 3. **Full Autonomous Mode** (requires `--allow-dangerous` flag)
-  - All commands allowed without confirmation
-  - Denylist applied for catastrophic commands
-  - User must explicitly opt-in with flag
+
+- All commands allowed without confirmation
+- Denylist applied for catastrophic commands
+- User must explicitly opt-in with flag
 
 #### Command Validation
 
@@ -942,11 +1648,11 @@ impl CommandValidator {
 
 **Storage Backends by Platform**:
 
-| Platform | Backend      | Keyring Implementation      |
+| Platform | Backend            | Keyring Implementation            |
 | -------- | ------------------ | --------------------------------- |
-| macOS  | Keychain      | System Keychain          |
-| Linux  | Secret Service   | gnome-keyring, kwallet, keepassxc |
-| Windows | Credential Manager | Windows Credential Manager    |
+| macOS    | Keychain           | System Keychain                   |
+| Linux    | Secret Service     | gnome-keyring, kwallet, keepassxc |
+| Windows  | Credential Manager | Windows Credential Manager        |
 
 **Storage Strategy**:
 
@@ -977,24 +1683,58 @@ export OLLAMA_API_KEY="..."
 
 ## Dependencies
 
-### Core
+### Core Dependencies
 
-- `clap` - CLI parsing
-- `tokio` - Async runtime
-- `serde`, `serde_json`, `serde_yaml` - Serialization
-- `anyhow`, `thiserror` - Error handling
-- `tracing` - Logging
+**CLI and Configuration**:
 
-### Providers
+- `clap` - Command-line argument parsing
+- `serde` / `serde_json` / `serde_yaml` - Serialization/deserialization
+- `toml` - TOML configuration parsing
 
-- `reqwest` - HTTP client
-- `async-trait` - Async traits
-- `keyring` - Credential storage
+**Async Runtime**:
 
-### Tools
+- `tokio` - Async runtime and I/O
+- `async-trait` - Trait methods with async
 
-- `walkdir` - Directory traversal
-- `similar` - Diff generation
+**HTTP Client**:
+
+- `reqwest` - HTTP client for provider APIs and fetch tool
+- `url` - URL parsing and validation
+
+**Error Handling**:
+
+- `thiserror` - Derive macro for custom error types
+- `anyhow` - Flexible error handling
+
+**Logging and Tracing**:
+
+- `tracing` - Structured logging framework
+- `tracing-subscriber` - Log output and formatting
+
+**Persistence**:
+
+- `sled` - Embedded key-value database for conversation storage
+- `ulid` - Sortable unique identifiers for conversations
+
+**Content Processing**:
+
+- `html2text` - Convert HTML to plain text for fetch tool
+- `regex` - Regular expression matching for grep tool
+
+**Kafka Integration (optional features)**:
+
+- `rdkafka` - Kafka client for XZepr/Watcher modules
+- `cloudevents-sdk` - CloudEvents 1.0.1 message support
+
+**Metrics (optional features)**:
+
+- `prometheus` - Metrics collection and export
+
+### Development Dependencies
+
+- `mockall` - Mocking framework for tests
+- `tempfile` - Temporary file/directory creation for tests
+- `tokio-test` - Async test utilities
 
 ## Example: How a Task is Executed
 
