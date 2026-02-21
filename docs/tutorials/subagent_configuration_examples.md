@@ -218,7 +218,7 @@ provider:
 agent:
   subagent:
     # Use same provider (ollama)
-    model: gemma2:2b                 # Smaller, faster model
+    model: granite3.2:2b                 # Smaller, faster model
     chat_enabled: true                # Enable by default
     default_max_turns: 3             # Quick responses only
     max_executions: 5                # Good parallelism locally
@@ -239,7 +239,7 @@ ollama serve
 
 # 2. Pull models (if not already available)
 ollama pull llama3.2      # ~4GB
-ollama pull gemma2:2b     # ~1.6GB (faster)
+ollama pull granite3.2:2b     # ~1.6GB (faster)
 
 # 3. Verify both are available
 ollama list
@@ -376,7 +376,7 @@ provider:
 
 agent:
   subagent:
-    model: gemma2:2b
+    model: granite3.2:2b
     chat_enabled: true
     max_executions: 5
 ```
