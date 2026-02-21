@@ -25,10 +25,73 @@ const GITHUB_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const COPILOT_TOKEN_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 /// Copilot chat completions endpoint
 const COPILOT_COMPLETIONS_URL: &str = "https://api.githubcopilot.com/chat/completions";
+/// Copilot responses endpoint
+const COPILOT_RESPONSES_URL: &str = "https://api.githubcopilot.com/responses";
 /// Copilot models endpoint
 const COPILOT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
 /// GitHub Copilot OAuth client ID
 const GITHUB_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
+
+/// Supported model endpoints
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelEndpoint {
+    /// Chat completions endpoint (/chat/completions)
+    ChatCompletions,
+    /// Responses endpoint (/responses)
+    Responses,
+    /// Messages endpoint (/messages)
+    Messages,
+    /// Unknown/unsupported endpoint
+    Unknown,
+}
+
+impl ModelEndpoint {
+    /// Convert endpoint name string to enum
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Endpoint name (e.g., "responses", "chat_completions")
+    ///
+    /// # Returns
+    ///
+    /// Returns corresponding ModelEndpoint variant
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(ModelEndpoint::from_name("responses"), ModelEndpoint::Responses);
+    /// assert_eq!(ModelEndpoint::from_name("chat_completions"), ModelEndpoint::ChatCompletions);
+    /// ```
+    fn from_name(name: &str) -> Self {
+        match name {
+            "chat_completions" => ModelEndpoint::ChatCompletions,
+            "responses" => ModelEndpoint::Responses,
+            "messages" => ModelEndpoint::Messages,
+            _ => ModelEndpoint::Unknown,
+        }
+    }
+
+    /// Get endpoint name as string
+    ///
+    /// # Returns
+    ///
+    /// Returns the string representation of the endpoint
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(ModelEndpoint::Responses.as_str(), "responses");
+    /// assert_eq!(ModelEndpoint::ChatCompletions.as_str(), "chat_completions");
+    /// ```
+    fn as_str(&self) -> &'static str {
+        match self {
+            ModelEndpoint::ChatCompletions => "chat_completions",
+            ModelEndpoint::Responses => "responses",
+            ModelEndpoint::Messages => "messages",
+            ModelEndpoint::Unknown => "unknown",
+        }
+    }
+}
 
 /// Default context window size when not provided by API
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
@@ -209,6 +272,35 @@ pub(crate) struct CopilotModelData {
     pub(crate) capabilities: Option<CopilotModelCapabilities>,
     #[serde(default)]
     pub(crate) policy: Option<CopilotModelPolicy>,
+    /// Supported endpoints for this model
+    #[serde(default)]
+    pub(crate) supported_endpoints: Vec<String>,
+}
+
+impl CopilotModelData {
+    /// Check if model supports a specific endpoint
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - Endpoint name to check (e.g., "responses", "chat_completions")
+    ///
+    /// # Returns
+    ///
+    /// Returns true if model supports the endpoint
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let model_data = CopilotModelData {
+    ///     supported_endpoints: vec!["responses".to_string()],
+    ///     // ... other fields
+    /// };
+    /// assert!(model_data.supports_endpoint("responses"));
+    /// assert!(!model_data.supports_endpoint("messages"));
+    /// ```
+    pub(crate) fn supports_endpoint(&self, endpoint: &str) -> bool {
+        self.supported_endpoints.iter().any(|e| e == endpoint)
+    }
 }
 
 /// Model policy information
@@ -240,6 +332,151 @@ pub(crate) struct CopilotModelSupports {
     pub(crate) tool_calls: Option<bool>,
     #[serde(default)]
     pub(crate) vision: Option<bool>,
+}
+
+// ============================================================================
+// RESPONSES ENDPOINT TYPES
+// ============================================================================
+
+/// Request structure for /responses endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponsesRequest {
+    /// Model identifier (e.g., "gpt-5-mini", "claude-3.5-sonnet")
+    pub model: String,
+
+    /// Input items (messages, function calls, reasoning)
+    pub input: Vec<ResponseInputItem>,
+
+    /// Enable streaming (SSE)
+    #[serde(default)]
+    pub stream: bool,
+
+    /// Temperature for sampling (0.0 to 2.0)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+
+    /// Available tools for function calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDefinition>>,
+
+    /// Tool selection strategy
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+
+    /// Reasoning configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
+
+    /// Fields to include in response
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+}
+
+/// Input item for responses endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseInputItem {
+    /// Text message with role
+    Message {
+        role: String,
+        content: Vec<ResponseInputContent>,
+    },
+    /// Function call from assistant
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// Function call result
+    FunctionCallOutput { call_id: String, output: String },
+    /// Reasoning content
+    Reasoning { content: Vec<ResponseInputContent> },
+}
+
+/// Content types for response input
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseInputContent {
+    /// Text content
+    InputText { text: String },
+    /// Assistant output text
+    OutputText { text: String },
+    /// Image content
+    InputImage { url: String },
+}
+
+/// SSE stream events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    /// Message output event
+    Message {
+        role: String,
+        content: Vec<ResponseInputContent>,
+    },
+    /// Function call event
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    /// Reasoning event
+    Reasoning { content: Vec<ResponseInputContent> },
+    /// Status event
+    Status { status: String },
+    /// Done event
+    Done,
+}
+
+/// Tool definition for responses endpoint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    /// Function tool
+    Function { function: FunctionDefinition },
+}
+
+/// Function definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    /// Function name
+    pub name: String,
+    /// Function description
+    pub description: String,
+    /// JSON schema for parameters
+    pub parameters: serde_json::Value,
+    /// Enable strict mode
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
+
+/// Tool choice strategy
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolChoice {
+    /// Auto selection
+    Auto { auto: bool },
+    /// Require any tool
+    Any { any: bool },
+    /// No tool usage
+    None { none: bool },
+    /// Specific tool
+    Named { function: FunctionName },
+}
+
+/// Named function for tool choice
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionName {
+    /// Name of the function to call
+    pub name: String,
+}
+
+/// Reasoning configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningConfig {
+    /// Reasoning effort level: "low", "medium", "high"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
@@ -610,11 +847,51 @@ impl CopilotProvider {
         match path {
             "models" => COPILOT_MODELS_URL.to_string(),
             "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
+            "responses" => COPILOT_RESPONSES_URL.to_string(),
             "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
             other => format!(
                 "https://api.githubcopilot.com/{}",
                 other.trim_start_matches('/')
             ),
+        }
+    }
+
+    /// Get API endpoint URL for specified endpoint type
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - Endpoint type to get URL for
+    ///
+    /// # Returns
+    ///
+    /// Returns full URL for the endpoint
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let url = provider.endpoint_url(ModelEndpoint::Responses);
+    /// assert_eq!(url, "https://api.githubcopilot.com/responses");
+    /// ```
+    fn endpoint_url(&self, endpoint: ModelEndpoint) -> String {
+        if let Ok(cfg) = self.config.read() {
+            if let Some(base) = &cfg.api_base {
+                let path = match endpoint {
+                    ModelEndpoint::ChatCompletions => "/chat/completions",
+                    ModelEndpoint::Responses => "/responses",
+                    ModelEndpoint::Messages => "/messages",
+                    ModelEndpoint::Unknown => "/chat/completions",
+                };
+                return format!("{}{}", base.trim_end_matches('/'), path);
+            }
+        }
+
+        match endpoint {
+            ModelEndpoint::ChatCompletions => COPILOT_COMPLETIONS_URL.to_string(),
+            ModelEndpoint::Responses => COPILOT_RESPONSES_URL.to_string(),
+            ModelEndpoint::Messages => {
+                format!("{}messages", "https://api.githubcopilot.com/")
+            }
+            ModelEndpoint::Unknown => COPILOT_COMPLETIONS_URL.to_string(),
         }
     }
 
@@ -1730,6 +2007,7 @@ mod tests {
             policy: Some(CopilotModelPolicy {
                 state: "enabled".to_string(),
             }),
+            supported_endpoints: vec!["chat_completions".to_string(), "responses".to_string()],
         };
 
         let summary = provider.convert_to_summary(model_data);
@@ -1758,6 +2036,7 @@ mod tests {
             name: "GPT-3.5 Turbo".to_string(),
             capabilities: None,
             policy: None,
+            supported_endpoints: vec![],
         };
 
         let summary = provider.convert_to_summary(model_data);
@@ -1788,6 +2067,7 @@ mod tests {
             policy: Some(CopilotModelPolicy {
                 state: "enabled".to_string(),
             }),
+            supported_endpoints: vec![],
         };
 
         let summary = provider.convert_to_summary(model_data);
@@ -1819,6 +2099,7 @@ mod tests {
                 }),
             }),
             policy: None,
+            supported_endpoints: vec!["chat_completions".to_string()],
         };
 
         let summary = provider.convert_to_summary(model_data);
@@ -1875,5 +2156,310 @@ mod tests {
         assert_eq!(converted[1].role, "assistant");
         assert_eq!(converted[2].role, "tool");
         assert_eq!(converted[2].tool_call_id, Some("call_123".to_string()));
+    }
+
+    // ========================================================================
+    // PHASE 1 TESTS: Core Data Structures and Endpoint Detection
+    // ========================================================================
+
+    // Task 1.1: Response Endpoint Types Tests
+
+    #[test]
+    fn test_responses_request_serialization() {
+        let request = ResponsesRequest {
+            model: "gpt-5-mini".to_string(),
+            input: vec![ResponseInputItem::Message {
+                role: "user".to_string(),
+                content: vec![ResponseInputContent::InputText {
+                    text: "Hello".to_string(),
+                }],
+            }],
+            stream: true,
+            temperature: Some(0.7),
+            tools: None,
+            tool_choice: None,
+            reasoning: None,
+            include: None,
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        assert!(json.contains("\"model\":\"gpt-5-mini\""));
+        assert!(json.contains("\"stream\":true"));
+        assert!(json.contains("\"temperature\":0.7"));
+    }
+
+    #[test]
+    fn test_response_input_item_message_deserialization() {
+        let json = r#"{
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello"}]
+        }"#;
+
+        let item: ResponseInputItem = serde_json::from_str(json).expect("Failed to deserialize");
+
+        match item {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "user");
+                assert_eq!(content.len(), 1);
+            }
+            _ => panic!("Expected Message variant"),
+        }
+    }
+
+    #[test]
+    fn test_response_input_item_function_call_deserialization() {
+        let json = r#"{
+            "type": "function_call",
+            "call_id": "call_123",
+            "name": "get_weather",
+            "arguments": "{\"location\":\"SF\"}"
+        }"#;
+
+        let item: ResponseInputItem = serde_json::from_str(json).expect("Failed to deserialize");
+
+        match item {
+            ResponseInputItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                assert_eq!(call_id, "call_123");
+                assert_eq!(name, "get_weather");
+                assert!(arguments.contains("location"));
+            }
+            _ => panic!("Expected FunctionCall variant"),
+        }
+    }
+
+    #[test]
+    fn test_stream_event_roundtrip() {
+        let original = StreamEvent::Message {
+            role: "assistant".to_string(),
+            content: vec![ResponseInputContent::OutputText {
+                text: "Response text".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string(&original).expect("Failed to serialize");
+        let deserialized: StreamEvent = serde_json::from_str(&json).expect("Failed to deserialize");
+
+        match (original, deserialized) {
+            (StreamEvent::Message { role: r1, .. }, StreamEvent::Message { role: r2, .. }) => {
+                assert_eq!(r1, r2);
+            }
+            _ => panic!("Roundtrip failed"),
+        }
+    }
+
+    #[test]
+    fn test_tool_definition_serialization() {
+        let tool = ToolDefinition::Function {
+            function: FunctionDefinition {
+                name: "get_weather".to_string(),
+                description: "Get weather for location".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                }),
+                strict: Some(true),
+            },
+        };
+
+        let json = serde_json::to_string(&tool).expect("Failed to serialize");
+        assert!(json.contains("\"name\":\"get_weather\""));
+        assert!(json.contains("\"strict\":true"));
+    }
+
+    #[test]
+    fn test_tool_choice_variants() {
+        let auto = ToolChoice::Auto { auto: true };
+        let json = serde_json::to_string(&auto).expect("Serialize failed");
+        assert!(json.contains("\"auto\":true"));
+
+        let named = ToolChoice::Named {
+            function: FunctionName {
+                name: "specific_tool".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&named).expect("Serialize failed");
+        assert!(json.contains("\"specific_tool\""));
+    }
+
+    #[test]
+    fn test_response_input_content_variants() {
+        let input_text = ResponseInputContent::InputText {
+            text: "User input".to_string(),
+        };
+        let json = serde_json::to_string(&input_text).expect("Serialize failed");
+        assert!(json.contains("input_text"));
+        assert!(json.contains("User input"));
+
+        let output_text = ResponseInputContent::OutputText {
+            text: "Assistant output".to_string(),
+        };
+        let json = serde_json::to_string(&output_text).expect("Serialize failed");
+        assert!(json.contains("output_text"));
+    }
+
+    #[test]
+    fn test_optional_fields_omitted() {
+        let request = ResponsesRequest {
+            model: "gpt-5-mini".to_string(),
+            input: vec![],
+            stream: false,
+            temperature: None,
+            tools: None,
+            tool_choice: None,
+            reasoning: None,
+            include: None,
+        };
+
+        let json = serde_json::to_string(&request).expect("Failed to serialize");
+        assert!(!json.contains("temperature"));
+        assert!(!json.contains("tools"));
+        assert!(!json.contains("reasoning"));
+    }
+
+    // Task 1.2: Endpoint Tracking Tests
+
+    #[test]
+    fn test_parse_model_with_endpoints() {
+        let json = r#"{
+            "id": "gpt-5-mini",
+            "name": "GPT 5 Mini",
+            "supported_endpoints": ["chat_completions", "responses"]
+        }"#;
+
+        let model: CopilotModelData = serde_json::from_str(json).expect("Parse failed");
+        assert_eq!(model.supported_endpoints.len(), 2);
+        assert!(model.supported_endpoints.contains(&"responses".to_string()));
+    }
+
+    #[test]
+    fn test_supports_endpoint_method() {
+        let model = CopilotModelData {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            capabilities: None,
+            policy: None,
+            supported_endpoints: vec!["chat_completions".to_string(), "responses".to_string()],
+        };
+
+        assert!(model.supports_endpoint("responses"));
+        assert!(model.supports_endpoint("chat_completions"));
+        assert!(!model.supports_endpoint("messages"));
+        assert!(!model.supports_endpoint("unknown"));
+    }
+
+    #[test]
+    fn test_model_without_endpoints_field() {
+        let json = r#"{
+            "id": "old-model",
+            "name": "Old Model"
+        }"#;
+
+        let model: CopilotModelData = serde_json::from_str(json).expect("Parse failed");
+        assert_eq!(model.supported_endpoints.len(), 0);
+        assert!(!model.supports_endpoint("responses"));
+    }
+
+    #[test]
+    fn test_endpoints_stored_in_model_info() {
+        let model_data = CopilotModelData {
+            id: "gpt-5-mini".to_string(),
+            name: "GPT 5 Mini".to_string(),
+            capabilities: None,
+            policy: None,
+            supported_endpoints: vec!["responses".to_string()],
+        };
+
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).expect("Failed to create provider");
+        let summary = provider.convert_to_summary(model_data);
+
+        let endpoints = summary
+            .raw_data
+            .get("supported_endpoints")
+            .expect("Endpoints not in metadata");
+
+        let endpoints_array = endpoints.as_array().expect("Not an array");
+        assert_eq!(endpoints_array.len(), 1);
+    }
+
+    // Task 1.3: Endpoint Configuration Tests
+
+    #[test]
+    fn test_endpoint_url_constants() {
+        assert_eq!(
+            COPILOT_COMPLETIONS_URL,
+            "https://api.githubcopilot.com/chat/completions"
+        );
+        assert_eq!(
+            COPILOT_RESPONSES_URL,
+            "https://api.githubcopilot.com/responses"
+        );
+        assert!(COPILOT_RESPONSES_URL.starts_with("https://"));
+    }
+
+    #[test]
+    fn test_model_endpoint_from_name() {
+        assert_eq!(
+            ModelEndpoint::from_name("responses"),
+            ModelEndpoint::Responses
+        );
+        assert_eq!(
+            ModelEndpoint::from_name("chat_completions"),
+            ModelEndpoint::ChatCompletions
+        );
+        assert_eq!(
+            ModelEndpoint::from_name("messages"),
+            ModelEndpoint::Messages
+        );
+        assert_eq!(ModelEndpoint::from_name("invalid"), ModelEndpoint::Unknown);
+    }
+
+    #[test]
+    fn test_model_endpoint_as_str() {
+        assert_eq!(ModelEndpoint::Responses.as_str(), "responses");
+        assert_eq!(ModelEndpoint::ChatCompletions.as_str(), "chat_completions");
+        assert_eq!(ModelEndpoint::Messages.as_str(), "messages");
+        assert_eq!(ModelEndpoint::Unknown.as_str(), "unknown");
+    }
+
+    #[test]
+    fn test_api_endpoint_url_construction() {
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            api_base: None,
+        };
+
+        let provider = CopilotProvider::new(config).expect("Failed to create provider");
+
+        assert_eq!(
+            provider.endpoint_url(ModelEndpoint::Responses),
+            "https://api.githubcopilot.com/responses"
+        );
+        assert_eq!(
+            provider.endpoint_url(ModelEndpoint::ChatCompletions),
+            "https://api.githubcopilot.com/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_api_endpoint_with_custom_base() {
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            api_base: Some("https://custom.api.com".to_string()),
+        };
+
+        let provider = CopilotProvider::new(config).expect("Failed to create provider");
+
+        assert_eq!(
+            provider.endpoint_url(ModelEndpoint::Responses),
+            "https://custom.api.com/responses"
+        );
     }
 }

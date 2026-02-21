@@ -116,6 +116,30 @@ pub enum XzatomaError {
     /// Internal runtime error
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Model does not support the requested endpoint
+    #[error("Model {0} does not support endpoint {1}")]
+    UnsupportedEndpoint(String, String),
+
+    /// Failed to parse Server-Sent Events data
+    #[error("Failed to parse SSE event: {0}")]
+    SseParseError(String),
+
+    /// Stream was interrupted before completion
+    #[error("Stream interrupted: {0}")]
+    StreamInterrupted(String),
+
+    /// Response format does not match expected structure
+    #[error("Invalid response format: {0}")]
+    InvalidResponseFormat(String),
+
+    /// Both completions and responses endpoints failed
+    #[error("Endpoint fallback failed - both completions and responses returned errors")]
+    EndpointFallbackFailed,
+
+    /// Message format conversion failed
+    #[error("Message conversion failed: {0}")]
+    MessageConversionError(String),
 }
 
 /// Result type alias for XZatoma operations
@@ -278,5 +302,67 @@ mod tests {
     fn test_internal_error_display() {
         let error = XzatomaError::Internal("poisoned lock".to_string());
         assert_eq!(error.to_string(), "Internal error: poisoned lock");
+    }
+
+    #[test]
+    fn test_unsupported_endpoint_error() {
+        let err =
+            XzatomaError::UnsupportedEndpoint("gpt-3.5-turbo".to_string(), "responses".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("gpt-3.5-turbo"));
+        assert!(msg.contains("responses"));
+        assert!(msg.contains("does not support"));
+    }
+
+    #[test]
+    fn test_sse_parse_error() {
+        let err = XzatomaError::SseParseError("Invalid JSON in event".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Failed to parse SSE event"));
+        assert!(msg.contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_stream_interrupted_error() {
+        let err = XzatomaError::StreamInterrupted("Connection reset".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Stream interrupted"));
+        assert!(msg.contains("Connection reset"));
+    }
+
+    #[test]
+    fn test_invalid_response_format_error() {
+        let err = XzatomaError::InvalidResponseFormat("Missing required field".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Invalid response format"));
+        assert!(msg.contains("Missing required field"));
+    }
+
+    #[test]
+    fn test_endpoint_fallback_failed_error() {
+        let err = XzatomaError::EndpointFallbackFailed;
+        let msg = err.to_string();
+        assert!(msg.contains("Endpoint fallback failed"));
+        assert!(msg.contains("both completions and responses"));
+    }
+
+    #[test]
+    fn test_message_conversion_error() {
+        let err = XzatomaError::MessageConversionError("Invalid role".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("Message conversion failed"));
+        assert!(msg.contains("Invalid role"));
+    }
+
+    #[test]
+    fn test_error_propagation() {
+        fn failing_function() -> crate::error::Result<()> {
+            Err(anyhow::anyhow!(XzatomaError::SseParseError(
+                "Test error".to_string()
+            )))
+        }
+
+        let result = failing_function();
+        assert!(result.is_err());
     }
 }
