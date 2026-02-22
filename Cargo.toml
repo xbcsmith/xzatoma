@@ -39,6 +39,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # File operations and utilities
 walkdir = "2.4"
+ignore = "0.4"
 similar = "2.3"
 # Fuzzy matching helpers used for path suggestion and abbreviation resolution
 strsim = "0.10"
