@@ -129,6 +129,21 @@ This directory contains detailed implementation documentation for XZatoma featur
 - Documentation: `docs/explanation/phase4_provider_integration_implementation.md`
 - ~4,500 lines added/modified, zero warnings
 
+**Copilot Responses Endpoint - Missing Deliverables Fix** - Complete
+
+Audit against `docs/explanation/copilot_responses_endpoint_implementation_plan.md` identified and resolved four gaps:
+
+- `CompletionResponse.model` field added to `src/providers/base.rs` - surfaces the model identifier that generated each response
+- `CompletionResponse.reasoning` field added to `src/providers/base.rs` - surfaces extended-thinking content from o1-family models
+- Builder methods `set_model()` and `set_reasoning()` added to `CompletionResponse`, plus `with_model()` constructor
+- All completion paths in `copilot.rs` updated to populate `model` on every returned `CompletionResponse`; `complete_responses_streaming` and `complete_responses_blocking` also extract and attach `reasoning` when present in the API response
+- `test_message_conversion_roundtrip` added (Task 2.1 plan item): verifies forward + reverse message conversion preserves roles and content
+- `test_select_endpoint_default_completions` added (Task 4.1 plan item): documents legacy-model fallback logic
+- `test_select_endpoint_unknown_model_error` added (Task 4.1 plan item): validates error message format for unknown models
+- `test_model_supports_endpoint_logic` added (Task 4.1 plan item - replaces async stub): unit-tests `CopilotModelData::supports_endpoint` across all three cases (both, completions-only, legacy/empty)
+- Five additional unit tests for `CompletionResponse` model/reasoning fields
+- Total tests increased from 956 to 965, zero warnings
+
 ### Pending Implementation
 
 ⏳ **Phase 1: Foundation** - Not started

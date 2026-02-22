@@ -99,10 +99,10 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = CopilotConfig::default();
     let provider = CopilotProvider::new(config)?;
-    
+
     let messages = vec![Message::user("What is the weather?")];
     let response = provider.complete(&messages, &[]).await?;
-    
+
     println!("{}", response.message.content());
     Ok(())
 }
@@ -183,7 +183,7 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let provider = CopilotProvider::new(CopilotConfig::default())?;
     let messages = vec![Message::user("Hello")];
-    
+
     match provider.complete(&messages, &[]).await {
         Ok(response) => {
             println!("Success: {}", response.message.content());
@@ -195,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Error: {}", e);
         }
     }
-    
+
     Ok(())
 }
 ```

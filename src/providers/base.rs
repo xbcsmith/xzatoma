@@ -530,13 +530,19 @@ pub struct ProviderCapabilities {
 
 /// Completion response with message and optional token usage
 ///
-/// Contains both the response message and metadata about token usage.
+/// Contains both the response message and metadata about token usage,
+/// as well as an optional model identifier and reasoning content for
+/// providers that support extended thinking.
 #[derive(Debug, Clone)]
 pub struct CompletionResponse {
     /// The response message from the AI
     pub message: Message,
     /// Optional token usage information
     pub usage: Option<TokenUsage>,
+    /// The model that generated this response
+    pub model: Option<String>,
+    /// Reasoning content from extended-thinking models (e.g. o1 family)
+    pub reasoning: Option<String>,
 }
 
 impl CompletionResponse {
@@ -554,11 +560,15 @@ impl CompletionResponse {
     /// let response = CompletionResponse::new(Message::assistant("Hello!"));
     /// assert_eq!(response.message.role, "assistant");
     /// assert!(response.usage.is_none());
+    /// assert!(response.model.is_none());
+    /// assert!(response.reasoning.is_none());
     /// ```
     pub fn new(message: Message) -> Self {
         Self {
             message,
             usage: None,
+            model: None,
+            reasoning: None,
         }
     }
 
@@ -578,12 +588,80 @@ impl CompletionResponse {
     /// let response = CompletionResponse::with_usage(Message::assistant("Hello!"), usage);
     /// assert_eq!(response.message.role, "assistant");
     /// assert!(response.usage.is_some());
+    /// assert!(response.model.is_none());
+    /// assert!(response.reasoning.is_none());
     /// ```
     pub fn with_usage(message: Message, usage: TokenUsage) -> Self {
         Self {
             message,
             usage: Some(usage),
+            model: None,
+            reasoning: None,
         }
+    }
+
+    /// Create a new CompletionResponse with model identifier
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The response message
+    /// * `model` - The model that generated this response
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{CompletionResponse, Message};
+    ///
+    /// let response = CompletionResponse::with_model(
+    ///     Message::assistant("Hello!"),
+    ///     "gpt-5-mini".to_string(),
+    /// );
+    /// assert_eq!(response.model.as_deref(), Some("gpt-5-mini"));
+    /// assert!(response.usage.is_none());
+    /// assert!(response.reasoning.is_none());
+    /// ```
+    pub fn with_model(message: Message, model: String) -> Self {
+        Self {
+            message,
+            usage: None,
+            model: Some(model),
+            reasoning: None,
+        }
+    }
+
+    /// Create a builder-style setter for model
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{CompletionResponse, Message};
+    ///
+    /// let response = CompletionResponse::new(Message::assistant("Hello!"))
+    ///     .set_model("gpt-5-mini".to_string());
+    /// assert_eq!(response.model.as_deref(), Some("gpt-5-mini"));
+    /// ```
+    pub fn set_model(mut self, model: String) -> Self {
+        self.model = Some(model);
+        self
+    }
+
+    /// Create a builder-style setter for reasoning content
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{CompletionResponse, Message};
+    ///
+    /// let response = CompletionResponse::new(Message::assistant("42"))
+    ///     .set_reasoning("I thought about it carefully".to_string());
+    /// assert_eq!(
+    ///     response.reasoning.as_deref(),
+    ///     Some("I thought about it carefully"),
+    /// );
+    /// ```
+    pub fn set_reasoning(mut self, reasoning: String) -> Self {
+        self.reasoning = Some(reasoning);
+        self
     }
 }
 

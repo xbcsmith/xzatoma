@@ -20,12 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a simple message
     let messages = vec![Message::user("Hello, how are you?")];
-    
+
     // Get completion
     let response = provider.complete(&messages, &[]).await?;
 
     println!("Assistant: {}", response.message.content());
-    
+
     if let Some(usage) = response.usage {
         println!("Tokens used: {:?}", usage);
     }
@@ -62,13 +62,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response1 = provider.complete(&messages, &[]).await?;
     println!("Q1: {}", messages[0].content());
     println!("A1: {}\n", response1.message.content());
-    
+
     // Add assistant response to history
     messages.push(response1.message.clone());
-    
+
     // Second turn - context aware
     messages.push(Message::user("What is its population?"));
-    
+
     let response2 = provider.complete(&messages, &[]).await?;
     println!("Q2: {}", messages.last().unwrap().content());
     println!("A2: {}\n", response2.message.content());
@@ -333,11 +333,11 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 #[tokio::main]
 async fn main() {
     let config = CopilotConfig::default();
-    
+
     match CopilotProvider::new(config) {
         Ok(provider) => {
             let messages = vec![Message::user("Hello")];
-            
+
             match provider.complete(&messages, &[]).await {
                 Ok(response) => {
                     println!("Success: {}", response.message.content());
