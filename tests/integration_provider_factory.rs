@@ -18,6 +18,10 @@ fn create_test_provider_config() -> ProviderConfig {
         copilot: CopilotConfig {
             model: "gpt-5-mini".to_string(),
             api_base: None,
+            enable_streaming: true,
+            enable_endpoint_fallback: true,
+            reasoning_effort: None,
+            include_reasoning: false,
         },
         ollama: OllamaConfig {
             host: "http://localhost:11434".to_string(),

@@ -104,6 +104,46 @@ This directory contains detailed implementation documentation for XZatoma featur
 - **[models_command_documentation_and_examples_implementation.md](models_command_documentation_and_examples_implementation.md)** - Phase 5: Documentation and Examples (reference docs, how-to updates, CLI help text, tests, and example scripts)
 - ~1,502 lines of comprehensive documentation
 
+**Phase 3: Streaming Infrastructure** - Complete
+
+- SSE parsing functions: `parse_sse_line()`, `parse_sse_event()`
+- Stream response method: `stream_response()` for /responses endpoint
+- Stream completion method: `stream_completion()` for /chat/completions endpoint
+- Helper method: `convert_tools_legacy()` for legacy tool format
+- Comprehensive streaming tests (10 tests, all passing)
+- Reqwest streaming feature enabled for `bytes_stream()` support
+- Documentation: `docs/explanation/phase3_streaming_infrastructure_implementation.md`
+- ~335 lines of production code, zero warnings
+
+**Phase 4: Provider Integration** - Complete
+
+- Extended `CopilotConfig` with streaming, fallback, and reasoning fields
+- Endpoint selection logic: `select_endpoint()` and `model_supports_endpoint()`
+- Refactored `Provider::complete()` with intelligent routing
+- Endpoint-specific implementations: `complete_with_responses_endpoint()`, `complete_with_completions_endpoint()`
+- Streaming and blocking variants for both endpoints
+- Smart RwLock guard management across async boundaries
+- Configuration management with serde defaults
+- Updated provider capabilities to advertise streaming support
+- Comprehensive tests (22 tests for Phase 4, all passing)
+- Documentation: `docs/explanation/phase4_provider_integration_implementation.md`
+- ~4,500 lines added/modified, zero warnings
+
+**Copilot Responses Endpoint - Missing Deliverables Fix** - Complete
+
+Audit against `docs/explanation/copilot_responses_endpoint_implementation_plan.md` identified and resolved four gaps:
+
+- `CompletionResponse.model` field added to `src/providers/base.rs` - surfaces the model identifier that generated each response
+- `CompletionResponse.reasoning` field added to `src/providers/base.rs` - surfaces extended-thinking content from o1-family models
+- Builder methods `set_model()` and `set_reasoning()` added to `CompletionResponse`, plus `with_model()` constructor
+- All completion paths in `copilot.rs` updated to populate `model` on every returned `CompletionResponse`; `complete_responses_streaming` and `complete_responses_blocking` also extract and attach `reasoning` when present in the API response
+- `test_message_conversion_roundtrip` added (Task 2.1 plan item): verifies forward + reverse message conversion preserves roles and content
+- `test_select_endpoint_default_completions` added (Task 4.1 plan item): documents legacy-model fallback logic
+- `test_select_endpoint_unknown_model_error` added (Task 4.1 plan item): validates error message format for unknown models
+- `test_model_supports_endpoint_logic` added (Task 4.1 plan item - replaces async stub): unit-tests `CopilotModelData::supports_endpoint` across all three cases (both, completions-only, legacy/empty)
+- Five additional unit tests for `CompletionResponse` model/reasoning fields
+- Total tests increased from 956 to 965, zero warnings
+
 ### Pending Implementation
 
 ⏳ **Phase 1: Foundation** - Not started
@@ -274,6 +314,8 @@ All implementations must meet these requirements (per AGENTS.md):
 
 ## Version History
 
+- **2025-01-XX** - Phase 5: Documentation and Examples completed
+- **2025-01-XX** - Phase 4: Provider Integration completed
 - **2025-01-XX** - Phase 3 Security Validation completed
 - **2025-01-XX** - Provider abstraction planning completed
 - **2025-01-XX** - Architecture validation completed (approved)
@@ -281,6 +323,54 @@ All implementations must meet these requirements (per AGENTS.md):
 - **2025-01-XX** - Project initiated as XZatoma
 
 ## Documentation Deliverables
+
+### Phase 5: Documentation and Examples (2025-01-XX)
+
+**Completed:**
+
+- `docs/reference/copilot_provider.md` (221 lines) - Complete API reference for Copilot provider including:
+
+  - Configuration field documentation (6 fields with defaults and descriptions)
+  - Method signatures for `complete()` and `list_models()`
+  - Endpoint selection explanation with algorithm details
+  - Streaming support documentation
+  - Reasoning model configuration
+  - Authentication flow overview
+  - Error handling guide
+  - Performance characteristics
+  - Limitations and constraints
+  - Common configuration patterns (production, testing, extended thinking)
+
+- `docs/explanation/copilot_usage_examples.md` (540 lines) - Practical usage examples covering:
+
+  - Basic chat completion (default configuration)
+  - Multi-turn conversation state management
+  - Reasoning models (o1-family with extended thinking)
+  - Tool calling with function definitions
+  - Streaming disabled (blocking responses)
+  - Custom API base for testing with mock servers
+  - Endpoint fallback behavior control
+  - Comprehensive error handling patterns
+  - Configuration from YAML files
+  - Configuration from environment variables
+  - Listing available models
+  - System message context usage
+  - Feature matrix by endpoint
+  - Migration guide for existing users
+
+- `docs/explanation/phase5_documentation_examples_implementation.md` (394 lines) - Implementation summary
+
+- **Total:** ~1,155 lines of documentation
+
+**Coverage:**
+
+- All public methods documented with runnable examples
+- All configuration options with use cases
+- Both major endpoints (/responses and /chat/completions)
+- Streaming, tool calling, and reasoning features
+- Error handling patterns for production code
+- Configuration patterns for different scenarios
+- Migration guidance for existing users
 
 ### Model Management Documentation (2025-01-22)
 
@@ -305,4 +395,4 @@ All implementations must meet these requirements (per AGENTS.md):
 
 ---
 
-**Status**: Phase 3 complete, Model Management Documentation complete, Phase 1-2 pending. Security validation implemented and tested.
+**Status**: Phase 4 complete (Provider Integration), Phase 5 complete (Documentation and Examples). Model Management Documentation complete. Phases 1-3 implemented. Security validation completed and tested.
