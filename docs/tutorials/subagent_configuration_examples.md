@@ -225,17 +225,10 @@ provider:
 agent:
   subagent:
     # Use same provider (ollama)
-<<<<<<< Updated upstream
-    model: granite3.2:2b                 # Smaller, faster model
-    chat_enabled: true                # Enable by default
-    default_max_turns: 3             # Quick responses only
-    max_executions: 5                # Good parallelism locally
-=======
     model: granite3.2:2b # Smaller, faster model
     chat_enabled: true # Enable by default
     default_max_turns: 3 # Quick responses only
     max_executions: 5 # Good parallelism locally
->>>>>>> Stashed changes
 ```
 
 ### Expected Behavior
@@ -252,13 +245,8 @@ agent:
 ollama serve
 
 # 2. Pull models (if not already available)
-<<<<<<< Updated upstream
-ollama pull llama3.2      # ~4GB
-ollama pull granite3.2:2b     # ~1.6GB (faster)
-=======
 ollama pull llama3.2:3b      # ~1.9GB
 ollama pull granite3.2:2b    # ~1.4GB (faster)
->>>>>>> Stashed changes
 
 # 3. Verify both are available
 ollama list

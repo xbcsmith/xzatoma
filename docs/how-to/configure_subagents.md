@@ -52,11 +52,7 @@ Override the model for subagent instances. Must be available in the configured p
 ```yaml
 agent:
   subagent:
-<<<<<<< Updated upstream
-    model: "gpt-5-mini"  # Cheaper model for cost optimization
-=======
     model: "gpt-5.1-codex-mini" # Cheaper model for cost optimization
->>>>>>> Stashed changes
 ```
 
 #### `chat_enabled` (Optional)
@@ -144,11 +140,7 @@ provider:
 
 agent:
   subagent:
-<<<<<<< Updated upstream
-    model: gpt-5-mini        # 10x cheaper
-=======
     model: gpt-5.1-codex-mini # cheaper model for subagents
->>>>>>> Stashed changes
     chat_enabled: false
     max_executions: 10
 ```
@@ -196,11 +188,7 @@ provider:
 
 agent:
   subagent:
-<<<<<<< Updated upstream
-    model: granite3.2:2b              # Smaller, faster model
-=======
     model: granite3.2:2b # Smaller, faster model
->>>>>>> Stashed changes
     chat_enabled: true
     default_max_turns: 3 # Quick operations only
     max_depth: 1 # Keep it simple
@@ -270,11 +258,7 @@ agent:
 agent:
   subagent:
     # provider: ollama   <- Remove if using main provider
-<<<<<<< Updated upstream
-    model: gpt-5-mini
-=======
     model: gpt-5.1-codex-mini
->>>>>>> Stashed changes
     chat_enabled: true
 ```
 
@@ -325,15 +309,9 @@ agent:
 ```yaml
 agent:
   subagent:
-<<<<<<< Updated upstream
-    model: granite3.2:2b              # Faster, smaller
-    max_executions: 2             # Reduce parallelism
-    max_depth: 1                  # Simpler delegation
-=======
     model: granite3.2:2b # Faster, smaller
     max_executions: 2 # Reduce parallelism
     max_depth: 1 # Simpler delegation
->>>>>>> Stashed changes
 ```
 
 ## Migration from Previous Versions
@@ -376,20 +354,12 @@ Default `max_executions: 5` balances parallelism vs. resource usage:
 ### Model Selection Impact
 
 <<<<<<< Updated upstream
-| Model | Speed | Quality | Cost | Best For |
-|-------|-------|---------|------|----------|
-| granite3.2:2b | Very Fast | Basic | Free | Quick tasks |
-| llama3.2 | Fast | Good | Free | General work |
-| gpt-5-mini | Moderate | Excellent | $0.0005/1K tokens | Analysis |
-| gpt-4 | Slow | Best | $0.03/1K tokens | Complex reasoning |
-=======
 | Model            | Speed     | Quality   | Cost     | Best For          |
 | ---------------- | --------- | --------- | -------- | ----------------- |
 | granite3.2:2b    | Very Fast | Good      | Free     | Quick tasks       |
 | llama3.2:3b      | Fast      | Good      | Free     | General work      |
 | gpt-5.1-codex-mini | Moderate  | Excellent | Low      | Analysis          |
 | gpt-5.3-codex       | Fast      | Best      | Moderate | Complex reasoning |
->>>>>>> Stashed changes
 
 ## Best Practices
 
@@ -428,13 +398,8 @@ xzatoma /status
 ### 4. Match Model to Task
 
 - **Quick tasks**: Small, fast models (granite3.2:2b)
-<<<<<<< Updated upstream
-- **General work**: Medium models (llama3.2, gpt-5-mini)
-- **Complex analysis**: Larger models (gpt-4)
-=======
 - **General work**: Medium models (llama3.2:3b, gpt-5.1-codex-mini)
 - **Complex analysis**: Larger models (gpt-5.3-codex, claude-sonnet-4.6)
->>>>>>> Stashed changes
 
 ### 5. Set Clear Limits
 
@@ -505,9 +470,3 @@ xzatoma chat
 ```
 
 ---
-
-<<<<<<< Updated upstream
-=======
-### Task 4.2: Create Chat Mode Usage Guide
-```
->>>>>>> Stashed changes

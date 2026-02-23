@@ -213,21 +213,12 @@ The agent enforces a maximum iteration limit (configured via `agent.max_turns`, 
 
 **Token Limits by Provider**:
 
-<<<<<<< Updated upstream
-| Provider | Model       | Context Window | Safe Limit (80%) |
-| -------- | ----------- | -------------- | ---------------- |
-| Copilot  | gpt-5-mini  | 128,000 tokens | 102,400 tokens   |
-| Copilot  | gpt-4o-mini | 128,000 tokens | 102,400 tokens   |
-| Ollama   | qwen3       | 32,768 tokens  | 26,214 tokens    |
-| Ollama   | llama3      | 8,192 tokens   | 6,553 tokens     |
-=======
 | Provider | Model            | Context Window | Safe Limit (80%) |
 | -------- | ---------------- | -------------- | ---------------- |
 | Copilot  | gpt-5.3-codex       | 264,000 tokens | 211,200 tokens   |
 | Copilot  | gpt-5.1-codex-mini | 200,000 tokens | 160,000 tokens   |
 | Ollama   | llama3.2:3b      | 131,072 tokens | 104,857 tokens   |
 | Ollama   | granite3.2:2b    | 131,072 tokens | 104,857 tokens   |
->>>>>>> Stashed changes
 
 **Pruning Strategy**:
 
@@ -636,18 +627,11 @@ impl QuotaTracker {
 
 ```yaml
 agent:
-<<<<<<< Updated upstream
-  quota:
-    max_executions: 100
-    max_total_tokens: 1000000
-    max_total_time_seconds: 3600
-=======
   max_turns: 100
   conversation:
     max_tokens: 100000 # Provider-specific limit
     min_retain_turns: 5 # Always keep last N turns
     prune_threshold: 0.8 # Prune when 80% of max_tokens
->>>>>>> Stashed changes
 ```
 
 **Benefits**:
@@ -1192,7 +1176,7 @@ The Watcher module enables fully autonomous operation without human intervention
 
 ### Interactive Mode
 
-```
+```text
 User Input → Agent → AI Provider (with tools) → Tool Call
         ↑                  ↓
         └────────── Tool Result ─────────────┘
@@ -1201,7 +1185,7 @@ User Input → Agent → AI Provider (with tools) → Tool Call
 
 ### Plan Execution Mode
 
-```
+```text
 Plan File → Parse Plan → Extract Goal → Agent → AI Provider
                       ↓
                   Tool Execution Loop
@@ -1213,116 +1197,9 @@ Plan File → Parse Plan → Extract Goal → Agent → AI Provider
 
 ### Configuration Structure
 
-````yaml
+```yaml
 # ~/.config/xzatoma/config.yaml
 
-<<<<<<< Updated upstream
-# Agent configuration
-agent:
- max_turns: 100
- chat_mode: planning  # or 'write'
- safety_mode: safe   # or 'yolo'
- conversation:
-  max_tokens: 100000 # Provider-specific limit
-  min_retain_turns: 5 # Always keep last N turns
-  prune_threshold: 0.8 # Prune when 80% of max_tokens
-
- # Subagent configuration
- subagent:
-  max_depth: 3
-  default_max_turns: 10
-  output_max_size: 4096
-  telemetry_enabled: true
-  persistence_enabled: true
-  provider_override: false
-
- # Resource quotas
- quota:
-  max_executions: 100
-  max_total_tokens: 1000000
-  max_total_time_seconds: 3600
-
- # Context mentions
- mentions:
-  max_file_size: 10485760  # 10 MB
-  url_cache_ttl_seconds: 86400 # 24 hours
-  max_urls_per_request: 10
-
- # Conversation persistence
- persistence:
-  enabled: true
-  db_path: "~/.xzatoma/conversations.db"
-
-# AI Provider configuration
-provider:
- type: copilot     # or 'ollama'
- model: "claude-3.5-sonnet"  # Provider-specific model name
-
- # Copilot-specific (OAuth + VSCode API)
- copilot:
-  api_url: "https://api.githubcopilot.com"
-
- # Ollama-specific
- ollama:
-  base_url: "http://localhost:11434"
-  model: "llama2"
-
-# Tool configuration
-tools:
- working_directory: "."
- max_output_size: 10000  # Max bytes per tool result
- command_timeout_seconds: 60
-
- # File operations
- file_ops:
-  max_file_size: 10485760  # 10 MB
-
- # Terminal execution
- terminal:
-  shell: "bash"
-  allow_list: []   # If specified, only these commands allowed
-  deny_list: ["rm -rf /", "sudo rm"]
-  unsafe_patterns: ["rm", "mv"]
-
- # HTTP fetching
- fetch:
-  timeout_seconds: 60
-  max_response_size: 1048576  # 1 MB
-  user_agent: "xzatoma/1.0"
-  cache_ttl_seconds: 86400
-
-# XZepr integration (optional)
-xzepr:
- enabled: false
- api_url: "https://xzepr.example.com"
- api_key: "${XZEPR_API_KEY}"  # From environment
- kafka:
-  bootstrap_servers: "kafka.example.com:9092"
-  topic: "xzepr.events"
-  group_id: "xzatoma-consumer"
-  security_protocol: "SASL_SSL"
-  sasl_mechanism: "PLAIN"
-  sasl_username: "${KAFKA_USERNAME}"
-  sasl_password: "${KAFKA_PASSWORD}"
-
-# Watcher module (optional)
-watcher:
- enabled: false
- kafka:
-  bootstrap_servers: "kafka.example.com:9092"
-  topic: "xzepr.events"
-  group_id: "xzatoma-watcher"
-  security_protocol: "PLAINTEXT"
- filter:
-  event_types: []  # Empty = all types
-  sources: []    # Empty = all sources
-  platforms: []   # Empty = all platforms
-
-# Logging
-logging:
- level: info     # debug, info, warn, error
- format: json    # or 'text'
-=======
 provider:
   type: copilot # or 'ollama'
 
@@ -1349,7 +1226,6 @@ agent:
     max_stdout_bytes: 10485760
     max_stderr_bytes: 1048576
 ```
->>>>>>> Stashed changes
 
 ### Configuration Precedence
 
@@ -1358,7 +1234,6 @@ agent:
 3. Config file (`~/.config/xzatoma/config.yaml`)
 4. Defaults (lowest priority)
 
-<<<<<<< Updated upstream
 **Environment Variable Support**:
 
 - `XZATOMA_PROVIDER_TYPE` - Override provider type
@@ -1366,7 +1241,7 @@ agent:
 - `COPILOT_API_TOKEN` - Copilot authentication
 - `XZEPR_API_KEY` - XZepr API authentication
 - `KAFKA_USERNAME` / `KAFKA_PASSWORD` - Kafka SASL credentials
-=======
+
 1. **Command-line arguments** - Highest priority
 
 - Example: `xzatoma --provider ollama`
@@ -1382,20 +1257,14 @@ agent:
 4. **Default values** - Built-in defaults
 
 - Example: `provider: copilot`, `max_turns: 100`
->>>>>>> Stashed changes
 
 **Example Priority Resolution**:
 
 ```yaml
 # config.yaml
 provider:
-<<<<<<< Updated upstream
- type: copilot
-````
-=======
   type: copilot
 ```
->>>>>>> Stashed changes
 
 ```bash
 # Environment variable overrides config.yaml
