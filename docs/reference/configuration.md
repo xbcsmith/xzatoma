@@ -83,7 +83,7 @@ XZatoma manages conversation context windows to prevent exceeding AI model token
 - `summary_model`: Model to use for generating summaries (optional, defaults to current model)
 
   - Useful for cost optimization: use a cheaper/faster model for summaries
-  - Example: use `gpt-4o-mini` for Copilot or `mistral:latest` for Ollama
+  - Example: use `gpt-5.1-codex-mini` for Copilot or `llama3.2:3b` for Ollama
   - If not specified, uses the same model configured for main conversations
 
 - `prune_threshold`: Token threshold to trigger conversation pruning (0.0-1.0, default: 0.8)
@@ -110,7 +110,7 @@ agent:
 
 
     # Use cheaper model for summaries (optional)
-    # summary_model: "gpt-4o-mini"  # For Copilot provider
+    # summary_model: "gpt-5.1-codex-mini"  # For Copilot provider
 ```
 
 ---
@@ -122,11 +122,11 @@ agent:
 provider:
   provider_type: copilot # or 'ollama'
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
     # api_base: https://internal-copilot-host.example
   ollama:
     host: localhost:11434
-    model: qwen3
+    model: llama3.2:3b
 
 agent:
   max_turns: 50
@@ -138,7 +138,7 @@ agent:
     prune_threshold: 0.8
     warning_threshold: 0.85
     auto_summary_threshold: 0.90
-    # summary_model: "gpt-4o-mini"  # Optional: use cheaper model for summaries
+    # summary_model: "gpt-5.1-codex-mini"  # Optional: use cheaper model for summaries
 
 repository:
   clone_depth: 1
@@ -168,13 +168,13 @@ Common environment variables:
   Example: `export XZATOMA_PROVIDER=copilot`
 
 - `XZATOMA_COPILOT_MODEL`
-  Example: `export XZATOMA_COPILOT_MODEL=gpt-5-mini`
+  Example: `export XZATOMA_COPILOT_MODEL=gpt-5.3-codex`
 
 - `XZATOMA_OLLAMA_HOST`
   Example: `export XZATOMA_OLLAMA_HOST=localhost:11434`
 
 - `XZATOMA_OLLAMA_MODEL`
-  Example: `export XZATOMA_OLLAMA_MODEL=qwen3`
+  Example: `export XZATOMA_OLLAMA_MODEL=llama3.2:3b`
 
 - `XZATOMA_MAX_TURNS`
   Example: `export XZATOMA_MAX_TURNS=100`
@@ -204,7 +204,7 @@ Context window management environment variables:
   Token usage percentage to trigger automatic summarization (0.0-1.0)
 
 - `XZATOMA_CONTEXT_SUMMARY_MODEL`
-  Example: `export XZATOMA_CONTEXT_SUMMARY_MODEL=gpt-4o-mini`
+  Example: `export XZATOMA_CONTEXT_SUMMARY_MODEL=gpt-5.1-codex-mini`
   Model to use for generating conversation summaries
 
 Usage example (one-off):

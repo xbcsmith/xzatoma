@@ -23,7 +23,7 @@ and `../archive/implementation_summaries/implementation_plan_refactoring_summary
 | --------- | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
 | OpenAI  | Bearer Token  | api.openai.com    | gpt-4o      | 128K      | SSE    | Native      |
 | Anthropic | API Key Header | api.anthropic.com   | claude-sonnet-4-0 | 200K      | SSE    | Content blocks  |
-| Copilot  | OAuth Device  | api.githubcopilot.com | gpt-5-mini    | 128K      | SSE    | OpenAI-compatible |
+| Copilot  | OAuth Device  | api.githubcopilot.com | gpt-5.3-codex    | 128K      | SSE    | OpenAI-compatible |
 | Ollama  | None (local)  | localhost:11434    | User-configured  | Model-dependent | JSON Lines | Limited      |
 
 ---

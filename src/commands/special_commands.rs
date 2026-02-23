@@ -1084,8 +1084,11 @@ mod tests {
 
     #[test]
     fn test_parse_models_info_with_complex_model_name() {
-        let cmd = parse_special_command("/models info gpt-5-mini").unwrap();
-        assert_eq!(cmd, SpecialCommand::ShowModelInfo("gpt-5-mini".to_string()));
+        let cmd = parse_special_command("/models info gpt-5.3-codex").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::ShowModelInfo("gpt-5.3-codex".to_string())
+        );
     }
 
     #[test]

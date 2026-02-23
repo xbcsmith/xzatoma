@@ -335,7 +335,7 @@ impl ChatModeState {
     /// Format a prompt string including optional provider/model information.
     ///
     /// When both `provider` and `model` are provided, the returned prompt will
-    /// include a provider tag like `[Copilot: gpt-5-mini]` after the mode and safety tags.
+    /// include a provider tag like `[Copilot: gpt-5.3-codex]` after the mode and safety tags.
     ///
     /// # Examples
     ///
@@ -344,8 +344,8 @@ impl ChatModeState {
     ///
     /// let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
     /// assert_eq!(
-    ///     state.format_prompt_with_provider(Some("copilot"), Some("gpt-5-mini")),
-    ///     "[PLANNING][SAFE][Copilot: gpt-5-mini] >>> "
+    ///     state.format_prompt_with_provider(Some("copilot"), Some("gpt-5.3-codex")),
+    ///     "[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>> "
     /// );
     ///
     /// // If provider or model is missing, the base prompt is returned unchanged
@@ -387,8 +387,8 @@ impl ChatModeState {
     /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
     ///
     /// let state = ChatModeState::new(ChatMode::Write, SafetyMode::NeverConfirm);
-    /// let s = state.format_colored_prompt_with_provider(Some("copilot"), Some("gpt-5-mini"));
-    /// assert!(s.contains("Copilot: gpt-5-mini"));
+    /// let s = state.format_colored_prompt_with_provider(Some("copilot"), Some("gpt-5.3-codex"));
+    /// assert!(s.contains("Copilot: gpt-5.3-codex"));
     /// ```
     pub fn format_colored_prompt_with_provider(
         &self,

@@ -22,8 +22,8 @@ pub struct ModelInfo {
 
 **Fields:**
 
-- `name`: Unique identifier for the model (e.g., "gpt-4o", "qwen2.5-coder:7b")
-- `display_name`: Human-readable name for UI display (e.g., "GPT-4o", "Qwen 2.5 Coder 7B")
+- `name`: Unique identifier for the model (e.g., "gpt-5.3-codex", "llama3.2:3b")
+- `display_name`: Human-readable name for UI display (e.g., "GPT-5.3 Codex", "llama3.2:3b")
 - `context_window`: Maximum number of tokens the model can handle
 - `capabilities`: List of supported features (function calling, vision, etc.)
 - `provider_specific`: Additional provider-specific metadata
@@ -190,7 +190,7 @@ async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo>
 **Example:**
 
 ```rust
-let model = provider.get_model_info("gpt-4o").await?;
+let model = provider.get_model_info("gpt-5.3-codex").await?;
 println!("Context: {} tokens", model.context_window);
 println!("Supports vision: {}", model.supports_capability(ModelCapability::Vision));
 ```

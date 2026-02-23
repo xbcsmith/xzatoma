@@ -155,13 +155,13 @@ xzatoma models list --summary
 xzatoma models list --json --summary > all_models_with_summary.json
 
 # Get info about a model (table)
-xzatoma models info --model gpt-4
+xzatoma models info --model gpt-5.3-codex
 
 # Get summary info for a model
-xzatoma models info --model gpt-4 --summary
+xzatoma models info --model gpt-5.3-codex --summary
 
 # Export model info as JSON
-xzatoma models info --model gpt-4 --json > gpt4_info.json
+xzatoma models info --model gpt-5.3-codex --json > gpt53codex_info.json
 
 # Show current model for Copilot
 xzatoma models current --provider copilot

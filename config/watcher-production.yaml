@@ -17,7 +17,7 @@
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   # Conservative production values (tune to your needs)

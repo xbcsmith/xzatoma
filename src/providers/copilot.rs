@@ -47,7 +47,7 @@ const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 ///
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = CopilotConfig {
-///     model: "gpt-5-mini".to_string(),
+///     model: "gpt-5.3-codex".to_string(),
 ///     ..Default::default()
 /// };
 /// let provider = CopilotProvider::new(config)?;
@@ -275,7 +275,7 @@ impl CopilotProvider {
     /// use xzatoma::providers::CopilotProvider;
     ///
     /// let config = CopilotConfig {
-    ///     model: "gpt-5-mini".to_string(),
+    ///     model: "gpt-5.3-codex".to_string(),
     ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config);
@@ -309,11 +309,11 @@ impl CopilotProvider {
     /// use xzatoma::providers::{CopilotProvider, Provider};
     ///
     /// let config = CopilotConfig {
-    ///     model: "gpt-5-mini".to_string(),
+    ///     model: "gpt-5.3-codex".to_string(),
     ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
-    /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+    /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
     /// ```
     ///
     /// Authenticate and get Copilot token
@@ -1344,7 +1344,7 @@ mod tests {
     #[test]
     fn test_copilot_config_default_model() {
         let config = CopilotConfig::default();
-        assert_eq!(config.model, "gpt-5-mini");
+        assert_eq!(config.model, "gpt-5.3-codex");
     }
 
     #[test]
@@ -1362,7 +1362,7 @@ mod tests {
     fn test_copilot_provider_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
     }
 
     #[test]
@@ -1505,16 +1505,16 @@ mod tests {
 
         // Check for expected models from the testdata
         let model_ids: Vec<_> = enabled_models.iter().map(|m| m.id.as_str()).collect();
-        assert!(model_ids.contains(&"gpt-5-mini"));
-        assert!(model_ids.contains(&"claude-sonnet-4.5"));
+        assert!(model_ids.contains(&"gpt-5.3-codex"));
+        assert!(model_ids.contains(&"claude-sonnet-4.6"));
 
         // Verify models have capabilities
-        let gpt5_mini = enabled_models
+        let gpt5_codex = enabled_models
             .iter()
-            .find(|m| m.id == "gpt-5-mini")
+            .find(|m| m.id == "gpt-5.3-codex")
             .unwrap();
-        assert!(gpt5_mini.capabilities.is_some());
-        let caps = gpt5_mini.capabilities.as_ref().unwrap();
+        assert!(gpt5_codex.capabilities.is_some());
+        let caps = gpt5_codex.capabilities.as_ref().unwrap();
         assert!(caps.supports.is_some());
         assert_eq!(caps.supports.as_ref().unwrap().tool_calls, Some(true));
     }
@@ -1525,9 +1525,9 @@ mod tests {
         let test_data = include_str!("../../testdata/models.json");
         let models: Vec<CopilotModelData> = serde_json::from_str(test_data).unwrap();
 
-        // Find gpt-5-mini and verify context window
-        let gpt5_mini = models.iter().find(|m| m.id == "gpt-5-mini").unwrap();
-        let context_window = gpt5_mini
+        // Find gpt-5.3-codex and verify context window
+        let gpt5_codex = models.iter().find(|m| m.id == "gpt-5.3-codex").unwrap();
+        let context_window = gpt5_codex
             .capabilities
             .as_ref()
             .and_then(|c| c.limits.as_ref())
@@ -1539,7 +1539,7 @@ mod tests {
     fn test_get_current_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
     }
 
     #[test]
@@ -1754,16 +1754,16 @@ mod tests {
         let provider = CopilotProvider::new(config).unwrap();
 
         let model_data = CopilotModelData {
-            id: "gpt-3.5-turbo".to_string(),
-            name: "GPT-3.5 Turbo".to_string(),
+            id: "gpt-5.1-codex-mini".to_string(),
+            name: "GPT-5.1 Codex Mini".to_string(),
             capabilities: None,
             policy: None,
         };
 
         let summary = provider.convert_to_summary(model_data);
 
-        assert_eq!(summary.info.name, "gpt-3.5-turbo");
-        assert_eq!(summary.info.display_name, "GPT-3.5 Turbo");
+        assert_eq!(summary.info.name, "gpt-5.1-codex-mini");
+        assert_eq!(summary.info.display_name, "GPT-5.1 Codex Mini");
         assert_eq!(summary.info.context_window, DEFAULT_CONTEXT_WINDOW);
         assert!(summary.state.is_none());
         assert!(summary.supports_tool_calls.is_none());

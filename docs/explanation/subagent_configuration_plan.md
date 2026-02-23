@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan implements configurable provider and model selection for subagents, along with chat mode controls for enabling/disabling subagent delegation. The implementation allows users to specify different models and providers for subagent execution (e.g., using gpt-5-mini for subagents while the main agent uses gpt-5.2), and provides explicit control over when subagents are available in chat mode.
+This plan implements configurable provider and model selection for subagents, along with chat mode controls for enabling/disabling subagent delegation. The implementation allows users to specify different models and providers for subagent execution (e.g., using gpt-5.3-codex for subagents while the main agent uses gpt-5.3-codex), and provides explicit control over when subagents are available in chat mode.
 
 ## Current State Analysis
 
@@ -88,7 +88,7 @@ agent:
     # provider: copilot  # or "ollama"
 
     # Optional: Override model for subagents
-    # model: gpt-5-mini
+    # model: gpt-5.3-codex
 
     # Enable subagents in chat mode by default
     chat_enabled: false
@@ -648,7 +648,7 @@ async fn test_subagent_provider_override_copilot() {
 
 #[tokio::test]
 async fn test_subagent_model_override() {
-    // Main uses gpt-5-mini, subagents use gpt-3.5-turbo
+    // Main uses gpt-5.3-codex, subagents use gpt-3.5-turbo
 }
 
 #[tokio::test]
@@ -755,7 +755,7 @@ Manual testing checklist:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   subagent:
@@ -774,7 +774,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -815,7 +815,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   subagent:

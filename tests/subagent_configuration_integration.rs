@@ -28,7 +28,7 @@ provider:
     host: http://localhost:11434
     model: llama3.2:latest
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -49,14 +49,14 @@ agent:
 /// Test subagent model override
 ///
 /// Validates that subagents can use a different model than the main provider.
-/// Main agent uses gpt-5-mini, subagents use gpt-3.5-turbo.
+/// Main agent uses gpt-5.3-codex, subagents use gpt-3.5-turbo.
 #[test]
 fn test_subagent_model_override() {
     let config = r#"
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -76,14 +76,14 @@ agent:
 /// Test combined provider and model override
 ///
 /// Validates both provider and model can be overridden simultaneously.
-/// Main uses Copilot with gpt-5-mini, subagents use Ollama with llama3.2.
+/// Main uses Copilot with gpt-5.3-codex, subagents use Ollama with llama3.2.
 #[test]
 fn test_subagent_provider_and_model_override() {
     let config = r#"
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -114,7 +114,7 @@ fn test_subagent_inherits_parent_provider_when_no_override() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -140,7 +140,7 @@ fn test_subagent_model_override_with_parent_provider() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -171,7 +171,7 @@ fn test_chat_subagent_disabled_by_default() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -196,7 +196,7 @@ fn test_chat_subagent_enabled_by_default() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -225,7 +225,7 @@ fn test_chat_subagent_prompt_detection_config() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -255,7 +255,7 @@ fn test_invalid_subagent_provider_type() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -290,7 +290,7 @@ provider:
     host: http://localhost:11434
     model: llama3.2:latest
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -316,7 +316,7 @@ fn test_valid_subagent_provider_ollama() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -345,7 +345,7 @@ fn test_subagent_config_all_fields() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -383,7 +383,7 @@ fn test_subagent_config_minimal_fields() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -406,7 +406,7 @@ fn test_subagent_config_empty_provider_string() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -437,7 +437,7 @@ fn test_invalid_yaml_syntax() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 agent: [invalid yaml structure
 "#;
 
@@ -461,7 +461,7 @@ fn test_missing_provider_type() {
     let config = r#"
 provider:
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -493,7 +493,7 @@ fn test_subagent_provider_creation_with_invalid_config() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://invalid.host:99999
     model: nonexistent:model
@@ -528,7 +528,7 @@ fn test_subagent_config_parsing_performance() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -567,7 +567,7 @@ fn test_multiple_provider_configs_memory_efficiency() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
     api_base: "https://api.github.com"
   ollama:
     host: http://localhost:11434
@@ -644,7 +644,7 @@ fn test_backward_compatibility_empty_subagent_section() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -669,7 +669,7 @@ fn test_backward_compatibility_subagent_no_override() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -724,7 +724,7 @@ fn test_backward_compatibility_chat_enabled_field() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -743,7 +743,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -774,7 +774,7 @@ fn test_subagent_max_depth_valid_range() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -802,7 +802,7 @@ fn test_subagent_max_depth_exceeds_maximum() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -836,7 +836,7 @@ fn test_subagent_default_max_turns_valid_range() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -864,7 +864,7 @@ fn test_subagent_output_max_size_minimum() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -897,7 +897,7 @@ fn test_subagent_output_max_size_valid() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -925,7 +925,7 @@ fn test_cost_optimized_configuration_example() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -957,7 +957,7 @@ fn test_provider_mixing_configuration_example() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
@@ -1016,7 +1016,7 @@ fn test_chat_mode_manual_enablement_example() {
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10

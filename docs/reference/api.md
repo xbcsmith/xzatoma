@@ -132,7 +132,7 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 #[tokio::main]
 async fn example() -> xzatoma::error::Result<()> {
   let config = CopilotConfig {
-    model: "gpt-5-mini".to_string(),
+    model: "gpt-5.3-codex".to_string(),
     ..Default::default()
   };
 

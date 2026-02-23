@@ -122,7 +122,7 @@ New tests validate error handling:
 - `test_parse_model_command_no_args_returns_error()` - Missing model name
 - `test_parse_models_info_with_model_name()` - Valid `/models info` command
 - `test_parse_models_info_without_model_name()` - Missing model name for info
-- `test_parse_models_info_with_complex_model_name()` - Complex model name like "gpt-5-mini"
+- `test_parse_models_info_with_complex_model_name()` - Complex model name like "gpt-5.3-codex"
 
 ### Test Results
 
@@ -192,28 +192,28 @@ Switched from PLANNING to WRITE mode
 ### Model Info Command
 
 ```text
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>> /models info gpt-5-mini
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>> /models info gpt-5.3-codex
 
-Model Information: gpt-5-mini
+Model Information: gpt-5.3-codex
 ==============================
-Display Name: GPT-5 Mini
+Display Name: GPT-5.3 Codex
 Context Window: 16,384 tokens
 Capabilities: text, code
 Status: stable
 ...
 
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>
 ```
 
 ### Model Info Missing Argument
 
 ```text
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>> /models info
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>> /models info
 Command /models info requires an argument
 
 Usage: /models info <model_name>
 
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>
 ```
 
 ## Design Decisions

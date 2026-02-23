@@ -18,13 +18,13 @@ Subagent configuration lives under `agent.subagent` in your YAML config file:
 ```yaml
 agent:
   subagent:
-    provider: "ollama"              # Optional: override main provider
-    model: "llama3.2:latest"        # Optional: override main model
-    chat_enabled: true              # Optional: enable subagents in chat mode
-    max_executions: 5               # Optional: limit concurrent subagents
-    max_depth: 3                    # Optional: limit delegation depth
-    max_total_tokens: 50000         # Optional: token budget
-    default_max_turns: 10           # Optional: conversation turns per subagent
+    provider: "ollama" # Optional: override main provider
+    model: "llama3.2:3b" # Optional: override main model
+    chat_enabled: true # Optional: enable subagents in chat mode
+    max_executions: 5 # Optional: limit concurrent subagents
+    max_depth: 3 # Optional: limit delegation depth
+    max_total_tokens: 50000 # Optional: token budget
+    default_max_turns: 10 # Optional: conversation turns per subagent
 ```
 
 ### Configuration Fields
@@ -36,6 +36,7 @@ Override the provider used for subagent instances. If not specified, subagents u
 **Valid values**: `copilot`, `ollama`
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -47,10 +48,15 @@ agent:
 Override the model for subagent instances. Must be available in the configured provider.
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
+<<<<<<< Updated upstream
     model: "gpt-5-mini"  # Cheaper model for cost optimization
+=======
+    model: "gpt-5.1-codex-mini" # Cheaper model for cost optimization
+>>>>>>> Stashed changes
 ```
 
 #### `chat_enabled` (Optional)
@@ -58,10 +64,12 @@ agent:
 Enable subagent functionality in interactive chat mode. Default is `false` (disabled).
 
 When enabled, users can:
+
 - Use `/subagents on|off` to toggle subagent delegation
 - Mention subagent keywords to auto-enable (`/subagents`, `delegate`, `spawn agent`, etc.)
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -75,6 +83,7 @@ Maximum number of concurrent subagent instances. Prevents resource exhaustion.
 **Default**: `5`
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -88,6 +97,7 @@ Maximum delegation nesting level. Prevents infinite recursion where subagents sp
 **Default**: `3`
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -99,6 +109,7 @@ agent:
 Total token budget for all active subagents. Helps control API costs.
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -112,6 +123,7 @@ Maximum conversation turns each subagent can take before returning results.
 **Default**: `10`
 
 **Example**:
+
 ```yaml
 agent:
   subagent:
@@ -128,11 +140,15 @@ Use an expensive model (GPT-4) for main tasks but delegate heavy lifting to chea
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
 agent:
   subagent:
+<<<<<<< Updated upstream
     model: gpt-5-mini        # 10x cheaper
+=======
+    model: gpt-5.1-codex-mini # cheaper model for subagents
+>>>>>>> Stashed changes
     chat_enabled: false
     max_executions: 10
 ```
@@ -149,16 +165,16 @@ Use cloud-based Copilot for reasoning, local Ollama for cost-free subagents:
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   subagent:
-    provider: ollama              # Use local model for subagents
-    model: llama3.2:latest
+    provider: ollama # Use local model for subagents
+    model: llama3.2:3b
     chat_enabled: true
     max_executions: 5
 ```
@@ -176,14 +192,18 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   subagent:
+<<<<<<< Updated upstream
     model: granite3.2:2b              # Smaller, faster model
+=======
+    model: granite3.2:2b # Smaller, faster model
+>>>>>>> Stashed changes
     chat_enabled: true
-    default_max_turns: 3          # Quick operations only
-    max_depth: 1                  # Keep it simple
+    default_max_turns: 3 # Quick operations only
+    max_depth: 1 # Keep it simple
 ```
 
 **When to use**: Real-time operations, quick parallel tasks
@@ -200,29 +220,32 @@ XZatoma validates subagent configuration on startup:
 agent:
   subagent:
     provider: ollama
-    model: llama3.2:latest
+    model: llama3.2:3b
     chat_enabled: true
 ```
 
 ### Invalid Configuration Examples
 
 **Missing provider model**:
+
 ```yaml
 agent:
   subagent:
-    provider: ollama          # ERROR: model not specified
+    provider: ollama # ERROR: model not specified
     chat_enabled: true
 ```
 
 **Unknown provider**:
+
 ```yaml
 agent:
   subagent:
-    provider: unknown-provider   # ERROR: not "copilot" or "ollama"
+    provider: unknown-provider # ERROR: not "copilot" or "ollama"
     model: some-model
 ```
 
 **Model not available**:
+
 ```yaml
 provider:
   type: copilot
@@ -232,7 +255,7 @@ provider:
 agent:
   subagent:
     provider: copilot
-    model: nonexistent-model     # ERROR: not available in provider
+    model: nonexistent-model # ERROR: not available in provider
 ```
 
 ## Troubleshooting
@@ -247,7 +270,11 @@ agent:
 agent:
   subagent:
     # provider: ollama   <- Remove if using main provider
+<<<<<<< Updated upstream
     model: gpt-5-mini
+=======
+    model: gpt-5.1-codex-mini
+>>>>>>> Stashed changes
     chat_enabled: true
 ```
 
@@ -270,6 +297,7 @@ xzatoma /models list --provider ollama
 **Cause**: `chat_enabled: false` or subagents not enabled at runtime.
 
 **Solution**:
+
 1. Verify config: `chat_enabled: true`
 2. In chat, run `/subagents on` to enable
 3. Check status: `/status`
@@ -283,9 +311,9 @@ xzatoma /models list --provider ollama
 ```yaml
 agent:
   subagent:
-    max_total_tokens: 50000       # Hard cap
-    default_max_turns: 5          # Fewer turns per subagent
-    max_executions: 2             # Fewer concurrent subagents
+    max_total_tokens: 50000 # Hard cap
+    default_max_turns: 5 # Fewer turns per subagent
+    max_executions: 2 # Fewer concurrent subagents
 ```
 
 ### Performance degradation
@@ -297,9 +325,15 @@ agent:
 ```yaml
 agent:
   subagent:
+<<<<<<< Updated upstream
     model: granite3.2:2b              # Faster, smaller
     max_executions: 2             # Reduce parallelism
     max_depth: 1                  # Simpler delegation
+=======
+    model: granite3.2:2b # Faster, smaller
+    max_executions: 2 # Reduce parallelism
+    max_depth: 1 # Simpler delegation
+>>>>>>> Stashed changes
 ```
 
 ## Migration from Previous Versions
@@ -311,7 +345,7 @@ If you have an existing XZatoma config without subagent settings, subagents are 
 ```yaml
 agent:
   subagent:
-    chat_enabled: false           # Start disabled
+    chat_enabled: false # Start disabled
     max_executions: 5
     max_depth: 3
 ```
@@ -341,24 +375,34 @@ Default `max_executions: 5` balances parallelism vs. resource usage:
 
 ### Model Selection Impact
 
+<<<<<<< Updated upstream
 | Model | Speed | Quality | Cost | Best For |
 |-------|-------|---------|------|----------|
 | granite3.2:2b | Very Fast | Basic | Free | Quick tasks |
 | llama3.2 | Fast | Good | Free | General work |
 | gpt-5-mini | Moderate | Excellent | $0.0005/1K tokens | Analysis |
 | gpt-4 | Slow | Best | $0.03/1K tokens | Complex reasoning |
+=======
+| Model            | Speed     | Quality   | Cost     | Best For          |
+| ---------------- | --------- | --------- | -------- | ----------------- |
+| granite3.2:2b    | Very Fast | Good      | Free     | Quick tasks       |
+| llama3.2:3b      | Fast      | Good      | Free     | General work      |
+| gpt-5.1-codex-mini | Moderate  | Excellent | Low      | Analysis          |
+| gpt-5.3-codex       | Fast      | Best      | Moderate | Complex reasoning |
+>>>>>>> Stashed changes
 
 ## Best Practices
 
 ### 1. Start Conservative
 
 Begin with safe limits:
+
 ```yaml
 agent:
   subagent:
-    chat_enabled: false          # Disabled by default
-    max_executions: 2            # Conservative parallelism
-    max_depth: 2                 # Limited nesting
+    chat_enabled: false # Disabled by default
+    max_executions: 2 # Conservative parallelism
+    max_depth: 2 # Limited nesting
 ```
 
 ### 2. Use Chat Mode for Testing
@@ -384,8 +428,13 @@ xzatoma /status
 ### 4. Match Model to Task
 
 - **Quick tasks**: Small, fast models (granite3.2:2b)
+<<<<<<< Updated upstream
 - **General work**: Medium models (llama3.2, gpt-5-mini)
 - **Complex analysis**: Larger models (gpt-4)
+=======
+- **General work**: Medium models (llama3.2:3b, gpt-5.1-codex-mini)
+- **Complex analysis**: Larger models (gpt-5.3-codex, claude-sonnet-4.6)
+>>>>>>> Stashed changes
 
 ### 5. Set Clear Limits
 
@@ -394,9 +443,9 @@ Always specify cost/resource boundaries:
 ```yaml
 agent:
   subagent:
-    max_total_tokens: 50000      # Hard cost cap
-    max_executions: 5            # Resource limit
-    max_depth: 3                 # Nesting limit
+    max_total_tokens: 50000 # Hard cost cap
+    max_executions: 5 # Resource limit
+    max_depth: 3 # Nesting limit
 ```
 
 ## Advanced Configuration
@@ -409,16 +458,16 @@ Use different providers for different scenarios:
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   subagent:
-    provider: ollama              # Default to local
-    model: llama3.2:latest
+    provider: ollama # Default to local
+    model: llama3.2:3b
 ```
 
 In code, you can override at runtime:
@@ -437,7 +486,7 @@ Override configuration via environment variables:
 
 ```bash
 XZATOMA_SUBAGENT_PROVIDER=ollama \
-XZATOMA_SUBAGENT_MODEL=llama3.2 \
+XZATOMA_SUBAGENT_MODEL=llama3.2:3b \
 xzatoma chat
 ```
 
@@ -452,7 +501,13 @@ xzatoma chat
 
 **Last updated**: 2024
 **For questions**: See the troubleshooting section above or check project issues
+
 ```
 
 ---
 
+<<<<<<< Updated upstream
+=======
+### Task 4.2: Create Chat Mode Usage Guide
+```
+>>>>>>> Stashed changes
