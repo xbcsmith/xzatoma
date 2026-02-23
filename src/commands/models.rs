@@ -679,8 +679,8 @@ mod tests {
 
     #[test]
     fn test_output_models_json_multiple_models() {
-        let a = ModelInfo::new("gpt-4", "GPT-4", 8192);
-        let b = ModelInfo::new("llama-3", "Llama 3", 65536);
+        let a = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
+        let b = ModelInfo::new("llama3.2:3b", "llama3.2:3b", 131072);
         let json = serialize_pretty(&vec![a.clone(), b.clone()]).unwrap();
         let parsed: Vec<ModelInfo> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.len(), 2);
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_output_models_summary_json_with_full_data() {
-        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         let summary = ModelInfoSummary::new(
             info.clone(),
             Some("enabled".to_string()),
@@ -709,16 +709,16 @@ mod tests {
 
     #[test]
     fn test_output_model_info_json_basic_fields() {
-        let model = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let model = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         let json = serialize_pretty(&model).unwrap();
         let parsed: ModelInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.name, "gpt-4");
-        assert_eq!(parsed.display_name, "GPT-4");
+        assert_eq!(parsed.name, "gpt-5.3-codex");
+        assert_eq!(parsed.display_name, "GPT-5.3 Codex");
     }
 
     #[test]
     fn test_output_model_summary_json_all_fields() {
-        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         let summary = ModelInfoSummary::new(
             info.clone(),
             Some("enabled".to_string()),
@@ -751,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_output_models_summary_json_returns_ok() {
-        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         let summary = ModelInfoSummary::new(
             info,
             Some("enabled".to_string()),
@@ -773,7 +773,7 @@ mod tests {
 
     #[test]
     fn test_output_model_summary_json_returns_ok() {
-        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         let summary = ModelInfoSummary::new(
             info,
             Some("enabled".to_string()),
@@ -788,8 +788,8 @@ mod tests {
 
     #[test]
     fn test_list_models_summary_table_output() {
-        let info1 = ModelInfo::new("gpt-4", "GPT-4", 8192);
-        let info2 = ModelInfo::new("llama-3", "Llama 3", 65536);
+        let info1 = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
+        let info2 = ModelInfo::new("llama3.2:3b", "llama3.2:3b", 131072);
 
         let summary1 = ModelInfoSummary::new(
             info1.clone(),
@@ -827,7 +827,7 @@ mod tests {
 
     #[test]
     fn test_model_info_summary_detailed_output() {
-        let mut info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let mut info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
         info.provider_specific
             .insert("policy".to_string(), "standard".to_string());
 
@@ -842,10 +842,10 @@ mod tests {
         );
 
         let output = render_model_summary_detailed(&summary);
-        assert!(output.contains("Model Information (GPT-4)"));
+        assert!(output.contains("Model Information (GPT-5.3 Codex)"));
         assert!(output.contains("Name:"));
         assert!(output.contains("Display Name:"));
-        assert!(output.contains("Context Window:  8192 tokens"));
+        assert!(output.contains("Context Window:  264000 tokens"));
         assert!(output.contains("State:           enabled"));
         assert!(output.contains("Max Prompt:      6144 tokens"));
         assert!(output.contains("Max Completion:  2048 tokens"));

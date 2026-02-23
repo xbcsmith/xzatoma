@@ -4,18 +4,18 @@ This tutorial provides practical, tested examples of subagent configuration for 
 
 ## Quick Reference
 
-| Use Case | Best For | Config Complexity | Cost Impact |
-|----------|----------|------------------|------------|
-| [Cost Optimization](#example-1-cost-optimization) | High volume work | Simple | 70% savings |
-| [Provider Mixing](#example-2-provider-mixing) | Hybrid workflows | Moderate | Variable |
-| [Speed Optimization](#example-3-speed-optimization) | Real-time operations | Simple | Minimal |
-| [Chat Mode with Manual Control](#example-4-chat-mode-manual) | Interactive work | Simple | Control-based |
+| Use Case                                                     | Best For             | Config Complexity | Cost Impact   |
+| ------------------------------------------------------------ | -------------------- | ----------------- | ------------- |
+| [Cost Optimization](#example-1-cost-optimization)            | High volume work     | Simple            | 70% savings   |
+| [Provider Mixing](#example-2-provider-mixing)                | Hybrid workflows     | Moderate          | Variable      |
+| [Speed Optimization](#example-3-speed-optimization)          | Real-time operations | Simple            | Minimal       |
+| [Chat Mode with Manual Control](#example-4-chat-mode-manual) | Interactive work     | Simple            | Control-based |
 
 ## Example 1: Cost Optimization
 
 ### Use Case
 
-You have a Copilot subscription and want to use expensive GPT-4 for main reasoning but delegate routine work to cheaper GPT-3.5-turbo.
+You have a Copilot subscription and want to use a powerful model for main reasoning but delegate routine work to a cheaper model.
 
 ### Configuration
 
@@ -24,14 +24,14 @@ You have a Copilot subscription and want to use expensive GPT-4 for main reasoni
 provider:
   type: copilot
   copilot:
-    model: gpt-4-turbo              # Expensive but powerful
+    model: gpt-5.3-codex # Powerful main model
 
 agent:
   subagent:
-    model: gpt-3.5-turbo            # Cheap but capable
-    chat_enabled: false              # Enable manually with /subagents on
-    max_executions: 10               # Allow parallel work
-    max_total_tokens: 50000          # Cost cap
+    model: gpt-5.1-codex-mini # Cheaper but capable
+    chat_enabled: false # Enable manually with /subagents on
+    max_executions: 10 # Allow parallel work
+    max_total_tokens: 50000 # Cost cap
 ```
 
 ### Expected Behavior
@@ -39,6 +39,7 @@ agent:
 **Main agent**: Uses GPT-4 for complex reasoning and planning
 
 **Subagents**: Use GPT-3.5-turbo for:
+
 - Document summarization
 - Data extraction
 - File processing
@@ -56,8 +57,8 @@ xzatoma chat
 # Check model assignment
 /models list
 # Shows:
-#  - Main model: gpt-4-turbo
-#  - Subagent model: gpt-3.5-turbo
+#  - Main model: gpt-5.3-codex
+#  - Subagent model: gpt-5.1-codex-mini
 
 # Try delegating work
 Process these 20 CSV files and create a summary report.
@@ -71,13 +72,15 @@ Use subagents to speed up the work.
 ### Cost Analysis
 
 **Without subagents**:
-- 1 GPT-4 call for 20 files
-- Estimated: ~$0.10-0.20 (1000-2000 tokens × $0.03/1K)
+
+- 1 gpt-5.3-codex call for 20 files
+- Estimated: ~$0.10-0.20 (1000-2000 tokens)
 
 **With subagents**:
-- 1 GPT-4 call for coordination
-- 20 GPT-3.5-turbo calls for file processing
-- Estimated: ~$0.02 (2000 cheap tokens × $0.0005/1K)
+
+- 1 gpt-5.3-codex call for coordination
+- 20 gpt-5.1-codex-mini calls for file processing
+- Estimated: ~$0.02 (2000 cheaper tokens)
 - **Savings**: ~80-90%
 
 ## Example 2: Provider Mixing
@@ -93,25 +96,25 @@ You want to use Copilot for strategic work but delegate to your local Ollama ins
 provider:
   type: copilot
   copilot:
-    model: gpt-4-turbo
+    model: gpt-5.3-codex
 
   # Configure Ollama as alternative provider
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   subagent:
-    provider: ollama                 # Use local instead of cloud
-    model: llama3.2:latest
-    chat_enabled: true               # Enable by default
-    max_executions: 5                # Reasonable parallelism
-    max_depth: 2                     # Limit nesting
+    provider: ollama # Use local instead of cloud
+    model: llama3.2:3b
+    chat_enabled: true # Enable by default
+    max_executions: 5 # Reasonable parallelism
+    max_depth: 2 # Limit nesting
 ```
 
 ### Expected Behavior
 
-**Main agent**: Copilot (GPT-4) - strategic thinking
+**Main agent**: Copilot (gpt-5.3-codex) - strategic thinking
 
 **Subagents**: Ollama on localhost (free) - parallel task execution
 
@@ -127,7 +130,7 @@ brew install ollama
 brew services start ollama
 
 # 3. Pull a model
-ollama pull llama3.2
+ollama pull llama3.2:3b
 
 # 4. Verify it's running
 curl http://localhost:11434/api/tags
@@ -153,18 +156,20 @@ Use subagents to analyze each one in parallel for key terms.
 
 # Monitor execution
 # You should see:
-# - Main agent (GPT-4) coordinates
+# - Main agent (gpt-5.3-codex) coordinates
 # - Subagents use Ollama locally (fast, no API calls)
 ```
 
 ### Cost Analysis
 
 **Without subagents**:
+
 - 1 GPT-4 call processing all 10 documents
 - Cost: ~$0.05
 
 **With Ollama subagents**:
-- 1 GPT-4 call for coordination
+
+- 1 gpt-5.3-codex call for coordination
 - 10 local Ollama calls (free)
 - Cost: ~$0.005
 - **Savings**: 90%
@@ -174,6 +179,7 @@ Use subagents to analyze each one in parallel for key terms.
 **Issue**: "Failed to connect to Ollama"
 
 **Solution**:
+
 ```bash
 # Verify Ollama is running
 ps aux | grep ollama
@@ -188,12 +194,13 @@ curl http://localhost:11434/api/tags
 **Issue**: "Model not found in Ollama"
 
 **Solution**:
+
 ```bash
 # List available models
 ollama list
 
 # Pull the model if missing
-ollama pull llama3.2
+ollama pull llama3.2:3b
 
 # Update config with available model
 # Then restart xzatoma
@@ -213,22 +220,22 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest           # General model
+    model: llama3.2:3b # General model
 
 agent:
   subagent:
     # Use same provider (ollama)
-    model: granite3.2:2b                 # Smaller, faster model
-    chat_enabled: true                # Enable by default
-    default_max_turns: 3             # Quick responses only
-    max_executions: 5                # Good parallelism locally
+    model: granite3.2:2b # Smaller, faster model
+    chat_enabled: true # Enable by default
+    default_max_turns: 3 # Quick responses only
+    max_executions: 5 # Good parallelism locally
 ```
 
 ### Expected Behavior
 
 - All operations local (no API calls)
-- Main agent: Medium-sized model (balanced)
-- Subagents: Very small model (fast)
+- Main agent: llama3.2:3b (balanced)
+- Subagents: granite3.2:2b (fast, compact)
 - Response time: Sub-second for subagent operations
 
 ### Setup
@@ -238,8 +245,8 @@ agent:
 ollama serve
 
 # 2. Pull models (if not already available)
-ollama pull llama3.2      # ~4GB
-ollama pull granite3.2:2b     # ~1.6GB (faster)
+ollama pull llama3.2:3b      # ~1.9GB
+ollama pull granite3.2:2b    # ~1.4GB (faster)
 
 # 3. Verify both are available
 ollama list
@@ -268,11 +275,13 @@ Use subagents to read and summarize these 5 text files.
 ### Performance Analysis
 
 **Speed metrics** (typical):
+
 - Main agent processing: 2-5 seconds per request
 - Subagent delegation: <1 second response per task
 - 5 parallel subagents: 1-3 seconds to complete all tasks
 
 **Resource usage** (typical):
+
 - RAM: 4-6GB for two models loaded
 - CPU: 60-80% during processing
 - Network: 0 MB (local only)
@@ -290,13 +299,13 @@ You want subagents available in chat mode but want to control them manually. No 
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
 agent:
   subagent:
     # Keep same provider for simplicity
     # model not specified - uses main model
-    chat_enabled: false              # Don't enable automatically
+    chat_enabled: false # Don't enable automatically
     max_executions: 5
     max_depth: 3
     max_total_tokens: 100000
@@ -353,26 +362,28 @@ You want different configurations for different scenarios. Create multiple confi
 ### Configuration Files
 
 **config.yaml** (cost-optimized, default):
+
 ```yaml
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
 agent:
   subagent:
-    model: gpt-3.5-turbo
+    model: gpt-5.1-codex-mini
     chat_enabled: false
     max_executions: 10
 ```
 
 **config-local.yaml** (fully local):
+
 ```yaml
 provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2
+    model: llama3.2:3b
 
 agent:
   subagent:
@@ -382,17 +393,18 @@ agent:
 ```
 
 **config-premium.yaml** (best quality):
+
 ```yaml
 provider:
   type: copilot
   copilot:
-    model: gpt-4
+    model: gpt-5.3-codex
 
 agent:
   subagent:
-    model: gpt-4              # Same powerful model
+    model: gpt-5.3-codex # Same powerful model
     chat_enabled: true
-    max_executions: 3         # Limit cost
+    max_executions: 3 # Limit cost
     max_total_tokens: 200000
 ```
 
@@ -405,7 +417,7 @@ xzatoma chat
 # Use local-only config (free)
 xzatoma chat --config ~/.xzatoma/config-local.yaml
 
-# Use premium config (best quality, highest cost)
+# Use cloud config (best quality)
 xzatoma chat --config ~/.xzatoma/config-premium.yaml
 
 # Run plan with specific config
@@ -425,7 +437,7 @@ You're deploying XZatoma in production and need safety, monitoring, and cost con
 provider:
   type: copilot
   copilot:
-    model: gpt-4-turbo
+    model: gpt-5.3-codex
 
 agent:
   # Main agent settings
@@ -435,12 +447,12 @@ agent:
   # Subagent settings with production guardrails
   subagent:
     provider: copilot
-    model: gpt-3.5-turbo            # Cheap for cost control
-    chat_enabled: false              # Manual control only
-    max_executions: 3                # Conservative parallelism
-    max_depth: 1                     # No recursive delegation
-    max_total_tokens: 10000          # Hard cost cap per session
-    default_max_turns: 5             # Quick completion
+    model: gpt-5.1-codex-mini # Cheaper for cost control
+    chat_enabled: false # Manual control only
+    max_executions: 3 # Conservative parallelism
+    max_depth: 1 # No recursive delegation
+    max_total_tokens: 10000 # Hard cost cap per session
+    default_max_turns: 5 # Quick completion
 
   # Safety settings
   tools:
@@ -448,7 +460,7 @@ agent:
       allowed_dirs:
         - /data/input
         - /data/output
-      max_file_size: 10485760        # 10MB
+      max_file_size: 10485760 # 10MB
     terminal:
       allowed_commands:
         - ls
@@ -493,16 +505,16 @@ You're developing and testing features. You want fast iteration with good qualit
 provider:
   type: copilot
   copilot:
-    model: gpt-4-turbo              # Good quality for testing
+    model: gpt-5.3-codex # Good quality for testing
 
 agent:
   subagent:
-    model: gpt-4-turbo              # Same quality for consistency
-    chat_enabled: true              # Enable by default
-    max_executions: 5               # Good parallelism
-    max_depth: 3                    # Allow nesting
-    max_total_tokens: 500000        # High limit for testing
-    default_max_turns: 20           # Thorough responses
+    model: gpt-5.3-codex # Same quality for consistency
+    chat_enabled: true # Enable by default
+    max_executions: 5 # Good parallelism
+    max_depth: 3 # Allow nesting
+    max_total_tokens: 500000 # High limit for testing
+    default_max_turns: 20 # Thorough responses
 ```
 
 ### Usage
@@ -526,8 +538,8 @@ xzatoma chat --config config-dev.yaml
 ```yaml
 agent:
   subagent:
-    model: gpt-3.5-turbo
-    chat_enabled: false              # Conservative start
+    model: gpt-5.1-codex-mini
+    chat_enabled: false # Conservative start
     max_executions: 5
 ```
 
@@ -556,7 +568,7 @@ xzatoma chat
 ```yaml
 agent:
   subagent:
-    chat_enabled: true              # Now enable by default
+    chat_enabled: true # Now enable by default
 ```
 
 ## Validation Checklist
@@ -578,25 +590,25 @@ For each configuration example:
 
 ### Cost Optimization Example
 
-| Operation | Main Only | With Subagents | Savings |
-|-----------|-----------|---|---|
-| Process 20 files | $0.15 | $0.02 | 87% |
-| 10K tokens | $0.03 | $0.005 | 83% |
+| Operation        | Main Only | With Subagents | Savings |
+| ---------------- | --------- | -------------- | ------- |
+| Process 20 files | $0.15     | $0.02          | 87%     |
+| 10K tokens       | $0.03     | $0.005         | 83%     |
 
 ### Speed Optimization Example
 
-| Operation | Sequentially | Parallel (5 agents) | Speedup |
-|-----------|---|---|---|
-| Process 10 files | 10s | 2s | 5x |
-| Analyze docs | 30s | 6s | 5x |
+| Operation        | Sequentially | Parallel (5 agents) | Speedup |
+| ---------------- | ------------ | ------------------- | ------- |
+| Process 10 files | 10s          | 2s                  | 5x      |
+| Analyze docs     | 30s          | 6s                  | 5x      |
 
 ### Provider Mixing Example
 
-| Scenario | Cost | Speed | Resources |
-|----------|------|-------|-----------|
-| All Copilot | $0.10 | Medium | Cloud |
-| Copilot + Ollama | $0.02 | Fast | Hybrid |
-| All Ollama | Free | Fast | Local |
+| Scenario         | Cost  | Speed  | Resources |
+| ---------------- | ----- | ------ | --------- |
+| All Copilot      | $0.10 | Medium | Cloud     |
+| Copilot + Ollama | $0.02 | Fast   | Hybrid    |
+| All Ollama       | Free  | Fast   | Local     |
 
 ## Common Configuration Mistakes
 
@@ -606,17 +618,18 @@ For each configuration example:
 # Wrong
 agent:
   subagent:
-    model: gpt-3.5-turbo
+    model: gpt-5.1-codex-mini
     # Missing: chat_enabled
 ```
 
 **Fix**:
+
 ```yaml
 # Right
 agent:
   subagent:
-    model: gpt-3.5-turbo
-    chat_enabled: true              # Add this
+    model: gpt-5.1-codex-mini
+    chat_enabled: true # Add this
 ```
 
 ### Mistake 2: Using Non-Existent Model
@@ -625,10 +638,11 @@ agent:
 # Wrong
 agent:
   subagent:
-    model: gpt-99-ultra             # Doesn't exist
+    model: gpt-99-ultra # Doesn't exist
 ```
 
 **Fix**: Check available models first
+
 ```bash
 xzatoma /models list
 ```
@@ -641,16 +655,17 @@ Then use real model name.
 # Wrong
 agent:
   subagent:
-    model: gpt-4
+    model: gpt-5.3-codex
     # Missing: max_total_tokens
 ```
 
 **Fix**:
+
 ```yaml
 agent:
   subagent:
-    model: gpt-4
-    max_total_tokens: 50000         # Add limit
+    model: gpt-5.3-codex
+    max_total_tokens: 50000 # Add limit
 ```
 
 ### Mistake 4: Using Wrong Provider Name
@@ -659,14 +674,15 @@ agent:
 # Wrong
 agent:
   subagent:
-    provider: openai                # Not "copilot" or "ollama"
+    provider: openai # Not "copilot" or "ollama"
 ```
 
 **Fix**: Use only configured providers:
+
 ```yaml
 agent:
   subagent:
-    provider: copilot               # or "ollama"
+    provider: copilot # or "ollama"
 ```
 
 ## Next Steps

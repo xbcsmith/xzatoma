@@ -5,6 +5,7 @@
 This plan implements intelligent context window management for XZatoma with different behaviors for chat mode (user-controlled) and run mode (automatic). The system will monitor token usage, warn users when approaching limits, provide summarization capabilities, and automatically manage context in autonomous execution.
 
 Key features:
+
 - Context window monitoring with configurable thresholds
 - Warning system for chat mode when approaching token limits
 - `/context summary` command for manual summarization
@@ -17,6 +18,7 @@ Key features:
 ### Existing Infrastructure
 
 **Conversation Management**
+
 - `src/agent/conversation.rs` - Manages conversation history with token tracking
 - `Conversation::get_context_info()` - Returns `ContextInfo` with token usage stats
 - `Conversation::prune_if_needed()` - Automatic pruning at 80% threshold (creates summary)
@@ -24,18 +26,21 @@ Key features:
 - Support for provider-reported token usage via `update_from_provider_usage()`
 
 **Command System**
+
 - `src/commands/special_commands.rs` - Special command parsing
 - `SpecialCommand` enum with existing commands (mode, safety, status, help, etc.)
 - `ShowContextInfo` command already exists (displays token stats)
 - Command parsing with error handling
 
 **Configuration**
+
 - `src/config.rs` - YAML-based configuration
 - `ConversationConfig` - max_tokens, min_retain_turns, prune_threshold
 - `AgentConfig` - chat, conversation, tools configuration
 - Environment variable and CLI override support
 
 **Chat vs Run Modes**
+
 - Chat mode: `src/commands/mod.rs::run_chat()` - Interactive with special commands
 - Run mode: `src/commands/mod.rs::run_plan()` - Autonomous plan execution
 - Different execution patterns and user interaction models
@@ -60,6 +65,7 @@ Key features:
 **File**: `src/config.rs`
 
 Add new fields to `ConversationConfig`:
+
 ```rust
 pub struct ConversationConfig {
     pub max_tokens: usize,
@@ -73,6 +79,7 @@ pub struct ConversationConfig {
 ```
 
 Add default functions:
+
 - `default_warning_threshold()` -> 0.85
 - `default_auto_summary_threshold()` -> 0.90
 
@@ -83,6 +90,7 @@ Update `config/config.yaml` example with new fields.
 **File**: `src/agent/conversation.rs`
 
 Add new method to `Conversation`:
+
 ```rust
 pub fn check_context_status(&self) -> ContextStatus {
     let percentage = self.token_count as f64 / self.max_tokens as f64;
@@ -104,6 +112,7 @@ pub enum ContextStatus {
 ```
 
 Add helper method:
+
 ```rust
 pub fn should_warn(&self, warning_threshold: f64) -> bool
 pub fn should_auto_summarize(&self, auto_threshold: f64) -> bool
@@ -114,11 +123,13 @@ pub fn should_auto_summarize(&self, auto_threshold: f64) -> bool
 **File**: `src/agent/conversation.rs`
 
 Make existing `create_summary()` method public:
+
 ```rust
 pub fn create_summary_message(&self, messages: &[Message]) -> String
 ```
 
 Add new public method for explicit summarization:
+
 ```rust
 pub fn summarize_and_reset(&mut self) -> Result<String, ConversationError> {
     // 1. Collect all non-system messages
@@ -133,6 +144,7 @@ pub fn summarize_and_reset(&mut self) -> Result<String, ConversationError> {
 #### Task 1.4: Testing Requirements
 
 **Tests** in `src/agent/conversation.rs`:
+
 - `test_context_status_normal()` - Below warning threshold
 - `test_context_status_warning()` - Between warning and critical
 - `test_context_status_critical()` - Above auto-summary threshold
@@ -166,6 +178,7 @@ pub fn summarize_and_reset(&mut self) -> Result<String, ConversationError> {
 **File**: `src/commands/mod.rs`
 
 In `run_chat()` function, after each agent turn:
+
 ```rust
 // Check context status after agent response
 let context_status = conversation.check_context_status();
@@ -194,6 +207,7 @@ match context_status {
 **File**: `src/commands/special_commands.rs`
 
 Extend `SpecialCommand` enum:
+
 ```rust
 pub enum SpecialCommand {
     // ... existing variants ...
@@ -208,6 +222,7 @@ pub enum SpecialCommand {
 ```
 
 Update `parse_special_command()`:
+
 ```rust
 fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError> {
     // ... existing parsing ...
@@ -234,6 +249,7 @@ fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError> {
 **File**: `src/commands/mod.rs`
 
 In `run_chat()`, handle new commands:
+
 ```rust
 SpecialCommand::ContextInfo => {
     let info = conversation.get_context_info(model_context_window);
@@ -278,6 +294,7 @@ SpecialCommand::ContextSummary { model } => {
 **File**: `src/commands/mod.rs`
 
 Add helper function:
+
 ```rust
 async fn perform_context_summary(
     conversation: &mut Conversation,
@@ -323,13 +340,15 @@ fn create_summary_prompt(messages: &[Message]) -> String {
 #### Task 2.5: Testing Requirements
 
 **Tests** in `src/commands/special_commands.rs`:
+
 - `test_parse_context_info()` - Parse `/context` and `/context info`
 - `test_parse_context_summary_no_model()` - Parse `/context summary`
-- `test_parse_context_summary_with_model()` - Parse `/context summary --model gpt-4`
-- `test_parse_context_summary_short_flag()` - Parse `/context summary -m gpt-4`
+- `test_parse_context_summary_with_model()` - Parse `/context summary --model gpt-5.3-codex`
+- `test_parse_context_summary_short_flag()` - Parse `/context summary -m gpt-5.3-codex`
 - `test_context_command_errors()` - Invalid subcommands
 
 **Integration tests** (manual verification):
+
 - Warning displays at 85% threshold
 - Critical warning displays at 90% threshold
 - `/context info` shows current status
@@ -363,6 +382,7 @@ fn create_summary_prompt(messages: &[Message]) -> String {
 **File**: `src/commands/mod.rs`
 
 In `run_plan()` and `run_plan_with_options()`, add monitoring:
+
 ```rust
 // Inside agent execution loop, after each turn:
 if conversation.should_auto_summarize(config.agent.conversation.auto_summary_threshold) {
@@ -414,6 +434,7 @@ if conversation.should_auto_summarize(config.agent.conversation.auto_summary_thr
 **File**: `src/commands/mod.rs`
 
 Add helper to create provider for summary model:
+
 ```rust
 async fn create_summary_provider_if_needed(
     config: &Config,
@@ -465,6 +486,7 @@ async fn create_provider_for_model(
 **File**: `src/config.rs`
 
 In `Config::validate()`, add checks:
+
 ```rust
 // Validate conversation thresholds
 if config.agent.conversation.warning_threshold < 0.0
@@ -491,6 +513,7 @@ if let Some(ref model) = config.agent.conversation.summary_model {
 #### Task 3.4: Testing Requirements
 
 **Tests** in `src/config.rs`:
+
 - `test_conversation_config_with_thresholds()` - Valid threshold configuration
 - `test_validation_invalid_warning_threshold()` - Out of range warning threshold
 - `test_validation_invalid_auto_summary_threshold()` - Out of range auto threshold
@@ -498,6 +521,7 @@ if let Some(ref model) = config.agent.conversation.summary_model {
 - `test_conversation_config_summary_model()` - Summary model configuration
 
 **Integration tests** (manual verification):
+
 - Run mode triggers auto-summary at threshold
 - Summary uses configured model
 - Falls back to pruning on summary failure
@@ -530,7 +554,8 @@ if let Some(ref model) = config.agent.conversation.summary_model {
 **File**: `docs/reference/configuration.md`
 
 Add section for context window management:
-```markdown
+
+````markdown
 ### Conversation Context Window Management
 
 Configure how XZatoma manages the conversation context window:
@@ -540,6 +565,7 @@ Configure how XZatoma manages the conversation context window:
 - `summary_model`: Model to use for generating summaries (optional, defaults to current model)
 
 Example:
+
 ```yaml
 agent:
   conversation:
@@ -548,9 +574,11 @@ agent:
     prune_threshold: 0.8
     warning_threshold: 0.85
     auto_summary_threshold: 0.90
-    summary_model: "gpt-4o-mini"  # Use cheaper model for summaries
+    summary_model: "gpt-5.1-codex-mini" # Use cheaper model for summaries
 ```
-```
+````
+
+````
 
 #### Task 4.2: Create How-To Guide
 
@@ -579,13 +607,14 @@ In run mode, XZatoma automatically...
 ## Configuring Summary Models
 
 To save costs, use a cheaper model for summaries...
-```
+````
 
 #### Task 4.3: Update Example Configurations
 
 **File**: `config/config.yaml`
 
 Add commented examples:
+
 ```yaml
 agent:
   conversation:
@@ -594,11 +623,12 @@ agent:
     prune_threshold: 0.8
 
     # Context window management
-    warning_threshold: 0.85      # Warn at 85% full
-    auto_summary_threshold: 0.90  # Auto-summarize at 90% full
+    warning_threshold: 0.85 # Warn at 85% full
+    auto_summary_threshold: 0.90 # Auto-summarize at 90% full
+
 
     # Use cheaper model for summaries (optional)
-    # summary_model: "gpt-4o-mini"
+    # summary_model: "gpt-5.1-codex-mini"
 ```
 
 #### Task 4.4: Update Command Help Text
@@ -606,6 +636,7 @@ agent:
 **File**: `src/commands/special_commands.rs`
 
 Update `print_help()`:
+
 ```rust
 println!("  /context info              Show context window usage");
 println!("  /context summary           Summarize and reset context");
@@ -641,12 +672,12 @@ Document the implementation following the template in AGENTS.md.
 ```yaml
 agent:
   conversation:
-    max_tokens: 100000           # Existing
-    min_retain_turns: 5          # Existing
-    prune_threshold: 0.8         # Existing
-    warning_threshold: 0.85      # NEW: Warn user at 85%
+    max_tokens: 100000 # Existing
+    min_retain_turns: 5 # Existing
+    prune_threshold: 0.8 # Existing
+    warning_threshold: 0.85 # NEW: Warn user at 85%
     auto_summary_threshold: 0.90 # NEW: Auto-summarize at 90%
-    summary_model: "gpt-4o-mini" # NEW: Model for summaries (optional)
+    summary_model: "gpt-5.1-codex-mini" # NEW: Model for summaries (optional)
 ```
 
 ### Environment Variable Overrides
@@ -666,8 +697,8 @@ agent:
 
 # Summarize current context
 /context summary                    # Use default/config model
-/context summary --model gpt-4o-mini  # Use specific model
-/context summary -m gpt-4o-mini       # Short flag
+/context summary --model gpt-5.1-codex-mini  # Use specific model
+/context summary -m gpt-5.1-codex-mini       # Short flag
 ```
 
 ## Flow Diagrams
@@ -748,6 +779,7 @@ After each turn, check context
 No breaking changes. New features are opt-in via configuration.
 
 To enable:
+
 1. Add `warning_threshold` and `auto_summary_threshold` to config
 2. Optionally configure `summary_model` for cost savings
 3. Use `/context summary` when warned in chat mode
@@ -755,6 +787,7 @@ To enable:
 ### For Developers
 
 No API changes to public interfaces. Internal additions:
+
 - `ConversationConfig` has new optional fields
 - `SpecialCommand` enum has new variants
 - `Conversation` has new public methods
@@ -762,11 +795,13 @@ No API changes to public interfaces. Internal additions:
 ## Open Questions
 
 1. Should we persist summaries to conversation history database?
+
    - Option A: Yes, store summaries as metadata
    - Option B: No, summaries are transient
    - **Recommendation**: Option B for Phase 1, Option A for future enhancement
 
 2. Should summary generation have a timeout?
+
    - Option A: Use standard provider timeout
    - Option B: Add separate summary timeout config
    - **Recommendation**: Option A for simplicity

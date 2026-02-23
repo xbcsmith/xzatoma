@@ -1,7 +1,7 @@
 [
   {
     "capabilities": {
-      "family": "gpt-5-mini",
+      "family": "gpt-5.3-codex",
       "limits": {
         "max_context_window_tokens": 264000,
         "max_output_tokens": 64000,
@@ -28,19 +28,19 @@
       "tokenizer": "o200k_base",
       "type": "chat"
     },
-    "id": "gpt-5-mini",
+    "id": "gpt-5.3-codex",
     "model_picker_category": "lightweight",
     "model_picker_enabled": true,
-    "name": "GPT-5 mini",
+    "name": "GPT-5.3 Codex",
     "object": "model",
     "policy": {
       "state": "enabled",
-      "terms": "Enable access to the latest GPT-5 mini model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5 mini](https://gh.io/copilot-openai)."
+      "terms": "Enable access to the latest GPT-5.3 Codex model from OpenAI. [Learn more about how GitHub Copilot serves GPT-5.3 Codex](https://gh.io/copilot-openai)."
     },
     "preview": false,
     "supported_endpoints": ["/chat/completions", "/responses"],
     "vendor": "Azure OpenAI",
-    "version": "gpt-5-mini"
+    "version": "gpt-5.3-codex"
   },
   {
     "capabilities": {
@@ -404,7 +404,7 @@
   },
   {
     "capabilities": {
-      "family": "claude-sonnet-4.5",
+      "family": "claude-sonnet-4.6",
       "limits": {
         "max_context_window_tokens": 144000,
         "max_output_tokens": 16000,
@@ -427,19 +427,19 @@
       "tokenizer": "o200k_base",
       "type": "chat"
     },
-    "id": "claude-sonnet-4.5",
+    "id": "claude-sonnet-4.6",
     "model_picker_category": "versatile",
     "model_picker_enabled": true,
-    "name": "Claude Sonnet 4.5",
+    "name": "Claude Sonnet 4.6",
     "object": "model",
     "policy": {
       "state": "enabled",
-      "terms": "Enable access to the latest Claude Sonnet 4.5 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Sonnet 4.5](https://docs.github.com/en/copilot/using-github-copilot/ai-models/using-claude-sonnet-in-github-copilot)."
+      "terms": "Enable access to the latest Claude Sonnet 4.6 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Sonnet 4.6](https://docs.github.com/en/copilot/using-github-copilot/ai-models/using-claude-sonnet-in-github-copilot)."
     },
     "preview": false,
     "supported_endpoints": ["/chat/completions"],
     "vendor": "Anthropic",
-    "version": "claude-sonnet-4.5"
+    "version": "claude-sonnet-4.6"
   },
   {
     "capabilities": {
@@ -482,7 +482,7 @@
   },
   {
     "capabilities": {
-      "family": "claude-haiku-4.5",
+      "family": "gpt-5.1-codex-mini",
       "limits": {
         "max_context_window_tokens": 144000,
         "max_output_tokens": 16000,
@@ -505,19 +505,19 @@
       "tokenizer": "o200k_base",
       "type": "chat"
     },
-    "id": "claude-haiku-4.5",
+    "id": "gpt-5.1-codex-mini",
     "model_picker_category": "versatile",
     "model_picker_enabled": true,
-    "name": "Claude Haiku 4.5",
+    "name": "GPT-5.1 Codex Mini",
     "object": "model",
     "policy": {
       "state": "enabled",
-      "terms": "Enable access to the latest Claude Haiku 4.5 model from Anthropic. [Learn more about how GitHub Copilot serves Claude Haiku 4.5](https://gh.io/copilot-anthropic)."
+      "terms": "Enable access to the latest GPT-5.1 Codex Mini model from Anthropic. [Learn more about how GitHub Copilot serves GPT-5.1 Codex Mini](https://gh.io/copilot-anthropic)."
     },
     "preview": false,
     "supported_endpoints": ["/chat/completions"],
     "vendor": "Anthropic",
-    "version": "claude-haiku-4.5"
+    "version": "gpt-5.1-codex-mini"
   },
   {
     "capabilities": {
@@ -606,7 +606,7 @@
   },
   {
     "capabilities": {
-      "family": "gpt-5.2",
+      "family": "gpt-5.3-codex",
       "limits": {
         "max_context_window_tokens": 264000,
         "max_output_tokens": 64000,
@@ -633,7 +633,7 @@
       "tokenizer": "o200k_base",
       "type": "chat"
     },
-    "id": "gpt-5.2",
+    "id": "gpt-5.3-codex",
     "model_picker_category": "versatile",
     "model_picker_enabled": true,
     "name": "GPT-5.2",
@@ -645,7 +645,7 @@
     "preview": false,
     "supported_endpoints": ["/chat/completions", "/responses"],
     "vendor": "OpenAI",
-    "version": "gpt-5.2"
+    "version": "gpt-5.3-codex"
   },
   {
     "capabilities": {

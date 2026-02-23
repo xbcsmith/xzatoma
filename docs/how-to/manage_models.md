@@ -28,7 +28,7 @@ Available models from ollama:
 +-------------------+-------------------+----------------+-------------------+
 | Model Name    | Display Name   | Context Window | Capabilities   |
 +-------------------+-------------------+----------------+-------------------+
-| llama3.2:13b   | Llama 3.2 13B   | 8192 tokens  | FunctionCalling  |
+| granite4:3b   | Llama 3.2 13B   | 8192 tokens  | FunctionCalling  |
 | llama3.2:3b    | Llama 3.2 3B   | 8192 tokens  | FunctionCalling  |
 | gemma2:9b     | Gemma 2 9B    | 8192 tokens  | FunctionCalling  |
 +-------------------+-------------------+----------------+-------------------+
@@ -80,7 +80,7 @@ Capabilities:  FunctionCalling, LongContext
 Ollama provides additional metadata:
 
 ```bash
-xzatoma models info --model llama3.2:13b --provider ollama
+xzatoma models info --model granite4:3b --provider ollama
 ```
 
 Example output:
@@ -88,7 +88,7 @@ Example output:
 ```
 Model Information (Llama 3.2 13B)
 
-Name:      llama3.2:13b
+Name:      granite4:3b
 Display Name:  Llama 3.2 13B
 Context Window: 8192 tokens
 Capabilities:  FunctionCalling
@@ -115,7 +115,7 @@ Example output:
 Current Model Information
 
 Provider:    ollama
-Active Model:  llama3.2:13b
+Active Model:  granite4:3b
 ```
 
 ### With Provider Override
@@ -139,7 +139,7 @@ Example output:
 ║   Context Window Information   ║
 ╚════════════════════════════════════╝
 
-Current Model:   llama3.2:13b
+Current Model:   granite4:3b
 Context Window:  32768 tokens
 Tokens Used:    2450 tokens
 Remaining:     30318 tokens
@@ -175,7 +175,7 @@ Models with `FunctionCalling` can use XZatoma's tools (file operations, terminal
 Use models optimized for code:
 
 - `llama3.2:3b` (Ollama) - Good balance of speed and quality
-- `llama3.2:13b` (Ollama) - Higher quality, slower
+- `granite4:3b` (Ollama) - Higher quality, slower
 - `gpt-4o` (Copilot) - Excellent quality, cloud-based
 
 ### For Large Context Tasks
@@ -223,7 +223,7 @@ Available models:
 Install models with:
 
 ```bash
-ollama pull llama3.2:13b
+ollama pull granite4:3b
 ollama pull llama3.2:3b
 ```
 
@@ -244,7 +244,7 @@ curl http://localhost:11434/api/tags
 2. Install a model if none are available:
 
 ```bash
-ollama pull llama3.2:13b
+ollama pull granite4:3b
 ```
 
 3. Check Ollama host in config:
@@ -384,7 +384,7 @@ xzatoma models list --provider ollama
 
 ```bash
 # Get details
-xzatoma models info --model llama3.2:13b
+xzatoma models info --model granite4:3b
 
 # Check current model
 xzatoma models current
@@ -413,7 +413,7 @@ xzatoma models list --json --summary > all_models_with_summary.json
 - Export details for a single model:
 
 ```bash
-xzatoma models info --model llama3.2:13b --json > llama3.2-13b.json
+xzatoma models info --model granite4:3b --json > granite4:3bb.json
 ```
 
 - Export a model's summary (compact, but serialized to JSON):
@@ -438,11 +438,11 @@ There are two common approaches to comparing models: manual inspection and scrip
 ```bash
 # Dump model info to JSON for manual inspection
 xzatoma models info --model gpt-4 --json > gpt4.json
-xzatoma models info --model llama3.2:13b --json > llama13b.json
+xzatoma models info --model granite4:3b --json > granite4:3b.json
 
 # Inspect specific fields
 jq '.context_window, .capabilities, .provider_specific' gpt4.json
-jq '.context_window, .capabilities, .provider_specific' llama13b.json
+jq '.context_window, .capabilities, .provider_specific' granite4:3b.json
 ```
 
 2. Script-based comparison using `jq`
@@ -482,7 +482,7 @@ xzatoma models list --provider ollama | grep "Context Window"
 # View specific model details
 
 xzatoma models info --model gpt-4o --provider copilot
-xzatoma models info --model llama3.2:13b --provider ollama
+xzatoma models info --model granite4:3b --provider ollama
 
 ```
 

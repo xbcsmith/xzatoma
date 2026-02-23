@@ -137,7 +137,7 @@ pub trait ToolExecutor: Send + Sync {
 provider:
  type: copilot # or 'ollama'
  copilot:
-  model: gpt-5-mini
+  model: gpt-5.3-codex
  ollama:
   host: localhost:11434
   model: qwen3
@@ -168,7 +168,7 @@ documentation:
 ```bash
 # Provider settings
 export XZATOMA_PROVIDER=copilot
-export COPILOT_MODEL=gpt-5-mini
+export COPILOT_MODEL=gpt-5.3-codex
 export OLLAMA_HOST=localhost:11434
 export OLLAMA_MODEL=qwen3
 

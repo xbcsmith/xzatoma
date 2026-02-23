@@ -16,7 +16,7 @@ fn create_test_provider_config() -> ProviderConfig {
     ProviderConfig {
         provider_type: "copilot".to_string(),
         copilot: CopilotConfig {
-            model: "gpt-5-mini".to_string(),
+            model: "gpt-5.3-codex".to_string(),
             api_base: None,
             enable_streaming: true,
             enable_endpoint_fallback: true,
@@ -25,7 +25,7 @@ fn create_test_provider_config() -> ProviderConfig {
         },
         ollama: OllamaConfig {
             host: "http://localhost:11434".to_string(),
-            model: "llama3.2:latest".to_string(),
+            model: "llama3.2:3b".to_string(),
         },
     }
 }
@@ -73,7 +73,7 @@ fn test_create_provider_with_override_both() {
     let config = create_test_provider_config();
 
     // Override both provider and model
-    let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:1b"));
+    let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:3b"));
     assert!(result.is_ok());
 
     let provider = result.unwrap();
@@ -85,7 +85,7 @@ fn test_create_provider_with_override_model_only_copilot() {
     let config = create_test_provider_config();
 
     // Override model only (uses copilot from config)
-    let result = create_provider_with_override(&config, None, Some("gpt-3.5-turbo"));
+    let result = create_provider_with_override(&config, None, Some("gpt-5.1-codex-mini"));
     assert!(result.is_ok());
 }
 
@@ -157,7 +157,7 @@ fn test_subagent_tool_new_with_config_model_override() {
     let mut agent_config = create_test_agent_config();
 
     // Configure subagent to use different model with same provider
-    agent_config.subagent.model = Some("gpt-3.5-turbo".to_string());
+    agent_config.subagent.model = Some("gpt-5.1-codex-mini".to_string());
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
@@ -183,7 +183,7 @@ fn test_subagent_tool_new_with_config_provider_and_model_override() {
 
     // Configure subagent to use ollama with specific model
     agent_config.subagent.provider = Some("ollama".to_string());
-    agent_config.subagent.model = Some("llama3.2:1b".to_string());
+    agent_config.subagent.model = Some("llama3.2:3b".to_string());
 
     // Create parent provider (copilot)
     let parent_provider = create_provider_with_override(&provider_config, None, None)
@@ -252,7 +252,7 @@ fn test_provider_override_copilot_to_ollama() {
 
     // Subagent overrides to ollama
     let subagent_provider =
-        create_provider_with_override(&provider_config, Some("ollama"), Some("llama3.2:latest"))
+        create_provider_with_override(&provider_config, Some("ollama"), Some("llama3.2:3b"))
             .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
@@ -270,9 +270,12 @@ fn test_provider_override_ollama_to_copilot() {
         .expect("Failed to create parent provider");
 
     // Subagent overrides to copilot
-    let subagent_provider =
-        create_provider_with_override(&provider_config, Some("copilot"), Some("gpt-3.5-turbo"))
-            .expect("Failed to create subagent provider");
+    let subagent_provider = create_provider_with_override(
+        &provider_config,
+        Some("copilot"),
+        Some("gpt-5.1-codex-mini"),
+    )
+    .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
     assert!(parent_provider.get_current_model().is_ok());
@@ -289,7 +292,7 @@ fn test_model_override_same_provider() {
 
     // Create provider with model override
     let custom_provider =
-        create_provider_with_override(&provider_config, None, Some("gpt-3.5-turbo"))
+        create_provider_with_override(&provider_config, None, Some("gpt-5.1-codex-mini"))
             .expect("Failed to create custom provider");
 
     // Both should be valid copilot providers

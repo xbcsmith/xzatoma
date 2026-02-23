@@ -9,15 +9,15 @@ provider:
 
   # GitHub Copilot configuration
   copilot:
-    # Model to use (e.g., gpt-5-mini, gpt-4-turbo)
-    model: gpt-5-mini
+    # Model to use (e.g., gpt-5.3-codex, claude-sonnet-4.6)
+    model: gpt-5.3-codex
 
   # Ollama configuration
   ollama:
     # Ollama server host
     host: http://localhost:11434
-    # Model to use (e.g., llama3.2:latest, llama3.2:latest, gemma3:latest)
-    model: llama3.2:latest
+    # Model to use (e.g., llama3.2:3b, granite3.2:2b, granite4:3b)
+    model: llama3.2:3b
 
 agent:
   # Maximum number of agent turns before stopping
@@ -40,7 +40,7 @@ agent:
     auto_summary_threshold: 0.90 # Auto-summarize at 90% full
 
     # Use cheaper model for summaries (optional)
-    # summary_model: "gpt-4o-mini"
+    # summary_model: "gpt-5.1-codex-mini"
 
   # Tool execution settings
   tools:
@@ -93,8 +93,8 @@ agent:
 
     # Optional: Override model for subagents
     # If specified, subagents will use this model instead of the provider's default
-    # Example: "gpt-5-mini" for Copilot, "llama3.2:latest" for Ollama
-    # model: gpt-5-mini
+    # Example: "gpt-5.1-codex-mini" for Copilot, "llama3.2:3b" for Ollama
+    # model: gpt-5.1-codex-mini
 
     # Enable subagents in chat mode by default
     # If false (default), requires explicit prompt pattern or command to enable

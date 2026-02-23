@@ -19,7 +19,7 @@
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   # Limits how many agent turns are allowed during plan execution

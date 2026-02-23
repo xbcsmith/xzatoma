@@ -97,13 +97,13 @@ When a configured provider exposes a current model, the interactive prompt will 
 Example (plain):
 
 ```text
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>
 ```
 
 Example (colored):
 
 ```text
-[PLANNING][SAFE][Copilot: gpt-5-mini] >>>  (Provider is white, model is green)
+[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>  (Provider is white, model is green)
 ```
 
 Notes and behavior:

@@ -259,9 +259,9 @@ impl TokenUsage {
 /// context window, and supported capabilities.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
-    /// Unique identifier for the model (e.g., "gpt-4", "llama3.2:latest")
+    /// Unique identifier for the model (e.g., "gpt-5.3-codex", "llama3.2:3b")
     pub name: String,
-    /// Display name for user-friendly presentation (e.g., "GPT-4 Turbo")
+    /// Display name for user-friendly presentation (e.g., "GPT-5.3 Codex")
     pub display_name: String,
     /// Maximum context window size in tokens
     pub context_window: usize,

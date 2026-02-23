@@ -128,7 +128,7 @@ You can also configure providers in the YAML config file. Example:
 provider:
  provider_type: copilot     # default provider: copilot|ollama|openai|anthropic
  copilot:
-  model: "gpt-5-mini"
+  model: "gpt-5.3-codex"
  ollama:
   host: "http://localhost:11434"
   model: "llama3.2:latest"

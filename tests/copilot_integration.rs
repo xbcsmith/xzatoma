@@ -67,8 +67,8 @@ async fn test_copilot_models_401_refresh_retry() {
     // Retry models request should succeed with the refreshed token
     let models_body = json!({
         "data": [{
-            "id": "gpt-5-mini",
-            "name": "gpt-5-mini",
+            "id": "gpt-5.3-codex",
+            "name": "gpt-5.3-codex",
             "capabilities": {
                 "limits": { "max_context_window_tokens": 264000 },
                 "supports": { "tool_calls": true, "vision": false }
@@ -93,7 +93,7 @@ async fn test_copilot_models_401_refresh_retry() {
         .await
         .unwrap();
     assert!(!models.is_empty());
-    assert!(models.iter().any(|m| m.name == "gpt-5-mini"));
+    assert!(models.iter().any(|m| m.name == "gpt-5.3-codex"));
 }
 
 /// Verify models list is cached and second call does not hit the server
@@ -129,8 +129,8 @@ async fn test_copilot_models_caching_ttl() {
     // Only one models request is expected even if list_models is called twice
     let models_body = json!({
         "data": [{
-            "id": "gpt-5-mini",
-            "name": "gpt-5-mini",
+            "id": "gpt-5.3-codex",
+            "name": "gpt-5.3-codex",
             "capabilities": {
                 "limits": { "max_context_window_tokens": 264000 },
                 "supports": { "tool_calls": true, "vision": false }

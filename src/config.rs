@@ -86,7 +86,7 @@ pub struct CopilotConfig {
 }
 
 fn default_copilot_model() -> String {
-    "gpt-5-mini".to_string()
+    "gpt-5.3-codex".to_string()
 }
 
 fn default_enable_streaming() -> bool {
@@ -1194,10 +1194,10 @@ mod tests {
 provider:
   type: ollama
   copilot:
-    model: gpt-4o
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 100
@@ -1436,12 +1436,12 @@ provider: copilot
     fn test_subagent_config_deserialize_with_model_override() {
         let yaml = r#"
 max_depth: 5
-model: gpt-5-mini
+model: gpt-5.3-codex
 "#;
         let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.max_depth, 5);
         assert_eq!(config.provider, None);
-        assert_eq!(config.model, Some("gpt-5-mini".to_string()));
+        assert_eq!(config.model, Some("gpt-5.3-codex".to_string()));
         assert!(!config.chat_enabled);
     }
 
@@ -1449,12 +1449,12 @@ model: gpt-5-mini
     fn test_subagent_config_deserialize_with_both_overrides() {
         let yaml = r#"
 provider: ollama
-model: llama3.2:latest
+model: llama3.2:3b
 chat_enabled: true
 "#;
         let config: SubagentConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.provider, Some("ollama".to_string()));
-        assert_eq!(config.model, Some("llama3.2:latest".to_string()));
+        assert_eq!(config.model, Some("llama3.2:3b".to_string()));
         assert!(config.chat_enabled);
     }
 
@@ -1667,22 +1667,25 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
   subagent:
     provider: copilot
-    model: gpt-3.5-turbo
+    model: gpt-5.1-codex-mini
     chat_enabled: false
 "#;
 
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.agent.subagent.provider, Some("copilot".to_string()));
-        assert_eq!(cfg.agent.subagent.model, Some("gpt-3.5-turbo".to_string()));
+        assert_eq!(
+            cfg.agent.subagent.model,
+            Some("gpt-5.1-codex-mini".to_string())
+        );
         assert!(!cfg.agent.subagent.chat_enabled);
     }
 
@@ -1692,23 +1695,23 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 10
   subagent:
     provider: ollama
-    model: gemma2:2b
+    model: granite3.2:2b
     chat_enabled: true
 "#;
 
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
-        assert_eq!(cfg.agent.subagent.model, Some("gemma2:2b".to_string()));
+        assert_eq!(cfg.agent.subagent.model, Some("granite3.2:2b".to_string()));
         assert!(cfg.agent.subagent.chat_enabled);
     }
 
@@ -1718,19 +1721,22 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
   subagent:
-    model: gpt-3.5-turbo
+    model: gpt-5.1-codex-mini
     chat_enabled: false
 "#;
 
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.agent.subagent.provider, None);
-        assert_eq!(cfg.agent.subagent.model, Some("gpt-3.5-turbo".to_string()));
+        assert_eq!(
+            cfg.agent.subagent.model,
+            Some("gpt-5.1-codex-mini".to_string())
+        );
     }
 
     #[test]
@@ -1739,7 +1745,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1758,7 +1764,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1777,7 +1783,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1794,10 +1800,10 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 20
@@ -1812,7 +1818,7 @@ agent:
     max_total_tokens: 50000
     max_total_time: 3600
     provider: ollama
-    model: llama3.2:latest
+    model: llama3.2:3b
     chat_enabled: true
 "#;
 
@@ -1827,10 +1833,7 @@ agent:
         assert_eq!(cfg.agent.subagent.max_total_tokens, Some(50000));
         assert_eq!(cfg.agent.subagent.max_total_time, Some(3600));
         assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
-        assert_eq!(
-            cfg.agent.subagent.model,
-            Some("llama3.2:latest".to_string())
-        );
+        assert_eq!(cfg.agent.subagent.model, Some("llama3.2:3b".to_string()));
         assert!(cfg.agent.subagent.chat_enabled);
     }
 
@@ -1840,7 +1843,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1864,7 +1867,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1883,7 +1886,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1906,7 +1909,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1926,7 +1929,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1945,7 +1948,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1968,7 +1971,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -1991,7 +1994,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2010,7 +2013,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2033,7 +2036,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2058,7 +2061,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2077,7 +2080,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2100,7 +2103,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2119,7 +2122,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2143,7 +2146,7 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
 
 agent:
   max_turns: 10
@@ -2162,16 +2165,16 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 50
   subagent:
     provider: ollama
-    model: llama3.2:latest
+    model: llama3.2:3b
     chat_enabled: true
     max_executions: 10
     max_total_tokens: 50000
@@ -2181,10 +2184,7 @@ agent:
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.provider.provider_type, "copilot");
         assert_eq!(cfg.agent.subagent.provider, Some("ollama".to_string()));
-        assert_eq!(
-            cfg.agent.subagent.model,
-            Some("llama3.2:latest".to_string())
-        );
+        assert_eq!(cfg.agent.subagent.model, Some("llama3.2:3b".to_string()));
     }
 
     #[test]
@@ -2193,16 +2193,16 @@ agent:
 provider:
   type: copilot
   copilot:
-    model: gpt-5-mini
+    model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 15
   subagent:
     provider: ollama
-    model: llama3.2:latest
+    model: llama3.2:3b
     chat_enabled: false
     max_depth: 2
 "#;
@@ -2219,19 +2219,19 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest
+    model: llama3.2:3b
 
 agent:
   max_turns: 10
   subagent:
-    model: gemma2:2b
+    model: granite3.2:2b
     chat_enabled: true
     default_max_turns: 5
 "#;
 
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         assert!(cfg.validate().is_ok());
-        assert_eq!(cfg.agent.subagent.model, Some("gemma2:2b".to_string()));
+        assert_eq!(cfg.agent.subagent.model, Some("granite3.2:2b".to_string()));
         assert_eq!(cfg.agent.subagent.default_max_turns, 5);
     }
 }

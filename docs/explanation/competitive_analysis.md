@@ -8,24 +8,24 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 ## Comparison Matrix
 
-| Aspect         | XZatoma        | Goose                         | Zed Agent          |
-| ---------------------- | --------------------- | ------------------------------------------------------ | --------------------------- |
-| **Maturity**      | Design phase    | Production (v0.9+)                 | Production        |
-| **Lines of Code**   | ~0 (planned ~3-5k)  | ~9k+ core                       | ~9.6k+ assistant      |
-| **Platform**      | CLI only       | CLI + Desktop App                   | Editor-integrated      |
-| **Provider Support**  | Copilot, Ollama    | OpenAI, Anthropic, Databricks, Groq, OpenRouter    | Copilot, Claude       |
-| **MCP Support**    | No         | Yes (native)                    | No            |
-| **Extensions**     | No         | Yes (MCP servers)                  | Limited (slash commands) |
-| **Built-in Tools**   | File ops, terminal  | File ops, terminal, web scraping, memory, integrations | Editor operations, terminal |
-| **Autonomous Mode**  | Yes (core feature) | Yes (with modes)                  | WARNING: Semi (user in loop)   |
-| **UI**         | Terminal only     | Terminal + Electron app                | Editor UI (GPUI)      |
-| **Local LLM**     | Yes (Ollama)    | Yes (Ollama)                    | No            |
-| **Context Management** | Token pruning     | Summarization + algorithms               | Editor context aware    |
-| **Security Model**   | Command validation  | Permission system                   | Editor sandboxing      |
-| **Plan Support**    | YAML/JSON/Markdown | Recipes (YAML)                   | No            |
-| **License**      | Not set        | Apache 2.0                       | GPL v3           |
-| **Language**      | Rust         | Rust                          | Rust            |
-| **Team**        | Solo/small      | Block (Square) team                  | Zed Industries       |
+| Aspect                 | XZatoma            | Goose                                                  | Zed Agent                    |
+| ---------------------- | ------------------ | ------------------------------------------------------ | ---------------------------- |
+| **Maturity**           | Design phase       | Production (v0.9+)                                     | Production                   |
+| **Lines of Code**      | ~0 (planned ~3-5k) | ~9k+ core                                              | ~9.6k+ assistant             |
+| **Platform**           | CLI only           | CLI + Desktop App                                      | Editor-integrated            |
+| **Provider Support**   | Copilot, Ollama    | OpenAI, Anthropic, Databricks, Groq, OpenRouter        | Copilot, Claude              |
+| **MCP Support**        | No                 | Yes (native)                                           | No                           |
+| **Extensions**         | No                 | Yes (MCP servers)                                      | Limited (slash commands)     |
+| **Built-in Tools**     | File ops, terminal | File ops, terminal, web scraping, memory, integrations | Editor operations, terminal  |
+| **Autonomous Mode**    | Yes (core feature) | Yes (with modes)                                       | WARNING: Semi (user in loop) |
+| **UI**                 | Terminal only      | Terminal + Electron app                                | Editor UI (GPUI)             |
+| **Local LLM**          | Yes (Ollama)       | Yes (Ollama)                                           | No                           |
+| **Context Management** | Token pruning      | Summarization + algorithms                             | Editor context aware         |
+| **Security Model**     | Command validation | Permission system                                      | Editor sandboxing            |
+| **Plan Support**       | YAML/JSON/Markdown | Recipes (YAML)                                         | No                           |
+| **License**            | Not set            | Apache 2.0                                             | GPL v3                       |
+| **Language**           | Rust               | Rust                                                   | Rust                         |
+| **Team**               | Solo/small         | Block (Square) team                                    | Zed Industries               |
 
 ## Detailed Comparison
 
@@ -83,15 +83,15 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 **XZatoma**:
 
-- GitHub Copilot (gpt-5-mini, gpt-4o-mini)
-- Ollama (any model: qwen3, llama3, etc.)
+- GitHub Copilot (gpt-5.3-codex, claude-sonnet-4.6, gpt-5.1-codex-mini)
+- Ollama (any model with function calling: llama3.2:3b, granite3.2:2b, etc.)
 - Simple provider trait
 - No streaming (Phase 1)
 
 **Goose**:
 
 - OpenAI (GPT-4, GPT-4 Turbo, etc.)
-- Anthropic (Claude 3.5 Sonnet, Opus, etc.)
+- Anthropic (Claude Sonnet, Opus, etc.)
 - Databricks (DBRX)
 - Groq
 - OpenRouter (access to many models)
@@ -205,11 +205,11 @@ This document provides an honest, technical comparison of XZatoma against two es
 ```yaml
 goal: "Generate documentation"
 context:
- directory: "src/"
+  directory: "src/"
 instructions:
- - List all source files
- - Read key components
- - Generate docs/api.md
+  - List all source files
+  - Read key components
+  - Generate docs/api.md
 ```
 
 - Simple YAML/JSON/Markdown plans

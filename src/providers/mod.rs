@@ -105,7 +105,7 @@ pub fn create_provider(
 /// let custom_provider = create_provider_with_override(
 ///     &config,
 ///     Some("ollama"),
-///     Some("llama3.2:latest"),
+///     Some("llama3.2:3b"),
 /// )?;
 /// # Ok(())
 /// # }
@@ -166,7 +166,7 @@ mod tests {
         let config = ProviderConfig {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig {
-                model: "gpt-5-mini".to_string(),
+                model: "gpt-5.3-codex".to_string(),
                 api_base: None,
                 enable_streaming: true,
                 enable_endpoint_fallback: true,
@@ -203,7 +203,7 @@ mod tests {
         };
 
         // Override both provider and model
-        let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:1b"));
+        let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:3b"));
         assert!(result.is_ok());
     }
 
@@ -212,7 +212,7 @@ mod tests {
         let config = ProviderConfig {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig {
-                model: "gpt-5-mini".to_string(),
+                model: "gpt-5.3-codex".to_string(),
                 api_base: None,
                 enable_streaming: true,
                 enable_endpoint_fallback: true,
@@ -223,7 +223,7 @@ mod tests {
         };
 
         // Override model only (uses config provider type)
-        let result = create_provider_with_override(&config, None, Some("gpt-3.5-turbo"));
+        let result = create_provider_with_override(&config, None, Some("gpt-5.1-codex-mini"));
         assert!(result.is_ok());
     }
 
@@ -245,7 +245,7 @@ mod tests {
         let config = ProviderConfig {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig {
-                model: "gpt-5-mini".to_string(),
+                model: "gpt-5.3-codex".to_string(),
                 api_base: None,
                 enable_streaming: true,
                 enable_endpoint_fallback: true,

@@ -5,9 +5,9 @@ use xzatoma::providers::{ModelCapability, ModelInfo, ModelInfoSummary};
 /// valid and parseable by downstream tooling (e.g. `jq`, Python's json).
 #[test]
 fn test_list_models_json_output_parseable() {
-    let a = ModelInfo::new("gpt-4", "GPT-4", 8192)
+    let a = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000)
         .with_capabilities(vec![ModelCapability::FunctionCalling]);
-    let b = ModelInfo::new("llama-3", "Llama 3", 65536)
+    let b = ModelInfo::new("llama3.2:3b", "llama3.2:3b", 131072)
         .with_capabilities(vec![ModelCapability::LongContext, ModelCapability::Vision]);
 
     let models = vec![a.clone(), b.clone()];
@@ -16,13 +16,13 @@ fn test_list_models_json_output_parseable() {
         serde_json::from_str(&json).expect("parse models JSON back into struct");
 
     assert_eq!(parsed.len(), 2);
-    assert_eq!(parsed[0].name, "gpt-4");
+    assert_eq!(parsed[0].name, "gpt-5.3-codex");
     assert!(parsed[1].capabilities.contains(&ModelCapability::Vision));
 }
 
 #[test]
 fn test_list_models_summary_json_output_parseable() {
-    let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
     let summary = ModelInfoSummary::new(
         info.clone(),
         Some("enabled".to_string()),
@@ -45,13 +45,13 @@ fn test_list_models_summary_json_output_parseable() {
 
 #[test]
 fn test_model_info_json_output_parseable() {
-    let model = ModelInfo::new("gpt-4", "GPT-4", 8192)
+    let model = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000)
         .with_capabilities(vec![ModelCapability::FunctionCalling]);
 
     let json = serde_json::to_string_pretty(&model).expect("serialize model info");
     let parsed: ModelInfo = serde_json::from_str(&json).expect("parse model info JSON");
 
-    assert_eq!(parsed.name, "gpt-4");
+    assert_eq!(parsed.name, "gpt-5.3-codex");
     assert!(parsed
         .capabilities
         .contains(&ModelCapability::FunctionCalling));
@@ -59,7 +59,7 @@ fn test_model_info_json_output_parseable() {
 
 #[test]
 fn test_model_summary_json_output_parseable() {
-    let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    let info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
     let summary = ModelInfoSummary::new(
         info.clone(),
         Some("disabled".to_string()),
@@ -88,9 +88,9 @@ fn test_empty_model_list_json_is_array() {
 
 #[test]
 fn test_list_models_summary_table_output() {
-    let info1 = ModelInfo::new("gpt-4", "GPT-4", 8192)
+    let info1 = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000)
         .with_capabilities(vec![ModelCapability::FunctionCalling]);
-    let info2 = ModelInfo::new("llama-3", "Llama 3", 65536);
+    let info2 = ModelInfo::new("llama3.2:3b", "llama3.2:3b", 131072);
 
     let summary1 = ModelInfoSummary::new(
         info1.clone(),
@@ -122,7 +122,7 @@ fn test_list_models_summary_table_output() {
 
 #[test]
 fn test_model_info_summary_detailed_output() {
-    let mut info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    let mut info = ModelInfo::new("gpt-5.3-codex", "GPT-5.3 Codex", 264000);
     info.provider_specific
         .insert("policy".to_string(), "standard".to_string());
 
@@ -137,10 +137,10 @@ fn test_model_info_summary_detailed_output() {
     );
 
     let output = xzatoma::commands::models::render_model_summary_detailed(&summary);
-    assert!(output.contains("Model Information (GPT-4)"));
+    assert!(output.contains("Model Information (GPT-5.3 Codex)"));
     assert!(output.contains("Name:"));
     assert!(output.contains("Display Name:"));
-    assert!(output.contains("Context Window:  8192 tokens"));
+    assert!(output.contains("Context Window:  264000 tokens"));
     assert!(output.contains("State:           enabled"));
     assert!(output.contains("Max Prompt:      6144 tokens"));
     assert!(output.contains("Max Completion:  2048 tokens"));
