@@ -168,6 +168,10 @@ mod tests {
             copilot: CopilotConfig {
                 model: "gpt-5.3-codex".to_string(),
                 api_base: None,
+                enable_streaming: true,
+                enable_endpoint_fallback: true,
+                reasoning_effort: None,
+                include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
         };
@@ -210,6 +214,10 @@ mod tests {
             copilot: CopilotConfig {
                 model: "gpt-5.3-codex".to_string(),
                 api_base: None,
+                enable_streaming: true,
+                enable_endpoint_fallback: true,
+                reasoning_effort: None,
+                include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
         };
@@ -239,6 +247,10 @@ mod tests {
             copilot: CopilotConfig {
                 model: "gpt-5.3-codex".to_string(),
                 api_base: None,
+                enable_streaming: true,
+                enable_endpoint_fallback: true,
+                reasoning_effort: None,
+                include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
         };

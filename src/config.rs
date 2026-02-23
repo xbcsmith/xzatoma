@@ -54,10 +54,51 @@ pub struct CopilotConfig {
     /// point the provider at a mock server.
     #[serde(default)]
     pub api_base: Option<String>,
+
+    /// Enable streaming mode for responses
+    ///
+    /// When enabled, the provider will use SSE (Server-Sent Events) streaming
+    /// for response delivery. Defaults to true.
+    #[serde(default = "default_enable_streaming")]
+    pub enable_streaming: bool,
+
+    /// Enable automatic endpoint fallback
+    ///
+    /// When enabled, if the preferred /responses endpoint is not supported,
+    /// the provider will automatically fall back to /chat/completions endpoint.
+    /// Defaults to true.
+    #[serde(default = "default_enable_endpoint_fallback")]
+    pub enable_endpoint_fallback: bool,
+
+    /// Reasoning effort level: "low", "medium", "high"
+    ///
+    /// Controls how much reasoning the model should perform. Only applicable
+    /// to models that support extended thinking.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+
+    /// Include reasoning in the response
+    ///
+    /// When enabled, models that support extended thinking will include
+    /// their reasoning process in the response. Defaults to false.
+    #[serde(default = "default_include_reasoning")]
+    pub include_reasoning: bool,
 }
 
 fn default_copilot_model() -> String {
     "gpt-5.3-codex".to_string()
+}
+
+fn default_enable_streaming() -> bool {
+    true
+}
+
+fn default_enable_endpoint_fallback() -> bool {
+    true
+}
+
+fn default_include_reasoning() -> bool {
+    false
 }
 
 impl Default for CopilotConfig {
@@ -65,6 +106,10 @@ impl Default for CopilotConfig {
         Self {
             model: default_copilot_model(),
             api_base: None,
+            enable_streaming: default_enable_streaming(),
+            enable_endpoint_fallback: default_enable_endpoint_fallback(),
+            reasoning_effort: None,
+            include_reasoning: default_include_reasoning(),
         }
     }
 }

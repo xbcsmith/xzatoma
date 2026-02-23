@@ -6,13 +6,14 @@
 use crate::error::Result;
 use crate::tools::{ToolExecutor, ToolResult};
 use async_trait::async_trait;
+use glob::Pattern;
+use ignore::WalkBuilder;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::debug;
-use walkdir::WalkDir;
 
 /// Search result with file location and context
 ///
@@ -163,13 +164,64 @@ impl GrepTool {
 
         let mut all_matches = Vec::new();
 
-        // Walk directory tree
-        for entry in WalkDir::new(&self.working_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-        {
+        // Read .gitignore patterns (if any) from the working directory.
+        // We parse simple, line-based patterns: skip empty lines and comments.
+        // Plain filenames (no wildcard and no slash) are treated as exact names for deterministic behavior.
+        let mut gitignore_exact: HashSet<String> = HashSet::new();
+        let mut gitignore_globs: Vec<Pattern> = Vec::new();
+        let gitignore_path = self.working_dir.join(".gitignore");
+        if let Ok(contents) = fs::read_to_string(&gitignore_path) {
+            for line in contents.lines() {
+                let t = line.trim();
+                if t.is_empty() || t.starts_with('#') {
+                    continue;
+                }
+                // Skip negation patterns (advanced support could be added later)
+                if t.starts_with('!') {
+                    continue;
+                }
+                // Treat simple names (no wildcard, no slash) as exact filenames
+                if !t.contains('*') && !t.contains('?') && !t.contains('/') {
+                    gitignore_exact.insert(t.to_string());
+                } else if let Ok(pat) = Pattern::new(t) {
+                    // Store wildcard/slash patterns as compiled glob Patterns
+                    gitignore_globs.push(pat);
+                }
+            }
+        }
+
+        // Walk directory tree using ignore::WalkBuilder so we respect .gitignore and git excludes
+        let mut builder = WalkBuilder::new(&self.working_dir);
+        // Respect .gitignore files discovered by the walker as well
+        builder.git_ignore(true);
+        // Respect .git/info/exclude
+        builder.git_exclude(true);
+        // Do not automatically skip hidden files; leave control to excluded_patterns or explicit options
+        builder.hidden(false);
+
+        let walker = builder.build();
+
+        for result in walker {
+            let entry = match result {
+                Ok(e) => e,
+                Err(err) => {
+                    debug!("Error while walking files: {}", err);
+                    continue;
+                }
+            };
+
+            // Rely on WalkBuilder's configuration to respect .gitignore/git excludes.
+            // The `ignore` crate's DirEntry does not expose `is_ignored()` in all versions,
+            // so avoid calling it here; we've configured the walker with `git_ignore(true)`
+            // and `git_exclude(true)` above and also apply parsed .gitignore patterns where
+            // appropriate further down. Do not perform an entry-level `is_ignored()` call.
+
             let path = entry.path();
+
+            // Only consider files
+            if !path.is_file() {
+                continue;
+            }
 
             // Check if file matches include pattern
             if let Some(include) = include_pattern {
@@ -179,7 +231,53 @@ impl GrepTool {
                 }
             }
 
-            // Check if file is excluded
+            // Check if file matches any patterns derived from the working directory .gitignore we parsed above.
+            // Use exact-name set first for deterministic matches, then fall back to compiled globs.
+            if !gitignore_exact.is_empty() || !gitignore_globs.is_empty() {
+                // Compute path relative to working_dir for more accurate .gitignore matching
+                let rel_path = path
+                    .strip_prefix(&self.working_dir)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string());
+
+                // If filename can be decoded to &str, check exact-name matches and globs.
+                if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                    // Exact-name checks (fast and deterministic)
+                    if gitignore_exact.contains(file_name) || gitignore_exact.contains(&rel_path) {
+                        // Skip files explicitly listed by exact names in .gitignore
+                        continue;
+                    }
+
+                    // Check compiled glob patterns against relative path and file name
+                    let mut ignored = false;
+                    for gp in &gitignore_globs {
+                        if gp.matches(&rel_path)
+                            || gp.matches(file_name)
+                            || gp.matches(&path.display().to_string())
+                        {
+                            ignored = true;
+                            break;
+                        }
+                    }
+                    if ignored {
+                        continue;
+                    }
+                } else {
+                    // If we don't have a usable filename, apply glob checks against the relative path
+                    let mut ignored = false;
+                    for gp in &gitignore_globs {
+                        if gp.matches(&rel_path) || gp.matches(&path.display().to_string()) {
+                            ignored = true;
+                            break;
+                        }
+                    }
+                    if ignored {
+                        continue;
+                    }
+                }
+            }
+
+            // Check if file is excluded via user-provided excluded_patterns
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                 if self.should_exclude(file_name, path) {
                     continue;
@@ -621,5 +719,30 @@ mod tests {
         assert!(tool.glob_match("target/", "target/*"));
         assert!(tool.glob_match("test123.lock", "*.lock"));
         assert!(tool.glob_match("path/to/file.rs", "*.rs"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_tool_respects_gitignore() {
+        // Ensure files listed in .gitignore are not searched
+        let temp_dir = TempDir::new().unwrap();
+        let temp_path = temp_dir.path().to_path_buf();
+
+        // Write .gitignore to ignore `ignored.txt`
+        fs::write(temp_path.join(".gitignore"), "ignored.txt\n").unwrap();
+
+        // Create an ignored file and a visible file with the same search term
+        fs::write(temp_path.join("ignored.txt"), "secret_line\n").unwrap();
+        fs::write(temp_path.join("visible.txt"), "secret_line\n").unwrap();
+
+        let tool = GrepTool::new(temp_path, 20, 2, 1_000_000, vec![]);
+
+        let (matches, total) = tool.search("secret_line", None, false, 0).await.unwrap();
+
+        // The ignored file should not be counted; only the visible file should be matched
+        assert_eq!(total, 1);
+        assert_eq!(
+            matches[0].file.file_name().and_then(|s| s.to_str()),
+            Some("visible.txt")
+        );
     }
 }
