@@ -9,6 +9,7 @@
 //!
 //! # Module Layout
 //!
+//! - `auth`      -- OAuth 2.1 / OIDC authorization for HTTP transport
 //! - `types`     -- All MCP 2025-11-25 protocol types and JSON-RPC primitives
 //! - `client`    -- Transport-agnostic async JSON-RPC 2.0 client
 //! - `protocol`  -- Typed MCP lifecycle wrapper over `JsonRpcClient`
@@ -19,6 +20,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod auth;
 pub mod client;
 pub mod config;
 pub mod protocol;

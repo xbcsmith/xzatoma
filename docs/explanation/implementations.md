@@ -262,6 +262,8 @@ and resolved four gaps:
 
 ### MCP Support Implementation
 
+- Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
+
 - **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
   Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
 
@@ -656,6 +658,160 @@ Key test cases per Task 2.7:
 - Protocol spec: MCP revision 2025-11-25
 - SSE specification:
   <https://html.spec.whatwg.org/multipage/server-sent-events.html>
+
+---
+
+## MCP Phase 3: OAuth 2.1 / OIDC Authorization (2025-07-XX)
+
+### Overview
+
+Implements the full OAuth 2.1 authorization code flow with PKCE S256 required by
+the MCP `2025-11-25` specification for HTTP transport connections. Authorization
+applies only to HTTP transport; stdio servers obtain credentials from
+environment variables per the specification.
+
+### Components Delivered
+
+| File                                  | Action                       |
+| ------------------------------------- | ---------------------------- |
+| `src/mcp/auth/mod.rs`                 | Created                      |
+| `src/mcp/auth/token_store.rs`         | Created                      |
+| `src/mcp/auth/discovery.rs`           | Created                      |
+| `src/mcp/auth/pkce.rs`                | Created                      |
+| `src/mcp/auth/flow.rs`                | Created                      |
+| `src/mcp/auth/manager.rs`             | Created                      |
+| `src/mcp/mod.rs`                      | Updated with `pub mod auth;` |
+| `tests/mcp_auth_pkce_test.rs`         | Created                      |
+| `tests/mcp_auth_discovery_test.rs`    | Created                      |
+| `tests/mcp_auth_token_store_test.rs`  | Created                      |
+| `tests/mcp_auth_flow_test.rs`         | Created                      |
+| `docs/explanation/implementations.md` | Updated with Phase 3 entry   |
+
+### Implementation Details
+
+#### src/mcp/auth/mod.rs
+
+Module root that declares all five sub-modules: `discovery`, `flow`, `manager`,
+`pkce`, and `token_store`. Module-level doc comment describes the authorization
+scope (HTTP transport only, per spec).
+
+#### src/mcp/auth/token_store.rs
+
+- `OAuthToken` -- `Debug, Clone, Serialize, Deserialize`. Stores `access_token`,
+  `token_type`, `expires_at` (RFC-3339 via `chrono` serde), `refresh_token`, and
+  `scope`. Optional fields use `skip_serializing_if = "Option::is_none"`.
+- `OAuthToken::is_expired()` -- returns `true` when
+  `Utc::now() >= expires_at - 60s`. The 60-second buffer ensures callers have
+  time to refresh before the token is actually rejected.
+- `TokenStore` -- zero-field struct. Provides `save_token`, `load_token`, and
+  `delete_token` backed by the OS native keyring (`keyring` crate). Service name
+  is prefixed `xzatoma-mcp-{server_id}` for collision avoidance. `load_token`
+  returns `Ok(None)` on `keyring::Error::NoEntry`. `delete_token` is idempotent.
+
+#### src/mcp/auth/discovery.rs
+
+- `ProtectedResourceMetadata` -- RFC 9728 document with `resource`,
+  `authorization_servers`, and optional `scopes_supported` /
+  `bearer_methods_supported`. Uses `#[serde(rename_all = "snake_case")]`.
+- `AuthorizationServerMetadata` -- RFC 8414 / OIDC Discovery document. Captures
+  all standard fields plus unknown fields via `#[serde(flatten)]` into an
+  `extra: HashMap<String, serde_json::Value>`.
+- `ClientIdMetadataDocument` -- MCP extension allowing a stable URL to serve as
+  the `client_id`.
+- `fetch_protected_resource_metadata` -- tries the `resource_metadata` URL from
+  a `WWW-Authenticate` header first; falls back to the RFC 9728 well-known URI
+  `/.well-known/oauth-protected-resource{path}`.
+- `fetch_authorization_server_metadata` -- tries five well-known endpoint
+  orderings (RFC 8414 path-insertion, OIDC path-insertion, OIDC path-appending,
+  RFC 8414 root, OIDC root) and returns the first success.
+- `fetch_client_id_metadata_document` -- simple GET and JSON deserialize.
+
+#### src/mcp/auth/pkce.rs
+
+- `PkceChallenge` -- `Debug, Clone` with `verifier`, `challenge`, and `method`
+  fields.
+- `generate()` -- 32 random bytes via `rand::rng().fill_bytes()`, base64url (no
+  padding) encoded as the verifier; SHA-256 of the verifier UTF-8 bytes also
+  base64url-encoded as the challenge. Always sets `method = "S256"`. Verified
+  against RFC 7636 Appendix B known-answer test vector.
+- `verify_s256_support()` -- rejects servers that do not advertise `"S256"` in
+  `code_challenge_methods_supported`; case-sensitive comparison.
+
+#### src/mcp/auth/flow.rs
+
+- `OAuthFlowConfig` -- per-server config: `server_id`, `resource_url`,
+  `client_name`, `redirect_port`, `static_client_id`, `static_client_secret`.
+- `OAuthFlow` -- stateless flow driver. Key methods:
+  - `authorize()` -- full authorization code flow: PKCE check, client ID
+    resolution (static > metadata document > DCR), PKCE + state generation, TCP
+    listener bind, authorization URL construction with `resource` parameter (RFC
+    8707), browser open attempt, callback accept + state validation, code
+    exchange.
+  - `refresh_token()` -- POST to token endpoint with `grant_type=refresh_token`
+    and `resource` parameter.
+  - `handle_step_up()` -- parses `scope=` from `WWW-Authenticate` challenge
+    header; calls `authorize` up to 3 times before returning an error.
+- Private helpers: `resolve_client_id`, `dynamic_client_registration`,
+  `generate_state`, `build_authorization_url`, `try_open_browser`,
+  `accept_callback`, `exchange_code`.
+- Utility functions: `parse_query_string`, `percent_decode`,
+  `parse_scope_from_www_authenticate`.
+
+#### src/mcp/auth/manager.rs
+
+- `AuthManager` -- owns `Arc<reqwest::Client>`, `Arc<TokenStore>`, and
+  `HashMap<String, OAuthFlowConfig>`. Not internally synchronized; wrap in
+  `Arc<tokio::sync::Mutex<_>>` for shared use.
+- `new()` -- creates empty manager.
+- `add_server()` -- registers or overwrites a server's flow config.
+- `get_token()` -- load from keyring; if valid return immediately; if expired
+  attempt refresh; if refresh fails or no refresh token, run full auth flow.
+- `handle_401()` -- delete cached token, call `get_token` for full re-auth.
+- `handle_403_scope()` -- call `flow.handle_step_up()`, persist new token.
+- `inject_token()` -- inserts `Authorization: Bearer <token>` into a header map.
+
+### Testing
+
+| Test File                            | Tests                     | Notes                                                        |
+| ------------------------------------ | ------------------------- | ------------------------------------------------------------ |
+| `tests/mcp_auth_pkce_test.rs`        | 15                        | All pass; includes RFC 7636 Appendix B KAT                   |
+| `tests/mcp_auth_token_store_test.rs` | 15 (11 active, 4 ignored) | Keyring tests marked `#[ignore = "requires system keyring"]` |
+| `tests/mcp_auth_discovery_test.rs`   | 15                        | wiremock integration; all pass                               |
+| `tests/mcp_auth_flow_test.rs`        | 10                        | wiremock integration; all pass                               |
+| Inline unit tests (all auth modules) | 80+                       | Embedded in `#[cfg(test)]` blocks                            |
+
+### Validation Results
+
+- `cargo fmt --all` passed
+- `cargo check --all-targets --all-features` passed (zero errors)
+- `cargo clippy --all-targets --all-features -- -D warnings` passed (zero
+  warnings)
+- `cargo test --all-features` passed (1102 passed; 1 pre-existing failure in
+  unrelated `providers::copilot` module; 11 ignored)
+- All 51 Phase 3 integration tests pass
+- All 80+ inline unit tests across auth modules pass
+- RFC 7636 Appendix B known-answer test vector verified
+
+### Success Criteria Verification
+
+- PKCE S256 challenge verified correct against RFC 7636 Appendix B test vector.
+- Discovery tries all five well-known endpoint orderings (wiremock verified).
+- Authorization URL includes `resource` parameter (RFC 8707) -- test verified.
+- `is_expired` returns `true` when past `expires_at - 60s`; `false` otherwise.
+- `inject_token` sets `Authorization: Bearer <token>` correctly.
+- All Phase 3 tests pass under `cargo test`.
+
+### References
+
+- Architecture: `docs/explanation/mcp_support_implementation_plan.md` Phase 3
+  (lines 1244-1570)
+- RFC 7636 PKCE: <https://www.rfc-editor.org/rfc/rfc7636>
+- RFC 8414 Authorization Server Metadata:
+  <https://www.rfc-editor.org/rfc/rfc8414>
+- RFC 8707 Resource Indicators: <https://www.rfc-editor.org/rfc/rfc8707>
+- RFC 9728 Protected Resource Metadata: <https://www.rfc-editor.org/rfc/rfc9728>
+- OpenID Connect Discovery 1.0:
+  <https://openid.net/specs/openid-connect-discovery-1_0.html>
 
 ---
 
