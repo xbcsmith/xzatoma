@@ -127,6 +127,49 @@ impl JsonRpcClient {
         }
     }
 
+    /// Create a new [`JsonRpcClient`] that shares all internal state with
+    /// `self`.
+    ///
+    /// The returned client shares the same `pending` map, `next_id` counter,
+    /// `notification_handlers`, and `server_request_handlers` as the original.
+    /// This allows a read loop started with an `Arc<JsonRpcClient>` to resolve
+    /// responses issued by a second client that owns the value, since both
+    /// clients operate on the same pending map.
+    ///
+    /// This is the canonical pattern for wiring `McpProtocol` (which takes
+    /// `JsonRpcClient` by value) with `start_read_loop` (which takes
+    /// `Arc<JsonRpcClient>`):
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tokio::sync::mpsc;
+    /// use tokio_util::sync::CancellationToken;
+    /// use xzatoma::mcp::client::{JsonRpcClient, start_read_loop};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let (out_tx, _out_rx) = mpsc::unbounded_channel::<String>();
+    /// let (_in_tx, in_rx) = mpsc::unbounded_channel::<String>();
+    /// let token = CancellationToken::new();
+    ///
+    /// let shared = Arc::new(JsonRpcClient::new(out_tx));
+    /// start_read_loop(in_rx, token, Arc::clone(&shared));
+    ///
+    /// // proto_client shares all Arcs with `shared`; responses resolved by
+    /// // the read loop via `shared` are visible to `proto_client.request()`.
+    /// let proto_client = shared.clone_shared();
+    /// # }
+    /// ```
+    pub fn clone_shared(&self) -> Self {
+        Self {
+            next_id: Arc::clone(&self.next_id),
+            pending: Arc::clone(&self.pending),
+            outbound_tx: self.outbound_tx.clone(),
+            notification_handlers: Arc::clone(&self.notification_handlers),
+            server_request_handlers: Arc::clone(&self.server_request_handlers),
+        }
+    }
+
     /// Send a JSON-RPC request and await the typed response.
     ///
     /// Assigns the next monotonic ID, serializes the request, sends it on the

@@ -651,7 +651,7 @@ pub has_more: Option<bool> }`
 Option<String> }`
 - `struct ProgressParams { pub progress_token: serde_json::Value, pub progress:
 f64, pub message: Option<String>, pub total: Option<f64>,
-#[serde(rename = "_meta")] pub meta: Option<serde_json::Value> }`
+# [serde(rename = "_meta")] pub meta: Option<serde_json::Value> }`
 - `struct PaginatedParams { pub cursor: Option<String> }`
 
 **JSON-RPC types** (used by `src/mcp/client.rs`):
@@ -1590,7 +1590,7 @@ Deserialize`; all fields `Option<>` and `#[serde(default)]`:
 Deserialize`, `#[serde(tag = "type", rename_all = "lowercase")]`:
 
 - `Stdio { executable: String, #[serde(default)] args: Vec<String>,
-#[serde(default)] env: std::collections::HashMap<String, String>,
+# [serde(default)] env: std::collections::HashMap<String, String>,
 working_dir: Option<String> }`
 - `Http { endpoint: url::Url, #[serde(default)] headers:
 std::collections::HashMap<String, String>, timeout_seconds: Option<u64>,
