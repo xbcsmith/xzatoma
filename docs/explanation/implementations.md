@@ -144,6 +144,161 @@ Audit against `docs/explanation/copilot_responses_endpoint_implementation_plan.m
 - Five additional unit tests for `CompletionResponse` model/reasoning fields
 - Total tests increased from 956 to 965, zero warnings
 
+### MCP Support Implementation
+
+- **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** - Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
+
+---
+
+## MCP Phase 0: Repository Integration Scaffold (2025-07-XX)
+
+### Overview
+
+Created the minimal scaffolding required for all subsequent MCP phases to compile and integrate incrementally. The project compiles cleanly after this phase. All new stubs use empty `Ok(())` bodies.
+
+### Components Delivered
+
+- `src/mcp/mod.rs` (26 lines) - Module root declaring all future submodules
+- `src/mcp/config.rs` (20 lines) - Placeholder `McpConfig` type with `Default`
+- `src/mcp/server.rs` (4 lines) - Placeholder comment for Phase 4
+- `src/commands/mcp.rs` (66 lines) - Stub `McpCommands` enum and `handle_mcp` handler
+- `src/lib.rs` - Updated with `pub mod mcp;`
+- `src/commands/mod.rs` - Updated with `pub mod mcp;`
+- `src/cli.rs` - Updated with `Commands::Mcp` variant
+- `src/main.rs` - Updated with dispatch arm and import removal
+- `src/config.rs` - Updated with `#[serde(default)] pub mcp: McpConfig` field
+- `src/watcher/watcher.rs` - Updated test struct literal with `mcp` field
+- `config/config.yaml` - Appended commented-out MCP configuration block
+- `tests/mcp_types_test.rs` - Created placeholder test file
+
+### Validation Results
+
+- cargo fmt --all passed
+- cargo check --all-targets --all-features passed (zero errors)
+- cargo clippy --all-targets --all-features -- -D warnings passed (zero warnings)
+- cargo test --all-features passed (all pre-existing tests pass)
+
+---
+
+## MCP Phase 1: Core MCP Types and JSON-RPC Client (2025-07-XX)
+
+### Overview
+
+Implemented all MCP 2025-11-25 protocol types, the transport-agnostic JSON-RPC 2.0 client backed by Tokio channels, and the typed MCP lifecycle wrapper. No transport or auth code is introduced in this phase.
+
+### Components Delivered
+
+- `src/mcp/types.rs` (1556 lines) - All MCP 2025-11-25 protocol types, JSON-RPC 2.0 wire types, method/notification constants, and inline unit tests
+- `src/mcp/client.rs` (890 lines) - Transport-agnostic `JsonRpcClient` with `start_read_loop`, `request`, `notify`, `on_notification`, and `on_server_request`
+- `src/mcp/protocol.rs` (1142 lines) - `McpProtocol` (uninitialized) and `InitializedMcpProtocol` (fully negotiated) wrappers; `SamplingHandler` and `ElicitationHandler` traits; `ServerCapabilityFlag` enum
+- `src/mcp/mod.rs` - Updated to declare `types`, `client`, `protocol`, `config`, `server` and re-export `types::*`
+- `src/error.rs` - Added 9 MCP error variants: `Mcp`, `McpTransport`, `McpServerNotFound`, `McpToolNotFound`, `McpProtocolVersion`, `McpTimeout`, `McpAuth`, `McpElicitation`, `McpTask`
+- `Cargo.toml` - Added `tokio-util` (with `codec` feature), `sha2`, `rand` via `cargo add`
+- `tests/mcp_types_test.rs` - 38 integration tests covering all type round-trips, serialization invariants, and wire-format contracts
+- `tests/mcp_client_test.rs` - 11 integration tests covering request/response matching, timeout, notification dispatch, concurrent requests, and read-loop lifecycle
+
+### Implementation Details
+
+#### src/mcp/types.rs
+
+Defines all wire types for protocol revision 2025-11-25 with 2025-03-26 backwards compatibility:
+
+- Protocol version constants: `LATEST_PROTOCOL_VERSION`, `PROTOCOL_VERSION_2025_03_26`, `SUPPORTED_PROTOCOL_VERSIONS`
+- 30 JSON-RPC method and notification constants (`METHOD_INITIALIZE`, `NOTIF_TOOLS_LIST_CHANGED`, etc.)
+- JSON-RPC primitives: `JsonRpcRequest`, `JsonRpcResponse`, `JsonRpcError` (with `Display`), `JsonRpcNotification`
+- Core identity: `ProtocolVersion` (newtype with `Display`, `From`), `Implementation`
+- Capability types: `ClientCapabilities`, `ServerCapabilities`, `TasksCapability`, `ElicitationCapability`, `SamplingCapability`, `RootsCapability`
+- Initialize: `InitializeParams`, `InitializeResponse`
+- Tool types: `McpTool`, `ToolAnnotations`, `ToolExecution`, `TaskSupport`, `ListToolsResponse`, `CallToolParams`, `CallToolResponse`, `ToolResponseContent` (tagged enum: Text/Image/Audio/Resource)
+- Task types: `Task`, `TaskStatus` (snake_case), `CreateTaskResult`, `TasksListResponse`, `TasksGetParams`, `TasksResultParams`, `TasksCancelParams`, `TasksListParams`
+- Resource types: `Resource`, `ResourceTemplate`, `ResourceContents` (untagged: Text/Blob), `TextResourceContents`, `BlobResourceContents`, `ListResourcesResponse`, `ReadResourceParams`, `ReadResourceResponse`
+- Prompt types: `Role`, `TextContent`, `ImageContent`, `AudioContent`, `MessageContent` (tagged), `PromptMessage`, `PromptArgument`, `Prompt`, `ListPromptsResponse`, `GetPromptParams`, `GetPromptResponse`
+- Sampling types: `ModelHint`, `ModelPreferences`, `ToolChoiceMode` (`None_` serializes as `"none"`), `SamplingToolChoice`, `CreateMessageRequest`, `CreateMessageResult`
+- Elicitation types: `ElicitationMode`, `ElicitationAction`, `ElicitationCreateParams`, `ElicitationResult`
+- Logging: `LoggingLevel` (ordered)
+- Completion: `CompletionCompleteParams`, `CompletionResult`, `CompletionCompleteResponse`
+- Utilities: `Root`, `CancelledParams`, `ProgressParams`, `PaginatedParams`
+
+All struct fields use `#[serde(rename_all = "camelCase")]`. All `Option<>` fields use `#[serde(skip_serializing_if = "Option::is_none")]`. `_meta` fields use explicit `#[serde(rename = "_meta")]`.
+
+#### src/mcp/client.rs
+
+Transport-agnostic `JsonRpcClient` backed by `tokio::sync::mpsc::UnboundedSender/Receiver<String>`:
+
+- `JsonRpcClient::new(outbound_tx)` - constructs client; caller wires channels
+- `request<P, R>(method, params, timeout)` - assigns monotonic ID, registers oneshot in `pending` map, sends serialized request, awaits with timeout
+- `notify<P>(method, params)` - sends notification (no `id` field)
+- `on_notification(method, f)` - registers handler for server-sent notifications
+- `on_server_request(method, f)` - registers async handler for server-initiated requests; sends response automatically
+- `start_read_loop(inbound_rx, cancellation, client)` - Tokio task that classifies each inbound message as response/server-request/notification and dispatches; drops all pending senders on cancellation
+
+Message classification logic:
+
+- `has_id && (has_result || has_error) && !has_method` → response
+- `has_id && has_method` → server-initiated request
+- `has_method && !has_id` → notification
+
+#### src/mcp/protocol.rs
+
+`McpProtocol::initialize(client_info, capabilities)` performs the handshake:
+
+1. Sends `initialize` request with `LATEST_PROTOCOL_VERSION`
+2. Validates server's chosen version is in `SUPPORTED_PROTOCOL_VERSIONS`; returns `McpProtocolVersion` error if not
+3. Fires `notifications/initialized` (fire-and-forget)
+4. Returns `InitializedMcpProtocol`
+
+`InitializedMcpProtocol` provides:
+
+- `capable(flag)` - checks `InitializeResponse.capabilities`
+- `list_tools()`, `list_resources()`, `list_prompts()` - cursor-paginated list methods
+- `call_tool(name, arguments, task)`, `read_resource(uri)`, `get_prompt(name, arguments)` - single-call methods
+- `complete(params)`, `ping()` - utility methods
+- `tasks_get/result/cancel/list` - task lifecycle methods
+- `register_sampling_handler(Arc<dyn SamplingHandler>)` - wires `sampling/createMessage`
+- `register_elicitation_handler(Arc<dyn ElicitationHandler>)` - wires `elicitation/create`
+
+### Testing
+
+Test coverage: >80% on all three new modules.
+
+```text
+tests/mcp_types_test.rs:  38 passed; 0 failed
+tests/mcp_client_test.rs: 11 passed; 0 failed
+src/mcp/types.rs inline:  included in lib test run
+src/mcp/client.rs inline: included in lib test run
+src/mcp/protocol.rs inline: included in lib test run
+Total new MCP tests: ~75 (inline + integration)
+```
+
+Key test cases per Task 1.7:
+
+- `test_protocol_version_constants_are_correct` - constant values verified
+- `test_implementation_description_skipped_when_none` - `skip_serializing_if` verified
+- `test_call_tool_response_roundtrip` - full round-trip with all fields
+- `test_task_status_serializes_snake_case` - all 5 variants checked
+- `test_tool_response_content_text_roundtrip` - tagged enum discrimination
+- `test_json_rpc_error_display` - `Display` impl verified
+- `test_request_resolves_with_correct_result` - pending map resolution
+- `test_request_timeout_fires` - `McpTimeout` error on no response
+- `test_notification_handler_called_for_matching_method` - dispatch to handler
+- `test_pending_sender_dropped_cleanly_on_read_loop_exit` - clean cancellation
+- `test_json_rpc_error_response_mapped_to_mcp_error` - error variant mapping
+
+### Validation Results
+
+- cargo fmt --all passed
+- cargo check --all-targets --all-features passed (zero errors)
+- cargo clippy --all-targets --all-features -- -D warnings passed (zero warnings)
+- cargo test --all-features passed (1008 passed; 1 pre-existing failure in unrelated `providers::copilot` module)
+- All 49 integration tests in `tests/mcp_types_test.rs` and `tests/mcp_client_test.rs` pass
+
+### References
+
+- Architecture: `docs/explanation/mcp_support_implementation_plan.md`
+- Protocol spec: MCP revision 2025-11-25
+
+---
+
 ### Pending Implementation
 
 ⏳ **Phase 1: Foundation** - Not started

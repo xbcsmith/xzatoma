@@ -4,6 +4,7 @@
 //! configuration from files, environment variables, and CLI overrides.
 
 use crate::error::{Result, XzatomaError};
+use crate::mcp::config::McpConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -20,6 +21,9 @@ pub struct Config {
     /// Watcher configuration for Kafka event monitoring
     #[serde(default)]
     pub watcher: WatcherConfig,
+    /// MCP client configuration
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 /// Provider configuration
@@ -676,6 +680,7 @@ impl Config {
             },
             agent: AgentConfig::default(),
             watcher: WatcherConfig::default(),
+            mcp: McpConfig::default(),
         }
     }
 

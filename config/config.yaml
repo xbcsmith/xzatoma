@@ -109,3 +109,22 @@ agent:
 
     # Maximum wall-clock time for all subagents in seconds (optional)
     # max_total_time: 3600
+# MCP (Model Context Protocol) client configuration
+# mcp:
+#   auto_connect: true
+#   request_timeout_seconds: 30
+#   expose_resources_tool: true
+#   expose_prompts_tool: true
+#   servers:
+#     - id: "my_stdio_server"
+#       transport:
+#         type: "stdio"
+#         executable: "/usr/local/bin/my-mcp-server"
+#         args: []
+#         env: {}
+#     - id: "my_http_server"
+#       transport:
+#         type: "http"
+#         endpoint: "https://mcp.example.com/mcp"
+#         oauth:
+#           redirect_port: 8765

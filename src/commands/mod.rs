@@ -47,6 +47,9 @@ pub mod history;
 // Replay command for conversation debugging
 pub mod replay;
 
+// MCP server management commands
+pub mod mcp;
+
 /// Detect if a user prompt requests subagent functionality
 ///
 /// Analyzes the prompt for keywords and patterns that suggest the user
