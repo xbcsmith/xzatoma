@@ -16,15 +16,19 @@
 //! - `transport` -- `Transport` trait and concrete implementations (stdio, HTTP,
 //!   fake)
 //! - `config`    -- MCP client configuration structures
-//! - `server`    -- Per-server connection descriptors (Phase 4)
+//! - `server`    -- Per-server connection descriptors
+//! - `manager`   -- Client lifecycle and server manager (Phase 4)
+//! - `task_manager` -- Long-running task tracking (Phase 6 placeholder)
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
 pub mod auth;
 pub mod client;
 pub mod config;
+pub mod manager;
 pub mod protocol;
 pub mod server;
+pub mod task_manager;
 pub mod transport;
 pub mod types;
 

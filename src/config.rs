@@ -932,6 +932,29 @@ impl Config {
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
         }
+
+        // ---------------------------------------------------------------------
+        // MCP environment variable overrides
+        // ---------------------------------------------------------------------
+        if let Ok(val) = std::env::var("XZATOMA_MCP_REQUEST_TIMEOUT") {
+            if let Ok(n) = val.parse::<u64>() {
+                self.mcp.request_timeout_seconds = n;
+                tracing::debug!(
+                    request_timeout_seconds = n,
+                    "Env override: XZATOMA_MCP_REQUEST_TIMEOUT"
+                );
+            } else {
+                tracing::warn!("Invalid value for XZATOMA_MCP_REQUEST_TIMEOUT: {}", val);
+            }
+        }
+
+        if let Ok(val) = std::env::var("XZATOMA_MCP_AUTO_CONNECT") {
+            self.mcp.auto_connect = matches!(val.to_lowercase().as_str(), "true" | "1" | "yes");
+            tracing::debug!(
+                auto_connect = self.mcp.auto_connect,
+                "Env override: XZATOMA_MCP_AUTO_CONNECT"
+            );
+        }
     }
 
     fn apply_cli_overrides(&mut self, cli: &crate::cli::Cli) {
@@ -1091,6 +1114,9 @@ impl Config {
                 .into());
             }
         }
+
+        // Validate MCP configuration
+        self.mcp.validate()?;
 
         Ok(())
     }

@@ -263,6 +263,7 @@ and resolved four gaps:
 ### MCP Support Implementation
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
+- Phase 4: MCP Client Lifecycle and Server Manager -- Complete
 
 - **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
   Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
@@ -815,6 +816,216 @@ scope (HTTP transport only, per spec).
 
 ---
 
+## MCP Phase 4: Client Lifecycle and Server Manager (2025-07-XX)
+
+### Overview
+
+Phase 4 implements the full MCP server configuration types, the `McpConfig`
+top-level configuration struct, and the `McpClientManager` which manages the
+complete lifecycle of all connected MCP servers. It also wires `McpConfig` into
+`src/config.rs` including environment variable overrides and validation, and
+introduces a `TaskManager` placeholder for Phase 6.
+
+### Components Delivered
+
+| File                        | Action                                             |
+| --------------------------- | -------------------------------------------------- |
+| `src/mcp/server.rs`         | Replaced stub with full implementation             |
+| `src/mcp/config.rs`         | Replaced stub with full implementation             |
+| `src/mcp/manager.rs`        | Created                                            |
+| `src/mcp/task_manager.rs`   | Created (Phase 6 placeholder)                      |
+| `src/mcp/mod.rs`            | Added `pub mod manager` and `pub mod task_manager` |
+| `src/config.rs`             | `apply_env_vars` and `validate` updated            |
+| `tests/mcp_manager_test.rs` | Created                                            |
+| `tests/mcp_config_test.rs`  | Created                                            |
+
+### Implementation Details
+
+#### src/mcp/server.rs
+
+Defines three public types:
+
+- `OAuthServerConfig` -- optional OAuth 2.1 overrides for a single HTTP server
+  (client_id, client_secret, redirect_port, metadata_url). All fields `Option<>`
+  with `#[serde(default)]`.
+
+- `McpServerTransportConfig` -- tagged enum
+  (`#[serde(tag = "type", rename_all = "lowercase")]`) with two variants:
+
+  - `Stdio { executable, args, env, working_dir }` -- launch a subprocess and
+    communicate over stdin/stdout.
+  - `Http { endpoint, headers, timeout_seconds, oauth }` -- Streamable HTTP/SSE
+    transport with optional OAuth.
+
+- `McpServerConfig` -- full per-server descriptor with `id` (validated against
+  `^[a-z0-9_-]{1,64}$`), `transport`, `enabled`, `timeout_seconds`, and five
+  capability-enable flags (`tools_enabled`, `resources_enabled`,
+  `prompts_enabled`, `sampling_enabled`, `elicitation_enabled`).
+
+  `McpServerConfig::validate` enforces:
+
+  1. ID matches regex.
+  2. Stdio: `executable` is non-empty.
+  3. Http: endpoint scheme is `"http"` or `"https"`.
+
+#### src/mcp/config.rs
+
+Defines `McpConfig` with `#[serde(default)]` at the struct level so that config
+files that omit the `mcp:` key continue to deserialise without error.
+
+Fields:
+
+- `servers: Vec<McpServerConfig>` -- list of servers to connect to.
+- `request_timeout_seconds: u64` -- default `30`.
+- `auto_connect: bool` -- default `true`.
+- `expose_resources_tool: bool` -- default `true`.
+- `expose_prompts_tool: bool` -- default `true`.
+
+`McpConfig::validate` checks for duplicate server IDs (returns
+`XzatomaError::Config("duplicate MCP server id: ...")`) and calls
+`McpServerConfig::validate` for each entry.
+
+#### src/config.rs
+
+`apply_env_vars` extended with two new overrides:
+
+```text
+XZATOMA_MCP_REQUEST_TIMEOUT  -> mcp.request_timeout_seconds (u64)
+XZATOMA_MCP_AUTO_CONNECT     -> mcp.auto_connect (true|1|yes => true, else false)
+```
+
+`validate` extended to call `self.mcp.validate()` before returning `Ok(())`.
+
+#### src/mcp/manager.rs
+
+Core of Phase 4. Provides:
+
+- `McpServerState` -- `Debug, Clone, PartialEq` enum with variants
+  `Disconnected`, `Connecting`, `Connected`, `Failed(String)`.
+
+- `McpServerEntry` -- all-`pub` struct holding: `config`, `protocol`
+  (`Option<Arc<InitializedMcpProtocol>>`), `tools` (cached `Vec<McpTool>`),
+  `state`, `auth_manager` (`Option<Arc<AuthManager>>`), `server_metadata`
+  (`Option<AuthorizationServerMetadata>`), `read_loop_handle`, and
+  `cancellation`.
+
+- `McpClientManager` -- owns a `HashMap<String, McpServerEntry>`, a shared
+  `reqwest::Client`, a shared `TokenStore`, and an `Arc<Mutex<TaskManager>>`
+  (Phase 6 placeholder).
+
+  Public methods:
+
+  - `new(http_client, token_store) -> Self`
+  - `connect_all(config) -> Result<()>` -- connects all enabled servers; logs
+    individual failures without propagating.
+  - `connect(config) -> Result<()>` -- full lifecycle: transport spawn, channel
+    wiring, read loop start, initialize handshake, tool list fetch. Supports
+    stdio and HTTP (with OAuth token injection).
+  - `disconnect(id) -> Result<()>` -- cancels the read loop, drops the protocol,
+    transitions to `Disconnected`.
+  - `reconnect(id) -> Result<()>` -- disconnect then connect.
+  - `refresh_tools(id) -> Result<()>` -- re-issues `tools/list` and updates the
+    cache.
+  - `connected_servers() -> Vec<&McpServerEntry>`
+  - `get_tools_for_registry() -> Vec<(String, Vec<McpTool>)>`
+  - `call_tool(server_id, tool_name, arguments) -> Result<CallToolResponse>` --
+    includes single 401 retry via `AuthManager::handle_401`.
+  - `call_tool_as_task(server_id, tool_name, arguments, ttl)` -- uses
+    `TaskParams`; Phase 6 will add task polling.
+  - `list_resources(server_id) -> Result<Vec<Resource>>`
+  - `read_resource(server_id, uri) -> Result<String>` -- text returned directly;
+    blobs prefixed with `"[base64 <mime>] "`.
+  - `list_prompts(server_id) -> Result<Vec<Prompt>>`
+  - `get_prompt(server_id, name, arguments) -> Result<GetPromptResponse>`
+  - `insert_entry_for_test(id, entry)` -- test helper for integration tests.
+
+- `xzatoma_client_capabilities() -> ClientCapabilities` -- canonical
+  capabilities advertised to all servers: sampling, elicitation (form + url),
+  roots (list_changed: true), tasks (list + cancel + requests).
+
+#### src/mcp/task_manager.rs
+
+Phase 6 placeholder. Provides `TaskManager` (Default-constructible) with:
+
+- `register_task(server_id, task_id, ttl)` -- records a new in-flight task.
+- `update_task_state(server_id, task_id, state)` -- updates lifecycle state.
+- `remove_task(server_id, task_id)` -- removes a completed task.
+- `task_state(server_id, task_id) -> Option<&TaskLifecycleState>` -- queries
+  current state.
+- `active_task_count() -> usize`
+
+### Testing
+
+#### tests/mcp_config_test.rs (25 tests)
+
+- `test_server_id_rejects_uppercase` -- `"MyServer"` fails validate.
+- `test_server_id_rejects_spaces` -- `"my server"` fails validate.
+- `test_server_id_rejects_too_long` -- 65-char id fails validate.
+- `test_server_id_accepts_valid` -- `"my-server_01"` passes validate.
+- `test_config_yaml_without_mcp_key_loads_default` -- empty YAML gives
+  `McpConfig::default()` with no servers.
+- `test_duplicate_server_ids_fail_mcp_config_validate` -- two servers with same
+  id returns `Err`.
+- `test_env_var_xzatoma_mcp_request_timeout_applies` -- env var sets field.
+- `test_env_var_xzatoma_mcp_auto_connect_applies_false` -- `"false"` sets
+  `auto_connect` to `false`.
+- Plus 17 additional tests for boundary values, serde round-trips, OAuth YAML
+  parsing, and invalid-scheme/empty-executable validation.
+
+  All env-var tests use `#[serial]` from `serial_test` to prevent concurrent
+  interference via shared process-wide env vars.
+
+#### tests/mcp_manager_test.rs (24 tests)
+
+- `test_connect_succeeds_with_fake_transport_and_valid_initialize_response` --
+  wired protocol transitions to Connected state correctly.
+- `test_connect_fails_with_protocol_version_mismatch` -- injecting
+  `"protocolVersion": "1999-01-01"` causes `McpProtocolVersion` error.
+- `test_refresh_tools_updates_cached_tool_list` -- second `list_tools` call with
+  two-tool response updates the cache from 1 to 2.
+- `test_refresh_tools_via_manager_updates_cached_tool_list` -- full manager
+  `refresh_tools` path updates `get_tools_for_registry`.
+- `test_call_tool_returns_not_found_for_unknown_tool_name` -- empty tool cache
+  returns `McpToolNotFound`.
+- `test_call_tool_succeeds_for_known_tool` -- known tool is forwarded to the
+  protocol layer and the injected response is returned.
+- `test_401_triggers_reauth_classification` -- `McpAuth` error is classified
+  correctly by the retry guard; `McpTransport` is not.
+- `test_disconnect_transitions_state_to_disconnected` -- state transitions and
+  protocol is cleared.
+- Plus 16 additional tests for state equality, empty registries, capability
+  values, connect_all skip-disabled behaviour, and not-found errors.
+
+### Validation Results
+
+All Phase 4 success criteria are met:
+
+- `connect` completes `initialize` then `tools/list` using wired channels.
+- `Config` loaded from YAML with no `mcp:` key produces `McpConfig::default()`.
+- Duplicate server IDs caught by `McpConfig::validate`.
+- `XZATOMA_MCP_REQUEST_TIMEOUT` env var applies to
+  `mcp.request_timeout_seconds`.
+- `XZATOMA_MCP_AUTO_CONNECT` env var applies to `mcp.auto_connect`.
+- 401 during `call_tool` triggers a single retry via `auth_manager`.
+- All Phase 4 tests pass under `cargo test --all-features`.
+
+Quality gate results:
+
+- `cargo fmt --all` -- pass
+- `cargo check --all-targets --all-features` -- pass (zero errors)
+- `cargo clippy --all-targets --all-features -- -D warnings` -- pass (zero
+  warnings)
+- `cargo test --all-features` -- 1171 Phase 4 tests pass; 1 pre-existing failure
+  in `providers::copilot` (unrelated to Phase 4)
+
+### References
+
+- Implementation plan: `docs/explanation/mcp_support_implementation_plan.md`
+  Phase 4 (lines 1570-1909)
+- MCP protocol specification revision 2025-11-25
+
+---
+
 ### Pending Implementation
 
 ⏳ **Phase 1: Foundation** - Not started
@@ -990,6 +1201,7 @@ All implementations must meet these requirements (per AGENTS.md):
 
 ## Version History
 
+- **2025-07-XX** - MCP Phase 4: Client Lifecycle and Server Manager completed
 - **2025-01-XX** - Phase 5: Documentation and Examples completed
 - **2025-01-XX** - Phase 4: Provider Integration completed
 - **2025-01-XX** - Phase 3 Security Validation completed
