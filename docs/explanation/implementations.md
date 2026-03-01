@@ -264,6 +264,7 @@ and resolved four gaps:
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
 - Phase 4: MCP Client Lifecycle and Server Manager -- Complete
+- Phase 5A: Tool Bridge, Resources, and Prompts -- Complete
 
 - **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
   Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
@@ -1022,6 +1023,81 @@ Quality gate results:
 
 - Implementation plan: `docs/explanation/mcp_support_implementation_plan.md`
   Phase 4 (lines 1570-1909)
+- MCP protocol specification revision 2025-11-25
+
+---
+
+## MCP Phase 5A: Tool Bridge, Resources, and Prompts (2025-07-XX)
+
+### Overview
+
+Phase 5A implements the bridge layer between MCP servers and Xzatoma's internal
+`ToolRegistry`. It introduces three `ToolExecutor` adapters, a unified
+auto-approval policy, and the `register_mcp_tools` helper used by both the `run`
+and `chat` commands.
+
+### Components Delivered
+
+| File                                                         | Action                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `src/mcp/approval.rs`                                        | Created -- auto-approval policy function                    |
+| `src/mcp/tool_bridge.rs`                                     | Created -- three ToolExecutor adapters                      |
+| `src/mcp/mod.rs`                                             | Updated with `pub mod approval;` and `pub mod tool_bridge;` |
+| `tests/mcp_tool_bridge_test.rs`                              | Created -- 18 integration tests                             |
+| `docs/explanation/mcp_phase5a_tool_bridge_implementation.md` | Created                                                     |
+
+### Implementation Details
+
+#### `src/mcp/approval.rs`
+
+Single authoritative source for MCP tool auto-approval policy. Exports one
+function:
+
+- `should_auto_approve(execution_mode, headless) -> bool` -- returns `true` when
+  `headless == true` OR `execution_mode == FullAutonomous`. All other
+  combinations require a confirmation prompt. No other module may embed inline
+  approval checks.
+
+#### `src/mcp/tool_bridge.rs`
+
+Three `ToolExecutor` implementations and a registration helper:
+
+- `McpToolExecutor` -- wraps a single `tools/call` tool. Registry name is always
+  `format!("{}__{}", server_id, tool_name)` (double underscore). Routes through
+  `call_tool_as_task` when `task_support == Some(TaskSupport::Required)`.
+  Appends `structured_content` after a `"---"` delimiter in output.
+- `McpResourceToolExecutor` -- exposes `resources/read` as
+  `"mcp_read_resource"`. Accepts `server_id` and `uri` arguments.
+- `McpPromptToolExecutor` -- exposes `prompts/get` as `"mcp_get_prompt"`.
+  Accepts `server_id`, `prompt_name`, and optional `arguments`. Formats response
+  messages as `"[ROLE]\ncontent"` blocks separated by blank lines.
+- `register_mcp_tools(registry, manager, execution_mode, headless)` -- iterates
+  all connected servers and registers one `McpToolExecutor` per tool, plus
+  always registers `mcp_read_resource` and `mcp_get_prompt`. Emits
+  `tracing::warn!` before overwriting an existing registry entry.
+
+### Validation Results
+
+All Phase 5A quality gates pass:
+
+- `cargo fmt --all` -- pass
+- `cargo check --all-targets --all-features` -- pass (zero errors)
+- `cargo clippy --all-targets --all-features -- -D warnings` -- pass (zero
+  warnings)
+- `cargo test --all-features --lib mcp::approval` -- 8 passed
+- `cargo test --all-features --lib mcp::tool_bridge` -- 16 passed
+- `cargo test --all-features --test mcp_tool_bridge_test` -- 18 passed
+
+The single pre-existing failure
+(`providers::copilot::tests::test_copilot_config_defaults`) is unrelated to
+Phase 5A.
+
+### References
+
+- Implementation plan: `docs/explanation/mcp_support_implementation_plan.md`
+  Phase 5A (lines 1909-2152)
+- Implementation summary:
+  `docs/explanation/mcp_phase5a_tool_bridge_implementation.md`
 - MCP protocol specification revision 2025-11-25
 
 ---

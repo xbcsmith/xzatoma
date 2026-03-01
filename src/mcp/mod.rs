@@ -9,19 +9,22 @@
 //!
 //! # Module Layout
 //!
-//! - `auth`      -- OAuth 2.1 / OIDC authorization for HTTP transport
-//! - `types`     -- All MCP 2025-11-25 protocol types and JSON-RPC primitives
-//! - `client`    -- Transport-agnostic async JSON-RPC 2.0 client
-//! - `protocol`  -- Typed MCP lifecycle wrapper over `JsonRpcClient`
-//! - `transport` -- `Transport` trait and concrete implementations (stdio, HTTP,
-//!   fake)
-//! - `config`    -- MCP client configuration structures
-//! - `server`    -- Per-server connection descriptors
-//! - `manager`   -- Client lifecycle and server manager (Phase 4)
+//! - `approval`     -- MCP tool auto-approval policy (single authoritative source)
+//! - `auth`         -- OAuth 2.1 / OIDC authorization for HTTP transport
+//! - `client`       -- Transport-agnostic async JSON-RPC 2.0 client
+//! - `config`       -- MCP client configuration structures
+//! - `manager`      -- Client lifecycle and server manager
+//! - `protocol`     -- Typed MCP lifecycle wrapper over `JsonRpcClient`
+//! - `server`       -- Per-server connection descriptors
 //! - `task_manager` -- Long-running task tracking (Phase 6 placeholder)
+//! - `tool_bridge`  -- ToolExecutor adapters for MCP tools, resources, and prompts
+//! - `transport`    -- `Transport` trait and concrete implementations (stdio, HTTP,
+//!   fake)
+//! - `types`        -- All MCP 2025-11-25 protocol types and JSON-RPC primitives
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod approval;
 pub mod auth;
 pub mod client;
 pub mod config;
@@ -29,6 +32,7 @@ pub mod manager;
 pub mod protocol;
 pub mod server;
 pub mod task_manager;
+pub mod tool_bridge;
 pub mod transport;
 pub mod types;
 
