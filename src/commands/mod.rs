@@ -152,6 +152,50 @@ pub mod chat {
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
 
+        // Build MCP client manager if auto_connect is enabled and servers are configured.
+        // The manager Arc must stay alive for the entire duration of run_chat so that
+        // McpToolExecutor instances can call back to it during agent turns.
+        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
+            use crate::mcp::auth::token_store::TokenStore;
+            use crate::mcp::manager::McpClientManager;
+            use tokio::sync::RwLock;
+
+            let http_client = Arc::new(reqwest::Client::new());
+            let token_store = Arc::new(TokenStore);
+            let mut manager = McpClientManager::new(http_client, token_store);
+
+            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
+                if let Err(e) = manager.connect(server_config.clone()).await {
+                    tracing::warn!(
+                        server_id = %server_config.id,
+                        error = %e,
+                        "Failed to connect to MCP server during chat startup"
+                    );
+                }
+            }
+
+            Some(Arc::new(RwLock::new(manager)))
+        } else {
+            None
+        };
+
+        // Register MCP tools into the registry.
+        // Chat is interactive so headless=false.
+        if let Some(ref manager) = mcp_manager {
+            use crate::mcp::tool_bridge::register_mcp_tools;
+
+            let execution_mode = config.agent.terminal.default_mode;
+            match register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, false).await {
+                Ok(count) if count > 0 => {
+                    tracing::info!(count = %count, "Registered MCP tools for chat command");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to register MCP tools for chat command");
+                }
+            }
+        }
+
         // Initialize storage
         let storage = match SqliteStorage::new() {
             Ok(s) => Some(s),
@@ -1551,10 +1595,54 @@ pub mod r#run {
             _ => SafetyMode::AlwaysConfirm,
         };
 
-        let tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.clone())
+        let mut tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.clone())
             .with_tools_config(config.agent.tools.clone())
             .with_terminal_config(config.agent.terminal.clone())
             .build()?;
+
+        // Build MCP client manager if auto_connect is enabled and servers are configured.
+        // The manager Arc must stay alive for the entire duration of run_plan_with_options
+        // so that McpToolExecutor instances can call back to it during agent execution.
+        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
+            use crate::mcp::auth::token_store::TokenStore;
+            use crate::mcp::manager::McpClientManager;
+            use tokio::sync::RwLock;
+
+            let http_client = Arc::new(reqwest::Client::new());
+            let token_store = Arc::new(TokenStore);
+            let mut manager = McpClientManager::new(http_client, token_store);
+
+            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
+                if let Err(e) = manager.connect(server_config.clone()).await {
+                    tracing::warn!(
+                        server_id = %server_config.id,
+                        error = %e,
+                        "Failed to connect to MCP server during run command startup"
+                    );
+                }
+            }
+
+            Some(Arc::new(RwLock::new(manager)))
+        } else {
+            None
+        };
+
+        // Register MCP tools into the registry after it is built.
+        if let Some(ref manager) = mcp_manager {
+            use crate::mcp::tool_bridge::register_mcp_tools;
+
+            // run command is always headless.
+            let execution_mode = config.agent.terminal.default_mode;
+            let count = register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, true)
+                .await
+                .map_err(|e| {
+                    XzatomaError::Config(format!("Failed to register MCP tools: {}", e))
+                })?;
+
+            if count > 0 {
+                tracing::info!(count = %count, "Registered MCP tools for run command");
+            }
+        }
 
         // Create agent using concrete providers
         let mut agent = match config.provider.provider_type.as_str() {

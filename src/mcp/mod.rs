@@ -13,8 +13,10 @@
 //! - `auth`         -- OAuth 2.1 / OIDC authorization for HTTP transport
 //! - `client`       -- Transport-agnostic async JSON-RPC 2.0 client
 //! - `config`       -- MCP client configuration structures
+//! - `elicitation`  -- Elicitation handler for structured user input collection
 //! - `manager`      -- Client lifecycle and server manager
 //! - `protocol`     -- Typed MCP lifecycle wrapper over `JsonRpcClient`
+//! - `sampling`     -- Sampling handler forwarding LLM inference to the Provider
 //! - `server`       -- Per-server connection descriptors
 //! - `task_manager` -- Long-running task tracking (Phase 6 placeholder)
 //! - `tool_bridge`  -- ToolExecutor adapters for MCP tools, resources, and prompts
@@ -28,8 +30,10 @@ pub mod approval;
 pub mod auth;
 pub mod client;
 pub mod config;
+pub mod elicitation;
 pub mod manager;
 pub mod protocol;
+pub mod sampling;
 pub mod server;
 pub mod task_manager;
 pub mod tool_bridge;

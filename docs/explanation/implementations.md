@@ -265,6 +265,7 @@ and resolved four gaps:
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
 - Phase 4: MCP Client Lifecycle and Server Manager -- Complete
 - Phase 5A: Tool Bridge, Resources, and Prompts -- Complete
+- Phase 5B: Sampling, Elicitation, and Command Integration -- Complete
 
 - **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
   Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
@@ -1098,6 +1099,147 @@ Phase 5A.
   Phase 5A (lines 1909-2152)
 - Implementation summary:
   `docs/explanation/mcp_phase5a_tool_bridge_implementation.md`
+- MCP protocol specification revision 2025-11-25
+
+---
+
+## MCP Phase 5B: Sampling, Elicitation, and Command Integration (2025-07-XX)
+
+### Overview
+
+Phase 5B completes the MCP client integration by wiring two server-initiated
+callback handlers into Xzatoma's execution model, connecting the
+`McpClientManager` to both the `run` and `chat` command flows, and providing
+full integration test coverage including an end-to-end test that exercises the
+complete path from `ToolRegistry::get` through a live MCP server subprocess and
+back.
+
+### Components Delivered
+
+| File                                                              | Action                                                      |
+| ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| `src/mcp/sampling.rs`                                             | Created -- sampling handler forwarding LLM requests         |
+| `src/mcp/elicitation.rs`                                          | Created -- elicitation handler for structured user input    |
+| `src/mcp/mod.rs`                                                  | Updated with `pub mod sampling;` and `pub mod elicitation;` |
+| `src/commands/mod.rs`                                             | Updated run and chat flows with MCP manager wiring          |
+| `Cargo.toml`                                                      | Fixed `url` crate to enable `serde` feature                 |
+| `tests/mcp_sampling_test.rs`                                      | Created -- 6 integration-style sampling tests               |
+| `tests/mcp_elicitation_test.rs`                                   | Created -- 12 integration-style elicitation tests           |
+| `tests/mcp_tool_execution_test.rs`                                | Created -- 4 end-to-end tool execution tests                |
+| `docs/explanation/phase5b_sampling_elicitation_implementation.md` | Created -- full implementation summary                      |
+
+### Implementation Details
+
+#### `src/mcp/sampling.rs`
+
+`XzatomaSamplingHandler` implements `SamplingHandler` and handles
+`sampling/createMessage` requests from connected MCP servers:
+
+1. Delegates approval to `should_auto_approve(execution_mode, headless)`. When
+   approval is required it prompts on stderr and reads one line from stdin. Any
+   answer other than `"y"` or `"yes"` returns
+   `Err(XzatomaError::McpElicitation("user rejected sampling request"))`.
+2. Converts `CreateMessageRequest.messages` to provider `Message` values.
+   Non-text content items are silently skipped.
+3. Prepends `system_prompt` as a `system` role message when present and
+   non-empty.
+4. Guards against empty message lists -- returns `Err(XzatomaError::Mcp(...))`
+   rather than passing an empty slice to the provider.
+5. Calls `Provider::complete(&messages, &[])` with no tool definitions.
+6. Maps the `CompletionResponse` to `CreateMessageResult` with
+   `role: Assistant`, `stop_reason: "toolUse"` or `"endTurn"`, and `model` from
+   the response (falling back to `"unknown"`).
+
+`Debug` is implemented manually because `Arc<dyn Provider>` does not implement
+`Debug` in the general case.
+
+#### `src/mcp/elicitation.rs`
+
+`XzatomaElicitationHandler` implements `ElicitationHandler`:
+
+- **Form mode**: non-interactive contexts (`headless == true` or
+  `execution_mode == FullAutonomous`) cancel immediately. Interactive contexts
+  prompt for each field from `requested_schema["properties"]` (sorted
+  alphabetically; falls back to a single `"value"` field). Typing `"decline"`
+  returns `Decline`; completing all fields returns `Accept` with a JSON object.
+- **URL mode**: headless contexts cancel immediately. Non-headless contexts
+  print the URL and attempt to open it with `open`/`xdg-open`; always returns
+  `Cancel` because the handler cannot await the OAuth redirect synchronously.
+
+The `extract_field_names` helper extracts sorted property names from a JSON
+Schema `"properties"` object, falling back to `["value"]` when the schema is
+absent or empty.
+
+#### `src/commands/mod.rs` -- Run and Chat Commands
+
+Both `run_plan_with_options` and `run_chat` now build an `McpClientManager` when
+`config.mcp.auto_connect == true` and `config.mcp.servers` is non-empty. The
+manager `Arc<RwLock<McpClientManager>>` is kept alive for the entire function
+duration. Per-server failures are logged at `warn` level without aborting.
+`register_mcp_tools` is called with `headless: true` for run and
+`headless: false` for chat.
+
+### Testing
+
+#### `tests/mcp_sampling_test.rs` (6 tests)
+
+- `test_full_autonomous_mode_skips_user_prompt_and_calls_provider`
+- `test_headless_mode_skips_user_prompt_and_calls_provider`
+- `test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error`
+- `test_stop_reason_is_end_turn_for_plain_text_response`
+- `test_result_model_field_not_empty`
+- `test_multiple_messages_all_forwarded_to_provider`
+
+#### `tests/mcp_elicitation_test.rs` (12 tests)
+
+- `test_form_mode_headless_returns_cancel`
+- `test_form_mode_full_autonomous_returns_cancel`
+- `test_url_mode_headless_returns_cancel`
+- `test_form_mode_headless_and_full_autonomous_returns_cancel`
+- `test_form_mode_restricted_autonomous_headless_returns_cancel`
+- `test_url_mode_full_autonomous_headless_returns_cancel`
+- `test_url_mode_no_url_headless_returns_cancel`
+- `test_url_mode_non_headless_returns_cancel_after_display`
+- `test_mode_none_defaults_to_form_and_full_autonomous_returns_cancel`
+- `test_mode_none_defaults_to_form_and_headless_returns_cancel`
+- `test_handler_is_idempotent_for_cancel_path`
+- `test_form_mode_headless_with_rich_schema_still_returns_cancel`
+
+#### `tests/mcp_tool_execution_test.rs` (4 tests)
+
+End-to-end tests spawning the `mcp_test_server` subprocess via
+`McpClientManager::connect`:
+
+- `test_end_to_end_tool_call_via_registry` -- full path from
+  `registry.get("test_server__echo").execute({"message":"hello"})` to subprocess
+  and back; asserts output is `"hello"`
+- `test_end_to_end_sequential_echo_calls_via_registry` -- four sequential calls
+- `test_end_to_end_tool_definition_is_well_formed` -- validates definition
+  structure
+- `test_end_to_end_registry_contains_namespaced_tool_name` -- validates
+  `tool_names()` output
+
+### Validation Results
+
+- `cargo fmt --all` -- pass
+- `cargo check --all-targets --all-features` -- pass (zero errors, zero
+  warnings)
+- `cargo clippy --all-targets --all-features -- -D warnings` -- pass (zero
+  warnings)
+- `cargo test --all-features --test mcp_elicitation_test` -- 12 passed
+- `cargo test --all-features --test mcp_sampling_test` -- 6 passed
+- `cargo test --all-features --test mcp_tool_execution_test` -- 4 passed
+- `cargo test --all-features --test mcp_tool_bridge_test` -- 18 passed
+- Full `cargo test --all-features` -- 1217 passed, 1 pre-existing failure
+  (`providers::copilot::tests::test_copilot_config_defaults`, unrelated to Phase
+  5B)
+
+### References
+
+- Implementation plan: `docs/explanation/mcp_support_implementation_plan.md`
+  Phase 5B (lines 2152-2426)
+- Implementation summary:
+  `docs/explanation/phase5b_sampling_elicitation_implementation.md`
 - MCP protocol specification revision 2025-11-25
 
 ---
