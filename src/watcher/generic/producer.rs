@@ -45,6 +45,7 @@ use tracing::info;
 ///     topic: "plans.in".to_string(),
 ///     output_topic: Some("plans.out".to_string()),
 ///     group_id: "xzatoma-watcher".to_string(),
+///     auto_create_topics: true,
 ///     security: None,
 /// };
 ///
@@ -89,6 +90,7 @@ impl GenericResultProducer {
     ///     topic: "plans".to_string(),
     ///     output_topic: None,
     ///     group_id: "watcher-group".to_string(),
+    ///     auto_create_topics: true,
     ///     security: None,
     /// };
     ///
@@ -159,6 +161,7 @@ impl GenericResultProducer {
     ///     topic: "plans".to_string(),
     ///     output_topic: None,
     ///     group_id: "watcher-group".to_string(),
+    ///     auto_create_topics: true,
     ///     security: None,
     /// };
     ///
@@ -235,6 +238,7 @@ impl GenericResultProducer {
     ///     topic: "plans".to_string(),
     ///     output_topic: Some("results".to_string()),
     ///     group_id: "watcher-group".to_string(),
+    ///     auto_create_topics: true,
     ///     security: None,
     /// };
     ///
@@ -334,6 +338,7 @@ mod tests {
             topic: "plans.input".to_string(),
             output_topic: None,
             group_id: "xzatoma-watcher".to_string(),
+            auto_create_topics: true,
             security: None,
         }
     }

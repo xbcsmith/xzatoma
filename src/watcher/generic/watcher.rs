@@ -30,6 +30,7 @@ use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
 use crate::watcher::generic::matcher::GenericMatcher;
 use crate::watcher::generic::message::{GenericPlanEvent, GenericPlanResult};
 use crate::watcher::generic::producer::GenericResultProducer;
+use crate::watcher::topic_admin::WatcherTopicAdmin;
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -94,11 +95,20 @@ pub enum MessageDisposition {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::config::Config;
+/// use xzatoma::config::{Config, KafkaWatcherConfig, WatcherType};
 /// use xzatoma::watcher::generic::watcher::GenericWatcher;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// let config = Config::default();
+/// let mut config = Config::default();
+/// config.watcher.watcher_type = WatcherType::Generic;
+/// config.watcher.kafka = Some(KafkaWatcherConfig {
+///     brokers: "localhost:9092".to_string(),
+///     topic: "generic.input".to_string(),
+///     output_topic: Some("generic.output".to_string()),
+///     group_id: "xzatoma-generic-doc-test".to_string(),
+///     auto_create_topics: true,
+///     security: None,
+/// });
 /// let _watcher = GenericWatcher::new(config, true)?;
 /// # Ok(())
 /// # }
@@ -145,6 +155,7 @@ impl GenericWatcher {
     ///     topic: "generic.input".to_string(),
     ///     output_topic: Some("generic.output".to_string()),
     ///     group_id: "xzatoma-generic-doc-test".to_string(),
+    ///     auto_create_topics: true,
     ///     security: None,
     /// });
     ///
@@ -213,6 +224,21 @@ impl GenericWatcher {
             dry_run = self.dry_run,
             "Starting generic watcher service"
         );
+
+        if self.kafka_config.auto_create_topics {
+            let topic_admin = WatcherTopicAdmin::new(&self.kafka_config)
+                .map_err(|e| GenericWatcherError::Config(e.to_string()))?;
+            topic_admin
+                .ensure_generic_watcher_topics()
+                .await
+                .map_err(|e| GenericWatcherError::Config(e.to_string()))?;
+        } else {
+            debug!(
+                topic = %self.kafka_config.topic,
+                output_topic = %self.producer.output_topic(),
+                "Skipping generic watcher topic auto-creation because it is disabled"
+            );
+        }
 
         debug!(
             max_concurrent = self.execution_semaphore.available_permits(),
@@ -543,6 +569,7 @@ mod tests {
                     topic: "generic.input".to_string(),
                     output_topic: Some("generic.output".to_string()),
                     group_id: "xzatoma-generic-test".to_string(),
+                    auto_create_topics: true,
                     security: None,
                 }),
                 generic_match: match_config,
@@ -727,6 +754,7 @@ mod tests {
             topic: "generic.input".to_string(),
             output_topic: Some("generic.output".to_string()),
             group_id: "xzatoma-generic-test".to_string(),
+            auto_create_topics: true,
             security: Some(KafkaSecurityConfig {
                 protocol: "SASL_SSL".to_string(),
                 sasl_mechanism: Some("SCRAM-SHA-256".to_string()),

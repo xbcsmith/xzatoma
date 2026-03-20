@@ -769,6 +769,7 @@ impl Config {
                     topic: "xzepr.dev.events".to_string(),
                     output_topic: Some(output_topic.clone()),
                     group_id: default_watcher_group_id(),
+                    auto_create_topics: default_auto_create_topics(),
                     security: None,
                 });
             }
@@ -776,6 +777,26 @@ impl Config {
             tracing::debug!(
                 output_topic = %output_topic,
                 "Env override: XZATOMA_WATCHER_OUTPUT_TOPIC"
+            );
+        }
+
+        if let Ok(group_id) = std::env::var("XZATOMA_WATCHER_GROUP_ID") {
+            if let Some(ref mut kafka_cfg) = self.watcher.kafka {
+                kafka_cfg.group_id = group_id.clone();
+            } else {
+                self.watcher.kafka = Some(KafkaWatcherConfig {
+                    brokers: "localhost:9092".to_string(),
+                    topic: "xzepr.dev.events".to_string(),
+                    output_topic: None,
+                    group_id: group_id.clone(),
+                    auto_create_topics: default_auto_create_topics(),
+                    security: None,
+                });
+            }
+
+            tracing::debug!(
+                group_id = %group_id,
+                "Env override: XZATOMA_WATCHER_GROUP_ID"
             );
         }
 
@@ -987,6 +1008,7 @@ impl Config {
                     topic,
                     output_topic: None,
                     group_id,
+                    auto_create_topics: default_auto_create_topics(),
                     security,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
@@ -1204,6 +1226,13 @@ impl Config {
                     )
                     .into());
                 }
+            }
+
+            if kafka.group_id.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.group_id cannot be empty".to_string(),
+                )
+                .into());
             }
         }
 
@@ -1528,6 +1557,7 @@ kafka:
             topic: "plans.in".to_string(),
             output_topic: Some("plans.out".to_string()),
             group_id: "watchers".to_string(),
+            auto_create_topics: true,
             security: None,
         };
 
@@ -1538,6 +1568,28 @@ kafka:
         assert_eq!(restored.topic, "plans.in");
         assert_eq!(restored.output_topic.as_deref(), Some("plans.out"));
         assert_eq!(restored.group_id, "watchers");
+        assert!(restored.auto_create_topics);
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_roundtrip_auto_create_topics_false() {
+        let original = KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.in".to_string(),
+            output_topic: None,
+            group_id: "watchers".to_string(),
+            auto_create_topics: false,
+            security: None,
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: KafkaWatcherConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(restored.brokers, "localhost:9092");
+        assert_eq!(restored.topic, "plans.in");
+        assert_eq!(restored.output_topic, None);
+        assert_eq!(restored.group_id, "watchers");
+        assert!(!restored.auto_create_topics);
     }
 
     #[test]
@@ -1988,6 +2040,7 @@ chat_enabled: true
             topic: "plans.input".to_string(),
             output_topic: None,
             group_id: "test-group".to_string(),
+            auto_create_topics: true,
             security: None,
         });
 
@@ -2001,6 +2054,36 @@ chat_enabled: true
 
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_OUTPUT_TOPIC");
+        }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_watcher_group_id() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_GROUP_ID");
+        }
+
+        let mut cfg = Config::default();
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "original-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.kafka.as_ref().unwrap().group_id,
+            "override-group"
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_GROUP_ID");
         }
     }
 
@@ -2043,6 +2126,7 @@ chat_enabled: true
             topic: "plans.input".to_string(),
             output_topic: None,
             group_id: "test-group".to_string(),
+            auto_create_topics: true,
             security: None,
         });
 
@@ -2058,6 +2142,7 @@ chat_enabled: true
             topic: "plans.input".to_string(),
             output_topic: Some("plans.output".to_string()),
             group_id: "test-group".to_string(),
+            auto_create_topics: true,
             security: None,
         });
         cfg.watcher.generic_match = GenericMatchConfig {
@@ -2078,12 +2163,29 @@ chat_enabled: true
             topic: "plans.input".to_string(),
             output_topic: None,
             group_id: "test-group".to_string(),
+            auto_create_topics: true,
             security: None,
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
 
         let err = cfg.validate().unwrap_err().to_string();
         assert!(err.contains("Invalid generic match regex"));
+    }
+
+    #[test]
+    fn test_config_validate_empty_group_id_returns_error() {
+        let mut cfg = Config::default();
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "   ".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("watcher.kafka.group_id cannot be empty"));
     }
 
     #[test]
@@ -2806,6 +2908,13 @@ pub struct KafkaWatcherConfig {
     #[serde(default = "default_watcher_group_id")]
     pub group_id: String,
 
+    /// Automatically create input/output topics when watcher mode starts.
+    ///
+    /// This is a stub-first configuration flag used by watcher startup logic to
+    /// decide whether missing topics should be provisioned automatically.
+    #[serde(default = "default_auto_create_topics")]
+    pub auto_create_topics: bool,
+
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
@@ -2929,6 +3038,11 @@ pub struct WatcherExecutionConfig {
 /// Default watcher consumer group ID
 fn default_watcher_group_id() -> String {
     "xzatoma-watcher".to_string()
+}
+
+/// Default topic auto-creation setting
+fn default_auto_create_topics() -> bool {
+    true
 }
 
 /// Default success_only value

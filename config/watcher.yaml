@@ -28,6 +28,7 @@ agent:
   timeout_seconds: 300
 
 watcher:
+  # watcher_type: xzepr
   kafka:
     # Comma-separated Kafka broker list
     brokers: "localhost:9092"
@@ -78,6 +79,7 @@ provider:
   type: copilot
 
 watcher:
+  # watcher_type: xzepr
   kafka:
     brokers: "kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093"
     topic: "xzepr.production.events"

@@ -1895,8 +1895,12 @@ pub mod watch {
         pub json_logs: bool,
         /// Optional watcher backend type override.
         pub watcher_type: Option<String>,
+        /// Optional Kafka consumer group ID override.
+        pub group_id: Option<String>,
         /// Optional generic watcher output topic override.
         pub output_topic: Option<String>,
+        /// Whether missing Kafka topics should be created automatically.
+        pub create_topics: bool,
         /// Optional generic matcher action override.
         pub action: Option<String>,
         /// Optional generic matcher name override.
@@ -1940,9 +1944,29 @@ pub mod watch {
             watcher_type = %config.watcher.watcher_type.as_str(),
             kafka_brokers = %config.watcher.kafka.as_ref().map(|k| &k.brokers).unwrap_or(&"not configured".to_string()),
             kafka_topic = %config.watcher.kafka.as_ref().map(|k| &k.topic).unwrap_or(&"not configured".to_string()),
+            kafka_group_id = %config.watcher.kafka.as_ref().map(|k| &k.group_id).unwrap_or(&"not configured".to_string()),
+            auto_create_topics = config.watcher.kafka.as_ref().map(|k| k.auto_create_topics).unwrap_or(false),
             dry_run = overrides.dry_run,
             "Initializing watcher service"
         );
+
+        let kafka_config = config.watcher.kafka.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            )
+        })?;
+
+        if kafka_config.auto_create_topics || overrides.create_topics {
+            let topic_admin = crate::watcher::topic_admin::WatcherTopicAdmin::new(&kafka_config)?;
+            match config.watcher.watcher_type {
+                crate::config::WatcherType::XZepr => {
+                    topic_admin.ensure_xzepr_watcher_topics().await?;
+                }
+                crate::config::WatcherType::Generic => {
+                    topic_admin.ensure_generic_watcher_topics().await?;
+                }
+            }
+        }
 
         // Create watcher service first so constructor validation happens
         // before entering the signal-handling path.
@@ -2055,11 +2079,27 @@ pub mod watch {
             }
         }
 
+        // Override group ID if provided
+        if let Some(group_id) = &overrides.group_id {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.group_id = group_id.clone();
+                tracing::debug!(group_id = %group_id, "CLI override: Kafka consumer group ID");
+            }
+        }
+
         // Override output topic if provided
         if let Some(output) = &overrides.output_topic {
             if let Some(ref mut kafka) = config.watcher.kafka {
                 kafka.output_topic = Some(output.clone());
                 tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
+            }
+        }
+
+        // Override topic auto-creation if requested
+        if overrides.create_topics {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.auto_create_topics = true;
+                tracing::debug!("CLI override: Kafka topic auto-creation enabled");
             }
         }
 
@@ -2144,6 +2184,7 @@ pub mod watch {
                 topic: "original.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2170,6 +2211,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2203,6 +2245,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
             config.watcher.logging.json_format = false;
@@ -2227,6 +2270,7 @@ pub mod watch {
                 topic: "original".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2254,6 +2298,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2279,6 +2324,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2305,6 +2351,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2330,6 +2377,57 @@ pub mod watch {
         }
 
         #[test]
+        fn test_apply_cli_overrides_group_id() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    group_id: Some("override-group".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.kafka.as_ref().unwrap().group_id,
+                "override-group"
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_create_topics() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    create_topics: true,
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert!(config.watcher.kafka.as_ref().unwrap().auto_create_topics);
+        }
+
+        #[test]
         fn test_apply_cli_overrides_generic_match_action() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
@@ -2337,6 +2435,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 
@@ -2363,6 +2462,7 @@ pub mod watch {
                 topic: "test.topic".to_string(),
                 output_topic: None,
                 group_id: "test-group".to_string(),
+                auto_create_topics: false,
                 security: None,
             });
 

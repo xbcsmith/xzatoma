@@ -8,16 +8,16 @@
 //! Two watcher backends are supported as equal configuration peers:
 //!
 //! - [`xzepr`]: XZepr CloudEvents-based watcher (default, full backward compatibility)
-//! - [`generic`]: Generic Kafka plan-event watcher (Phase 3, not yet implemented)
+//! - [`generic`]: Generic Kafka plan-event watcher
 //!
 //! The active backend is selected via the `watcher_type` configuration field
-//! (added in Phase 4) or the corresponding CLI flag. Until Phase 4 is complete,
-//! only the XZepr backend is available and [`XzeprWatcher`] is used directly.
+//! or the corresponding CLI flag.
 //!
 //! # Module Layout
 //!
-//! - [`generic`]: Placeholder for the Phase 3 generic Kafka watcher
+//! - [`generic`]: Generic Kafka watcher backend
 //! - [`logging`]: Structured logging helpers shared across all watcher backends
+//! - [`topic_admin`]: Shared topic administration helpers for watcher startup
 //! - [`xzepr`]: XZepr watcher backend (consumer, filter, plan extractor, watcher)
 //!
 //! # XZepr-Specific Types
@@ -32,6 +32,7 @@
 
 pub mod generic;
 pub mod logging;
+pub mod topic_admin;
 pub mod xzepr;
 
 /// The XZepr watcher backend, re-exported for use in the watch command dispatcher.
