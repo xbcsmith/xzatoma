@@ -2068,6 +2068,7 @@ pub mod watch {
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
                 brokers: "localhost:9092".to_string(),
                 topic: "original.topic".to_string(),
+                output_topic: None,
                 group_id: "test-group".to_string(),
                 security: None,
             });
@@ -2094,6 +2095,7 @@ pub mod watch {
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
                 brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
+                output_topic: None,
                 group_id: "test-group".to_string(),
                 security: None,
             });
@@ -2127,6 +2129,7 @@ pub mod watch {
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
                 brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
+                output_topic: None,
                 group_id: "test-group".to_string(),
                 security: None,
             });
@@ -2144,6 +2147,7 @@ pub mod watch {
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
                 brokers: "localhost:9092".to_string(),
                 topic: "original".to_string(),
+                output_topic: None,
                 group_id: "test-group".to_string(),
                 security: None,
             });
@@ -2169,6 +2173,7 @@ pub mod watch {
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
                 brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
+                output_topic: None,
                 group_id: "test-group".to_string(),
                 security: None,
             });

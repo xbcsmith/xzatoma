@@ -926,6 +926,7 @@ impl Config {
                 self.watcher.kafka = Some(KafkaWatcherConfig {
                     brokers,
                     topic,
+                    output_topic: None,
                     group_id,
                     security,
                 });
@@ -1112,6 +1113,38 @@ impl Config {
                     valid_providers.join(", ")
                 ))
                 .into());
+            }
+        }
+
+        if let Some(kafka) = &self.watcher.kafka {
+            if kafka.brokers.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.brokers cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if kafka.topic.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.topic cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if kafka.group_id.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.group_id cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if let Some(output_topic) = &kafka.output_topic {
+                if output_topic.trim().is_empty() {
+                    return Err(XzatomaError::Config(
+                        "watcher.kafka.output_topic cannot be empty when set".to_string(),
+                    )
+                    .into());
+                }
             }
         }
 
@@ -2277,6 +2310,10 @@ pub struct WatcherConfig {
     #[serde(default)]
     pub kafka: Option<KafkaWatcherConfig>,
 
+    /// Generic watcher match configuration
+    #[serde(default)]
+    pub generic_match: GenericMatchConfig,
+
     /// Event filtering configuration
     #[serde(default)]
     pub filters: EventFilterConfig,
@@ -2298,6 +2335,12 @@ pub struct KafkaWatcherConfig {
 
     /// Topic to consume from
     pub topic: String,
+
+    /// Optional topic to publish generic watcher results to.
+    ///
+    /// When omitted, the generic watcher publishes results back to `topic`.
+    #[serde(default)]
+    pub output_topic: Option<String>,
 
     /// Consumer group ID
     #[serde(default = "default_watcher_group_id")]
@@ -2322,6 +2365,26 @@ pub struct KafkaSecurityConfig {
 
     /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
     pub sasl_password: Option<String>,
+}
+
+/// Generic watcher match configuration.
+///
+/// Controls which generic plan events should be processed by the generic
+/// watcher backend. All configured fields are interpreted as regular
+/// expressions by `GenericMatcher`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GenericMatchConfig {
+    /// Optional action regex to match against `GenericPlanEvent::action`.
+    #[serde(default)]
+    pub action: Option<String>,
+
+    /// Optional name regex to match against `GenericPlanEvent::name`.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Optional version regex to match against `GenericPlanEvent::version`.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 /// Event filter configuration

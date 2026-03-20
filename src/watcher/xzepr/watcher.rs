@@ -476,6 +476,7 @@ mod tests {
             agent: crate::config::AgentConfig::default(),
             watcher: crate::config::WatcherConfig {
                 kafka: None,
+                generic_match: Default::default(),
                 filters: Default::default(),
                 logging: Default::default(),
                 execution: Default::default(),
@@ -493,6 +494,7 @@ mod tests {
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
             brokers: "localhost:9092".to_string(),
             topic: "test-topic".to_string(),
+            output_topic: None,
             group_id: "test-group".to_string(),
             security: None,
         });
@@ -513,6 +515,7 @@ mod tests {
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
             brokers: "localhost:9092".to_string(),
             topic: "test-topic".to_string(),
+            output_topic: None,
             group_id: "test-group".to_string(),
             security: None,
         });
