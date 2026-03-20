@@ -140,6 +140,57 @@ pub enum XzatomaError {
     /// Message format conversion failed
     #[error("Message conversion failed: {0}")]
     MessageConversionError(String),
+
+    /// General MCP protocol error
+    #[error("MCP error: {0}")]
+    Mcp(String),
+
+    /// MCP transport-level I/O failure
+    #[error("MCP transport error: {0}")]
+    McpTransport(String),
+
+    /// Named MCP server not found in config or registry
+    #[error("MCP server not found: {0}")]
+    McpServerNotFound(String),
+
+    /// Tool not found on the specified MCP server
+    #[error("MCP tool not found: server={server}, tool={tool}")]
+    McpToolNotFound {
+        /// Server identifier
+        server: String,
+        /// Tool name
+        tool: String,
+    },
+
+    /// MCP protocol version negotiation failure
+    #[error("MCP protocol version mismatch: expected one of {expected:?}, got {got}")]
+    McpProtocolVersion {
+        /// List of accepted versions
+        expected: Vec<String>,
+        /// Version the server returned
+        got: String,
+    },
+
+    /// MCP request timed out
+    #[error("MCP timeout: server={server}, method={method}")]
+    McpTimeout {
+        /// Server identifier
+        server: String,
+        /// JSON-RPC method that timed out
+        method: String,
+    },
+
+    /// OAuth / OIDC authorization error for an MCP HTTP server
+    #[error("MCP auth error: {0}")]
+    McpAuth(String),
+
+    /// MCP elicitation error or user decline/cancel
+    #[error("MCP elicitation error: {0}")]
+    McpElicitation(String),
+
+    /// MCP task lifecycle error
+    #[error("MCP task error: {0}")]
+    McpTask(String),
 }
 
 /// Result type alias for XZatoma operations
@@ -352,6 +403,46 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("Message conversion failed"));
         assert!(msg.contains("Invalid role"));
+    }
+
+    #[test]
+    fn test_mcp_error_variants() {
+        let e = XzatomaError::Mcp("protocol violation".to_string());
+        assert!(e.to_string().contains("MCP error"));
+
+        let e = XzatomaError::McpTransport("connection reset".to_string());
+        assert!(e.to_string().contains("MCP transport error"));
+
+        let e = XzatomaError::McpServerNotFound("my_server".to_string());
+        assert!(e.to_string().contains("my_server"));
+
+        let e = XzatomaError::McpToolNotFound {
+            server: "my_server".to_string(),
+            tool: "search".to_string(),
+        };
+        assert!(e.to_string().contains("my_server"));
+        assert!(e.to_string().contains("search"));
+
+        let e = XzatomaError::McpProtocolVersion {
+            expected: vec!["2025-11-25".to_string()],
+            got: "2024-01-01".to_string(),
+        };
+        assert!(e.to_string().contains("2024-01-01"));
+
+        let e = XzatomaError::McpTimeout {
+            server: "s1".to_string(),
+            method: "tools/list".to_string(),
+        };
+        assert!(e.to_string().contains("tools/list"));
+
+        let e = XzatomaError::McpAuth("token expired".to_string());
+        assert!(e.to_string().contains("MCP auth error"));
+
+        let e = XzatomaError::McpElicitation("user cancelled".to_string());
+        assert!(e.to_string().contains("MCP elicitation error"));
+
+        let e = XzatomaError::McpTask("task failed".to_string());
+        assert!(e.to_string().contains("MCP task error"));
     }
 
     #[test]

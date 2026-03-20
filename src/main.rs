@@ -11,6 +11,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use xzatoma::cli::{Cli, Commands, ModelCommand};
 use xzatoma::commands;
+
 use xzatoma::config::Config;
 
 #[tokio::main]
@@ -171,6 +172,11 @@ async fn main() -> Result<()> {
                 tree,
             };
             commands::replay::run_replay(args).await?;
+            Ok(())
+        }
+        Commands::Mcp { command } => {
+            tracing::info!("Starting MCP command");
+            commands::mcp::handle_mcp(command, config).await?;
             Ok(())
         }
     }

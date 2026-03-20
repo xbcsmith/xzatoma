@@ -459,6 +459,7 @@ mod tests {
                 logging: Default::default(),
                 execution: Default::default(),
             },
+            mcp: crate::mcp::config::McpConfig::default(),
         };
 
         let result = Watcher::new(config, false);

@@ -35,6 +35,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod error;
+pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;

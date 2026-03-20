@@ -154,6 +154,13 @@ pub enum Commands {
         #[arg(long, short = 't')]
         tree: bool,
     },
+
+    /// MCP server management commands
+    Mcp {
+        /// MCP subcommand to execute
+        #[command(subcommand)]
+        command: crate::commands::mcp::McpCommands,
+    },
 }
 
 /// Model management subcommands
