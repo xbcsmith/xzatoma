@@ -2,285 +2,827 @@
 
 ## Overview
 
-This document describes XZatoma's configuration model: where configuration is read from, the key schema used in the YAML config file, environment variables that override configuration values, and validation rules you should be aware of.
+This document describes XZatoma's configuration model, how configuration is
+loaded, the major configuration sections available in YAML, supported runtime
+overrides, and the validation rules that apply at startup.
 
-Key points:
+Configuration is resolved in this order:
 
-- Default config path used by the CLI is `config/config.yaml`. You may override it with `--config <path>`.
-- `Config::load(path, cli)` semantics:
+1. defaults built into the application
+2. values loaded from the YAML config file
+3. environment variable overrides
+4. CLI overrides where supported
 
-1.  If a config file exists at `path`, it is parsed; otherwise defaults are used.
-2.  Environment variables are applied (override file values).
-3.  CLI-level overrides are applied last (where implemented).
+This means a value passed through the command line has the highest precedence,
+followed by environment variables, then the configuration file, then defaults.
 
-- Sensitive credentials are not recommended to be stored directly in config files; use provider auth flows (e.g., Copilot device flow caches tokens in the system keyring).
+## Default Config Path and Loading
 
----
+By default, the CLI loads configuration from:
 
-## Default config path & loading
+- `config/config.yaml`
 
-By default, the CLI uses the path `config/config.yaml` unless you provide a different path with the `--config` option when invoking `xzatoma`.
+You can override that path with:
+
+```bash
+xzatoma --config /path/to/config.yaml chat
+```
+
+If the file does not exist, XZatoma falls back to built-in defaults and then
+applies any environment-variable or CLI overrides.
+
+## Top-Level Configuration Structure
+
+A typical configuration file includes these top-level sections:
+
+- `provider`
+- `agent`
+- `watcher`
+- `mcp`
 
 Example:
 
-```bash
-# Use a custom config location
-xzatoma --config ~/.config/xzatoma/config.yaml run --plan examples/quickstart_plan.yaml
-```
-
-If the file at the given path does not exist, the application will fall back to sensible defaults and then apply any environment variable overrides.
-
----
-
-## Top-level keys (schema summary)
-
-The configuration is organized into a small number of top-level sections. The schema shown here is a concise reference — consult `src/config.rs` for the canonical Rust types and defaults if you need exact types or additional fields.
-
-- `provider` — Provider selection and provider-specific settings
-- `provider_type` (string) — e.g., `copilot` or `ollama`
-- `copilot` — Copilot-specific configuration (e.g., `model`, optional `api_base`)
-- `ollama` — Ollama-specific configuration (e.g., `host`, `model`)
-
-- `agent` — Agent runtime configuration
-- `max_turns` (integer) — Max conversation turns (default: 50)
-- `timeout_seconds` (integer) — Per-run timeout (default: 600)
-- `conversation` — Conversation context management settings
-  - `max_tokens` (integer) — Maximum context window size in tokens (default: 100000)
-  - `min_retain_turns` (integer) — Minimum conversation turns to retain (default: 5)
-  - `prune_threshold` (float) — Token threshold for pruning (0.0-1.0, default: 0.8)
-  - `warning_threshold` (float) — Token usage threshold for warnings (0.0-1.0, default: 0.85)
-  - `auto_summary_threshold` (float) — Token threshold for automatic summarization (0.0-1.0, default: 0.90)
-  - `summary_model` (string, optional) — Model to use for generating summaries
-- `tools` — Tool-related limits (file read sizes, grep limits, fetch limits)
-- `terminal` — Terminal/command validator settings
-- `chat` — Chat-specific defaults (default mode, safety flags, etc.)
-
-- `repository`
-- `clone_depth` (integer) — `git` clone depth used when scanning repositories
-- `ignore_patterns` (array of strings) — globs to exclude (e.g., `node_modules`)
-
-- `documentation`
-- `output_dir` (string) — where generated docs are written
-- `categories` (array of strings) — categories to generate (Diataxis: `tutorials`, `how_to`, `reference`, `explanation`)
-
----
-
-## Conversation Context Window Management
-
-XZatoma manages conversation context windows to prevent exceeding AI model token limits. Configure these settings to control how your conversation history is retained and summarized:
-
-- `warning_threshold`: Token usage percentage to trigger warnings (0.0-1.0, default: 0.85)
-
-  - When conversation exceeds this percentage, XZatoma shows a warning in chat mode
-  - In run mode, this triggers automatic summarization if `auto_summary_threshold` is configured
-
-- `auto_summary_threshold`: Token usage percentage to trigger automatic summarization (0.0-1.0, default: 0.90)
-
-  - In run mode, when conversation exceeds this percentage, old turns are automatically summarized
-  - The summarization reduces token usage while preserving conversation context
-  - Chat mode requires manual summarization using `/context summary`
-
-- `summary_model`: Model to use for generating summaries (optional, defaults to current model)
-
-  - Useful for cost optimization: use a cheaper/faster model for summaries
-  - Example: use `gpt-5.1-codex-mini` for Copilot or `llama3.2:3b` for Ollama
-  - If not specified, uses the same model configured for main conversations
-
-- `prune_threshold`: Token threshold to trigger conversation pruning (0.0-1.0, default: 0.8)
-
-  - Before summarizing, older turns are pruned if conversation exceeds this threshold
-  - Helps reduce unnecessary context from very old turns
-
-- `min_retain_turns`: Minimum number of conversation turns to always keep (default: 5)
-  - Even during summarization, this many recent turns are always retained
-  - Ensures recent context is preserved even in summarized conversations
-
-### Example Configuration
-
 ```yaml
-agent:
-  conversation:
-    max_tokens: 100000
-    min_retain_turns: 5
-    prune_threshold: 0.8
-
-    # Context window management
-    warning_threshold: 0.85 # Warn at 85% full
-    auto_summary_threshold: 0.90 # Auto-summarize at 90% full
-
-
-    # Use cheaper model for summaries (optional)
-    # summary_model: "gpt-5.1-codex-mini"  # For Copilot provider
-```
-
----
-
-## Example configuration (YAML)
-
-```yaml
-# config/config.yaml (example)
 provider:
-  provider_type: copilot # or 'ollama'
+  type: copilot
   copilot:
-    model: gpt-5.3-codex
-    # api_base: https://internal-copilot-host.example
-  ollama:
-    host: localhost:11434
-    model: llama3.2:3b
+    model: gpt-5-mini
 
 agent:
   max_turns: 50
-  timeout_seconds: 600
-  # conversation, tools, terminal, and chat have nested defaults you may customize
+  timeout_seconds: 300
+
+watcher:
+  watcher_type: xzepr
+
+mcp:
+  auto_connect: true
+```
+
+## Provider Configuration
+
+The `provider` section controls which AI backend XZatoma uses.
+
+### Fields
+
+- `type`
+
+  - Type: string
+  - Accepted values:
+    - `copilot`
+    - `ollama`
+
+- `copilot`
+
+  - Copilot-specific configuration
+
+- `ollama`
+  - Ollama-specific configuration
+
+### Example
+
+```yaml
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+```
+
+Or:
+
+```yaml
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:latest
+```
+
+### Copilot Configuration
+
+#### Fields
+
+- `model`
+
+  - Type: string
+  - Default: `gpt-5-mini`
+
+- `api_base`
+
+  - Type: string or null
+  - Optional custom API base URL
+
+- `enable_streaming`
+
+  - Type: boolean
+  - Default: `true`
+
+- `enable_endpoint_fallback`
+
+  - Type: boolean
+  - Default: `true`
+
+- `reasoning_effort`
+
+  - Type: string or null
+  - Optional values typically include:
+    - `low`
+    - `medium`
+    - `high`
+
+- `include_reasoning`
+  - Type: boolean
+  - Default: `false`
+
+### Ollama Configuration
+
+#### Fields
+
+- `host`
+
+  - Type: string
+  - Default: `http://localhost:11434`
+
+- `model`
+  - Type: string
+  - Default: `llama3.2:latest`
+
+## Agent Configuration
+
+The `agent` section controls execution behavior, conversation management, tool
+limits, terminal behavior, chat defaults, and subagent settings.
+
+### Common Fields
+
+- `max_turns`
+
+  - Type: integer
+  - Default: `50`
+
+- `timeout_seconds`
+
+  - Type: integer
+  - Default: `300`
+
+- `conversation`
+
+  - Conversation window and summarization settings
+
+- `tools`
+
+  - Tool-related size and limit settings
+
+- `terminal`
+
+  - Terminal execution settings
+
+- `chat`
+
+  - Chat mode defaults
+
+- `subagent`
+  - Subagent delegation settings
+
+### Example
+
+```yaml
+agent:
+  max_turns: 50
+  timeout_seconds: 300
   conversation:
     max_tokens: 100000
     min_retain_turns: 5
     prune_threshold: 0.8
     warning_threshold: 0.85
-    auto_summary_threshold: 0.90
-    # summary_model: "gpt-5.1-codex-mini"  # Optional: use cheaper model for summaries
-
-repository:
-  clone_depth: 1
-  ignore_patterns:
-    - node_modules
-    - target
-    - .git
-
-documentation:
-  output_dir: docs
-  categories:
-    - tutorials
-    - how_to
-    - explanation
-    - reference
+    auto_summary_threshold: 0.9
+  terminal:
+    timeout_seconds: 30
 ```
 
----
+## Conversation Configuration
 
-## Environment variables
+The `agent.conversation` section controls context window usage and
+summarization.
 
-A set of environment variables is supported to override configuration values. Environment variables take precedence over values loaded from the file (but are overridden by CLI-level overrides where implemented).
+### Fields
 
-Common environment variables:
+- `max_tokens`
 
-- `XZATOMA_PROVIDER`
-  Example: `export XZATOMA_PROVIDER=copilot`
+  - Type: integer
+  - Default: `100000`
 
-- `XZATOMA_COPILOT_MODEL`
-  Example: `export XZATOMA_COPILOT_MODEL=gpt-5.3-codex`
+- `min_retain_turns`
 
-- `XZATOMA_OLLAMA_HOST`
-  Example: `export XZATOMA_OLLAMA_HOST=localhost:11434`
+  - Type: integer
+  - Default: `5`
 
-- `XZATOMA_OLLAMA_MODEL`
-  Example: `export XZATOMA_OLLAMA_MODEL=llama3.2:3b`
+- `prune_threshold`
 
-- `XZATOMA_MAX_TURNS`
-  Example: `export XZATOMA_MAX_TURNS=100`
+  - Type: float
+  - Default: `0.8`
 
-- `XZATOMA_TIMEOUT_SECONDS`
-  Example: `export XZATOMA_TIMEOUT_SECONDS=900`
+- `warning_threshold`
 
-- `XZATOMA_EXECUTION_MODE`
-  Example: `export XZATOMA_EXECUTION_MODE=restricted_autonomous`
-  Supported values (case-insensitive):
-- `interactive`
-- `restricted_autonomous`
-- `full_autonomous`
+  - Type: float
+  - Default: `0.85`
 
-Context window management environment variables:
+- `auto_summary_threshold`
 
-- `XZATOMA_CONTEXT_MAX_TOKENS`
-  Example: `export XZATOMA_CONTEXT_MAX_TOKENS=150000`
-  Override maximum tokens allowed in conversation context
+  - Type: float
+  - Default: `0.90`
 
-- `XZATOMA_CONTEXT_WARNING_THRESHOLD`
-  Example: `export XZATOMA_CONTEXT_WARNING_THRESHOLD=0.85`
-  Token usage percentage to trigger warnings (0.0-1.0)
+- `summary_model`
+  - Type: string or null
+  - Optional override used for summaries
 
-- `XZATOMA_CONTEXT_AUTO_SUMMARY_THRESHOLD`
-  Example: `export XZATOMA_CONTEXT_AUTO_SUMMARY_THRESHOLD=0.90`
-  Token usage percentage to trigger automatic summarization (0.0-1.0)
+### Example
 
-- `XZATOMA_CONTEXT_SUMMARY_MODEL`
-  Example: `export XZATOMA_CONTEXT_SUMMARY_MODEL=gpt-5.1-codex-mini`
-  Model to use for generating conversation summaries
+```yaml
+agent:
+  conversation:
+    max_tokens: 100000
+    min_retain_turns: 5
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.9
+    summary_model: gpt-5-mini
+```
 
-Usage example (one-off):
+## Watcher Configuration
+
+The `watcher` section configures Kafka-backed event monitoring and plan
+execution.
+
+XZatoma supports two watcher backends:
+
+- `xzepr`
+- `generic`
+
+These backends are selected through `watcher_type`.
+
+### WatcherConfig Fields
+
+- `watcher_type`
+- `kafka`
+- `generic_match`
+- `filters`
+- `logging`
+- `execution`
+
+### Example
+
+```yaml
+watcher:
+  watcher_type: xzepr
+  kafka:
+    brokers: localhost:9092
+    topic: xzepr.events
+    group_id: xzatoma-watcher
+```
+
+## `watcher_type`
+
+Selects which watcher backend is active.
+
+### Fields
+
+- Type: string
+- Accepted values:
+  - `xzepr`
+  - `generic`
+- Default: `xzepr`
+
+### Behavior
+
+- If omitted, XZatoma defaults to `xzepr`.
+- Existing watcher configs that do not specify `watcher_type` continue to work
+  unchanged.
+- `xzepr` uses `watcher.filters`.
+- `generic` uses `watcher.generic_match`.
+
+### Example
+
+```yaml
+watcher:
+  watcher_type: xzepr
+```
+
+Or:
+
+```yaml
+watcher:
+  watcher_type: generic
+```
+
+## Kafka Watcher Configuration
+
+The `watcher.kafka` section configures the Kafka connection used by watcher
+backends.
+
+### Fields
+
+- `brokers`
+
+  - Type: string
+  - Comma-separated broker addresses
+
+- `topic`
+
+  - Type: string
+  - Input topic to consume from
+
+- `output_topic`
+
+  - Type: string or null
+  - Generic watcher result topic
+  - If omitted, results are published back to `topic`
+
+- `group_id`
+
+  - Type: string
+  - Consumer group ID
+  - Default: `xzatoma-watcher`
+
+- `security`
+  - Optional Kafka security configuration
+
+### Example
+
+```yaml
+watcher:
+  kafka:
+    brokers: localhost:9092
+    topic: plans.events
+    output_topic: plans.results
+    group_id: xzatoma-generic-watcher
+```
+
+## `kafka.output_topic`
+
+The `output_topic` field is used by the generic watcher when publishing
+`GenericPlanResult` messages after plan execution.
+
+### Default Behavior
+
+If `output_topic` is omitted:
+
+- the generic watcher publishes results back to the input `topic`
+
+This is safe because:
+
+- generic trigger events must use `event_type: "plan"`
+- generic result events always use `event_type: "result"`
+- the generic watcher rejects every event where `event_type != "plan"`
+
+### Example Using a Separate Output Topic
+
+```yaml
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: localhost:9092
+    topic: plans.events
+    output_topic: plans.results
+    group_id: xzatoma-generic-watcher
+```
+
+### Example Using the Same Topic
+
+```yaml
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: localhost:9092
+    topic: plans.events
+    group_id: xzatoma-generic-watcher
+```
+
+## Kafka Security Configuration
+
+The `watcher.kafka.security` section controls connection security.
+
+### Fields
+
+- `protocol`
+
+  - Type: string
+  - Accepted values:
+    - `PLAINTEXT`
+    - `SSL`
+    - `SASL_PLAINTEXT`
+    - `SASL_SSL`
+
+- `sasl_mechanism`
+
+  - Type: string or null
+  - Accepted values:
+    - `PLAIN`
+    - `SCRAM-SHA-256`
+    - `SCRAM-SHA-512`
+
+- `sasl_username`
+
+  - Type: string or null
+
+- `sasl_password`
+  - Type: string or null
+
+### Example
+
+```yaml
+watcher:
+  kafka:
+    brokers: kafka-1.prod:9093,kafka-2.prod:9093
+    topic: plans.production.input
+    output_topic: plans.production.output
+    group_id: xzatoma-generic-watcher-prod
+    security:
+      protocol: SASL_SSL
+      sasl_mechanism: SCRAM-SHA-256
+      sasl_username: xzatoma-consumer
+      sasl_password: set-through-env-in-production
+```
+
+## XZepr Watcher Filters
+
+The `watcher.filters` section applies only when:
+
+- `watcher_type: xzepr`
+
+These filters are specific to XZepr CloudEvents.
+
+### Fields
+
+- `event_types`
+
+  - Type: array of strings
+  - Default: empty list
+
+- `source_pattern`
+
+  - Type: string or null
+
+- `platform_id`
+
+  - Type: string or null
+
+- `package`
+
+  - Type: string or null
+
+- `api_version`
+
+  - Type: string or null
+
+- `success_only`
+  - Type: boolean
+  - Default: `true`
+
+### Example
+
+```yaml
+watcher:
+  watcher_type: xzepr
+  filters:
+    event_types:
+      - deployment.success
+      - ci.pipeline.completed
+    source_pattern: "^xzepr\\.receiver\\."
+    platform_id: kubernetes
+    package: my-service
+    api_version: v1
+    success_only: true
+```
+
+## `generic_match`
+
+The `watcher.generic_match` section applies only when:
+
+- `watcher_type: generic`
+
+It controls which generic plan events are processed by the generic watcher.
+
+### Fields
+
+- `action`
+
+  - Type: string or null
+  - Regex matched against the event `action` field
+  - Case-insensitive by default
+
+- `name`
+
+  - Type: string or null
+  - Regex matched against the event `name` field
+  - Case-insensitive by default
+
+- `version`
+  - Type: string or null
+  - Regex matched against the event `version` field
+  - Case-insensitive by default
+
+### Example
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    action: deploy
+```
+
+## Generic Match Modes
+
+The generic watcher supports these matching modes depending on which fields are
+set.
+
+### Action only
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    action: deploy
+```
+
+Runtime behavior:
+
+- event `action` must match `deploy`
+
+### Name and version
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    name: service-a
+    version: "^v1\\.[0-9]+$"
+```
+
+Runtime behavior:
+
+- event `name` must match `service-a`
+- event `version` must match `^v1\.[0-9]+$`
+
+### Name and action
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    name: service-a
+    action: deploy.*
+```
+
+Runtime behavior:
+
+- event `name` must match `service-a`
+- event `action` must match `deploy.*`
+
+### Name, version, and action
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    name: service-a
+    version: "^v1\\.[0-9]+$"
+    action: deploy.*
+```
+
+Runtime behavior:
+
+- event `name` must match
+- event `version` must match
+- event `action` must match
+
+### Accept-all mode
+
+If all generic match fields are omitted or null, the generic watcher accepts
+every event where:
+
+- `event_type == "plan"`
+
+Example:
+
+```yaml
+watcher:
+  watcher_type: generic
+  generic_match:
+    action:
+    name:
+    version:
+```
+
+This is valid, but XZatoma emits a warning because accept-all mode may be
+unintentional in production.
+
+## Watcher Logging Configuration
+
+The `watcher.logging` section controls watcher-specific logging behavior.
+
+### Fields
+
+- `level`
+
+  - Type: string
+  - Default: `info`
+
+- `json_format`
+
+  - Type: boolean
+  - Default: `true`
+
+- `file_path`
+
+  - Type: string or null
+
+- `include_payload`
+  - Type: boolean
+  - Default: `false`
+
+### Example
+
+```yaml
+watcher:
+  logging:
+    level: debug
+    json_format: true
+    file_path: /var/log/xzatoma/watcher.log
+    include_payload: false
+```
+
+## Watcher Execution Configuration
+
+The `watcher.execution` section controls execution behavior for
+watcher-triggered plans.
+
+### Fields
+
+- `allow_dangerous`
+
+  - Type: boolean
+  - Default: `false`
+
+- `max_concurrent_executions`
+
+  - Type: integer
+  - Default: `1`
+
+- `execution_timeout_secs`
+  - Type: integer
+  - Default: `300`
+
+### Example
+
+```yaml
+watcher:
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 5
+    execution_timeout_secs: 1800
+```
+
+## MCP Configuration
+
+The `mcp` section controls MCP client behavior.
+
+### Common Fields
+
+- `auto_connect`
+- `request_timeout_seconds`
+- server definitions
+
+### Example
+
+```yaml
+mcp:
+  auto_connect: true
+  request_timeout_seconds: 30
+```
+
+## Environment Variable Overrides
+
+Environment variables can override many configuration values at runtime.
+
+Examples:
 
 ```bash
-XZATOMA_PROVIDER=ollama XZATOMA_OLLAMA_HOST=localhost:11434 xzatoma run --plan plans/generate_docs.yaml
+export XZATOMA_PROVIDER="copilot"
+export XZATOMA_COPILOT_MODEL="gpt-5-mini"
+export XZATOMA_WATCHER_TYPE="generic"
+export XZEPR_KAFKA_BROKERS="localhost:9092"
+export XZEPR_KAFKA_TOPIC="plans.events"
+export XZATOMA_WATCHER_OUTPUT_TOPIC="plans.results"
+export XZATOMA_WATCHER_MATCH_ACTION="deploy"
 ```
 
----
+See the full environment variable reference in:
 
-## Validation rules & common errors
+- `docs/reference/watcher_environment_variables.md`
 
-`Config::load` applies validation to ensure configuration is sane. Typical checks include:
+## Validation Rules
 
-- `provider_type` must be a known provider (e.g., `copilot`, `ollama`). An unknown provider produces a validation error.
-- Numeric limits (e.g., `max_turns`, `timeout_seconds`) must be positive where applicable.
-- Plan/agent runtime settings that fall outside acceptable ranges will be rejected by `Config::validate`.
+XZatoma validates configuration at startup.
 
-Common issues and corrective actions:
+### General Rules
 
-- "Config file not found" — the CLI will warn and use defaults. Pass `--config` with the correct path to use a custom config file.
-- "Invalid provider" — fix `provider.provider_type` or set `XZATOMA_PROVIDER`.
-- "Numeric validation errors" — verify integer fields are positive and within expected ranges.
+- provider type must be valid
+- numeric limits must be positive where required
+- conversation thresholds must be within valid ranges
+- Kafka config fields cannot be empty when provided
 
-When you receive validation errors, fix the config file (or use environment variables for temporary overrides) and re-run the command.
+### Generic Watcher Rules
 
----
+When `watcher_type: generic`:
 
-## Security & secrets handling
+- `watcher.kafka` must be present
+- configured `generic_match` fields must be valid regex patterns
+- if all generic match fields are unset, validation succeeds but logs a warning
 
-- Avoid embedding secrets (API keys or tokens) directly in repo files. Prefer provider authentication flows (for example, `xzatoma auth --provider copilot` uses a device-code flow and caches tokens in the system keyring).
-- If you must store secrets locally, place them in a secure location (outside version control) and ensure they are not committed.
+### XZepr Watcher Rules
 
----
+When `watcher_type: xzepr`:
 
-## Programmatic usage (Rust)
+- `generic_match` is ignored
+- if generic match fields are set anyway, XZatoma logs a debug message noting
+  they are unused
 
-Loading and merging configuration programmatically:
+## Example Complete Generic Watcher Configuration
 
-```rust
-use xzatoma::cli::Cli;
-use xzatoma::config::Config;
+```yaml
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
 
-let cli = Cli::parse_args(); // parse CLI args
-let cfg = Config::load("config/config.yaml", &cli)?;
-cfg.validate()?;
+agent:
+  max_turns: 50
+  timeout_seconds: 300
+
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: localhost:9092
+    topic: plans.events
+    output_topic: plans.results
+    group_id: xzatoma-generic-watcher
+  generic_match:
+    action: deploy
+    name:
+    version:
+  logging:
+    level: info
+    json_format: true
+    include_payload: false
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 1
+    execution_timeout_secs: 300
 ```
 
-This mirrors what the CLI does when resolving the effective configuration: read file → apply environment vars → apply CLI overrides.
+## Example Complete XZepr Watcher Configuration
 
----
+```yaml
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
 
-## Troubleshooting tips
+agent:
+  max_turns: 50
+  timeout_seconds: 300
 
-- Enable verbose/diagnostic logging for more insight:
-
-```bash
-RUST_LOG=debug xzatoma run --plan examples/quickstart_plan.yaml
+watcher:
+  watcher_type: xzepr
+  kafka:
+    brokers: localhost:9092
+    topic: xzepr.events
+    group_id: xzatoma-watcher
+  filters:
+    event_types:
+      - deployment.success
+    success_only: true
+  logging:
+    level: info
+    json_format: true
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 1
+    execution_timeout_secs: 300
 ```
 
-- If provider features fail due to authentication, run:
+## Security Guidance
 
-```bash
-xzatoma auth --provider copilot
-```
+- Avoid storing sensitive passwords directly in committed config files.
+- Prefer environment-variable injection or a secret manager for Kafka SASL
+  credentials.
+- Use secure Kafka protocols such as `SASL_SSL` in production.
+- Be cautious with payload logging in sensitive environments.
 
-- If a value set via environment variable appears not to take effect, verify spelling and that the variable is exported in the same shell session running `xzatoma`.
+## Related Documentation
 
----
-
-## See also
-
-- How to configure providers: `../how-to/configure_providers.md`
-- CLI reference (how to pass `--config` and other options): `../reference/cli.md`
-- Workflow / Plan format (how `generate_documentation` and other plan-driven features may consume `context`): `../reference/workflow_format.md`
-
----
-
-Last updated: 2026-01-24
+- how-to setup guide: `docs/how-to/setup_watcher.md`
+- watcher environment variables:
+  `docs/reference/watcher_environment_variables.md`
+- architecture reference: `docs/reference/architecture.md`
+- generic watcher example config: `config/generic_watcher.yaml`

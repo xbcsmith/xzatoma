@@ -1937,39 +1937,74 @@ pub mod watch {
 
         tracing::info!("Watch command started");
         tracing::info!(
+            watcher_type = %config.watcher.watcher_type.as_str(),
             kafka_brokers = %config.watcher.kafka.as_ref().map(|k| &k.brokers).unwrap_or(&"not configured".to_string()),
             kafka_topic = %config.watcher.kafka.as_ref().map(|k| &k.topic).unwrap_or(&"not configured".to_string()),
             dry_run = overrides.dry_run,
             "Initializing watcher service"
         );
 
-        // Create watcher service
-        let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
+        // Create watcher service first so constructor validation happens
+        // before entering the signal-handling path.
+        match config.watcher.watcher_type {
+            crate::config::WatcherType::XZepr => {
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
 
-        // Set up signal handling for graceful shutdown
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+                // Set up signal handling for graceful shutdown
+                let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
 
-        // Spawn signal handler task
-        tokio::spawn(async move {
-            match tokio::signal::ctrl_c().await {
-                Ok(()) => {
-                    tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
-                    let _ = shutdown_tx.send(()).await;
-                }
-                Err(err) => {
-                    tracing::error!(error = %err, "Failed to set up signal handler");
+                // Spawn signal handler task
+                tokio::spawn(async move {
+                    match tokio::signal::ctrl_c().await {
+                        Ok(()) => {
+                            tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
+                            let _ = shutdown_tx.send(()).await;
+                        }
+                        Err(err) => {
+                            tracing::error!(error = %err, "Failed to set up signal handler");
+                        }
+                    }
+                });
+
+                tokio::select! {
+                    result = watcher.start() => {
+                        result
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::info!("Graceful shutdown completed");
+                        Ok(())
+                    }
                 }
             }
-        });
+            crate::config::WatcherType::Generic => {
+                let mut watcher =
+                    crate::watcher::generic::GenericWatcher::new(config, overrides.dry_run)?;
 
-        // Start watcher, but allow graceful shutdown on signal
-        tokio::select! {
-            result = watcher.start() => {
-                result
-            }
-            _ = shutdown_rx.recv() => {
-                tracing::info!("Graceful shutdown completed");
-                Ok(())
+                // Set up signal handling for graceful shutdown
+                let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+
+                // Spawn signal handler task
+                tokio::spawn(async move {
+                    match tokio::signal::ctrl_c().await {
+                        Ok(()) => {
+                            tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
+                            let _ = shutdown_tx.send(()).await;
+                        }
+                        Err(err) => {
+                            tracing::error!(error = %err, "Failed to set up signal handler");
+                        }
+                    }
+                });
+
+                tokio::select! {
+                    result = watcher.start() => {
+                        result
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::info!("Graceful shutdown completed");
+                        Ok(())
+                    }
+                }
             }
         }
     }
@@ -2344,6 +2379,36 @@ pub mod watch {
                 config.watcher.generic_match.name.as_deref(),
                 Some("service-a")
             );
+        }
+
+        #[tokio::test]
+        async fn test_run_watch_xzepr_missing_kafka_returns_error() {
+            let mut config = Config::default();
+            config.watcher.watcher_type = crate::config::WatcherType::XZepr;
+            config.watcher.kafka = None;
+
+            let result = run_watch(config, WatchCliOverrides::default()).await;
+
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Kafka configuration"));
+        }
+
+        #[tokio::test]
+        async fn test_run_watch_generic_missing_kafka_returns_error() {
+            let mut config = Config::default();
+            config.watcher.watcher_type = crate::config::WatcherType::Generic;
+            config.watcher.kafka = None;
+
+            let result = run_watch(config, WatchCliOverrides::default()).await;
+
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Kafka configuration"));
         }
     }
 }

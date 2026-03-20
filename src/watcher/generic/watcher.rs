@@ -665,6 +665,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_generic_watcher_process_event_matching_action_is_processed() {
+        let watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("deploy".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap();
+
+        let mut event = matching_event();
+        event.action = Some("deploy".to_string());
+
+        let disposition = watcher.process_event(event).await.unwrap();
+
+        assert_eq!(disposition, MessageDisposition::Processed);
+
+        let published = watcher.published_results().await;
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].event_type, "result");
+        assert_eq!(published[0].trigger_event_id, "01JTESTMATCH00000000000001");
+        assert!(published[0].success);
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_process_event_non_matching_action_is_skipped() {
+        let watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("deploy".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap();
+
+        let mut event = matching_event();
+        event.action = Some("rollback".to_string());
+
+        let disposition = watcher.process_event(event).await.unwrap();
+
+        assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
+        assert!(watcher.published_results().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_generic_watcher_process_payload_invalid_json_returns_invalid_payload() {
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
