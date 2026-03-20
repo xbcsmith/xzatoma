@@ -3,15 +3,15 @@
 //! This module provides integration with XZepr for consuming CloudEvents
 //! messages from Kafka and posting events back to the XZepr API.
 //!
-//! # Overview
+//! # Relocation Notice
 //!
-//! XZepr is an event-driven platform that publishes CloudEvents 1.0.1
-//! compatible messages to Kafka topics. This module enables downstream
-//! services to:
+//! All XZepr implementation code has been relocated to `crate::watcher::xzepr`
+//! as part of the generic watcher architecture (Phase 1). This module re-exports
+//! everything from that canonical location to preserve full backward compatibility.
 //!
-//! 1. **Consume Events**: Read CloudEvents from XZepr Kafka topics
-//! 2. **Process Work**: Handle events and perform business logic
-//! 3. **Report Status**: Post work lifecycle events back to XZepr
+//! XZepr is a fully supported, permanent watcher backend — an equal configuration
+//! peer alongside the generic watcher introduced in Phase 3. No deprecation notices
+//! apply.
 //!
 //! # Submodules
 //!
@@ -23,10 +23,10 @@
 
 #![allow(dead_code)]
 
-pub mod consumer;
+pub use crate::watcher::xzepr::consumer;
 
 #[allow(unused_imports)]
-pub use consumer::{
+pub use crate::watcher::xzepr::consumer::{
     ClientError, CloudEventData, CloudEventMessage, ConfigError, ConsumerError,
     CreateEventReceiverRequest, CreateEventRequest, EventEntity, EventReceiverEntity,
     EventReceiverGroupEntity, EventReceiverResponse, KafkaConsumerConfig, MessageHandler,

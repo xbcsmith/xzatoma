@@ -1,8 +1,12 @@
-//! Plan extraction from CloudEvents
+//! Plan extraction from XZepr CloudEvents
 //!
-//! Provides strategies for extracting and parsing plans from CloudEvent message payloads.
+//! Provides strategies for extracting and parsing plans from XZepr CloudEvent
+//! message payloads.
+//!
+//! This module was relocated from `src/watcher/plan_extractor.rs` into
+//! `src/watcher/xzepr/` as part of the generic watcher architecture (Phase 1).
 
-use crate::xzepr::CloudEventMessage;
+use crate::watcher::xzepr::consumer::CloudEventMessage;
 use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
 
@@ -26,7 +30,7 @@ pub enum PlanExtractionStrategy {
     DataRoot,
 }
 
-/// Extract plans from CloudEvent messages.
+/// Extract plans from XZepr CloudEvent messages.
 ///
 /// Attempts multiple strategies to find and extract plans from CloudEvent payloads.
 /// The extractor tries strategies in priority order and returns the first successfully
@@ -46,7 +50,7 @@ impl PlanExtractor {
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::watcher::PlanExtractor;
+    /// use xzatoma::watcher::xzepr::plan_extractor::PlanExtractor;
     ///
     /// let extractor = PlanExtractor::new();
     /// // Can now extract from CloudEventMessage instances
@@ -62,7 +66,7 @@ impl PlanExtractor {
         }
     }
 
-    /// Extract plan string from CloudEvent message.
+    /// Extract plan string from XZepr CloudEvent message.
     ///
     /// Tries each extraction strategy in order until one successfully extracts a plan.
     /// Logs which strategy was used for debugging purposes.
@@ -75,11 +79,15 @@ impl PlanExtractor {
     ///
     /// Returns the extracted plan as a string, or error if no strategy succeeded
     ///
+    /// # Errors
+    ///
+    /// Returns an error if no extraction strategy succeeds for the given event.
+    ///
     /// # Examples
     ///
     /// ```no_run
-    /// use xzatoma::watcher::PlanExtractor;
-    /// use xzatoma::xzepr::consumer::message::CloudEventMessage;
+    /// use xzatoma::watcher::xzepr::plan_extractor::PlanExtractor;
+    /// use xzatoma::watcher::xzepr::consumer::message::CloudEventMessage;
     ///
     /// let extractor = PlanExtractor::new();
     /// let json = r#"{
@@ -190,7 +198,7 @@ impl Default for PlanExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::xzepr::consumer::message::{CloudEventData, EventEntity};
+    use crate::watcher::xzepr::consumer::message::{CloudEventData, EventEntity};
     use serde_json::json;
 
     fn create_test_event_with_payload(payload: serde_json::Value) -> CloudEventMessage {

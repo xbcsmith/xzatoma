@@ -1,31 +1,55 @@
 //! Watcher module for monitoring Kafka topics and executing plans
 //!
-//! This module provides functionality to watch Kafka topics for CloudEvents
-//! messages, filter events based on configured criteria, extract plans from
-//! event payloads, and execute those plans.
+//! This module provides the watcher service infrastructure that connects to
+//! Kafka/Redpanda topics, receives events, and executes embedded plans.
 //!
-//! # Overview
+//! # Backends
 //!
-//! The watcher is an autonomous component that:
-//! 1. Connects to a Kafka topic
-//! 2. Consumes CloudEvents messages
-//! 3. Filters events based on configured criteria
-//! 4. Extracts execution plans from event payloads
-//! 5. Executes extracted plans using the agent
+//! Two watcher backends are supported as equal configuration peers:
 //!
-//! # Modules
+//! - [`xzepr`]: XZepr CloudEvents-based watcher (default, full backward compatibility)
+//! - [`generic`]: Generic Kafka plan-event watcher (Phase 3, not yet implemented)
 //!
-//! - [`filter`]: Event filtering by type, source, platform, etc.
-//! - [`logging`]: Structured logging configuration
-//! - [`plan_extractor`]: Plan extraction from event payloads
-//! - [`watcher`]: Core watcher service implementation
+//! The active backend is selected via the `watcher_type` configuration field
+//! (added in Phase 4) or the corresponding CLI flag. Until Phase 4 is complete,
+//! only the XZepr backend is available and [`XzeprWatcher`] is used directly.
+//!
+//! # Module Layout
+//!
+//! - [`generic`]: Placeholder for the Phase 3 generic Kafka watcher
+//! - [`logging`]: Structured logging helpers shared across all watcher backends
+//! - [`xzepr`]: XZepr watcher backend (consumer, filter, plan extractor, watcher)
+//!
+//! # XZepr-Specific Types
+//!
+//! `EventFilter`, `PlanExtractor`, and other XZepr-specific types are intentionally
+//! NOT re-exported at this level. They belong exclusively to the XZepr backend and
+//! are accessible only via `crate::watcher::xzepr::*`. Hoisting them here would
+//! falsely imply a shared interface with the generic backend.
+//!
+//! The one exception is [`XzeprWatcher`], re-exported here to provide the dispatch
+//! call site used in `commands::watch::run_watch`.
 
-pub mod filter;
+pub mod generic;
 pub mod logging;
-pub mod plan_extractor;
-#[allow(clippy::module_inception)]
-pub mod watcher;
+pub mod xzepr;
 
-pub use filter::EventFilter;
-pub use plan_extractor::PlanExtractor;
-pub use watcher::Watcher;
+/// The XZepr watcher backend, re-exported for use in the watch command dispatcher.
+///
+/// This alias resolves to [`crate::watcher::xzepr::watcher::Watcher`]. When Phase 4
+/// introduces `watcher_type` dispatch, the call site in `commands::watch::run_watch`
+/// will select between `XzeprWatcher` and the generic watcher based on configuration.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::Config;
+/// use xzatoma::watcher::XzeprWatcher;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// let config = Config::default();
+/// let watcher = XzeprWatcher::new(config, false)?;
+/// # Ok(())
+/// # }
+/// ```
+pub use xzepr::watcher::Watcher as XzeprWatcher;

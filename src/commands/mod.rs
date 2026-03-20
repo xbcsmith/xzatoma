@@ -1937,7 +1937,7 @@ pub mod watch {
         );
 
         // Create watcher service
-        let mut watcher = crate::watcher::Watcher::new(config, dry_run)?;
+        let mut watcher = crate::watcher::XzeprWatcher::new(config, dry_run)?;
 
         // Set up signal handling for graceful shutdown
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);

@@ -1,15 +1,19 @@
-//! Watcher service for consuming and processing CloudEvents from Kafka
+//! XZepr watcher service for consuming and processing CloudEvents from Kafka
 //!
 //! This module provides the core watcher service that:
-//! 1. Connects to Kafka topics
-//! 2. Consumes CloudEvents messages
+//! 1. Connects to Kafka topics via the XZepr consumer
+//! 2. Consumes XZepr CloudEvents messages
 //! 3. Filters events based on configuration
 //! 4. Extracts plans from event payloads
 //! 5. Executes extracted plans with concurrency control
+//!
+//! This module was relocated from `src/watcher/watcher.rs` into
+//! `src/watcher/xzepr/` as part of the generic watcher architecture (Phase 1).
 
+use super::consumer::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, XzeprConsumer};
+use super::filter::EventFilter;
+use super::plan_extractor::PlanExtractor;
 use crate::config::{Config, WatcherConfig};
-use crate::watcher::{EventFilter, PlanExtractor};
-use crate::xzepr::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, XzeprConsumer};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -17,7 +21,7 @@ use thiserror::Error;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-/// Errors that can occur in the watcher service
+/// Errors that can occur in the XZepr watcher service.
 #[derive(Error, Debug)]
 #[allow(dead_code)]
 pub enum WatcherError {
@@ -42,21 +46,24 @@ pub enum WatcherError {
     Execution(String),
 }
 
-/// Main watcher service for processing CloudEvents from Kafka
+/// Main XZepr watcher service for processing CloudEvents from Kafka.
 ///
 /// The watcher manages the lifecycle of event consumption, filtering,
 /// plan extraction, and execution. It maintains concurrent execution
 /// limits and integrates with the XZepr Kafka consumer.
 ///
+/// This type is also accessible as `crate::watcher::XzeprWatcher` via the
+/// top-level watcher re-export added in Phase 1.
+///
 /// # Example
 ///
 /// ```
 /// use xzatoma::config::Config;
-/// use xzatoma::watcher::Watcher;
+/// use xzatoma::watcher::XzeprWatcher;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = Config::default();
-/// let mut watcher = Watcher::new(config, false)?;
+/// let mut watcher = XzeprWatcher::new(config, false)?;
 /// watcher.start().await?;
 /// # Ok(())
 /// # }
@@ -72,7 +79,7 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    /// Create a new watcher instance from global configuration
+    /// Create a new XZepr watcher instance from global configuration.
     ///
     /// # Arguments
     ///
@@ -81,23 +88,23 @@ impl Watcher {
     ///
     /// # Returns
     ///
-    /// Returns a configured Watcher instance ready to start consuming
+    /// Returns a configured `Watcher` instance ready to start consuming.
     ///
     /// # Errors
     ///
-    /// Returns `WatcherError::Config` if watcher configuration is missing or invalid
-    /// Returns `WatcherError::Consumer` if Kafka consumer cannot be created
-    /// Returns `WatcherError::Filter` if event filter initialization fails
+    /// Returns `WatcherError::Config` if watcher configuration is missing or invalid.
+    /// Returns `WatcherError::Consumer` if the Kafka consumer cannot be created.
+    /// Returns `WatcherError::Filter` if event filter initialization fails.
     ///
     /// # Examples
     ///
     /// ```
     /// use xzatoma::config::Config;
-    /// use xzatoma::watcher::Watcher;
+    /// use xzatoma::watcher::XzeprWatcher;
     ///
     /// # async fn example() -> anyhow::Result<()> {
     /// let config = Config::default();
-    /// let watcher = Watcher::new(config, false)?;
+    /// let watcher = XzeprWatcher::new(config, false)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -163,28 +170,28 @@ impl Watcher {
         })
     }
 
-    /// Start watching for and processing events from the Kafka topic
+    /// Start watching for and processing events from the Kafka topic.
     ///
     /// This is the main loop that consumes messages from Kafka. It will run
     /// indefinitely until an error occurs or the process is signaled to stop.
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` on graceful shutdown or error if processing fails
+    /// Returns `Ok(())` on graceful shutdown or error if processing fails.
     ///
     /// # Errors
     ///
-    /// Returns `WatcherError::Consumer` if subscription fails
+    /// Returns `WatcherError::Consumer` if subscription or message consumption fails.
     ///
     /// # Example
     ///
     /// ```
     /// use xzatoma::config::Config;
-    /// use xzatoma::watcher::Watcher;
+    /// use xzatoma::watcher::XzeprWatcher;
     ///
     /// # async fn example() -> anyhow::Result<()> {
     /// let config = Config::default();
-    /// let mut watcher = Watcher::new(config, false)?;
+    /// let mut watcher = XzeprWatcher::new(config, false)?;
     /// watcher.start().await?;
     /// # Ok(())
     /// # }
@@ -193,7 +200,7 @@ impl Watcher {
         info!(
             filters = %self.filter.summary(),
             dry_run = self.dry_run,
-            "Starting watcher service"
+            "Starting XZepr watcher service"
         );
 
         // Create message handler with shared state
@@ -216,12 +223,26 @@ impl Watcher {
         Ok(())
     }
 
-    /// Apply security configuration to Kafka consumer.
+    /// Apply security configuration to a Kafka consumer config.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The consumer config to modify
+    /// * `security` - Security settings from the watcher configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns the updated `KafkaConsumerConfig` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the security protocol or SASL mechanism is invalid,
+    /// or if required SASL credentials are missing.
     fn apply_security_config(
         mut config: KafkaConsumerConfig,
         security: &crate::config::KafkaSecurityConfig,
     ) -> Result<KafkaConsumerConfig> {
-        use crate::xzepr::consumer::config::{SaslConfig, SaslMechanism, SecurityProtocol};
+        use super::consumer::config::{SaslConfig, SaslMechanism, SecurityProtocol};
 
         debug!(
             protocol = %security.protocol,
@@ -275,7 +296,7 @@ impl Watcher {
     }
 }
 
-/// Message handler that processes CloudEvents from the watcher
+/// Message handler that processes XZepr CloudEvents from the watcher.
 ///
 /// This handler is invoked for each message received from Kafka.
 /// It applies filters, extracts plans, and executes them with
@@ -292,7 +313,7 @@ struct WatcherMessageHandler {
 
 #[async_trait]
 impl MessageHandler for WatcherMessageHandler {
-    /// Process a CloudEvent message
+    /// Process a CloudEvent message.
     ///
     /// # Arguments
     ///
@@ -300,8 +321,8 @@ impl MessageHandler for WatcherMessageHandler {
     ///
     /// # Returns
     ///
-    /// Returns Ok(()) if processing completed (even if plan execution failed)
-    /// Returns Err if message processing itself failed
+    /// Returns `Ok(())` if processing completed (even if plan execution failed).
+    /// Returns `Err` if message processing itself encountered an unrecoverable error.
     ///
     /// # Processing Steps
     ///
@@ -309,7 +330,7 @@ impl MessageHandler for WatcherMessageHandler {
     /// 2. Extract plan from event payload
     /// 3. Check for dry-run mode
     /// 4. Acquire execution permit (respects concurrency limit)
-    /// 5. Execute plan in spawned task
+    /// 5. Execute plan in a spawned task
     /// 6. Log results
     async fn handle(
         &self,
