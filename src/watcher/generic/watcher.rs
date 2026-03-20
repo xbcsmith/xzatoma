@@ -135,10 +135,20 @@ impl GenericWatcher {
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::config::Config;
+    /// use xzatoma::config::{Config, KafkaWatcherConfig, WatcherType};
     /// use xzatoma::watcher::generic::watcher::GenericWatcher;
     ///
-    /// let watcher = GenericWatcher::new(Config::default(), true);
+    /// let mut config = Config::default();
+    /// config.watcher.watcher_type = WatcherType::Generic;
+    /// config.watcher.kafka = Some(KafkaWatcherConfig {
+    ///     brokers: "localhost:9092".to_string(),
+    ///     topic: "generic.input".to_string(),
+    ///     output_topic: Some("generic.output".to_string()),
+    ///     group_id: "xzatoma-generic-doc-test".to_string(),
+    ///     security: None,
+    /// });
+    ///
+    /// let watcher = GenericWatcher::new(config, true);
     /// assert!(watcher.is_ok());
     /// ```
     pub fn new(config: Config, dry_run: bool) -> Result<Self> {
@@ -527,6 +537,7 @@ mod tests {
             },
             agent: AgentConfig::default(),
             watcher: WatcherConfig {
+                watcher_type: crate::config::WatcherType::Generic,
                 kafka: Some(KafkaWatcherConfig {
                     brokers: "localhost:9092".to_string(),
                     topic: "generic.input".to_string(),

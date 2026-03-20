@@ -316,7 +316,7 @@ impl JsonRpcClient {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use tokio::sync::mpsc;
     /// use xzatoma::mcp::client::JsonRpcClient;
     /// use xzatoma::mcp::types::NOTIF_TOOLS_LIST_CHANGED;

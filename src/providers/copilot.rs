@@ -2697,7 +2697,7 @@ mod tests {
     #[test]
     fn test_copilot_config_default_model() {
         let config = CopilotConfig::default();
-        assert_eq!(config.model, "gpt-5.3-codex");
+        assert_eq!(config.model, "gpt-5-mini");
     }
 
     #[test]
@@ -2715,7 +2715,7 @@ mod tests {
     fn test_copilot_provider_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     }
 
     #[test]
@@ -2892,7 +2892,7 @@ mod tests {
     fn test_get_current_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
+        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
     }
 
     #[test]

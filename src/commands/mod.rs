@@ -1876,6 +1876,34 @@ pub mod auth {
 /// Watch command handler for monitoring Kafka topics and executing plans
 pub mod watch {
     use super::*;
+
+    /// CLI overrides for the `watch` command.
+    ///
+    /// This groups all optional CLI-provided overrides into a single value so the
+    /// watch command entry points remain readable and satisfy linting constraints.
+    #[derive(Debug, Clone, Default)]
+    pub struct WatchCliOverrides {
+        /// Optional Kafka topic override.
+        pub topic: Option<String>,
+        /// Optional event types filter override.
+        pub event_types: Option<String>,
+        /// Optional filter configuration path.
+        pub filter_config: Option<PathBuf>,
+        /// Optional watcher log file path.
+        pub log_file: Option<PathBuf>,
+        /// Whether JSON logging is enabled.
+        pub json_logs: bool,
+        /// Optional watcher backend type override.
+        pub watcher_type: Option<String>,
+        /// Optional generic watcher output topic override.
+        pub output_topic: Option<String>,
+        /// Optional generic matcher action override.
+        pub action: Option<String>,
+        /// Optional generic matcher name override.
+        pub name: Option<String>,
+        /// Whether dry-run mode is enabled.
+        pub dry_run: bool,
+    }
     use std::path::PathBuf;
 
     /// Run the watch command
@@ -1887,16 +1915,10 @@ pub mod watch {
     /// # Arguments
     ///
     /// * `config` - Global configuration (will be modified by CLI overrides)
-    /// * `topic` - Optional Kafka topic override from CLI
-    /// * `event_types` - Optional comma-separated event types filter from CLI
-    /// * `filter_config` - Optional path to filter configuration file (currently unused)
-    /// * `log_file` - Optional path to write log output
-    /// * `json_logs` - Whether to format logs as JSON
-    /// * `dry_run` - If true, parse plans but don't execute them
+    /// * `overrides` - Optional CLI overrides for watcher behavior
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` on successful completion or graceful shutdown.
     /// Returns `Err` if configuration is invalid or an error occurs.
     ///
     /// # Errors
@@ -1906,24 +1928,9 @@ pub mod watch {
     /// - Log initialization fails
     /// - Watcher creation fails
     /// - Message consumption fails
-    pub async fn run_watch(
-        mut config: Config,
-        topic: Option<String>,
-        event_types: Option<String>,
-        _filter_config: Option<PathBuf>,
-        log_file: Option<PathBuf>,
-        json_logs: bool,
-        dry_run: bool,
-    ) -> Result<()> {
+    pub async fn run_watch(mut config: Config, overrides: WatchCliOverrides) -> Result<()> {
         // Apply CLI argument overrides to configuration
-        apply_cli_overrides(
-            &mut config,
-            topic,
-            event_types,
-            log_file,
-            json_logs,
-            dry_run,
-        )?;
+        apply_cli_overrides(&mut config, &overrides)?;
 
         // Initialize logging system
         crate::watcher::logging::init_watcher_logging(&config.watcher.logging)?;
@@ -1932,12 +1939,12 @@ pub mod watch {
         tracing::info!(
             kafka_brokers = %config.watcher.kafka.as_ref().map(|k| &k.brokers).unwrap_or(&"not configured".to_string()),
             kafka_topic = %config.watcher.kafka.as_ref().map(|k| &k.topic).unwrap_or(&"not configured".to_string()),
-            dry_run = dry_run,
+            dry_run = overrides.dry_run,
             "Initializing watcher service"
         );
 
         // Create watcher service
-        let mut watcher = crate::watcher::XzeprWatcher::new(config, dry_run)?;
+        let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
 
         // Set up signal handling for graceful shutdown
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -1975,23 +1982,12 @@ pub mod watch {
     /// # Arguments
     ///
     /// * `config` - Configuration to modify
-    /// * `topic` - Optional topic override
-    /// * `event_types` - Optional event types filter (comma-separated)
-    /// * `log_file` - Optional log file path
-    /// * `json_logs` - JSON logging flag
-    /// * `dry_run` - Dry run flag
+    /// * `overrides` - CLI override values to apply
     ///
     /// # Errors
     ///
-    /// Returns error if configuration is invalid (e.g., no Kafka config).
-    fn apply_cli_overrides(
-        config: &mut Config,
-        topic: Option<String>,
-        event_types: Option<String>,
-        log_file: Option<PathBuf>,
-        json_logs: bool,
-        dry_run: bool,
-    ) -> Result<()> {
+    /// Returns error if configuration is invalid (e.g., no Kafka config or invalid watcher type).
+    fn apply_cli_overrides(config: &mut Config, overrides: &WatchCliOverrides) -> Result<()> {
         // Ensure Kafka configuration exists
         if config.watcher.kafka.is_none() {
             return Err(anyhow::anyhow!(
@@ -1999,16 +1995,59 @@ pub mod watch {
             ));
         }
 
+        // Override watcher type if provided
+        if let Some(cli_watcher_type) = &overrides.watcher_type {
+            let parsed_watcher_type = crate::config::WatcherType::from_str_name(cli_watcher_type)
+                .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Invalid watcher type: {}. Must be one of: xzepr, generic",
+                    cli_watcher_type
+                )
+            })?;
+
+            config.watcher.watcher_type = parsed_watcher_type;
+            tracing::debug!(
+                watcher_type = %cli_watcher_type,
+                "CLI override: Watcher type"
+            );
+        }
+
         // Override topic if provided
-        if let Some(t) = topic {
+        if let Some(t) = &overrides.topic {
             if let Some(ref mut kafka) = config.watcher.kafka {
                 kafka.topic = t.clone();
                 tracing::debug!(topic = %t, "CLI override: Kafka topic");
             }
         }
 
+        // Override output topic if provided
+        if let Some(output) = &overrides.output_topic {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.output_topic = Some(output.clone());
+                tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
+            }
+        }
+
+        // Override generic matcher action if provided
+        if let Some(action_pattern) = &overrides.action {
+            config.watcher.generic_match.action = Some(action_pattern.clone());
+            tracing::debug!(
+                action = %action_pattern,
+                "CLI override: Generic matcher action"
+            );
+        }
+
+        // Override generic matcher name if provided
+        if let Some(name_pattern) = &overrides.name {
+            config.watcher.generic_match.name = Some(name_pattern.clone());
+            tracing::debug!(
+                name = %name_pattern,
+                "CLI override: Generic matcher name"
+            );
+        }
+
         // Override event types filter if provided
-        if let Some(types) = event_types {
+        if let Some(types) = &overrides.event_types {
             let event_types_vec: Vec<String> = types
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -2023,7 +2062,7 @@ pub mod watch {
         }
 
         // Override log file if provided
-        if let Some(path) = log_file {
+        if let Some(path) = &overrides.log_file {
             config.watcher.logging.file_path = Some(path.clone());
             tracing::debug!(
                 log_file = %path.display(),
@@ -2032,13 +2071,13 @@ pub mod watch {
         }
 
         // Override JSON logging setting
-        if json_logs {
+        if overrides.json_logs {
             config.watcher.logging.json_format = true;
             tracing::debug!("CLI override: JSON logging enabled");
         }
 
         // Note: dry_run is passed separately to Watcher::new() and not stored in config
-        if dry_run {
+        if overrides.dry_run {
             tracing::debug!("Dry-run mode will be enabled for execution");
         }
 
@@ -2054,7 +2093,7 @@ pub mod watch {
             let mut config = Config::default();
             config.watcher.kafka = None;
 
-            let result = apply_cli_overrides(&mut config, None, None, None, false, false);
+            let result = apply_cli_overrides(&mut config, &WatchCliOverrides::default());
             assert!(result.is_err());
             assert!(result
                 .unwrap_err()
@@ -2075,11 +2114,10 @@ pub mod watch {
 
             let result = apply_cli_overrides(
                 &mut config,
-                Some("override.topic".to_string()),
-                None,
-                None,
-                false,
-                false,
+                &WatchCliOverrides {
+                    topic: Some("override.topic".to_string()),
+                    ..WatchCliOverrides::default()
+                },
             );
 
             assert!(result.is_ok());
@@ -2102,11 +2140,10 @@ pub mod watch {
 
             let result = apply_cli_overrides(
                 &mut config,
-                None,
-                Some("deployment.success,deployment.failure".to_string()),
-                None,
-                false,
-                false,
+                &WatchCliOverrides {
+                    event_types: Some("deployment.success,deployment.failure".to_string()),
+                    ..WatchCliOverrides::default()
+                },
             );
 
             assert!(result.is_ok());
@@ -2135,7 +2172,13 @@ pub mod watch {
             });
             config.watcher.logging.json_format = false;
 
-            let result = apply_cli_overrides(&mut config, None, None, None, true, false);
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    json_logs: true,
+                    ..WatchCliOverrides::default()
+                },
+            );
 
             assert!(result.is_ok());
             assert!(config.watcher.logging.json_format);
@@ -2154,11 +2197,12 @@ pub mod watch {
 
             let result = apply_cli_overrides(
                 &mut config,
-                Some("override".to_string()),
-                Some("deployment.success".to_string()),
-                None,
-                true,
-                false,
+                &WatchCliOverrides {
+                    topic: Some("override".to_string()),
+                    event_types: Some("deployment.success".to_string()),
+                    json_logs: true,
+                    ..WatchCliOverrides::default()
+                },
             );
 
             assert!(result.is_ok());
@@ -2180,15 +2224,126 @@ pub mod watch {
 
             let result = apply_cli_overrides(
                 &mut config,
-                None,
-                Some("deployment.success , deployment.failure , build.complete".to_string()),
-                None,
-                false,
-                false,
+                &WatchCliOverrides {
+                    event_types: Some(
+                        "deployment.success , deployment.failure , build.complete".to_string(),
+                    ),
+                    ..WatchCliOverrides::default()
+                },
             );
 
             assert!(result.is_ok());
             assert_eq!(config.watcher.filters.event_types.len(), 3);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_watcher_type() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    watcher_type: Some("generic".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.watcher_type,
+                crate::config::WatcherType::Generic
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_output_topic() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    output_topic: Some("results.topic".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config
+                    .watcher
+                    .kafka
+                    .as_ref()
+                    .unwrap()
+                    .output_topic
+                    .as_deref(),
+                Some("results.topic")
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_generic_match_action() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    action: Some("deploy.*".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.generic_match.action.as_deref(),
+                Some("deploy.*")
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_generic_match_name() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                security: None,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    name: Some("service-a".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.generic_match.name.as_deref(),
+                Some("service-a")
+            );
         }
     }
 }

@@ -475,6 +475,7 @@ mod tests {
             },
             agent: crate::config::AgentConfig::default(),
             watcher: crate::config::WatcherConfig {
+                watcher_type: crate::config::WatcherType::XZepr,
                 kafka: None,
                 generic_match: Default::default(),
                 filters: Default::default(),
