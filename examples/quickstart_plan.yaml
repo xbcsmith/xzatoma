@@ -14,7 +14,7 @@ description: >
   Minimal example plan used by the quickstart tutorial. It demonstrates
   plan parsing and a mixture of simple shell commands and a documentation
   generation task that the agent may interpret and execute.
-
+action: quickstart
 steps:
   - name: Print greeting
     action: Print a greeting to verify execution

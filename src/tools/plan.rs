@@ -17,6 +17,16 @@ pub struct Plan {
     /// Optional plan description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional action label used by the generic watcher for event-to-plan matching.
+    ///
+    /// When set, this value is matched against the `action` field of an incoming
+    /// `GenericPlanEvent`. Set to `None` to disable action-based matching; the plan
+    /// remains eligible for name-based or version-based matching by the watcher.
+    ///
+    /// This field is ignored by the standard `run` command — it exists solely to
+    /// allow plan authors to annotate plans for automated dispatch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
     /// Ordered list of plan steps
     pub steps: Vec<PlanStep>,
 }
@@ -39,6 +49,7 @@ impl Plan {
         Self {
             name,
             description: None,
+            action: None,
             steps,
         }
     }
@@ -224,6 +235,7 @@ impl PlanParser {
         let plan = Plan {
             name,
             description,
+            action: None,
             steps,
         };
 
@@ -405,6 +417,7 @@ steps:
         let plan = Plan {
             name: "".to_string(),
             description: None,
+            action: None,
             steps: vec![PlanStep::new("s".to_string()).with_action("a".to_string())],
         };
         assert!(PlanParser::validate(&plan).is_err());
@@ -413,6 +426,7 @@ steps:
         let plan2 = Plan {
             name: "n".to_string(),
             description: None,
+            action: None,
             steps: Vec::new(),
         };
         assert!(PlanParser::validate(&plan2).is_err());
@@ -421,6 +435,7 @@ steps:
         let plan3 = Plan {
             name: "n".to_string(),
             description: None,
+            action: None,
             steps: vec![PlanStep::new("step".to_string())],
         };
         assert!(PlanParser::validate(&plan3).is_err());
@@ -445,5 +460,73 @@ steps:
         };
         let loaded = load_plan(p.to_str().unwrap()).await.unwrap();
         assert_eq!(loaded.name, "Quick Plan");
+    }
+
+    #[test]
+    fn test_quickstart_plan_roundtrip_with_action() {
+        // Verifies that the updated quickstart_plan.yaml includes the new `action`
+        // field and that all pre-existing fields are unchanged.
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let path = std::path::Path::new(manifest_dir).join("examples/quickstart_plan.yaml");
+        let plan = PlanParser::from_file(&path).unwrap();
+
+        assert_eq!(
+            plan.name, "Quickstart Tutorial",
+            "plan name should be unchanged"
+        );
+        assert!(
+            plan.action.is_some(),
+            "action field must be set in quickstart_plan.yaml after schema extension"
+        );
+        assert_eq!(
+            plan.action.as_deref(),
+            Some("quickstart"),
+            "action field must equal 'quickstart'"
+        );
+        // Existing fields must remain intact
+        assert!(
+            plan.description.is_some(),
+            "description field should still be present"
+        );
+        assert!(
+            !plan.steps.is_empty(),
+            "plan must still contain at least one step"
+        );
+    }
+
+    #[test]
+    fn test_plan_action_field_optional_roundtrip() {
+        // A plan without `action` must parse successfully (backward compatibility).
+        let yaml_no_action = r#"
+name: No Action Plan
+steps:
+  - name: s1
+    action: do something
+"#;
+        let plan = PlanParser::from_yaml(yaml_no_action).unwrap();
+        assert_eq!(
+            plan.action, None,
+            "action should default to None when absent"
+        );
+
+        // A plan with `action` must round-trip through YAML correctly.
+        let yaml_with_action = r#"
+name: Action Plan
+action: deploy
+steps:
+  - name: s1
+    action: run deployment
+"#;
+        let plan2 = PlanParser::from_yaml(yaml_with_action).unwrap();
+        assert_eq!(
+            plan2.action.as_deref(),
+            Some("deploy"),
+            "action field should deserialize correctly"
+        );
+
+        // Round-trip through JSON.
+        let json_str = serde_json::to_string(&plan2).unwrap();
+        let plan3: crate::tools::plan::Plan = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(plan3.action.as_deref(), Some("deploy"));
     }
 }

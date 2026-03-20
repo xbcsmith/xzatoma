@@ -1,7 +1,7 @@
 //! Generic Kafka watcher backend
 //!
-//! This module will contain the generic Kafka/Redpanda watcher implementation
-//! as defined in Phase 3 of the generic watcher implementation plan.
+//! This module contains the generic Kafka/Redpanda watcher implementation
+//! as defined in the generic watcher implementation plan.
 //!
 //! # Planned Functionality
 //!
@@ -15,7 +15,24 @@
 //!   all other event types (including `event_type == "result"`) to prevent
 //!   same-topic input/output re-trigger loops
 //!
-//! # Status
+//! # Message Types (Phase 2)
 //!
-//! Placeholder — not yet implemented. See Phase 3 of
-//! `docs/explanation/generic_watcher_implementation_plan.md`.
+//! Two message schemas are defined in [`message`]:
+//!
+//! - [`GenericPlanEvent`]: The trigger message a producer publishes to the input
+//!   topic. The watcher deserializes each message, checks `event_type == "plan"`,
+//!   evaluates the optional matching criteria, and executes the embedded plan on
+//!   a successful match.
+//!
+//! - [`GenericPlanResult`]: The result message published to the output topic after
+//!   plan execution. Its `event_type` is always `"result"`, which prevents
+//!   re-trigger loops when the output topic and input topic are the same.
+//!
+//! # Matcher and Watcher (Phase 3)
+//!
+//! `GenericMatcher`, `GenericResultProducer`, and `GenericWatcher` will be added
+//! in Phase 3. See `docs/explanation/generic_watcher_implementation_plan.md`.
+
+pub mod message;
+
+pub use message::{GenericPlanEvent, GenericPlanResult};
