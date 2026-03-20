@@ -9,6 +9,13 @@
 //!   request.
 //! - `refresh_token` flow sends correct parameters.
 //! - Error responses from the token endpoint propagate as `McpAuth` errors.
+//!
+//! All `OAuthFlow` instances in this file are constructed with
+//! `OAuthFlow::new_with_opener(..., noop_browser_opener)` so that no
+//! subprocess is ever spawned and no browser or network request is made.
+//! The `refresh_token` and error-path tests that do make HTTP calls direct
+//! them exclusively to an in-process `wiremock::MockServer` bound to
+//! `127.0.0.1` on an OS-assigned port -- never to the public internet.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,7 +24,7 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
-use xzatoma::mcp::auth::flow::{OAuthFlow, OAuthFlowConfig};
+use xzatoma::mcp::auth::flow::{noop_browser_opener, OAuthFlow, OAuthFlowConfig};
 use xzatoma::mcp::auth::pkce;
 
 // ---------------------------------------------------------------------------
@@ -79,27 +86,22 @@ fn token_response_body() -> serde_json::Value {
 /// The test drives only the token-exchange portion of the flow by:
 ///
 /// 1. Pre-generating a PKCE challenge.
-/// 2. Calling the private `exchange_code` path indirectly by constructing
-///    a mock OAuth server that captures the POST body.
+/// 2. Calling a mock OAuth server that captures the POST body.
 /// 3. Asserting that the body contains the exact verifier string.
 ///
-/// Because `OAuthFlow::authorize` requires interactive browser interaction for
-/// the authorization step, we test `refresh_token` (which exercises the same
-/// HTTP POST infrastructure) and verify the `code_verifier` by calling the
-/// token endpoint directly in a controlled scenario.
+/// The mock server is an in-process `wiremock::MockServer` bound to
+/// `127.0.0.1` -- no public internet connection is made.
+///
+/// `OAuthFlow` is constructed with `noop_browser_opener` so no subprocess
+/// is spawned.
 #[tokio::test]
 async fn test_full_pkce_exchange_sends_correct_verifier() {
     let server = MockServer::start().await;
     let base_url = server.uri();
 
-    // Generate a known PKCE challenge.
     let pkce_challenge = pkce::generate().expect("PKCE generation must not fail");
     let expected_verifier = pkce_challenge.verifier.clone();
 
-    // Mount a mock token endpoint that:
-    // - Accepts only POST requests to /token.
-    // - Requires the body to contain the correct code_verifier.
-    // - Returns a valid token response.
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(body_string_contains(format!(
@@ -111,20 +113,19 @@ async fn test_full_pkce_exchange_sends_correct_verifier() {
         .mount(&server)
         .await;
 
-    // Build the flow and simulate the token exchange by issuing the POST
-    // directly through reqwest, replicating what exchange_code does.
-    // This lets us verify the verifier is transmitted correctly without
-    // triggering the interactive browser flow.
+    // Build the flow with the no-op browser opener -- no subprocess is spawned.
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("test_server", &base_url, 0);
-    let _flow = OAuthFlow::new(Arc::clone(&http), config);
+    let _flow = OAuthFlow::new_with_opener(Arc::clone(&http), config, noop_browser_opener);
 
+    // Simulate the token exchange POST directly through reqwest, replicating
+    // what exchange_code does internally, so we can verify the verifier is
+    // transmitted without triggering the interactive browser flow.
     let mut params = HashMap::new();
     params.insert("grant_type", "authorization_code");
     params.insert("code", "test_auth_code_123");
     params.insert("redirect_uri", "http://127.0.0.1:0/callback");
     params.insert("client_id", "test-client-id");
-    // Use the pre-generated verifier to simulate what exchange_code sends.
     params.insert("code_verifier", expected_verifier.as_str());
     params.insert("resource", &base_url);
 
@@ -147,7 +148,6 @@ async fn test_full_pkce_exchange_sends_correct_verifier() {
         "access_token must match mock response"
     );
 
-    // Verify that wiremock received exactly one request with the correct verifier.
     server.verify().await;
 }
 
@@ -157,6 +157,9 @@ async fn test_full_pkce_exchange_sends_correct_verifier() {
 
 /// The token response must be correctly parsed into an `OAuthToken` with
 /// all fields populated.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_token_endpoint_response_is_parsed_correctly() {
     let server = MockServer::start().await;
@@ -177,7 +180,7 @@ async fn test_token_endpoint_response_is_parsed_correctly() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &base_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let token = flow
         .refresh_token(&metadata, "some_refresh_token", None)
@@ -214,6 +217,9 @@ async fn test_token_endpoint_response_is_parsed_correctly() {
 
 /// The refresh token request must include `grant_type=refresh_token` and the
 /// `resource` parameter (RFC 8707).
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_refresh_token_sends_correct_grant_type_and_resource() {
     let server = MockServer::start().await;
@@ -232,7 +238,7 @@ async fn test_refresh_token_sends_correct_grant_type_and_resource() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &resource_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow
         .refresh_token(&metadata, "my_refresh_token", None)
@@ -249,6 +255,9 @@ async fn test_refresh_token_sends_correct_grant_type_and_resource() {
 
 /// When a scope is passed to `refresh_token`, it must be included in the
 /// request body.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_refresh_token_includes_scope_when_provided() {
     let server = MockServer::start().await;
@@ -265,7 +274,7 @@ async fn test_refresh_token_includes_scope_when_provided() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &base_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow
         .refresh_token(&metadata, "refresh_tok", Some("openid admin"))
@@ -282,6 +291,9 @@ async fn test_refresh_token_includes_scope_when_provided() {
 
 /// When the token endpoint returns a 400 error, `refresh_token` must return
 /// an `Err` containing an `McpAuth` message.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_refresh_token_propagates_error_on_400_response() {
     let server = MockServer::start().await;
@@ -299,7 +311,7 @@ async fn test_refresh_token_propagates_error_on_400_response() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &base_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow.refresh_token(&metadata, "expired_token", None).await;
 
@@ -316,6 +328,9 @@ async fn test_refresh_token_propagates_error_on_400_response() {
 
 /// When the token endpoint returns a 401 error, `refresh_token` must return
 /// an `Err`.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_refresh_token_propagates_error_on_401_response() {
     let server = MockServer::start().await;
@@ -330,7 +345,7 @@ async fn test_refresh_token_propagates_error_on_401_response() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &base_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow.refresh_token(&metadata, "bad_token", None).await;
 
@@ -343,13 +358,15 @@ async fn test_refresh_token_propagates_error_on_401_response() {
 
 /// The `resource` parameter must be present in the refresh token request body
 /// and must match `config.resource_url`.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_refresh_token_includes_resource_parameter() {
     let server = MockServer::start().await;
     let base_url = server.uri();
     let resource_url = format!("{}/api/mcp", base_url);
 
-    // The mock requires the resource parameter to be present in the body.
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(body_string_contains("resource="))
@@ -361,7 +378,7 @@ async fn test_refresh_token_includes_resource_parameter() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &resource_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow.refresh_token(&metadata, "refresh_tok", None).await;
 
@@ -380,6 +397,9 @@ async fn test_refresh_token_includes_resource_parameter() {
 
 /// The token response may omit `expires_in`, `refresh_token`, and `scope`.
 /// The parsed `OAuthToken` must have `None` for those fields.
+///
+/// HTTP calls go only to the in-process `wiremock::MockServer`.
+/// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
 async fn test_token_response_without_optional_fields_is_parsed_correctly() {
     let server = MockServer::start().await;
@@ -397,7 +417,7 @@ async fn test_token_response_without_optional_fields_is_parsed_correctly() {
     let http = Arc::new(reqwest::Client::new());
     let config = make_flow_config("srv", &base_url, 0);
     let metadata = make_server_metadata(&base_url);
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let token = flow
         .refresh_token(&metadata, "old_refresh", None)
@@ -421,37 +441,32 @@ async fn test_token_response_without_optional_fields_is_parsed_correctly() {
 }
 
 // ---------------------------------------------------------------------------
-// OAuthFlowConfig: no viable registration mechanism
+// authorize() error paths: no network, no browser, no subprocess
 // ---------------------------------------------------------------------------
 
-/// When the authorization server does not support any client registration
-/// mechanism and no static client ID is configured, `authorize` must return
-/// an error with a message about the missing mechanism.
+/// When the authorization server does not support S256 PKCE, `authorize` must
+/// return an error immediately -- before binding a TCP listener or calling the
+/// browser opener.
 ///
-/// This test does NOT run the interactive browser flow; it verifies only the
-/// `resolve_client_id` error path by using a server metadata object with no
-/// registration endpoint and `client_id_metadata_document_supported: None`,
-/// combined with an `OAuthFlowConfig` that has no static client ID.
-///
-/// Because `authorize` calls `verify_s256_support` first, we also supply a
-/// metadata object that supports S256 so the error originates from the
-/// registration step.
+/// No HTTP calls are made. No subprocess is spawned (`noop_browser_opener`).
+/// The metadata URLs use the `.invalid` TLD (RFC 2606) to make it
+/// immediately obvious that no network resolution is intended or attempted.
 #[tokio::test]
 async fn test_authorize_returns_error_when_no_registration_mechanism() {
-    let base_url = "https://auth.example.invalid";
+    // Use the .invalid TLD (RFC 2606) -- guaranteed to never resolve.
+    let base_url = "https://auth.test.invalid";
 
     let metadata = AuthorizationServerMetadata {
         issuer: base_url.to_string(),
         authorization_endpoint: format!("{}/authorize", base_url),
         token_endpoint: format!("{}/token", base_url),
-        // No registration endpoint.
         registration_endpoint: None,
         scopes_supported: None,
         response_types_supported: vec!["code".to_string()],
         grant_types_supported: None,
-        // S256 is supported so the check passes.
+        // S256 would be supported, but we override to "plain" below so the
+        // error fires before any network or browser action.
         code_challenge_methods_supported: Some(vec!["S256".to_string()]),
-        // Document-based client_id is NOT supported.
         client_id_metadata_document_supported: None,
         extra: HashMap::new(),
     };
@@ -461,22 +476,17 @@ async fn test_authorize_returns_error_when_no_registration_mechanism() {
         resource_url: url::Url::parse(&format!("{}/mcp", base_url)).unwrap(),
         client_name: "Xzatoma".to_string(),
         redirect_port: 0,
-        // No static client ID.
         static_client_id: None,
         static_client_secret: None,
     };
 
+    // Use noop_browser_opener: no subprocess is ever spawned even if the
+    // flow mistakenly reaches the browser-open step.
     let http = Arc::new(reqwest::Client::new());
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
-    // We cannot complete the full authorize flow in a test (it requires a
-    // browser), but we can verify the error is returned before any network
-    // call is made when the client ID resolution fails.  The error must
-    // propagate from resolve_client_id before the TCP listener is used.
-    //
-    // The flow will attempt to bind a local TCP listener and open the browser.
-    // To avoid this, we verify the behaviour of the S256 check by passing
-    // metadata that DOES NOT support S256.
+    // Override to a metadata variant that does NOT support S256, so the error
+    // is returned before resolve_client_id attempts any network call.
     let no_pkce_metadata = AuthorizationServerMetadata {
         code_challenge_methods_supported: Some(vec!["plain".to_string()]),
         ..metadata
@@ -496,13 +506,18 @@ async fn test_authorize_returns_error_when_no_registration_mechanism() {
 }
 
 /// When a static client ID is configured but the authorization server does
-/// not support S256 PKCE, `authorize` must return an error immediately.
+/// not support S256 PKCE, `authorize` must return an error immediately --
+/// before binding a TCP listener or calling the browser opener.
+///
+/// No HTTP calls are made. No subprocess is spawned (`noop_browser_opener`).
+/// The metadata URLs use the `.invalid` TLD (RFC 2606).
 #[tokio::test]
 async fn test_authorize_rejects_server_without_s256_support() {
+    // Use the .invalid TLD (RFC 2606) -- guaranteed to never resolve.
     let metadata = AuthorizationServerMetadata {
-        issuer: "https://auth.example.invalid".to_string(),
-        authorization_endpoint: "https://auth.example.invalid/authorize".to_string(),
-        token_endpoint: "https://auth.example.invalid/token".to_string(),
+        issuer: "https://auth.test.invalid".to_string(),
+        authorization_endpoint: "https://auth.test.invalid/authorize".to_string(),
+        token_endpoint: "https://auth.test.invalid/token".to_string(),
         registration_endpoint: None,
         scopes_supported: None,
         response_types_supported: vec!["code".to_string()],
@@ -515,15 +530,16 @@ async fn test_authorize_rejects_server_without_s256_support() {
 
     let config = OAuthFlowConfig {
         server_id: "plain_only_server".to_string(),
-        resource_url: url::Url::parse("https://api.example.invalid/mcp").unwrap(),
+        resource_url: url::Url::parse("https://api.test.invalid/mcp").unwrap(),
         client_name: "Xzatoma".to_string(),
         redirect_port: 0,
         static_client_id: Some("my-client-id".to_string()),
         static_client_secret: None,
     };
 
+    // Use noop_browser_opener: no subprocess is ever spawned.
     let http = Arc::new(reqwest::Client::new());
-    let flow = OAuthFlow::new(http, config);
+    let flow = OAuthFlow::new_with_opener(http, config, noop_browser_opener);
 
     let result = flow.authorize(&metadata, None).await;
 
@@ -536,4 +552,18 @@ async fn test_authorize_rejects_server_without_s256_support() {
         msg.contains("PKCE S256 not supported"),
         "error must specifically mention PKCE S256, got: {msg}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// noop_browser_opener: verify the exported function is a true no-op
+// ---------------------------------------------------------------------------
+
+/// `noop_browser_opener` must not spawn any process and must be callable
+/// from any context including integration tests.
+#[test]
+fn test_noop_browser_opener_is_safe_to_call() {
+    // Calling with a .invalid URL -- guaranteed to never resolve even if the
+    // implementation were to attempt a network connection (it must not).
+    noop_browser_opener("https://auth.test.invalid/should-not-open");
+    // Reaching this line proves no panic occurred and no blocking happened.
 }

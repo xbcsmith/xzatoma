@@ -28,6 +28,55 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::Arc;
 
+// ---------------------------------------------------------------------------
+// Browser opener function type and built-in implementations
+// ---------------------------------------------------------------------------
+
+/// Signature for a browser-opener function stored on [`OAuthFlow`].
+///
+/// The function receives the URL string to open. It must never block and must
+/// never make network requests directly. Errors are intentionally ignored --
+/// if the browser does not open the user can copy the URL from stderr.
+pub type BrowserOpenerFn = fn(&str);
+
+/// Production browser opener: spawns `open` (macOS) or `xdg-open` (Linux).
+///
+/// Errors are silently ignored. The user can always copy the authorization URL
+/// from stderr.
+///
+/// # Safety
+///
+/// Spawns an OS subprocess. Never call this in tests -- use
+/// [`noop_browser_opener`] instead.
+pub fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+    // On other platforms (e.g. Windows) we do not attempt to open the
+    // browser; the user must copy the URL manually.
+    let _ = url;
+}
+
+/// No-op browser opener for use in tests.
+///
+/// Never spawns a subprocess, never opens a browser, never makes a network
+/// request. Calling this function is always safe from any test context.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::mcp::auth::flow::noop_browser_opener;
+///
+/// // Safe to call in any context -- pure no-op.
+/// noop_browser_opener("https://auth.test.invalid/oauth");
+/// ```
+pub fn noop_browser_opener(_url: &str) {}
+
 use base64::Engine as _;
 use url::Url;
 
@@ -181,6 +230,12 @@ struct DcrResponse {
 pub struct OAuthFlow {
     http: Arc<reqwest::Client>,
     config: OAuthFlowConfig,
+    /// Function used to open the authorization URL in the system browser.
+    ///
+    /// Set to [`open_browser`] in production via [`OAuthFlow::new`].
+    /// Set to [`noop_browser_opener`] in tests via [`OAuthFlow::new_with_opener`]
+    /// so that no subprocess is ever spawned and no network request is made.
+    browser_opener: BrowserOpenerFn,
 }
 
 impl OAuthFlow {
@@ -209,7 +264,56 @@ impl OAuthFlow {
     /// let flow = OAuthFlow::new(Arc::new(reqwest::Client::new()), config);
     /// ```
     pub fn new(http: Arc<reqwest::Client>, config: OAuthFlowConfig) -> Self {
-        Self { http, config }
+        Self {
+            http,
+            config,
+            browser_opener: open_browser,
+        }
+    }
+
+    /// Creates a new `OAuthFlow` with an explicit browser opener function.
+    ///
+    /// Use this constructor in tests, passing [`noop_browser_opener`] to
+    /// prevent any subprocess from being spawned.
+    ///
+    /// # Arguments
+    ///
+    /// * `http` - Shared HTTP client for all authorization requests.
+    /// * `config` - Server-specific OAuth flow configuration.
+    /// * `browser_opener` - Function called to open the authorization URL.
+    ///   Pass [`noop_browser_opener`] in tests.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use url::Url;
+    /// use xzatoma::mcp::auth::flow::{OAuthFlow, OAuthFlowConfig, noop_browser_opener};
+    ///
+    /// let config = OAuthFlowConfig {
+    ///     server_id: "srv".to_string(),
+    ///     resource_url: Url::parse("https://api.example.invalid").unwrap(),
+    ///     client_name: "Xzatoma".to_string(),
+    ///     redirect_port: 0,
+    ///     static_client_id: Some("test-id".to_string()),
+    ///     static_client_secret: None,
+    /// };
+    /// let flow = OAuthFlow::new_with_opener(
+    ///     Arc::new(reqwest::Client::new()),
+    ///     config,
+    ///     noop_browser_opener,
+    /// );
+    /// ```
+    pub fn new_with_opener(
+        http: Arc<reqwest::Client>,
+        config: OAuthFlowConfig,
+        browser_opener: BrowserOpenerFn,
+    ) -> Self {
+        Self {
+            http,
+            config,
+            browser_opener,
+        }
     }
 
     /// Runs the full OAuth 2.1 authorization code flow with PKCE.
@@ -284,7 +388,10 @@ impl OAuthFlow {
             "Open the following URL in your browser to authorize Xzatoma:\n{}",
             auth_url
         );
-        self.try_open_browser(&auth_url);
+        // Delegate to the injected browser opener. In production this spawns
+        // `open` / `xdg-open`. In tests this is always `noop_browser_opener`
+        // so no subprocess is ever spawned and no network request is made.
+        (self.browser_opener)(&auth_url);
 
         // Step 7: accept callback, validate state, extract code.
         let code = self
@@ -547,27 +654,6 @@ impl OAuthFlow {
         }
 
         Ok(url.to_string())
-    }
-
-    /// Attempts to open the authorization URL in the user's default browser.
-    ///
-    /// Errors are intentionally ignored; if the browser does not open the
-    /// user can copy the URL from stderr.
-    fn try_open_browser(&self, url: &str) {
-        #[cfg(target_os = "macos")]
-        {
-            let _ = std::process::Command::new("open").arg(url).spawn();
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-        }
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        {
-            // On other platforms (e.g. Windows) we do not attempt to open the
-            // browser; the user must copy the URL manually.
-            let _ = url;
-        }
     }
 
     /// Accepts a single TCP connection on the callback listener, parses the

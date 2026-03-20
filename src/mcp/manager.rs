@@ -817,7 +817,7 @@ impl McpClientManager {
                     env.clone(),
                     working_dir.as_deref().map(PathBuf::from),
                 )?;
-                Ok((Box::new(transport), None, None))
+                Ok((Box::new(transport) as Box<dyn Transport>, None, None))
             }
 
             McpServerTransportConfig::Http {
@@ -896,12 +896,16 @@ impl McpClientManager {
 
                     let transport =
                         HttpTransport::new(endpoint.clone(), effective_headers, timeout);
-                    return Ok((Box::new(transport), Some(auth_mgr), Some(as_metadata)));
+                    return Ok((
+                        Box::new(transport) as Box<dyn Transport>,
+                        Some(auth_mgr),
+                        Some(as_metadata),
+                    ));
                 }
 
                 // Plain HTTP (no OAuth).
                 let transport = HttpTransport::new(endpoint.clone(), effective_headers, timeout);
-                Ok((Box::new(transport), None, None))
+                Ok((Box::new(transport) as Box<dyn Transport>, None, None))
             }
         }
     }

@@ -1721,13 +1721,13 @@ pub mod r#run {
                 let mut copilot_config = config.provider.copilot.clone();
                 copilot_config.model = model_name.to_string();
                 let provider = CopilotProvider::new(copilot_config)?;
-                Ok(Arc::new(provider))
+                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
             }
             "ollama" => {
                 let mut ollama_config = config.provider.ollama.clone();
                 ollama_config.model = model_name.to_string();
                 let provider = OllamaProvider::new(ollama_config)?;
-                Ok(Arc::new(provider))
+                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
             }
             _ => Err(XzatomaError::Provider(format!(
                 "Unsupported provider type: {}",
