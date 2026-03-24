@@ -6,7 +6,23 @@ We are going to add Agent Communication Protocol support to xzatoma. The Spec is
 
 Write a plan with a phased approach to add ACP support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-[ACP Support](./acp_implementation_plan.md)
+PLAN WRITTEN - [ACP Support](./acp_implementation_plan.md)
+
+## Skills Support
+
+We are giong to add Agent Skills support to xzatoma. The spec is here https://agentskills.io/specification And doc to help add skill support https://agentskills.io/client-implementation/adding-skills-support
+
+Write a plan with a phased approach to add Agent Skills support to XZAtoma. THINK HARD and follow the rules in @PLAN.md
+
+PLAN WRITTEN - [Agent Skills Support](./agent_skills_implementation_plan.md)
+
+## Demos
+
+We need demos for Chat, Run, Skills, MCP, Subagents, Vision, and Watcher. Demos should live in subfolders under @demos and include a README.md walking the user through running the demo, any scripts to setup the demo, and any config files required for the demos. Demos should be completely self contained and not need anything outside of the individual demo directory. XZatoma should be properly sandboxed to the demo directory. All created files and content should live in the tmp directory. All output from the demos should be contained in a tmp/output directory. The tmp dirs will include a .gitignore file to prevent any demo data being included in a git commit. All demos should use Ollama models only. Specifically "granite4:3b" except for the vision demo which will require the "granite3.2-vision:2b" model.
+
+Write a plan with a phased approach to create the Demos for XZatoma. THINK HARD and follow the rules in @PLAN.md
+
+PLAN WRITTEN - [Demo Plan](./demo_implementation_plan.md)
 
 ## Generic Watcher
 
@@ -14,4 +30,4 @@ We are going to make a new watcher that works with Redpanda and consumes a plan 
 
 Write a plan with a phased approach to add the new generic watcher and move the xzepr watcher work. THINK HARD and follow the rules in @PLAN.md
 
-[Generic Watcher Implementation Plan](./generic_watcher_implementation_plan.md)
+COMPLETED - [Generic Watcher Implementation Plan](./generic_watcher_implementation_plan.md)

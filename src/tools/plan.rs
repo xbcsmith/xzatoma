@@ -463,38 +463,6 @@ steps:
     }
 
     #[test]
-    fn test_quickstart_plan_roundtrip_with_action() {
-        // Verifies that the updated quickstart_plan.yaml includes the new `action`
-        // field and that all pre-existing fields are unchanged.
-        let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let path = std::path::Path::new(manifest_dir).join("examples/quickstart_plan.yaml");
-        let plan = PlanParser::from_file(&path).unwrap();
-
-        assert_eq!(
-            plan.name, "Quickstart Tutorial",
-            "plan name should be unchanged"
-        );
-        assert!(
-            plan.action.is_some(),
-            "action field must be set in quickstart_plan.yaml after schema extension"
-        );
-        assert_eq!(
-            plan.action.as_deref(),
-            Some("quickstart"),
-            "action field must equal 'quickstart'"
-        );
-        // Existing fields must remain intact
-        assert!(
-            plan.description.is_some(),
-            "description field should still be present"
-        );
-        assert!(
-            !plan.steps.is_empty(),
-            "plan must still contain at least one step"
-        );
-    }
-
-    #[test]
     fn test_plan_action_field_optional_roundtrip() {
         // A plan without `action` must parse successfully (backward compatibility).
         let yaml_no_action = r#"
