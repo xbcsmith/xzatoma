@@ -92,17 +92,31 @@ async fn main() -> Result<()> {
             filter_config,
             log_file,
             json_logs,
+            watcher_type,
+            group_id,
+            output_topic,
+            create_topics,
+            action,
+            name,
             dry_run,
         } => {
             tracing::info!("Starting watcher mode");
             commands::watch::run_watch(
                 config,
-                topic,
-                event_types,
-                filter_config,
-                log_file,
-                json_logs,
-                dry_run,
+                commands::watch::WatchCliOverrides {
+                    topic,
+                    event_types,
+                    filter_config,
+                    log_file,
+                    json_logs,
+                    watcher_type,
+                    group_id,
+                    output_topic,
+                    create_topics,
+                    action,
+                    name,
+                    dry_run,
+                },
             )
             .await?;
             Ok(())

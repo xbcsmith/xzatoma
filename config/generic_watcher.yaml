@@ -1,0 +1,130 @@
+# Generic watcher example configuration for XZatoma.
+#
+# This file demonstrates three generic watcher configurations:
+#
+# 1. Minimal example
+# 2. Production example
+# 3. Accept-all example
+#
+# Copy the section you want into your active config file and adjust the values
+# for your environment.
+#
+# ---------------------------------------------------------------------------
+# 1. Minimal example
+# ---------------------------------------------------------------------------
+#
+# Use this when you want to consume plan events from a Kafka-compatible topic
+# and match only on the `action` field.
+#
+# watcher:
+#   watcher_type: generic
+#   kafka:
+#     brokers: localhost:9092
+#     topic: plans.events
+#     output_topic: plans.results
+#     group_id: xzatoma-generic-watcher
+#   generic_match:
+#     action: deploy
+#   logging:
+#     level: info
+#     json_format: true
+#   execution:
+#     allow_dangerous: false
+#     max_concurrent_executions: 1
+#     execution_timeout_secs: 300
+#
+# ---------------------------------------------------------------------------
+# 2. Production example
+# ---------------------------------------------------------------------------
+#
+# Use this for a secured Kafka/Redpanda environment with a dedicated result
+# topic and all three generic match fields enabled.
+#
+# watcher:
+#   watcher_type: generic
+#   kafka:
+#     brokers: kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093
+#     topic: plans.production.input
+#     output_topic: plans.production.output
+#     group_id: xzatoma-generic-watcher-prod
+#     security:
+#       protocol: SASL_SSL
+#       sasl_mechanism: SCRAM-SHA-256
+#       sasl_username: xzatoma-consumer
+#       # Prefer environment variable injection for secrets in production.
+#       sasl_password: ${KAFKA_SASL_PASSWORD}
+#   generic_match:
+#     action: deploy.*
+#     name: service-(api|web)
+#     version: ^v[0-9]+\.[0-9]+\.[0-9]+$
+#   logging:
+#     level: warn
+#     json_format: true
+#     include_payload: false
+#   execution:
+#     allow_dangerous: false
+#     max_concurrent_executions: 5
+#     execution_timeout_secs: 1800
+#
+# ---------------------------------------------------------------------------
+# 3. Accept-all example
+# ---------------------------------------------------------------------------
+#
+# This configuration intentionally omits all generic match criteria.
+# That means every event with `event_type: "plan"` on the configured input
+# topic will be processed.
+#
+# watcher:
+#   watcher_type: generic
+#   kafka:
+#     brokers: localhost:9092
+#     topic: plans.catch_all
+#     # When output_topic is omitted, results are published back to the input topic.
+#     output_topic:
+#     group_id: xzatoma-generic-watcher-catch-all
+#   generic_match:
+#     action:
+#     name:
+#     version:
+#   logging:
+#     level: info
+#     json_format: true
+#   execution:
+#     allow_dangerous: false
+#     max_concurrent_executions: 2
+#     execution_timeout_secs: 600
+#
+# ---------------------------------------------------------------------------
+# Active example configuration
+# ---------------------------------------------------------------------------
+#
+# The active configuration below is a practical minimal example. Edit as needed.
+
+provider:
+  type: copilot
+  copilot:
+    model: gpt-5-mini
+
+agent:
+  max_turns: 50
+  timeout_seconds: 300
+
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: localhost:9092
+    topic: plans.events
+    output_topic: plans.results
+    group_id: xzatoma-generic-watcher
+  generic_match:
+    action: deploy
+    name:
+    version:
+  logging:
+    level: info
+    json_format: true
+    include_payload: false
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 1
+    execution_timeout_secs: 300

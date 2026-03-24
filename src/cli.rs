@@ -90,6 +90,30 @@ pub enum Commands {
         #[arg(long, default_value = "true")]
         json_logs: bool,
 
+        /// Watcher backend type: "xzepr" (default) or "generic"
+        #[arg(long, default_value = "xzepr")]
+        watcher_type: Option<String>,
+
+        /// Kafka consumer group ID (overrides config)
+        #[arg(long)]
+        group_id: Option<String>,
+
+        /// Output topic for publishing results (generic watcher only; defaults to input topic)
+        #[arg(long)]
+        output_topic: Option<String>,
+
+        /// Create missing Kafka topics automatically at watcher startup
+        #[arg(long)]
+        create_topics: bool,
+
+        /// Generic matcher: regex pattern for the action field (case-insensitive)
+        #[arg(long)]
+        action: Option<String>,
+
+        /// Generic matcher: regex pattern for the name field (case-insensitive)
+        #[arg(long)]
+        name: Option<String>,
+
         /// Dry run mode (parse but don't execute plans)
         #[arg(long)]
         dry_run: bool,
@@ -489,6 +513,110 @@ mod tests {
             assert!(allow_dangerous);
         } else {
             panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_defaults() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+
+        if let Commands::Watch {
+            topic,
+            event_types,
+            filter_config,
+            log_file,
+            json_logs,
+            watcher_type,
+            group_id,
+            output_topic,
+            create_topics,
+            action,
+            name,
+            dry_run,
+        } = cli.command
+        {
+            assert_eq!(topic, None);
+            assert_eq!(event_types, None);
+            assert_eq!(filter_config, None);
+            assert_eq!(log_file, None);
+            assert!(json_logs);
+            assert_eq!(watcher_type, Some("xzepr".to_string()));
+            assert_eq!(group_id, None);
+            assert_eq!(output_topic, None);
+            assert!(!create_topics);
+            assert_eq!(action, None);
+            assert_eq!(name, None);
+            assert!(!dry_run);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_with_phase4_flags() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "watch",
+            "--watcher-type",
+            "generic",
+            "--output-topic",
+            "plans.output",
+            "--action",
+            "deploy.*",
+            "--name",
+            "service-a",
+            "--dry-run",
+        ]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+
+        if let Commands::Watch {
+            watcher_type,
+            group_id,
+            output_topic,
+            create_topics,
+            action,
+            name,
+            dry_run,
+            ..
+        } = cli.command
+        {
+            assert_eq!(watcher_type, Some("generic".to_string()));
+            assert_eq!(group_id, None);
+            assert_eq!(output_topic, Some("plans.output".to_string()));
+            assert!(!create_topics);
+            assert_eq!(action, Some("deploy.*".to_string()));
+            assert_eq!(name, Some("service-a".to_string()));
+            assert!(dry_run);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_with_group_id_and_create_topics() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "watch",
+            "--group-id",
+            "watchers-prod",
+            "--create-topics",
+        ]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+
+        if let Commands::Watch {
+            group_id,
+            create_topics,
+            ..
+        } = cli.command
+        {
+            assert_eq!(group_id, Some("watchers-prod".to_string()));
+            assert!(create_topics);
+        } else {
+            panic!("Expected Watch command");
         }
     }
 

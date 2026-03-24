@@ -1,255 +1,546 @@
 # Watcher Environment Variables Reference
 
-This document lists environment variables that affect the XZatoma watcher. Use
-environment variables to provide secrets (for example, Kafka SASL passwords)
-and to override configuration values at runtime. When both a configuration
-file and environment variables are present, environment variables take
-precedence.
+This document describes the environment variables that affect XZatoma watcher
+behavior.
 
-Note: Kafka-specific environment variables used by the XZepr consumer are
-prefixed with `XZEPR_`. Watcher-specific runtime overrides use the
+XZatoma supports two watcher backends:
+
+- `xzepr` for XZepr CloudEvents-style messages
+- `generic` for generic JSON plan-event messages
+
+Environment variables can override watcher configuration at runtime. When both a
+configuration file and environment variables are present, environment variables
+take precedence over file values.
+
+Kafka connection variables continue to use the `XZEPR_KAFKA_` prefix for
+backward compatibility. Watcher-specific runtime overrides use the
 `XZATOMA_WATCHER_` prefix.
-
-----
 
 ## Kafka Configuration
 
-These environment variables control the Kafka connection used by the watcher.
-They are consumed primarily by the XZepr consumer code (`XzeprConsumer`) and
-can be used instead of or in addition to the `watcher.kafka` block in the
-YAML configuration.
+These variables control the Kafka connection used by the watcher.
 
-- `XZEPR_KAFKA_BROKERS`
-  Kafka broker addresses (comma-separated).
-  Default: `localhost:9092`
-  Example:
-  ```bash
-  export XZEPR_KAFKA_BROKERS="kafka-1.prod:9093,kafka-2.prod:9093"
-  ```
+### `XZEPR_KAFKA_BROKERS`
 
-- `XZEPR_KAFKA_TOPIC`
-  Topic to consume from.
-  Default: `xzepr.dev.events` (or `watcher.kafka.topic` if set in config)
-  Example:
-  ```bash
-  export XZEPR_KAFKA_TOPIC="xzepr.production.events"
-  ```
+Kafka broker addresses as a comma-separated list.
 
-- `XZEPR_KAFKA_GROUP_ID`
-  Consumer group ID (default used when not provided).
-  Default: `xzatoma-watcher` (when set in watcher config)
-  Example:
-  ```bash
-  export XZEPR_KAFKA_GROUP_ID="xzatoma-watcher-prod"
-  ```
+- Maps to: `watcher.kafka.brokers`
+- Default: `localhost:9092` when watcher Kafka config is populated only from
+  environment variables
 
-- `XZEPR_KAFKA_SECURITY_PROTOCOL`
-  Security protocol. Valid values: `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT`, `SASL_SSL`.
-  Example:
-  ```bash
-  export XZEPR_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
-  ```
-
-- `XZEPR_KAFKA_SASL_MECHANISM`
-  SASL mechanism. Valid values: `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`.
-  Example:
-  ```bash
-  export XZEPR_KAFKA_SASL_MECHANISM="SCRAM-SHA-256"
-  ```
-
-- `XZEPR_KAFKA_SASL_USERNAME`
-  SASL username (required if using SASL).
-  Example:
-  ```bash
-  export XZEPR_KAFKA_SASL_USERNAME="xzatoma-consumer"
-  ```
-
-- `XZEPR_KAFKA_SASL_PASSWORD`
-  SASL password (sensitive). Prefer using a secret manager or process-managed
-  environment variables. The watcher also checks `KAFKA_SASL_PASSWORD` as a
-  fallback when applying runtime security config.
-  Example:
-  ```bash
-  export XZEPR_KAFKA_SASL_PASSWORD="supersecret"
-  ```
-
-- `XZEPR_KAFKA_SSL_CA_LOCATION`, `XZEPR_KAFKA_SSL_CERT_LOCATION`, `XZEPR_KAFKA_SSL_KEY_LOCATION`
-  Paths for TLS/SSL CA, client certificate, and client key (optional when using SSL/SASL_SSL).
-
-Security note: Do NOT store sensitive values (passwords, private keys) in
-committed configuration files. Use environment variables, secret managers,
-or platform-specific secret storage (e.g., Kubernetes Secrets).
-
-----
-
-## Filter Configuration
-
-Watcher filtering behavior can be overridden at runtime with these variables.
-Some values are comma-separated lists.
-
-- `XZATOMA_WATCHER_EVENT_TYPES`
-  Comma-separated list of event types to process (e.g. `deployment.success,ci.pipeline.completed`).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_EVENT_TYPES="deployment.success,ci.pipeline.completed"
-  ```
-
-- `XZATOMA_WATCHER_SOURCE_PATTERN`
-  Regex pattern to filter the `source` field of incoming CloudEvents.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_SOURCE_PATTERN="^xzepr\\.receiver\\.prod\\."
-  ```
-
-- `XZATOMA_WATCHER_PLATFORM_ID`
-  Filter events by platform identifier (string).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_PLATFORM_ID="kubernetes"
-  ```
-
-- `XZATOMA_WATCHER_PACKAGE`
-  Filter events by package name (string).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_PACKAGE="my-service-package"
-  ```
-
-- `XZATOMA_WATCHER_API_VERSION`
-  Filter by `api_version` string.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_API_VERSION="v1beta"
-  ```
-
-- `XZATOMA_WATCHER_SUCCESS_ONLY`
-  Whether to process only successful events. Accepts `true` or `false`.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_SUCCESS_ONLY="true"
-  ```
-
-----
-
-## Logging Configuration
-
-These variables control the watcher's logging behavior.
-
-- `XZATOMA_WATCHER_LOG_LEVEL`
-  Log level: `trace`, `debug`, `info`, `warn`, `error`.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_LOG_LEVEL="debug"
-  ```
-
-- `XZATOMA_WATCHER_LOG_FILE`
-  Path to write log file. If omitted, logs are written to STDOUT.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_LOG_FILE="/var/log/xzatoma/watcher.log"
-  ```
-
-- `XZATOMA_WATCHER_JSON_LOGS`
-  Enable JSON formatted logs (`true`/`false`).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_JSON_LOGS="true"
-  ```
-
-- `XZATOMA_WATCHER_INCLUDE_PAYLOAD`
-  Include full CloudEvent payload in logs (`true`/`false`). Useful for debugging but may increase log volume.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_INCLUDE_PAYLOAD="true"
-  ```
-
-----
-
-## Execution Configuration
-
-Control runtime execution limits and safety settings.
-
-- `XZATOMA_WATCHER_ALLOW_DANGEROUS`
-  Allow potentially dangerous operations in executed plans. Boolean: `true`/`false`.
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_ALLOW_DANGEROUS="false"
-  ```
-
-- `XZATOMA_WATCHER_MAX_CONCURRENT`
-  Maximum number of concurrent plan executions (integer).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_MAX_CONCURRENT="5"
-  ```
-
-- `XZATOMA_WATCHER_EXECUTION_TIMEOUT`
-  Execution timeout in seconds (integer).
-  Example:
-  ```bash
-  export XZATOMA_WATCHER_EXECUTION_TIMEOUT="600"
-  ```
-
-----
-
-## Examples
-
-Set a production Kafka connection with SASL and enable a small number
-of concurrent executions:
+Example:
 
 ```bash
 export XZEPR_KAFKA_BROKERS="kafka-1.prod:9093,kafka-2.prod:9093"
+```
+
+### `XZEPR_KAFKA_TOPIC`
+
+Topic to consume from.
+
+- Maps to: `watcher.kafka.topic`
+- Default: `xzepr.dev.events` when watcher Kafka config is populated only from
+  environment variables
+
+Example:
+
+```bash
 export XZEPR_KAFKA_TOPIC="xzepr.production.events"
+```
+
+### `XZEPR_KAFKA_GROUP_ID`
+
+Kafka consumer group identifier.
+
+- Maps to: `watcher.kafka.group_id`
+- Default: `xzatoma-watcher`
+
+Example:
+
+```bash
+export XZEPR_KAFKA_GROUP_ID="xzatoma-watcher-prod"
+```
+
+### `XZEPR_KAFKA_SECURITY_PROTOCOL`
+
+Kafka security protocol.
+
+- Maps to: `watcher.kafka.security.protocol`
+- Valid values:
+  - `PLAINTEXT`
+  - `SSL`
+  - `SASL_PLAINTEXT`
+  - `SASL_SSL`
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
+```
+
+### `XZEPR_KAFKA_SASL_MECHANISM`
+
+Kafka SASL mechanism.
+
+- Maps to: `watcher.kafka.security.sasl_mechanism`
+- Valid values:
+  - `PLAIN`
+  - `SCRAM-SHA-256`
+  - `SCRAM-SHA-512`
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SASL_MECHANISM="SCRAM-SHA-256"
+```
+
+### `XZEPR_KAFKA_SASL_USERNAME`
+
+Kafka SASL username.
+
+- Maps to: `watcher.kafka.security.sasl_username`
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SASL_USERNAME="xzatoma-consumer"
+```
+
+### `XZEPR_KAFKA_SASL_PASSWORD`
+
+Kafka SASL password.
+
+- Maps to: `watcher.kafka.security.sasl_password`
+- Sensitive: prefer secret injection or a secret manager
+- Related fallback used by some watcher code paths:
+  - `KAFKA_SASL_PASSWORD`
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SASL_PASSWORD="supersecret"
+```
+
+## Generic Watcher Configuration
+
+These variables configure generic-watcher-specific behavior.
+
+### `XZATOMA_WATCHER_TYPE`
+
+Selects the active watcher backend.
+
+- Maps to: `watcher.watcher_type`
+- Accepted values:
+  - `xzepr`
+  - `generic`
+- Default: `xzepr`
+
+Examples:
+
+```bash
+export XZATOMA_WATCHER_TYPE="xzepr"
+```
+
+```bash
+export XZATOMA_WATCHER_TYPE="generic"
+```
+
+Use `xzepr` when consuming XZepr CloudEvents and `generic` when consuming
+generic plan-event JSON messages.
+
+### `XZATOMA_WATCHER_OUTPUT_TOPIC`
+
+Configures the output topic for generic watcher result events.
+
+- Maps to: `watcher.kafka.output_topic`
+- Used by: generic watcher
+- Default behavior when unset:
+  - generic watcher publishes results back to `watcher.kafka.topic`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_OUTPUT_TOPIC="plans.results"
+```
+
+If this variable is omitted and the generic watcher is active, result events are
+published to the same topic as the input topic. This is safe because the generic
+watcher only processes events where `event_type == "plan"` and generic watcher
+result events always use `event_type == "result"`.
+
+### `XZATOMA_WATCHER_MATCH_ACTION`
+
+Regex pattern for matching the generic watcher event `action` field.
+
+- Maps to: `watcher.generic_match.action`
+- Used by: generic watcher
+- Matching behavior:
+  - treated as a regular expression
+  - case-insensitive by default
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_MATCH_ACTION="deploy.*"
+```
+
+A value of `deploy.*` matches actions such as:
+
+- `deploy`
+- `deploy-prod`
+- `deployment`
+
+### `XZATOMA_WATCHER_MATCH_NAME`
+
+Regex pattern for matching the generic watcher event `name` field.
+
+- Maps to: `watcher.generic_match.name`
+- Used by: generic watcher
+- Matching behavior:
+  - treated as a regular expression
+  - case-insensitive by default
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_MATCH_NAME="service-a"
+```
+
+### `XZATOMA_WATCHER_MATCH_VERSION`
+
+Regex pattern for matching the generic watcher event `version` field.
+
+- Maps to: `watcher.generic_match.version`
+- Used by: generic watcher
+- Matching behavior:
+  - treated as a regular expression
+  - case-insensitive by default
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_MATCH_VERSION="^v1\\.[0-9]+$"
+```
+
+## XZepr Watcher Filter Configuration
+
+These variables override XZepr CloudEvent filter behavior.
+
+### `XZATOMA_WATCHER_EVENT_TYPES`
+
+Comma-separated list of XZepr event types to process.
+
+- Maps to: `watcher.filters.event_types`
+- Used by: XZepr watcher
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_EVENT_TYPES="deployment.success,ci.pipeline.completed"
+```
+
+### `XZATOMA_WATCHER_SOURCE_PATTERN`
+
+Regex filter for the XZepr CloudEvent `source` field.
+
+- Maps to: `watcher.filters.source_pattern`
+- Used by: XZepr watcher
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_SOURCE_PATTERN="^xzepr\\.receiver\\.prod\\."
+```
+
+### `XZATOMA_WATCHER_PLATFORM_ID`
+
+Filter for XZepr `platform_id`.
+
+- Maps to: `watcher.filters.platform_id`
+- Used by: XZepr watcher
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_PLATFORM_ID="kubernetes"
+```
+
+### `XZATOMA_WATCHER_PACKAGE`
+
+Filter for XZepr `package`.
+
+- Maps to: `watcher.filters.package`
+- Used by: XZepr watcher
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_PACKAGE="my-service-package"
+```
+
+### `XZATOMA_WATCHER_API_VERSION`
+
+Filter for XZepr `api_version`.
+
+- Maps to: `watcher.filters.api_version`
+- Used by: XZepr watcher
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_API_VERSION="v1beta"
+```
+
+### `XZATOMA_WATCHER_SUCCESS_ONLY`
+
+Controls whether only successful XZepr events are processed.
+
+- Maps to: `watcher.filters.success_only`
+- Used by: XZepr watcher
+- Accepted values:
+  - `true`
+  - `false`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_SUCCESS_ONLY="true"
+```
+
+## Logging Configuration
+
+These variables control watcher logging.
+
+### `XZATOMA_WATCHER_LOG_LEVEL`
+
+Watcher log level.
+
+- Maps to: `watcher.logging.level`
+- Accepted values:
+  - `trace`
+  - `debug`
+  - `info`
+  - `warn`
+  - `error`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_LOG_LEVEL="debug"
+```
+
+### `XZATOMA_WATCHER_LOG_FILE`
+
+Path to the watcher log file.
+
+- Maps to: `watcher.logging.file_path`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_LOG_FILE="/var/log/xzatoma/watcher.log"
+```
+
+### `XZATOMA_WATCHER_JSON_LOGS`
+
+Enable JSON log output.
+
+- Maps to: `watcher.logging.json_format`
+- Accepted values:
+  - `true`
+  - `false`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_JSON_LOGS="true"
+```
+
+### `XZATOMA_WATCHER_INCLUDE_PAYLOAD`
+
+Include full event payloads in logs.
+
+- Maps to: `watcher.logging.include_payload`
+- Accepted values:
+  - `true`
+  - `false`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_INCLUDE_PAYLOAD="true"
+```
+
+Be careful when enabling payload logging in environments where event contents
+may contain sensitive data.
+
+## Execution Configuration
+
+These variables control execution behavior for watcher-triggered plans.
+
+### `XZATOMA_WATCHER_ALLOW_DANGEROUS`
+
+Allow potentially dangerous operations during plan execution.
+
+- Maps to: `watcher.execution.allow_dangerous`
+- Accepted values:
+  - `true`
+  - `false`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_ALLOW_DANGEROUS="false"
+```
+
+### `XZATOMA_WATCHER_MAX_CONCURRENT`
+
+Maximum number of concurrent watcher-triggered plan executions.
+
+- Maps to: `watcher.execution.max_concurrent_executions`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_MAX_CONCURRENT="5"
+```
+
+### `XZATOMA_WATCHER_EXECUTION_TIMEOUT`
+
+Execution timeout in seconds for watcher-triggered plans.
+
+- Maps to: `watcher.execution.execution_timeout_secs`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_EXECUTION_TIMEOUT="600"
+```
+
+## Generic Watcher Examples
+
+### Minimal generic watcher environment setup
+
+```bash
+export XZATOMA_WATCHER_TYPE="generic"
+export XZEPR_KAFKA_BROKERS="localhost:9092"
+export XZEPR_KAFKA_TOPIC="plans.events"
+export XZEPR_KAFKA_GROUP_ID="xzatoma-generic-watcher"
+export XZATOMA_WATCHER_MATCH_ACTION="deploy"
+```
+
+### Generic watcher with separate output topic
+
+```bash
+export XZATOMA_WATCHER_TYPE="generic"
+export XZEPR_KAFKA_BROKERS="localhost:9092"
+export XZEPR_KAFKA_TOPIC="plans.events"
+export XZEPR_KAFKA_GROUP_ID="xzatoma-generic-watcher"
+export XZATOMA_WATCHER_OUTPUT_TOPIC="plans.results"
+export XZATOMA_WATCHER_MATCH_ACTION="deploy.*"
+export XZATOMA_WATCHER_MATCH_NAME="service-a"
+export XZATOMA_WATCHER_MATCH_VERSION="^v1\\.[0-9]+$"
+```
+
+### Generic watcher accept-all mode
+
+```bash
+export XZATOMA_WATCHER_TYPE="generic"
+export XZEPR_KAFKA_BROKERS="localhost:9092"
+export XZEPR_KAFKA_TOPIC="plans.catch_all"
+export XZEPR_KAFKA_GROUP_ID="xzatoma-generic-catch-all"
+```
+
+If no generic match variables are set, the generic watcher accepts every event
+where `event_type == "plan"`.
+
+## XZepr Watcher Example
+
+```bash
+export XZATOMA_WATCHER_TYPE="xzepr"
+export XZEPR_KAFKA_BROKERS="kafka-1.prod:9093,kafka-2.prod:9093"
+export XZEPR_KAFKA_TOPIC="xzepr.production.events"
+export XZEPR_KAFKA_GROUP_ID="xzatoma-watcher-prod"
 export XZEPR_KAFKA_SECURITY_PROTOCOL="SASL_SSL"
 export XZEPR_KAFKA_SASL_MECHANISM="SCRAM-SHA-256"
 export XZEPR_KAFKA_SASL_USERNAME="xzatoma-consumer"
-export XZEPR_KAFKA_SASL_PASSWORD="(secret from secret manager)"
-export XZATOMA_WATCHER_MAX_CONCURRENT="10"
+export XZEPR_KAFKA_SASL_PASSWORD="secret-from-manager"
+export XZATOMA_WATCHER_EVENT_TYPES="deployment.success,ci.pipeline.completed"
 export XZATOMA_WATCHER_LOG_LEVEL="warn"
 ```
 
-Start the watcher in dry-run mode (parse plans but don't execute them):
+## Running the Watcher
+
+After setting environment variables, start the watcher like this:
 
 ```bash
-xzatoma watch --config config/watcher.yaml --dry-run
+xzatoma watch --config config/config.yaml --dry-run
 ```
 
-Systemd service snippet example (keep secrets out of committed unit files):
+For a generic watcher launched entirely from environment variables:
 
-```ini
-[Service]
-Environment="XZEPR_KAFKA_BROKERS=kafka-1.prod:9093"
-Environment="XZEPR_KAFKA_TOPIC=xzepr.production.events"
-EnvironmentFile=/etc/xzatoma/secret.env  # file must be owned and readable only by privileged user
-ExecStart=/usr/bin/xzatoma watch --config /etc/xzatoma/config.yaml
+```bash
+export XZATOMA_WATCHER_TYPE="generic"
+export XZEPR_KAFKA_BROKERS="localhost:9092"
+export XZEPR_KAFKA_TOPIC="plans.events"
+export XZATOMA_WATCHER_MATCH_ACTION="deploy"
+xzatoma watch --config config/config.yaml --dry-run
 ```
 
-----
+## Troubleshooting
 
-## Troubleshooting & Best Practices
+### The watcher fails with a Kafka configuration error
 
-- If watcher fails to start with a missing Kafka configuration error, ensure
-  either `watcher.kafka` is configured in your YAML file or the required
-  `XZEPR_KAFKA_*` environment variables are set.
+Make sure you have either:
 
-- Do not commit secrets (passwords, private keys) to version control. Use a
-  secret manager, environment injection via orchestration, or a protected
-  file with strict permissions.
+- a populated `watcher.kafka` section in your YAML config
+- or the required `XZEPR_KAFKA_*` environment variables set
 
-- If using SASL, both `XZEPR_KAFKA_SASL_USERNAME` and `XZEPR_KAFKA_SASL_PASSWORD`
-  must be available at runtime. Missing credentials will cause connection
-  failure.
+### The generic watcher does not process any events
 
-- For TLS/SSL, verify that `XZEPR_KAFKA_SSL_CA_LOCATION` (and cert/key paths
-  if client certs are required) are correct and accessible by the process.
+Check that:
 
-- For high throughput, tune `XZATOMA_WATCHER_MAX_CONCURRENT` in combination
-  with `XZATOMA_WATCHER_EXECUTION_TIMEOUT` to avoid resource exhaustion.
+- `XZATOMA_WATCHER_TYPE` is set to `generic`
+- incoming messages use `event_type: "plan"`
+- your regex patterns actually match the incoming `action`, `name`, or `version`
+  values
 
-----
+### The generic watcher appears to ignore result messages
 
-## References
+That is expected. Generic watcher result events use `event_type: "result"` and
+are intentionally skipped to prevent same-topic input/output loops.
 
-- Example configuration files: `config/watcher.yaml`
-- How-to guide: `docs/how-to/setup_watcher.md`
-- Watcher implementation details: `docs/explanation/phase3_configuration_and_documentation.md`
+### The XZepr watcher skips expected events
+
+Check your XZepr filter variables:
+
+- `XZATOMA_WATCHER_EVENT_TYPES`
+- `XZATOMA_WATCHER_SOURCE_PATTERN`
+- `XZATOMA_WATCHER_PLATFORM_ID`
+- `XZATOMA_WATCHER_PACKAGE`
+- `XZATOMA_WATCHER_API_VERSION`
+- `XZATOMA_WATCHER_SUCCESS_ONLY`
+
+### Logging is not detailed enough
+
+Increase verbosity:
+
+```bash
+export XZATOMA_WATCHER_LOG_LEVEL="debug"
+```
+
+## Security Notes
+
+- Do not commit SASL passwords or other secrets to version control.
+- Prefer environment injection, a secret manager, or platform-managed secret
+  storage.
+- Use `SASL_SSL` in production where possible.
+- Be careful with `XZATOMA_WATCHER_INCLUDE_PAYLOAD` in environments where
+  payload contents are sensitive.
+
+## Related Documentation
+
+- how-to guide: `docs/how-to/setup_watcher.md`
+- configuration reference: `docs/reference/configuration.md`
+- architecture reference: `docs/reference/architecture.md`
+- generic watcher example config: `config/generic_watcher.yaml`

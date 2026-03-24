@@ -5,6 +5,7 @@
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::config::McpConfig;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -90,7 +91,7 @@ pub struct CopilotConfig {
 }
 
 fn default_copilot_model() -> String {
-    "gpt-5.3-codex".to_string()
+    "gpt-5-mini".to_string()
 }
 
 fn default_enable_streaming() -> bool {
@@ -740,9 +741,88 @@ impl Config {
 
         // ---------------------------------------------------------------------
         // Watcher-specific environment variable overrides
-        // Supports: XZATOMA_WATCHER_* for filters, logging, execution
-        // and XZEPR_KAFKA_* for Kafka connection overrides.
+        // Supports: XZATOMA_WATCHER_* for backend selection, matching, filters,
+        // logging, execution, and XZEPR_KAFKA_* for Kafka connection overrides.
         // ---------------------------------------------------------------------
+
+        if let Ok(watcher_type) = std::env::var("XZATOMA_WATCHER_TYPE") {
+            match WatcherType::from_str_name(&watcher_type) {
+                Some(value) => {
+                    self.watcher.watcher_type = value;
+                    tracing::debug!(
+                        watcher_type = %watcher_type,
+                        "Env override: XZATOMA_WATCHER_TYPE"
+                    );
+                }
+                None => {
+                    tracing::warn!("Invalid value for XZATOMA_WATCHER_TYPE: {}", watcher_type);
+                }
+            }
+        }
+
+        if let Ok(output_topic) = std::env::var("XZATOMA_WATCHER_OUTPUT_TOPIC") {
+            if let Some(ref mut kafka_cfg) = self.watcher.kafka {
+                kafka_cfg.output_topic = Some(output_topic.clone());
+            } else {
+                self.watcher.kafka = Some(KafkaWatcherConfig {
+                    brokers: "localhost:9092".to_string(),
+                    topic: "xzepr.dev.events".to_string(),
+                    output_topic: Some(output_topic.clone()),
+                    group_id: default_watcher_group_id(),
+                    auto_create_topics: default_auto_create_topics(),
+                    security: None,
+                });
+            }
+
+            tracing::debug!(
+                output_topic = %output_topic,
+                "Env override: XZATOMA_WATCHER_OUTPUT_TOPIC"
+            );
+        }
+
+        if let Ok(group_id) = std::env::var("XZATOMA_WATCHER_GROUP_ID") {
+            if let Some(ref mut kafka_cfg) = self.watcher.kafka {
+                kafka_cfg.group_id = group_id.clone();
+            } else {
+                self.watcher.kafka = Some(KafkaWatcherConfig {
+                    brokers: "localhost:9092".to_string(),
+                    topic: "xzepr.dev.events".to_string(),
+                    output_topic: None,
+                    group_id: group_id.clone(),
+                    auto_create_topics: default_auto_create_topics(),
+                    security: None,
+                });
+            }
+
+            tracing::debug!(
+                group_id = %group_id,
+                "Env override: XZATOMA_WATCHER_GROUP_ID"
+            );
+        }
+
+        if let Ok(action) = std::env::var("XZATOMA_WATCHER_MATCH_ACTION") {
+            self.watcher.generic_match.action = Some(action.clone());
+            tracing::debug!(
+                action = %action,
+                "Env override: XZATOMA_WATCHER_MATCH_ACTION"
+            );
+        }
+
+        if let Ok(name) = std::env::var("XZATOMA_WATCHER_MATCH_NAME") {
+            self.watcher.generic_match.name = Some(name.clone());
+            tracing::debug!(
+                name = %name,
+                "Env override: XZATOMA_WATCHER_MATCH_NAME"
+            );
+        }
+
+        if let Ok(version) = std::env::var("XZATOMA_WATCHER_MATCH_VERSION") {
+            self.watcher.generic_match.version = Some(version.clone());
+            tracing::debug!(
+                version = %version,
+                "Env override: XZATOMA_WATCHER_MATCH_VERSION"
+            );
+        }
 
         // Filter overrides
         if let Ok(event_types) = std::env::var("XZATOMA_WATCHER_EVENT_TYPES") {
@@ -926,7 +1006,9 @@ impl Config {
                 self.watcher.kafka = Some(KafkaWatcherConfig {
                     brokers,
                     topic,
+                    output_topic: None,
                     group_id,
+                    auto_create_topics: default_auto_create_topics(),
                     security,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
@@ -1115,6 +1197,105 @@ impl Config {
             }
         }
 
+        if let Some(kafka) = &self.watcher.kafka {
+            if kafka.brokers.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.brokers cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if kafka.topic.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.topic cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if kafka.group_id.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.group_id cannot be empty".to_string(),
+                )
+                .into());
+            }
+
+            if let Some(output_topic) = &kafka.output_topic {
+                if output_topic.trim().is_empty() {
+                    return Err(XzatomaError::Config(
+                        "watcher.kafka.output_topic cannot be empty when set".to_string(),
+                    )
+                    .into());
+                }
+            }
+
+            if kafka.group_id.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.group_id cannot be empty".to_string(),
+                )
+                .into());
+            }
+        }
+
+        match self.watcher.watcher_type {
+            WatcherType::Generic => {
+                if self.watcher.kafka.is_none() {
+                    return Err(XzatomaError::Config(
+                        "watcher.kafka is required when watcher.watcher_type is generic"
+                            .to_string(),
+                    )
+                    .into());
+                }
+
+                let mut configured_patterns = Vec::new();
+
+                if let Some(action) = &self.watcher.generic_match.action {
+                    Regex::new(action).map_err(|e| {
+                        XzatomaError::Config(format!(
+                            "Invalid generic match regex for watcher.generic_match.action: {}",
+                            e
+                        ))
+                    })?;
+                    configured_patterns.push("action");
+                }
+
+                if let Some(name) = &self.watcher.generic_match.name {
+                    Regex::new(name).map_err(|e| {
+                        XzatomaError::Config(format!(
+                            "Invalid generic match regex for watcher.generic_match.name: {}",
+                            e
+                        ))
+                    })?;
+                    configured_patterns.push("name");
+                }
+
+                if let Some(version) = &self.watcher.generic_match.version {
+                    Regex::new(version).map_err(|e| {
+                        XzatomaError::Config(format!(
+                            "Invalid generic match regex for watcher.generic_match.version: {}",
+                            e
+                        ))
+                    })?;
+                    configured_patterns.push("version");
+                }
+
+                if configured_patterns.is_empty() {
+                    tracing::warn!(
+                        "watcher.watcher_type=generic with no generic_match fields configured; accept-all mode is active"
+                    );
+                }
+            }
+            WatcherType::XZepr => {
+                if self.watcher.generic_match.action.is_some()
+                    || self.watcher.generic_match.name.is_some()
+                    || self.watcher.generic_match.version.is_some()
+                {
+                    tracing::debug!(
+                        "watcher.watcher_type=xzepr; watcher.generic_match configuration is unused"
+                    );
+                }
+            }
+        }
+
         // Validate MCP configuration
         self.mcp.validate()?;
 
@@ -1147,6 +1328,7 @@ mod tests {
         assert_eq!(config.provider.provider_type, "copilot");
         assert_eq!(config.agent.max_turns, 50);
         assert_eq!(config.agent.timeout_seconds, 300);
+        assert_eq!(config.watcher.watcher_type, WatcherType::XZepr);
     }
 
     #[test]
@@ -1271,6 +1453,143 @@ agent:
         let mode = ExecutionMode::FullAutonomous;
         let yaml = serde_yaml::to_string(&mode).unwrap();
         assert!(yaml.contains("full_autonomous"));
+    }
+
+    #[test]
+    fn test_watcher_type_default_is_xzepr() {
+        assert_eq!(WatcherType::default(), WatcherType::XZepr);
+    }
+
+    #[test]
+    fn test_watcher_type_roundtrip_xzepr_yaml() {
+        let yaml = serde_yaml::to_string(&WatcherType::XZepr).unwrap();
+        assert!(yaml.contains("xzepr"));
+
+        let parsed: WatcherType = serde_yaml::from_str("xzepr").unwrap();
+        assert_eq!(parsed, WatcherType::XZepr);
+    }
+
+    #[test]
+    fn test_watcher_type_roundtrip_generic_yaml() {
+        let yaml = serde_yaml::to_string(&WatcherType::Generic).unwrap();
+        assert!(yaml.contains("generic"));
+
+        let parsed: WatcherType = serde_yaml::from_str("generic").unwrap();
+        assert_eq!(parsed, WatcherType::Generic);
+    }
+
+    #[test]
+    fn test_watcher_config_defaults_watcher_type_when_omitted() {
+        let yaml = r#"
+kafka:
+  brokers: localhost:9092
+  topic: events
+"#;
+
+        let config: WatcherConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.watcher_type, WatcherType::XZepr);
+    }
+
+    #[test]
+    fn test_generic_match_config_roundtrip_all_fields() {
+        let original = GenericMatchConfig {
+            action: Some("deploy.*".to_string()),
+            name: Some("service-(api|web)".to_string()),
+            version: Some("^v[0-9]+\\.[0-9]+$".to_string()),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: GenericMatchConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(restored.action, original.action);
+        assert_eq!(restored.name, original.name);
+        assert_eq!(restored.version, original.version);
+    }
+
+    #[test]
+    fn test_generic_match_config_roundtrip_action_only() {
+        let original = GenericMatchConfig {
+            action: Some("deploy-prod".to_string()),
+            name: None,
+            version: None,
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: GenericMatchConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(restored.action, original.action);
+        assert!(restored.name.is_none());
+        assert!(restored.version.is_none());
+    }
+
+    #[test]
+    fn test_generic_match_config_roundtrip_name_and_version_only() {
+        let original = GenericMatchConfig {
+            action: None,
+            name: Some("service-a".to_string()),
+            version: Some("1\\.2\\.3".to_string()),
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: GenericMatchConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert!(restored.action.is_none());
+        assert_eq!(restored.name, original.name);
+        assert_eq!(restored.version, original.version);
+    }
+
+    #[test]
+    fn test_generic_match_config_roundtrip_none_fields() {
+        let original = GenericMatchConfig::default();
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: GenericMatchConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert!(restored.action.is_none());
+        assert!(restored.name.is_none());
+        assert!(restored.version.is_none());
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_roundtrip_output_topic() {
+        let original = KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.in".to_string(),
+            output_topic: Some("plans.out".to_string()),
+            group_id: "watchers".to_string(),
+            auto_create_topics: true,
+            security: None,
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: KafkaWatcherConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(restored.brokers, "localhost:9092");
+        assert_eq!(restored.topic, "plans.in");
+        assert_eq!(restored.output_topic.as_deref(), Some("plans.out"));
+        assert_eq!(restored.group_id, "watchers");
+        assert!(restored.auto_create_topics);
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_roundtrip_auto_create_topics_false() {
+        let original = KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.in".to_string(),
+            output_topic: None,
+            group_id: "watchers".to_string(),
+            auto_create_topics: false,
+            security: None,
+        };
+
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: KafkaWatcherConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(restored.brokers, "localhost:9092");
+        assert_eq!(restored.topic, "plans.in");
+        assert_eq!(restored.output_topic, None);
+        assert_eq!(restored.group_id, "watchers");
+        assert!(!restored.auto_create_topics);
     }
 
     #[test]
@@ -1687,6 +2006,196 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_JSON_LOGS");
             std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
         }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_watcher_type() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_TYPE");
+        }
+
+        std::env::set_var("XZATOMA_WATCHER_TYPE", "generic");
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(cfg.watcher.watcher_type, WatcherType::Generic);
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_TYPE");
+        }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_watcher_output_topic() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_OUTPUT_TOPIC");
+        }
+
+        let mut cfg = Config::default();
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.kafka.as_ref().unwrap().output_topic.as_deref(),
+            Some("plans.output")
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_OUTPUT_TOPIC");
+        }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_watcher_group_id() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_GROUP_ID");
+        }
+
+        let mut cfg = Config::default();
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "original-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.kafka.as_ref().unwrap().group_id,
+            "override-group"
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_GROUP_ID");
+        }
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_generic_match_fields() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_ACTION");
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_NAME");
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_VERSION");
+        }
+
+        std::env::set_var("XZATOMA_WATCHER_MATCH_ACTION", "deploy.*");
+        std::env::set_var("XZATOMA_WATCHER_MATCH_NAME", "service-a");
+        std::env::set_var("XZATOMA_WATCHER_MATCH_VERSION", "^v1$");
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.generic_match.action.as_deref(),
+            Some("deploy.*")
+        );
+        assert_eq!(cfg.watcher.generic_match.name.as_deref(), Some("service-a"));
+        assert_eq!(cfg.watcher.generic_match.version.as_deref(), Some("^v1$"));
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_ACTION");
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_NAME");
+            std::env::remove_var("XZATOMA_WATCHER_MATCH_VERSION");
+        }
+    }
+
+    #[test]
+    fn test_config_validate_generic_accept_all_is_ok() {
+        let mut cfg = Config::default();
+        cfg.watcher.watcher_type = WatcherType::Generic;
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_generic_valid_regex_patterns_is_ok() {
+        let mut cfg = Config::default();
+        cfg.watcher.watcher_type = WatcherType::Generic;
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: Some("plans.output".to_string()),
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+        cfg.watcher.generic_match = GenericMatchConfig {
+            action: Some("deploy.*".to_string()),
+            name: Some("service-(api|web)".to_string()),
+            version: Some("^v[0-9]+$".to_string()),
+        };
+
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_generic_invalid_regex_returns_error() {
+        let mut cfg = Config::default();
+        cfg.watcher.watcher_type = WatcherType::Generic;
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+        cfg.watcher.generic_match.action = Some("[broken".to_string());
+
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("Invalid generic match regex"));
+    }
+
+    #[test]
+    fn test_config_validate_empty_group_id_returns_error() {
+        let mut cfg = Config::default();
+        cfg.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "plans.input".to_string(),
+            output_topic: None,
+            group_id: "   ".to_string(),
+            auto_create_topics: true,
+            security: None,
+        });
+
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("watcher.kafka.group_id cannot be empty"));
+    }
+
+    #[test]
+    fn test_config_validate_generic_missing_kafka_returns_error() {
+        let mut cfg = Config::default();
+        cfg.watcher.watcher_type = WatcherType::Generic;
+        cfg.watcher.kafka = None;
+
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("watcher.kafka is required"));
     }
 
     // Phase 5: Enhanced subagent configuration tests
@@ -2267,15 +2776,101 @@ agent:
     }
 }
 
+/// Watcher backend type.
+///
+/// This selects which watcher implementation should process Kafka messages.
+/// `XZepr` remains the default for backward compatibility with existing config
+/// files that omit the field.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::WatcherType;
+///
+/// let watcher_type = WatcherType::default();
+/// assert_eq!(watcher_type, WatcherType::XZepr);
+/// assert_eq!(watcher_type.as_str(), "xzepr");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WatcherType {
+    /// Existing XZepr CloudEvents watcher.
+    #[default]
+    XZepr,
+    /// Generic Kafka plan-event watcher.
+    Generic,
+}
+
+impl WatcherType {
+    /// Return the configuration string representation for this watcher type.
+    ///
+    /// # Returns
+    ///
+    /// Returns `"xzepr"` or `"generic"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::WatcherType;
+    ///
+    /// assert_eq!(WatcherType::XZepr.as_str(), "xzepr");
+    /// assert_eq!(WatcherType::Generic.as_str(), "generic");
+    /// ```
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::XZepr => "xzepr",
+            Self::Generic => "generic",
+        }
+    }
+
+    /// Parse a watcher type from a user-provided string.
+    ///
+    /// Matching is case-insensitive and ignores leading/trailing whitespace.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - String to parse
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(WatcherType)` for recognized values, otherwise `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::WatcherType;
+    ///
+    /// assert_eq!(WatcherType::from_str_name("xzepr"), Some(WatcherType::XZepr));
+    /// assert_eq!(WatcherType::from_str_name("GENERIC"), Some(WatcherType::Generic));
+    /// assert_eq!(WatcherType::from_str_name("other"), None);
+    /// ```
+    pub fn from_str_name(value: &str) -> Option<Self> {
+        match value.trim().to_lowercase().as_str() {
+            "xzepr" => Some(Self::XZepr),
+            "generic" => Some(Self::Generic),
+            _ => None,
+        }
+    }
+}
+
 /// Watcher configuration for Kafka event monitoring
 ///
-/// Configures the watcher service for monitoring Kafka topics,
-/// filtering events, logging, and executing plans extracted from events.
+/// Configures the watcher service for monitoring Kafka topics, filtering events,
+/// matching generic watcher events, logging, and executing plans extracted from
+/// events.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WatcherConfig {
+    /// Active watcher backend type.
+    #[serde(default)]
+    pub watcher_type: WatcherType,
+
     /// Kafka consumer configuration
     #[serde(default)]
     pub kafka: Option<KafkaWatcherConfig>,
+
+    /// Generic watcher match configuration
+    #[serde(default)]
+    pub generic_match: GenericMatchConfig,
 
     /// Event filtering configuration
     #[serde(default)]
@@ -2290,7 +2885,11 @@ pub struct WatcherConfig {
     pub execution: WatcherExecutionConfig,
 }
 
-/// Kafka consumer configuration for the watcher
+/// Kafka consumer configuration for the watcher.
+///
+/// The generic watcher also uses this structure for its result producer.
+/// When `output_topic` is `None` and `watcher_type` is `generic`, results are
+/// published back to the input `topic`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KafkaWatcherConfig {
     /// Kafka brokers (comma-separated)
@@ -2299,9 +2898,22 @@ pub struct KafkaWatcherConfig {
     /// Topic to consume from
     pub topic: String,
 
+    /// Output topic for publishing plan execution results (Generic watcher only).
+    ///
+    /// If `None`, results are published back to the input `topic`.
+    #[serde(default)]
+    pub output_topic: Option<String>,
+
     /// Consumer group ID
     #[serde(default = "default_watcher_group_id")]
     pub group_id: String,
+
+    /// Automatically create input/output topics when watcher mode starts.
+    ///
+    /// This is a stub-first configuration flag used by watcher startup logic to
+    /// decide whether missing topics should be provisioned automatically.
+    #[serde(default = "default_auto_create_topics")]
+    pub auto_create_topics: bool,
 
     /// Security configuration
     #[serde(default)]
@@ -2322,6 +2934,46 @@ pub struct KafkaSecurityConfig {
 
     /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
     pub sasl_password: Option<String>,
+}
+
+/// Generic watcher match configuration.
+///
+/// `GenericMatchConfig` and `EventFilterConfig` are intentionally separate:
+///
+/// - `GenericMatchConfig` is used only by the generic watcher backend
+/// - `EventFilterConfig` is used only by the XZepr watcher backend
+///
+/// All configured fields are interpreted as regular expressions by the generic
+/// matcher and are matched case-insensitively by default.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::GenericMatchConfig;
+///
+/// let cfg = GenericMatchConfig {
+///     action: Some("deploy.*".to_string()),
+///     name: Some("service-a".to_string()),
+///     version: None,
+/// };
+///
+/// assert_eq!(cfg.action.as_deref(), Some("deploy.*"));
+/// assert_eq!(cfg.name.as_deref(), Some("service-a"));
+/// assert!(cfg.version.is_none());
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GenericMatchConfig {
+    /// Regex pattern matched against the event action field.
+    #[serde(default)]
+    pub action: Option<String>,
+
+    /// Regex pattern matched against the event name field.
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Regex pattern matched against the event version field.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 /// Event filter configuration
@@ -2386,6 +3038,11 @@ pub struct WatcherExecutionConfig {
 /// Default watcher consumer group ID
 fn default_watcher_group_id() -> String {
     "xzatoma-watcher".to_string()
+}
+
+/// Default topic auto-creation setting
+fn default_auto_create_topics() -> bool {
+    true
 }
 
 /// Default success_only value

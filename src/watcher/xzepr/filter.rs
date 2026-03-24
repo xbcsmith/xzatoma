@@ -1,10 +1,13 @@
-//! Event filtering for CloudEvents messages
+//! Event filtering for XZepr CloudEvents messages
 //!
-//! This module provides filtering logic to determine which CloudEvents
+//! This module provides filtering logic to determine which XZepr CloudEvents
 //! should be processed based on configured criteria.
+//!
+//! It was relocated from `src/watcher/filter.rs` into `src/watcher/xzepr/`
+//! as part of the generic watcher architecture (Phase 1).
 
 use crate::config::EventFilterConfig;
-use crate::xzepr::CloudEventMessage;
+use crate::watcher::xzepr::consumer::CloudEventMessage;
 use anyhow::Result;
 use regex::Regex;
 
@@ -29,11 +32,15 @@ impl EventFilter {
     ///
     /// Returns the event filter or error if regex compilation fails
     ///
+    /// # Errors
+    ///
+    /// Returns an error if `config.source_pattern` is not a valid regular expression.
+    ///
     /// # Examples
     ///
     /// ```
     /// use xzatoma::config::EventFilterConfig;
-    /// use xzatoma::watcher::EventFilter;
+    /// use xzatoma::watcher::xzepr::filter::EventFilter;
     ///
     /// let config = EventFilterConfig {
     ///     event_types: vec!["deployment.success".to_string()],
@@ -74,8 +81,7 @@ impl EventFilter {
     ///
     /// ```
     /// use xzatoma::config::EventFilterConfig;
-    /// use xzatoma::watcher::EventFilter;
-    /// use xzatoma::xzepr::CloudEventMessage;
+    /// use xzatoma::watcher::xzepr::filter::EventFilter;
     ///
     /// let config = EventFilterConfig {
     ///     event_types: vec!["deployment.success".to_string()],
@@ -143,7 +149,7 @@ impl EventFilter {
     ///
     /// ```
     /// use xzatoma::config::EventFilterConfig;
-    /// use xzatoma::watcher::EventFilter;
+    /// use xzatoma::watcher::xzepr::filter::EventFilter;
     ///
     /// let config = EventFilterConfig {
     ///     event_types: vec!["deployment.success".to_string()],
@@ -206,7 +212,7 @@ mod tests {
         package: &str,
         api_version: &str,
     ) -> CloudEventMessage {
-        use crate::xzepr::consumer::message::CloudEventData;
+        use crate::watcher::xzepr::consumer::message::CloudEventData;
 
         CloudEventMessage {
             success,
