@@ -25,6 +25,9 @@ use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
+use crate::skills::{
+    build_skill_disclosure_section, discover_skills, render_skill_catalog, SkillRecord,
+};
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
@@ -87,6 +90,131 @@ pub fn should_enable_subagents(prompt: &str) -> bool {
         || lower.contains("use agent")
 }
 
+/// Returns `true` if the given skill is visible for startup disclosure.
+///
+/// Visibility rules for Phase 2:
+///
+/// - invalid skills are already excluded by discovery
+/// - project skills require trust when `skills.project_trust_required == true`
+/// - user skills do not require project trust
+/// - custom paths require trust unless
+///   `skills.allow_custom_paths_without_trust == true`
+///
+/// # Arguments
+///
+/// * `config` - Global configuration
+/// * `record` - Valid discovered skill
+///
+/// # Returns
+///
+/// Returns `true` if the skill should be disclosed to the model.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use std::collections::HashSet;
+/// use std::path::{Path, PathBuf};
+/// use xzatoma::commands::is_skill_visible_for_disclosure;
+/// use xzatoma::config::Config;
+/// use xzatoma::skills::{SkillMetadata, SkillRecord, SkillSourceScope};
+///
+/// let config = Config::default();
+/// let record = SkillRecord {
+///     metadata: SkillMetadata {
+///         name: "example_skill".to_string(),
+///         description: "Example".to_string(),
+///         license: None,
+///         compatibility: None,
+///         metadata: BTreeMap::new(),
+///         allowed_tools_raw: None,
+///         allowed_tools: Vec::new(),
+///     },
+///     skill_dir: PathBuf::from("/tmp/example_skill"),
+///     skill_file: PathBuf::from("/tmp/example_skill/SKILL.md"),
+///     source_scope: SkillSourceScope::UserClientSpecific,
+///     source_order: 0,
+///     body: "Body".to_string(),
+/// };
+///
+/// assert!(is_skill_visible_for_disclosure(
+///     &config,
+///     &record,
+///     Path::new("."),
+///     &HashSet::new(),
+/// ));
+/// ```
+pub fn is_skill_visible_for_disclosure(
+    config: &Config,
+    record: &SkillRecord,
+    working_dir: &Path,
+    trusted_paths: &std::collections::HashSet<std::path::PathBuf>,
+) -> bool {
+    crate::skills::disclosure::is_skill_visible(record, &config.skills, working_dir, trusted_paths)
+}
+
+/// Builds the startup skill disclosure block for the current session.
+///
+/// This helper discovers skills, filters them by disclosure visibility rules,
+/// enforces `catalog_max_entries`, and renders the disclosure block that can be
+/// injected into the conversation before the first provider call.
+///
+/// # Arguments
+///
+/// * `config` - Global configuration
+/// * `working_dir` - Current working directory
+///
+/// # Returns
+///
+/// Returns a rendered disclosure block when at least one valid visible skill
+/// exists, otherwise `None`.
+///
+/// # Errors
+///
+/// Returns an error if skill discovery fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use xzatoma::commands::build_startup_skill_disclosure;
+/// use xzatoma::config::Config;
+///
+/// let disclosure = build_startup_skill_disclosure(&Config::default(), Path::new("."))?;
+/// let _ = disclosure;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn build_startup_skill_disclosure(
+    config: &Config,
+    working_dir: &Path,
+) -> Result<Option<String>> {
+    if !config.skills.enabled {
+        return Ok(None);
+    }
+
+    let discovery = discover_skills(&config.skills, working_dir)?;
+    let trusted_paths = std::collections::BTreeSet::new();
+    let rendered_catalog = render_skill_catalog(
+        &discovery.catalog,
+        &config.skills,
+        working_dir,
+        &trusted_paths,
+    );
+    let disclosure = build_skill_disclosure_section(
+        &discovery.catalog,
+        &discovery.invalid_diagnostics,
+        &config.skills,
+        working_dir,
+        &trusted_paths,
+    );
+
+    if rendered_catalog.is_empty() {
+        Ok(None)
+    } else {
+        Ok(disclosure.filter(|section| !section.trim().is_empty()))
+    }
+}
+
 // Chat command handler
 pub mod chat {
     //! Interactive chat mode handler.
@@ -136,6 +264,7 @@ pub mod chat {
             .unwrap_or(&config.provider.provider_type);
 
         let working_dir = std::env::current_dir()?;
+        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
 
         // Initialize mode state from command-line arguments
         // Defaults: Planning mode, AlwaysConfirm (safe) safety mode
@@ -253,12 +382,27 @@ pub mod chat {
                             config.agent.conversation.min_retain_turns,
                             config.agent.conversation.prune_threshold as f64,
                         );
-                        Agent::with_conversation_and_shared_provider(
+                        let mut agent = Agent::with_conversation_and_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
                             conversation,
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            if !agent.conversation().messages().iter().any(|message| {
+                                message.role == "system"
+                                    && message
+                                        .content
+                                        .as_deref()
+                                        .map(|content| content == disclosure)
+                                        .unwrap_or(false)
+                            }) {
+                                agent
+                                    .conversation_mut()
+                                    .add_system_message(disclosure.clone());
+                            }
+                        }
+                        agent
                     }
                     Ok(None) => {
                         println!(
@@ -266,20 +410,32 @@ pub mod chat {
                             format!("Conversation {} not found, starting new one.", resume_id)
                                 .yellow()
                         );
-                        Agent::new_from_shared_provider(
+                        let mut agent = Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            agent
+                                .conversation_mut()
+                                .add_system_message(disclosure.clone());
+                        }
+                        agent
                     }
                     Err(e) => {
                         tracing::error!("Failed to load conversation: {}", e);
                         println!("{}", "Failed to load conversation, starting new one.".red());
-                        Agent::new_from_shared_provider(
+                        let mut agent = Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            agent
+                                .conversation_mut()
+                                .add_system_message(disclosure.clone());
+                        }
+                        agent
                     }
                 }
             } else {
@@ -287,10 +443,30 @@ pub mod chat {
                     "{}",
                     "Storage not available, starting new conversation.".yellow()
                 );
-                Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
+                let mut agent = Agent::new_from_shared_provider(
+                    Arc::clone(&provider),
+                    tools,
+                    config.agent.clone(),
+                )?;
+                if let Some(disclosure) = &skill_disclosure {
+                    agent
+                        .conversation_mut()
+                        .add_system_message(disclosure.clone());
+                }
+                agent
             }
         } else {
-            Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
+            let mut agent = Agent::new_from_shared_provider(
+                Arc::clone(&provider),
+                tools,
+                config.agent.clone(),
+            )?;
+            if let Some(disclosure) = &skill_disclosure {
+                agent
+                    .conversation_mut()
+                    .add_system_message(disclosure.clone());
+            }
+            agent
         };
 
         // Create readline instance
@@ -1576,6 +1752,7 @@ pub mod r#run {
 
         // Build tools & agent
         let working_dir = std::env::current_dir()?;
+        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
 
         if allow_dangerous {
             tracing::warn!("Dangerous commands are allowed for this run: allow_dangerous=true");
@@ -1658,6 +1835,12 @@ pub mod r#run {
                 return Err(XzatomaError::Config(format!("Unknown provider: {}", other)).into());
             }
         };
+
+        if let Some(disclosure) = &skill_disclosure {
+            agent
+                .conversation_mut()
+                .add_system_message(disclosure.clone());
+        }
 
         // Compose a textual task to send to the agent
         let task = if let Some(path) = plan_path {

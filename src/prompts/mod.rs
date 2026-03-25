@@ -8,7 +8,7 @@ pub mod write_prompt;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
 
-/// Builds a mode-specific system prompt
+/// Builds a mode-specific system prompt.
 ///
 /// Returns a system prompt tailored to the current chat mode and safety setting.
 /// The prompt instructs the AI on what it can and cannot do in the current mode.
@@ -33,9 +33,92 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 /// assert!(prompt.contains("read"));
 /// ```
 pub fn build_system_prompt(mode: ChatMode, safety: SafetyMode) -> String {
-    match mode {
+    build_system_prompt_with_skill_disclosure(mode, safety, None)
+}
+
+/// Builds a mode-specific system prompt with an optional skill disclosure section.
+///
+/// When a disclosure section is provided and non-empty, it is appended to the
+/// base mode prompt with clear separation. This keeps prompt construction
+/// centralized while allowing startup-time skill catalog disclosure to be
+/// injected without modifying the underlying mode prompts.
+///
+/// # Arguments
+///
+/// * `mode` - The current ChatMode (Planning or Write)
+/// * `safety` - The current SafetyMode (AlwaysConfirm or NeverConfirm)
+/// * `skill_disclosure` - Optional rendered skill disclosure section
+///
+/// # Returns
+///
+/// A string containing the system prompt for the given mode, optionally
+/// extended with a skill disclosure section
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+/// use xzatoma::prompts::build_system_prompt_with_skill_disclosure;
+///
+/// let prompt = build_system_prompt_with_skill_disclosure(
+///     ChatMode::Planning,
+///     SafetyMode::AlwaysConfirm,
+///     Some("## Available Skills\n- example_skill: Example description"),
+/// );
+///
+/// assert!(prompt.contains("PLANNING"));
+/// assert!(prompt.contains("## Available Skills"));
+/// assert!(prompt.contains("example_skill"));
+/// ```
+pub fn build_system_prompt_with_skill_disclosure(
+    mode: ChatMode,
+    safety: SafetyMode,
+    skill_disclosure: Option<&str>,
+) -> String {
+    let base_prompt = match mode {
         ChatMode::Planning => planning_prompt::generate_planning_prompt(safety),
         ChatMode::Write => write_prompt::generate_write_prompt(safety),
+    };
+
+    append_skill_disclosure_section(&base_prompt, skill_disclosure)
+}
+
+/// Appends a rendered skill disclosure section to an existing prompt.
+///
+/// Empty or whitespace-only disclosure content is ignored.
+///
+/// # Arguments
+///
+/// * `base_prompt` - Existing system prompt content
+/// * `skill_disclosure` - Optional disclosure section to append
+///
+/// # Returns
+///
+/// The original prompt when no disclosure is provided, otherwise the prompt with
+/// the disclosure appended
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::prompts::append_skill_disclosure_section;
+///
+/// let prompt = append_skill_disclosure_section(
+///     "Base prompt",
+///     Some("## Available Skills\n- example_skill: Example description"),
+/// );
+///
+/// assert!(prompt.contains("Base prompt"));
+/// assert!(prompt.contains("## Available Skills"));
+/// ```
+pub fn append_skill_disclosure_section(
+    base_prompt: &str,
+    skill_disclosure: Option<&str>,
+) -> String {
+    match skill_disclosure.map(str::trim) {
+        Some(disclosure) if !disclosure.is_empty() => {
+            format!("{base_prompt}\n\n{disclosure}")
+        }
+        _ => base_prompt.to_string(),
     }
 }
 
@@ -108,5 +191,56 @@ mod tests {
             safe_prompt.to_lowercase().contains("confirm")
                 || safe_prompt.to_lowercase().contains("safety")
         );
+    }
+
+    #[test]
+    fn test_append_skill_disclosure_section_with_disclosure() {
+        let prompt = append_skill_disclosure_section(
+            "Base prompt",
+            Some("## Available Skills\n- example_skill: Example description"),
+        );
+
+        assert!(prompt.contains("Base prompt"));
+        assert!(prompt.contains("## Available Skills"));
+        assert!(prompt.contains("example_skill"));
+    }
+
+    #[test]
+    fn test_append_skill_disclosure_section_without_disclosure() {
+        let prompt = append_skill_disclosure_section("Base prompt", None);
+
+        assert_eq!(prompt, "Base prompt");
+    }
+
+    #[test]
+    fn test_append_skill_disclosure_section_with_empty_disclosure() {
+        let prompt = append_skill_disclosure_section("Base prompt", Some("   \n\t  "));
+
+        assert_eq!(prompt, "Base prompt");
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skill_disclosure_appends_section() {
+        let prompt = build_system_prompt_with_skill_disclosure(
+            ChatMode::Planning,
+            SafetyMode::AlwaysConfirm,
+            Some("## Available Skills\n- example_skill: Example description"),
+        );
+
+        assert!(prompt.contains("PLANNING"));
+        assert!(prompt.contains("## Available Skills"));
+        assert!(prompt.contains("example_skill"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skill_disclosure_omits_empty_section() {
+        let base = build_system_prompt(ChatMode::Write, SafetyMode::AlwaysConfirm);
+        let with_empty = build_system_prompt_with_skill_disclosure(
+            ChatMode::Write,
+            SafetyMode::AlwaysConfirm,
+            Some(""),
+        );
+
+        assert_eq!(base, with_empty);
     }
 }
