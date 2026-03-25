@@ -109,6 +109,55 @@ agent:
 
     # Maximum wall-clock time for all subagents in seconds (optional)
     # max_total_time: 3600
+
+# Skills discovery and parsing configuration
+skills:
+  # Global feature flag for skills support
+  enabled: true
+
+  # Enable project-level discovery roots:
+  # - ./.xzatoma/skills/
+  # - ./.agents/skills/
+  project_enabled: true
+
+  # Enable user-level discovery roots:
+  # - ~/.xzatoma/skills/
+  # - ~/.agents/skills/
+  user_enabled: true
+
+  # Additional skill roots in exact discovery order
+  # Relative paths are resolved from the current working directory
+  additional_paths: []
+  # additional_paths:
+  #   - /opt/xzatoma/skills
+  #   - ./custom_skills
+
+  # Hard cap on valid loaded skills
+  max_discovered_skills: 256
+
+  # Hard cap on directories visited while scanning
+  max_scan_directories: 2000
+
+  # Maximum traversal depth per discovery root
+  max_scan_depth: 6
+
+  # Maximum number of catalog entries disclosed at startup
+  catalog_max_entries: 128
+
+  # Register activate_skill when valid skills are available
+  activation_tool_enabled: true
+
+  # Require explicit trust for project-level skills
+  project_trust_required: true
+
+  # Optional override for the trust-state file path
+  # trust_store_path: ~/.xzatoma/skills_trust.yaml
+
+  # Whether custom paths bypass trust checks
+  allow_custom_paths_without_trust: false
+
+  # Reject invalid skills without lenient fallback
+  strict_frontmatter: true
 # MCP (Model Context Protocol) client configuration
 # mcp:
 #   auto_connect: true

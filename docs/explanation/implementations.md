@@ -118,6 +118,12 @@ features and architecture.
 - **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** -
   Phase 5: Error handling and user feedback for mention-based content loading
   (structured `LoadError` types, graceful degradation with placeholders, CLI
+
+- **[agent_skills_phase1_implementation.md](agent_skills_phase1_implementation.md)** -
+  Phase 1: Skill Discovery and Parsing Foundation - added `skills` module
+  foundation, `SkillsConfig`, deterministic skill discovery roots and
+  precedence rules, `SKILL.md` parsing and validation, diagnostics for invalid
+  and shadowed skills, catalog foundation, tests, and configuration examples
   warnings and suggestions, tests, and documentation)
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to

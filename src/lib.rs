@@ -39,6 +39,7 @@ pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
+pub mod skills;
 pub mod storage;
 pub mod tools;
 pub mod watcher;

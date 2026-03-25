@@ -547,7 +547,7 @@ impl GenericWatcher {
 mod tests {
     use super::*;
     use crate::config::{
-        AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig,
+        AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig, SkillsConfig,
         WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
     };
     use crate::mcp::config::McpConfig;
@@ -582,6 +582,7 @@ mod tests {
                 },
             },
             mcp: McpConfig::default(),
+            skills: SkillsConfig::default(),
         }
     }
 
