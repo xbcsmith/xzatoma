@@ -1,8 +1,8 @@
-//! Skills command handlers.
-//!
-//! This module implements the Phase 4 CLI backend for skills catalog and trust
-//! operations.
-
+/// Skills command handlers.
+///
+/// This module implements the Phase 5 CLI backend for skills catalog and trust
+/// operations, including path visibility reporting and deterministic trust
+/// store management.
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::skills::trust::{
@@ -202,6 +202,10 @@ pub fn show_skill(config: Config, name: &str) -> Result<()> {
 
 /// Show effective discovery paths and trust state.
 ///
+/// This command prints the effective discovery roots together with their trust
+/// status so you can understand which roots are eligible for visible-skill
+/// disclosure.
+///
 /// # Arguments
 ///
 /// * `config` - Global configuration
@@ -223,6 +227,13 @@ pub fn show_paths(config: Config) -> Result<()> {
     let working_dir = std::env::current_dir()?;
     let trusted_paths = load_trusted_paths(&config.skills, &working_dir)?;
     let trust_store_path = resolve_trust_store_path(config.skills.trust_store_path.as_deref())?;
+    let project_client_specific = working_dir.join(".xzatoma").join("skills");
+    let project_shared_convention = working_dir.join(".agents").join("skills");
+    let home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("~"));
+    let user_client_specific = home.join(".xzatoma").join("skills");
+    let user_shared_convention = home.join(".agents").join("skills");
 
     println!("working_dir: {}", working_dir.display());
     println!("trust_store: {}", trust_store_path.display());
@@ -239,31 +250,50 @@ pub fn show_paths(config: Config) -> Result<()> {
 
     if config.skills.project_enabled {
         println!(
-            "- project_client_specific: {}",
-            working_dir.join(".xzatoma").join("skills").display()
+            "- project_client_specific: {} [trust={}]",
+            project_client_specific.display(),
+            root_trust_status(
+                &project_client_specific,
+                &working_dir,
+                &trusted_paths,
+                config.skills.project_trust_required
+            )
         );
         println!(
-            "- project_shared_convention: {}",
-            working_dir.join(".agents").join("skills").display()
+            "- project_shared_convention: {} [trust={}]",
+            project_shared_convention.display(),
+            root_trust_status(
+                &project_shared_convention,
+                &working_dir,
+                &trusted_paths,
+                config.skills.project_trust_required
+            )
         );
     }
 
     if config.skills.user_enabled {
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("~"));
         println!(
-            "- user_client_specific: {}",
-            home.join(".xzatoma").join("skills").display()
+            "- user_client_specific: {} [trust=not_required]",
+            user_client_specific.display()
         );
         println!(
-            "- user_shared_convention: {}",
-            home.join(".agents").join("skills").display()
+            "- user_shared_convention: {} [trust=not_required]",
+            user_shared_convention.display()
         );
     }
 
     for (index, path) in config.skills.additional_paths.iter().enumerate() {
-        println!("- custom_{}: {}", index, path);
+        let configured_path = PathBuf::from(path);
+        println!(
+            "- custom_{}: {} [trust={}]",
+            index,
+            configured_path.display(),
+            custom_root_trust_status(
+                &configured_path,
+                &trusted_paths,
+                config.skills.allow_custom_paths_without_trust
+            )
+        );
     }
 
     println!("\ntrusted paths:");
@@ -279,6 +309,9 @@ pub fn show_paths(config: Config) -> Result<()> {
 }
 
 /// Handle trust-related subcommands.
+///
+/// This dispatcher routes `skills trust` operations to the persistent trust
+/// store implementation.
 ///
 /// # Arguments
 ///
@@ -366,6 +399,45 @@ fn trust_remove(config: Config, path: &Path) -> Result<()> {
     println!("trust_store: {}", store.path().display());
 
     Ok(())
+}
+
+fn root_trust_status(
+    root: &Path,
+    working_dir: &Path,
+    trusted_paths: &BTreeSet<PathBuf>,
+    trust_required: bool,
+) -> &'static str {
+    if !trust_required {
+        return "not_required";
+    }
+
+    if trusted_paths
+        .iter()
+        .any(|trusted_path| working_dir.starts_with(trusted_path) || root.starts_with(trusted_path))
+    {
+        "trusted"
+    } else {
+        "required"
+    }
+}
+
+fn custom_root_trust_status(
+    root: &Path,
+    trusted_paths: &BTreeSet<PathBuf>,
+    allow_without_trust: bool,
+) -> &'static str {
+    if allow_without_trust {
+        return "not_required";
+    }
+
+    if trusted_paths
+        .iter()
+        .any(|trusted_path| root.starts_with(trusted_path))
+    {
+        "trusted"
+    } else {
+        "required"
+    }
 }
 
 /// Build a valid visible skill catalog using persistent trust state.

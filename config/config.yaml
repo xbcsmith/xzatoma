@@ -125,12 +125,14 @@ skills:
   # - ~/.agents/skills/
   user_enabled: true
 
-  # Additional skill roots in exact discovery order
-  # Relative paths are resolved from the current working directory
+  # Additional skill roots in exact discovery order.
+  # Relative paths are resolved from the current working directory.
   additional_paths: []
+  # Example custom-path configuration:
   # additional_paths:
   #   - /opt/xzatoma/skills
   #   - ./custom_skills
+  #   - ../shared_agent_skills
 
   # Hard cap on valid loaded skills
   max_discovered_skills: 256
@@ -150,7 +152,8 @@ skills:
   # Require explicit trust for project-level skills
   project_trust_required: true
 
-  # Optional override for the trust-state file path
+  # Optional override for the trust-state file path.
+  # Example trust-store configuration:
   # trust_store_path: ~/.xzatoma/skills_trust.yaml
 
   # Whether custom paths bypass trust checks
@@ -158,6 +161,25 @@ skills:
 
   # Reject invalid skills without lenient fallback
   strict_frontmatter: true
+
+  # Full skills configuration example:
+  #
+  # skills:
+  #   enabled: true
+  #   project_enabled: true
+  #   user_enabled: true
+  #   additional_paths:
+  #     - /opt/xzatoma/skills
+  #     - ./custom_skills
+  #   max_discovered_skills: 256
+  #   max_scan_directories: 2000
+  #   max_scan_depth: 6
+  #   catalog_max_entries: 128
+  #   activation_tool_enabled: true
+  #   project_trust_required: true
+  #   trust_store_path: ~/.xzatoma/skills_trust.yaml
+  #   allow_custom_paths_without_trust: false
+  #   strict_frontmatter: true
 # MCP (Model Context Protocol) client configuration
 # mcp:
 #   auto_connect: true

@@ -145,6 +145,12 @@ features and architecture.
   session-local active skill lifecycle behavior, and trust/resource/lifecycle
   test coverage
 
+- **[agent_skills_implementation.md](agent_skills_implementation.md)** -
+  Phase 5: Configuration, CLI, Documentation, and Hardening - completed the
+  `skills` CLI command surface, hardening for skills configuration and trust
+  operations, configuration examples, Diataxis documentation set, and
+  integration coverage for config and CLI behavior
+
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
   guides for managing and switching models)
