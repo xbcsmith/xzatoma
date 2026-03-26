@@ -55,6 +55,9 @@ pub mod replay;
 // MCP server management commands
 pub mod mcp;
 
+// Skills management commands
+pub mod skills;
+
 /// Detect if a user prompt requests subagent functionality
 ///
 /// Analyzes the prompt for keywords and patterns that suggest the user
@@ -195,7 +198,7 @@ pub fn build_startup_skill_disclosure(
     }
 
     let discovery = discover_skills(&config.skills, working_dir)?;
-    let trusted_paths = std::collections::BTreeSet::new();
+    let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
     let rendered_catalog = render_skill_catalog(
         &discovery.catalog,
         &config.skills,
@@ -253,8 +256,8 @@ pub fn build_visible_skill_catalog(config: &Config, working_dir: &Path) -> Resul
     }
 
     let discovery = discover_skills(&config.skills, working_dir)?;
-    let trusted_paths = std::collections::BTreeSet::new();
-    let visible_records = crate::skills::disclosure::visible_skill_records(
+    let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
+    let visible_records = crate::skills::trust::filter_visible_skill_records(
         &discovery.catalog,
         &config.skills,
         working_dir,

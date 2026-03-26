@@ -3,7 +3,7 @@
 //! This module defines the CLI structure using clap's derive API,
 //! providing commands for chat, plan execution, and authentication.
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 /// XZatoma - Autonomous AI agent CLI
@@ -185,6 +185,59 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::mcp::McpCommands,
     },
+
+    /// Manage agent skills
+    Skills {
+        /// Skills subcommand to execute
+        #[command(subcommand)]
+        command: SkillsCommand,
+    },
+}
+
+/// Skills management subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillsCommand {
+    /// List valid loaded skills only
+    List,
+
+    /// Validate configured skill roots and show diagnostics
+    Validate,
+
+    /// Show metadata for one valid loaded skill
+    Show {
+        /// Skill name to inspect
+        name: String,
+    },
+
+    /// Show effective discovery paths and trust state
+    Paths,
+
+    /// Manage skill trust state
+    Trust {
+        /// Trust subcommand to execute
+        #[command(subcommand)]
+        command: SkillsTrustCommand,
+    },
+}
+
+/// Skills trust subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillsTrustCommand {
+    /// Show trust configuration and trusted paths
+    Show,
+
+    /// Mark a project path trusted
+    Add(SkillsTrustPathArgs),
+
+    /// Remove trust for a project path
+    Remove(SkillsTrustPathArgs),
+}
+
+/// Shared path arguments for skills trust operations
+#[derive(Args, Debug, Clone)]
+pub struct SkillsTrustPathArgs {
+    /// Path to add or remove from the trust store
+    pub path: PathBuf,
 }
 
 /// Model management subcommands

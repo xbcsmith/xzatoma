@@ -138,6 +138,13 @@ features and architecture.
   activation deduplication, active-skill prompt injection support, runtime
   registration helpers, and activation/tool integration tests
 
+- **[agent_skills_phase4_implementation.md](agent_skills_phase4_implementation.md)** -
+  Phase 4: Skill Resource Access, Trust Enforcement, and Lifecycle Management -
+  added persistent trust store support, trust-backed disclosure filtering,
+  resource resolution and enumeration constrained to the skill root,
+  session-local active skill lifecycle behavior, and trust/resource/lifecycle
+  test coverage
+
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
   guides for managing and switching models)

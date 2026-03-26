@@ -19,6 +19,7 @@ pub mod catalog;
 pub mod disclosure;
 pub mod discovery;
 pub mod parser;
+pub mod trust;
 pub mod types;
 pub mod validation;
 
@@ -27,6 +28,11 @@ pub use catalog::SkillCatalog;
 pub use disclosure::{build_skill_disclosure_section, render_skill_catalog, SkillDisclosureTrust};
 pub use discovery::{discover_skills, DiscoveryResult};
 pub use parser::{parse_frontmatter_map, parse_skill_content, parse_skill_file, split_frontmatter};
+pub use trust::{
+    enumerate_skill_resources, expand_tilde_path, filter_visible_skill_records, load_trust_store,
+    load_trusted_paths, resolve_skill_resource_path, resolve_trust_store_path, SkillTrustStore,
+    SkillTrustStoreData,
+};
 pub use types::{
     RawSkillDocument, SkillDiagnostic, SkillDiagnosticKind, SkillDiagnosticSeverity, SkillMetadata,
     SkillRecord, SkillSourceScope, SkillValidationOutcome,
