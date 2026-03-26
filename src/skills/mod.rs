@@ -14,6 +14,7 @@
 /// let catalog = SkillCatalog::default();
 /// assert!(catalog.is_empty());
 /// ```
+pub mod activation;
 pub mod catalog;
 pub mod disclosure;
 pub mod discovery;
@@ -21,6 +22,7 @@ pub mod parser;
 pub mod types;
 pub mod validation;
 
+pub use activation::{ActiveSkill, ActiveSkillRegistry};
 pub use catalog::SkillCatalog;
 pub use disclosure::{build_skill_disclosure_section, render_skill_catalog, SkillDisclosureTrust};
 pub use discovery::{discover_skills, DiscoveryResult};

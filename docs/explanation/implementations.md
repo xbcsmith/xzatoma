@@ -131,6 +131,13 @@ features and architecture.
   rendering, visibility filtering, trust-gated catalog disclosure, startup
   prompt integration for chat and run flows, disclosure tests, and
   implementation documentation
+
+- **[agent_skills_phase3_implementation.md](agent_skills_phase3_implementation.md)** -
+  Phase 3: Skill Activation and Active-Skill Registry - added
+  `ActiveSkillRegistry`, `ActiveSkill`, and `activate_skill` tool foundation,
+  activation deduplication, active-skill prompt injection support, runtime
+  registration helpers, and activation/tool integration tests
+
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
   guides for managing and switching models)

@@ -7,6 +7,7 @@ pub mod planning_prompt;
 pub mod write_prompt;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
+use crate::skills::activation::ActiveSkillRegistry;
 
 /// Builds a mode-specific system prompt.
 ///
@@ -117,6 +118,95 @@ pub fn append_skill_disclosure_section(
     match skill_disclosure.map(str::trim) {
         Some(disclosure) if !disclosure.is_empty() => {
             format!("{base_prompt}\n\n{disclosure}")
+        }
+        _ => base_prompt.to_string(),
+    }
+}
+
+/// Builds a mode-specific system prompt with both skill disclosure and active
+/// skill injection.
+///
+/// This helper centralizes Phase 2 and Phase 3 prompt assembly:
+///
+/// - base mode prompt
+/// - optional skill catalog disclosure
+/// - optional currently active skill content
+///
+/// Active skills are appended after disclosure so the model sees availability
+/// information first and active instruction content second.
+///
+/// # Arguments
+///
+/// * `mode` - The current ChatMode (Planning or Write)
+/// * `safety` - The current SafetyMode (AlwaysConfirm or NeverConfirm)
+/// * `skill_disclosure` - Optional rendered skill disclosure section
+/// * `active_skills` - Active skill registry for prompt-layer injection
+///
+/// # Returns
+///
+/// A string containing the full system prompt for the current runtime state
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+/// use xzatoma::prompts::build_system_prompt_with_skills;
+/// use xzatoma::skills::activation::ActiveSkillRegistry;
+///
+/// let registry = ActiveSkillRegistry::new();
+/// let prompt = build_system_prompt_with_skills(
+///     ChatMode::Planning,
+///     SafetyMode::AlwaysConfirm,
+///     Some("## Available Skills\n- example_skill: Example description"),
+///     &registry,
+/// );
+///
+/// assert!(prompt.contains("PLANNING"));
+/// assert!(prompt.contains("## Available Skills"));
+/// ```
+pub fn build_system_prompt_with_skills(
+    mode: ChatMode,
+    safety: SafetyMode,
+    skill_disclosure: Option<&str>,
+    active_skills: &ActiveSkillRegistry,
+) -> String {
+    let prompt = build_system_prompt_with_skill_disclosure(mode, safety, skill_disclosure);
+    append_active_skills_section(&prompt, active_skills)
+}
+
+/// Appends currently active skill content to an existing prompt.
+///
+/// When the active skill registry is empty, this function returns the original
+/// prompt unchanged. Otherwise it appends the registry's prompt-injection-ready
+/// content as a separate section.
+///
+/// # Arguments
+///
+/// * `base_prompt` - Existing prompt content
+/// * `active_skills` - Active skill registry
+///
+/// # Returns
+///
+/// The original prompt or the prompt extended with active skill content
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::prompts::append_active_skills_section;
+/// use xzatoma::skills::activation::ActiveSkillRegistry;
+///
+/// let registry = ActiveSkillRegistry::new();
+/// let prompt = append_active_skills_section("Base prompt", &registry);
+///
+/// assert_eq!(prompt, "Base prompt");
+/// ```
+pub fn append_active_skills_section(
+    base_prompt: &str,
+    active_skills: &ActiveSkillRegistry,
+) -> String {
+    match active_skills.render_for_prompt_injection() {
+        Some(active_section) if !active_section.trim().is_empty() => {
+            format!("{base_prompt}\n\n{active_section}")
         }
         _ => base_prompt.to_string(),
     }
@@ -242,5 +332,43 @@ mod tests {
         );
 
         assert_eq!(base, with_empty);
+    }
+
+    #[test]
+    fn test_append_active_skills_section_without_active_skills() {
+        let registry = ActiveSkillRegistry::new();
+        let prompt = append_active_skills_section("Base prompt", &registry);
+
+        assert_eq!(prompt, "Base prompt");
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skills_includes_disclosure_when_present() {
+        let registry = ActiveSkillRegistry::new();
+        let prompt = build_system_prompt_with_skills(
+            ChatMode::Planning,
+            SafetyMode::AlwaysConfirm,
+            Some("## Available Skills\n- example_skill: Example description"),
+            &registry,
+        );
+
+        assert!(prompt.contains("PLANNING"));
+        assert!(prompt.contains("## Available Skills"));
+        assert!(prompt.contains("example_skill"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skills_without_disclosure_matches_base_when_no_active_skills()
+    {
+        let registry = ActiveSkillRegistry::new();
+        let base = build_system_prompt(ChatMode::Write, SafetyMode::AlwaysConfirm);
+        let prompt = build_system_prompt_with_skills(
+            ChatMode::Write,
+            SafetyMode::AlwaysConfirm,
+            None,
+            &registry,
+        );
+
+        assert_eq!(base, prompt);
     }
 }
