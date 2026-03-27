@@ -191,6 +191,27 @@ pub enum XzatomaError {
     /// MCP task lifecycle error
     #[error("MCP task error: {0}")]
     McpTask(String),
+
+    /// ACP protocol validation or payload-shape error
+    #[error("ACP validation error: {0}")]
+    AcpValidation(String),
+
+    /// ACP transport-independent lifecycle error
+    #[error("ACP lifecycle error: {0}")]
+    AcpLifecycle(String),
+
+    /// ACP persistence or state storage error
+    #[error("ACP persistence error: {0}")]
+    AcpPersistence(String),
+
+    /// ACP unsupported lifecycle transition
+    #[error("ACP unsupported transition: from={from}, to={to}")]
+    AcpUnsupportedTransition {
+        /// Previous lifecycle state
+        from: String,
+        /// Requested lifecycle state
+        to: String,
+    },
 }
 
 /// Result type alias for XZatoma operations
@@ -258,6 +279,45 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Streaming is not supported by this provider"
+        );
+    }
+
+    #[test]
+    fn test_acp_validation_error_display() {
+        let error = XzatomaError::AcpValidation("invalid message payload".to_string());
+        assert_eq!(
+            error.to_string(),
+            "ACP validation error: invalid message payload"
+        );
+    }
+
+    #[test]
+    fn test_acp_lifecycle_error_display() {
+        let error = XzatomaError::AcpLifecycle("run cannot be resumed".to_string());
+        assert_eq!(
+            error.to_string(),
+            "ACP lifecycle error: run cannot be resumed"
+        );
+    }
+
+    #[test]
+    fn test_acp_persistence_error_display() {
+        let error = XzatomaError::AcpPersistence("failed to store session".to_string());
+        assert_eq!(
+            error.to_string(),
+            "ACP persistence error: failed to store session"
+        );
+    }
+
+    #[test]
+    fn test_acp_unsupported_transition_error_display() {
+        let error = XzatomaError::AcpUnsupportedTransition {
+            from: "running".to_string(),
+            to: "pending".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "ACP unsupported transition: from=running, to=pending"
         );
     }
 

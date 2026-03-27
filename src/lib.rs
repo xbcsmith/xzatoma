@@ -29,6 +29,7 @@
 //! }
 //! ```
 
+pub mod acp;
 pub mod agent;
 pub mod chat_mode;
 pub mod cli;
