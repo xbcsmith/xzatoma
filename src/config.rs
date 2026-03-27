@@ -7,7 +7,7 @@ use crate::error::{Result, XzatomaError};
 use crate::mcp::config::McpConfig;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Main configuration structure for XZatoma
 ///
@@ -25,6 +25,9 @@ pub struct Config {
     /// MCP client configuration
     #[serde(default)]
     pub mcp: McpConfig,
+    /// Skills discovery and parsing configuration
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 /// Provider configuration
@@ -198,6 +201,129 @@ impl Default for AgentConfig {
             terminal: TerminalConfig::default(),
             chat: ChatConfig::default(),
             subagent: SubagentConfig::default(),
+        }
+    }
+}
+
+/// Skills discovery and parsing configuration
+///
+/// Controls whether skill discovery is enabled, which roots are scanned,
+/// and what hard limits are applied during discovery and validation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsConfig {
+    /// Global skills feature flag
+    #[serde(default = "default_skills_enabled")]
+    pub enabled: bool,
+
+    /// Enable project-level discovery
+    #[serde(default = "default_skills_project_enabled")]
+    pub project_enabled: bool,
+
+    /// Enable user-level discovery
+    #[serde(default = "default_skills_user_enabled")]
+    pub user_enabled: bool,
+
+    /// Additional absolute or config-resolved paths
+    #[serde(default)]
+    pub additional_paths: Vec<String>,
+
+    /// Hard cap on valid loaded skills
+    #[serde(default = "default_max_discovered_skills")]
+    pub max_discovered_skills: usize,
+
+    /// Hard cap on directories visited
+    #[serde(default = "default_max_scan_directories")]
+    pub max_scan_directories: usize,
+
+    /// Maximum traversal depth per discovery root
+    #[serde(default = "default_max_scan_depth")]
+    pub max_scan_depth: usize,
+
+    /// Maximum number of catalog entries disclosed to the model
+    #[serde(default = "default_catalog_max_entries")]
+    pub catalog_max_entries: usize,
+
+    /// Register `activate_skill` when skills are available
+    #[serde(default = "default_activation_tool_enabled")]
+    pub activation_tool_enabled: bool,
+
+    /// Require explicit trust for project-level skills
+    #[serde(default = "default_project_trust_required")]
+    pub project_trust_required: bool,
+
+    /// Optional override for trust-state file path
+    #[serde(default)]
+    pub trust_store_path: Option<String>,
+
+    /// Whether custom paths bypass trust checks
+    #[serde(default = "default_allow_custom_paths_without_trust")]
+    pub allow_custom_paths_without_trust: bool,
+
+    /// Reject invalid skills without lenient fallback
+    #[serde(default = "default_strict_frontmatter")]
+    pub strict_frontmatter: bool,
+}
+
+fn default_skills_enabled() -> bool {
+    true
+}
+
+fn default_skills_project_enabled() -> bool {
+    true
+}
+
+fn default_skills_user_enabled() -> bool {
+    true
+}
+
+fn default_max_discovered_skills() -> usize {
+    256
+}
+
+fn default_max_scan_directories() -> usize {
+    2000
+}
+
+fn default_max_scan_depth() -> usize {
+    6
+}
+
+fn default_catalog_max_entries() -> usize {
+    128
+}
+
+fn default_activation_tool_enabled() -> bool {
+    true
+}
+
+fn default_project_trust_required() -> bool {
+    true
+}
+
+fn default_allow_custom_paths_without_trust() -> bool {
+    false
+}
+
+fn default_strict_frontmatter() -> bool {
+    true
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_skills_enabled(),
+            project_enabled: default_skills_project_enabled(),
+            user_enabled: default_skills_user_enabled(),
+            additional_paths: Vec::new(),
+            max_discovered_skills: default_max_discovered_skills(),
+            max_scan_directories: default_max_scan_directories(),
+            max_scan_depth: default_max_scan_depth(),
+            catalog_max_entries: default_catalog_max_entries(),
+            activation_tool_enabled: default_activation_tool_enabled(),
+            project_trust_required: default_project_trust_required(),
+            trust_store_path: None,
+            allow_custom_paths_without_trust: default_allow_custom_paths_without_trust(),
+            strict_frontmatter: default_strict_frontmatter(),
         }
     }
 }
@@ -682,6 +808,7 @@ impl Config {
             agent: AgentConfig::default(),
             watcher: WatcherConfig::default(),
             mcp: McpConfig::default(),
+            skills: SkillsConfig::default(),
         }
     }
 
@@ -736,6 +863,140 @@ impl Config {
                     tracing::warn!("Invalid execution mode: {}, using default", mode);
                     ExecutionMode::default()
                 }
+            };
+        }
+
+        if let Ok(enabled) = std::env::var("XZATOMA_SKILLS_ENABLED") {
+            match parse_env_bool(&enabled) {
+                Some(value) => self.skills.enabled = value,
+                None => tracing::warn!("Invalid XZATOMA_SKILLS_ENABLED: {}", enabled),
+            }
+        }
+
+        if let Ok(project_enabled) = std::env::var("XZATOMA_SKILLS_PROJECT_ENABLED") {
+            match parse_env_bool(&project_enabled) {
+                Some(value) => self.skills.project_enabled = value,
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_PROJECT_ENABLED: {}",
+                    project_enabled
+                ),
+            }
+        }
+
+        if let Ok(user_enabled) = std::env::var("XZATOMA_SKILLS_USER_ENABLED") {
+            match parse_env_bool(&user_enabled) {
+                Some(value) => self.skills.user_enabled = value,
+                None => tracing::warn!("Invalid XZATOMA_SKILLS_USER_ENABLED: {}", user_enabled),
+            }
+        }
+
+        if let Ok(activation_tool_enabled) = std::env::var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED")
+        {
+            match parse_env_bool(&activation_tool_enabled) {
+                Some(value) => self.skills.activation_tool_enabled = value,
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED: {}",
+                    activation_tool_enabled
+                ),
+            }
+        }
+
+        if let Ok(project_trust_required) = std::env::var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED") {
+            match parse_env_bool(&project_trust_required) {
+                Some(value) => self.skills.project_trust_required = value,
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED: {}",
+                    project_trust_required
+                ),
+            }
+        }
+
+        if let Ok(allow_custom_paths_without_trust) =
+            std::env::var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST")
+        {
+            match parse_env_bool(&allow_custom_paths_without_trust) {
+                Some(value) => self.skills.allow_custom_paths_without_trust = value,
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST: {}",
+                    allow_custom_paths_without_trust
+                ),
+            }
+        }
+
+        if let Ok(strict_frontmatter) = std::env::var("XZATOMA_SKILLS_STRICT_FRONTMATTER") {
+            match parse_env_bool(&strict_frontmatter) {
+                Some(value) => self.skills.strict_frontmatter = value,
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_STRICT_FRONTMATTER: {}",
+                    strict_frontmatter
+                ),
+            }
+        }
+
+        if let Ok(additional_paths) = std::env::var("XZATOMA_SKILLS_ADDITIONAL_PATHS") {
+            let parsed_paths: Vec<String> = additional_paths
+                .split(':')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect();
+
+            if parsed_paths.is_empty() {
+                tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_ADDITIONAL_PATHS: no non-empty paths were provided"
+                );
+            } else {
+                self.skills.additional_paths = parsed_paths;
+            }
+        }
+
+        if let Ok(max_discovered_skills) = std::env::var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS") {
+            if let Ok(value) = max_discovered_skills.parse() {
+                self.skills.max_discovered_skills = value;
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS: {}",
+                    max_discovered_skills
+                );
+            }
+        }
+
+        if let Ok(max_scan_directories) = std::env::var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES") {
+            if let Ok(value) = max_scan_directories.parse() {
+                self.skills.max_scan_directories = value;
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES: {}",
+                    max_scan_directories
+                );
+            }
+        }
+
+        if let Ok(max_scan_depth) = std::env::var("XZATOMA_SKILLS_MAX_SCAN_DEPTH") {
+            if let Ok(value) = max_scan_depth.parse() {
+                self.skills.max_scan_depth = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_SKILLS_MAX_SCAN_DEPTH: {}", max_scan_depth);
+            }
+        }
+
+        if let Ok(catalog_max_entries) = std::env::var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES") {
+            if let Ok(value) = catalog_max_entries.parse() {
+                self.skills.catalog_max_entries = value;
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_SKILLS_CATALOG_MAX_ENTRIES: {}",
+                    catalog_max_entries
+                );
+            }
+        }
+
+        if let Ok(trust_store_path) = std::env::var("XZATOMA_SKILLS_TRUST_STORE_PATH") {
+            let trimmed = trust_store_path.trim();
+            self.skills.trust_store_path = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
             };
         }
 
@@ -1299,6 +1560,8 @@ impl Config {
         // Validate MCP configuration
         self.mcp.validate()?;
 
+        self.validate_skills_config()?;
+
         Ok(())
     }
 
@@ -1310,6 +1573,90 @@ impl Config {
     pub fn should_persist_commands(&self) -> bool {
         self.agent.chat.persist_special_commands
     }
+
+    fn validate_skills_config(&self) -> Result<()> {
+        if self.skills.max_discovered_skills == 0 {
+            return Err(XzatomaError::Config(
+                "skills.max_discovered_skills must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.skills.max_scan_directories == 0 {
+            return Err(XzatomaError::Config(
+                "skills.max_scan_directories must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.skills.max_scan_depth == 0 {
+            return Err(XzatomaError::Config(
+                "skills.max_scan_depth must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.skills.catalog_max_entries == 0 {
+            return Err(XzatomaError::Config(
+                "skills.catalog_max_entries must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.skills.catalog_max_entries > self.skills.max_discovered_skills {
+            return Err(XzatomaError::Config(
+                "skills.catalog_max_entries must be less than or equal to skills.max_discovered_skills"
+                    .to_string(),
+            )
+            .into());
+        }
+
+        for path in &self.skills.additional_paths {
+            if path.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "skills.additional_paths cannot contain empty entries".to_string(),
+                )
+                .into());
+            }
+        }
+
+        if let Some(path) = &self.skills.trust_store_path {
+            if path.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "skills.trust_store_path cannot be empty when set".to_string(),
+                )
+                .into());
+            }
+
+            let resolved = resolve_config_like_path(path);
+            if resolved.as_os_str().is_empty() {
+                return Err(XzatomaError::Config(
+                    "skills.trust_store_path resolved to an empty path".to_string(),
+                )
+                .into());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn parse_env_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn resolve_config_like_path(path: &str) -> PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(stripped);
+        }
+    }
+
+    PathBuf::from(path)
 }
 
 impl Default for Config {
@@ -1329,12 +1676,298 @@ mod tests {
         assert_eq!(config.agent.max_turns, 50);
         assert_eq!(config.agent.timeout_seconds, 300);
         assert_eq!(config.watcher.watcher_type, WatcherType::XZepr);
+        assert!(config.skills.enabled);
+        assert!(config.skills.project_enabled);
+        assert!(config.skills.user_enabled);
+        assert_eq!(config.skills.max_discovered_skills, 256);
+        assert_eq!(config.skills.max_scan_directories, 2000);
+        assert_eq!(config.skills.max_scan_depth, 6);
+        assert_eq!(config.skills.catalog_max_entries, 128);
+        assert!(config.skills.activation_tool_enabled);
+        assert!(config.skills.project_trust_required);
+        assert!(config.skills.strict_frontmatter);
     }
 
     #[test]
     fn test_config_validation_success() {
         let config = Config::default();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_skills_config_defaults() {
+        let config = SkillsConfig::default();
+        assert!(config.enabled);
+        assert!(config.project_enabled);
+        assert!(config.user_enabled);
+        assert!(config.additional_paths.is_empty());
+        assert_eq!(config.max_discovered_skills, 256);
+        assert_eq!(config.max_scan_directories, 2000);
+        assert_eq!(config.max_scan_depth, 6);
+        assert_eq!(config.catalog_max_entries, 128);
+        assert!(config.activation_tool_enabled);
+        assert!(config.project_trust_required);
+        assert!(!config.allow_custom_paths_without_trust);
+        assert!(config.strict_frontmatter);
+        assert_eq!(config.trust_store_path, None);
+    }
+
+    #[test]
+    fn test_skills_config_deserialize_with_all_fields() {
+        let yaml = r#"
+enabled: false
+project_enabled: false
+user_enabled: true
+additional_paths:
+  - /opt/xzatoma/skills
+  - ./custom_skills
+max_discovered_skills: 64
+max_scan_directories: 500
+max_scan_depth: 4
+catalog_max_entries: 32
+activation_tool_enabled: false
+project_trust_required: false
+trust_store_path: ~/.xzatoma/custom_skills_trust.yaml
+allow_custom_paths_without_trust: true
+strict_frontmatter: false
+"#;
+
+        let config: SkillsConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.enabled);
+        assert!(!config.project_enabled);
+        assert!(config.user_enabled);
+        assert_eq!(
+            config.additional_paths,
+            vec![
+                "/opt/xzatoma/skills".to_string(),
+                "./custom_skills".to_string()
+            ]
+        );
+        assert_eq!(config.max_discovered_skills, 64);
+        assert_eq!(config.max_scan_directories, 500);
+        assert_eq!(config.max_scan_depth, 4);
+        assert_eq!(config.catalog_max_entries, 32);
+        assert!(!config.activation_tool_enabled);
+        assert!(!config.project_trust_required);
+        assert_eq!(
+            config.trust_store_path,
+            Some("~/.xzatoma/custom_skills_trust.yaml".to_string())
+        );
+        assert!(config.allow_custom_paths_without_trust);
+        assert!(!config.strict_frontmatter);
+    }
+
+    #[test]
+    fn test_skills_config_deserialize_uses_defaults_for_omitted_fields() {
+        let yaml = r#"
+enabled: true
+"#;
+
+        let config: SkillsConfig = serde_yaml::from_str(yaml).unwrap();
+        let defaults = SkillsConfig::default();
+
+        assert_eq!(config.enabled, defaults.enabled);
+        assert_eq!(config.project_enabled, defaults.project_enabled);
+        assert_eq!(config.user_enabled, defaults.user_enabled);
+        assert_eq!(config.additional_paths, defaults.additional_paths);
+        assert_eq!(config.max_discovered_skills, defaults.max_discovered_skills);
+        assert_eq!(config.max_scan_directories, defaults.max_scan_directories);
+        assert_eq!(config.max_scan_depth, defaults.max_scan_depth);
+        assert_eq!(config.catalog_max_entries, defaults.catalog_max_entries);
+        assert_eq!(
+            config.activation_tool_enabled,
+            defaults.activation_tool_enabled
+        );
+        assert_eq!(
+            config.project_trust_required,
+            defaults.project_trust_required
+        );
+        assert_eq!(config.trust_store_path, defaults.trust_store_path);
+        assert_eq!(
+            config.allow_custom_paths_without_trust,
+            defaults.allow_custom_paths_without_trust
+        );
+        assert_eq!(config.strict_frontmatter, defaults.strict_frontmatter);
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_zero_max_discovered_skills() {
+        let mut config = Config::default();
+        config.skills.max_discovered_skills = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_zero_max_scan_directories() {
+        let mut config = Config::default();
+        config.skills.max_scan_directories = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_zero_max_scan_depth() {
+        let mut config = Config::default();
+        config.skills.max_scan_depth = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_zero_catalog_max_entries() {
+        let mut config = Config::default();
+        config.skills.catalog_max_entries = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_catalog_max_entries_above_max_discovered() {
+        let mut config = Config::default();
+        config.skills.max_discovered_skills = 8;
+        config.skills.catalog_max_entries = 9;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_empty_additional_path() {
+        let mut config = Config::default();
+        config.skills.additional_paths = vec!["/opt/xzatoma/skills".to_string(), "".to_string()];
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_skills_config_validation_rejects_empty_trust_store_path() {
+        let mut config = Config::default();
+        config.skills.trust_store_path = Some("   ".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_parse_env_bool_accepts_supported_values() {
+        assert_eq!(parse_env_bool("1"), Some(true));
+        assert_eq!(parse_env_bool("true"), Some(true));
+        assert_eq!(parse_env_bool("yes"), Some(true));
+        assert_eq!(parse_env_bool("on"), Some(true));
+        assert_eq!(parse_env_bool("0"), Some(false));
+        assert_eq!(parse_env_bool("false"), Some(false));
+        assert_eq!(parse_env_bool("no"), Some(false));
+        assert_eq!(parse_env_bool("off"), Some(false));
+    }
+
+    #[test]
+    fn test_parse_env_bool_rejects_invalid_value() {
+        assert_eq!(parse_env_bool("maybe"), None);
+    }
+
+    #[test]
+    fn test_resolve_config_like_path_expands_home_prefix() {
+        let original_home = std::env::var("HOME").ok();
+
+        unsafe {
+            std::env::set_var("HOME", "/tmp/xzatoma-home");
+        }
+
+        let resolved = resolve_config_like_path("~/skills_trust.yaml");
+
+        match original_home {
+            Some(value) => unsafe {
+                std::env::set_var("HOME", value);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+
+        assert_eq!(
+            resolved,
+            PathBuf::from("/tmp/xzatoma-home/skills_trust.yaml")
+        );
+    }
+
+    #[test]
+    fn test_resolve_config_like_path_returns_plain_path_when_not_tilde_prefixed() {
+        let resolved = resolve_config_like_path("./config/config.yaml");
+        assert_eq!(resolved, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    #[ignore = "modifies global environment variables"]
+    fn test_apply_env_vars_overrides_skills_fields() {
+        unsafe {
+            std::env::remove_var("XZATOMA_SKILLS_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_PROJECT_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_USER_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED");
+            std::env::remove_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST");
+            std::env::remove_var("XZATOMA_SKILLS_STRICT_FRONTMATTER");
+            std::env::remove_var("XZATOMA_SKILLS_ADDITIONAL_PATHS");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH");
+            std::env::remove_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES");
+            std::env::remove_var("XZATOMA_SKILLS_TRUST_STORE_PATH");
+        }
+
+        std::env::set_var("XZATOMA_SKILLS_ENABLED", "false");
+        std::env::set_var("XZATOMA_SKILLS_PROJECT_ENABLED", "false");
+        std::env::set_var("XZATOMA_SKILLS_USER_ENABLED", "false");
+        std::env::set_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED", "false");
+        std::env::set_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED", "false");
+        std::env::set_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST", "true");
+        std::env::set_var("XZATOMA_SKILLS_STRICT_FRONTMATTER", "false");
+        std::env::set_var(
+            "XZATOMA_SKILLS_ADDITIONAL_PATHS",
+            "/opt/xzatoma/skills:./custom_skills",
+        );
+        std::env::set_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS", "64");
+        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES", "400");
+        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH", "3");
+        std::env::set_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES", "16");
+        std::env::set_var(
+            "XZATOMA_SKILLS_TRUST_STORE_PATH",
+            "~/.xzatoma/custom_skills_trust.yaml",
+        );
+
+        let mut config = Config::default();
+        config.apply_env_vars();
+
+        assert!(!config.skills.enabled);
+        assert!(!config.skills.project_enabled);
+        assert!(!config.skills.user_enabled);
+        assert!(!config.skills.activation_tool_enabled);
+        assert!(!config.skills.project_trust_required);
+        assert!(config.skills.allow_custom_paths_without_trust);
+        assert!(!config.skills.strict_frontmatter);
+        assert_eq!(
+            config.skills.additional_paths,
+            vec![
+                "/opt/xzatoma/skills".to_string(),
+                "./custom_skills".to_string()
+            ]
+        );
+        assert_eq!(config.skills.max_discovered_skills, 64);
+        assert_eq!(config.skills.max_scan_directories, 400);
+        assert_eq!(config.skills.max_scan_depth, 3);
+        assert_eq!(config.skills.catalog_max_entries, 16);
+        assert_eq!(
+            config.skills.trust_store_path,
+            Some("~/.xzatoma/custom_skills_trust.yaml".to_string())
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_SKILLS_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_PROJECT_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_USER_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED");
+            std::env::remove_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED");
+            std::env::remove_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST");
+            std::env::remove_var("XZATOMA_SKILLS_STRICT_FRONTMATTER");
+            std::env::remove_var("XZATOMA_SKILLS_ADDITIONAL_PATHS");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES");
+            std::env::remove_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH");
+            std::env::remove_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES");
+            std::env::remove_var("XZATOMA_SKILLS_TRUST_STORE_PATH");
+        }
     }
 
     #[test]

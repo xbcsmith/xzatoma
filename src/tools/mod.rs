@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
+pub mod activate_skill;
 pub mod copy_path;
 pub mod create_directory;
 pub mod delete_path;

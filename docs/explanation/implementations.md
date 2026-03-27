@@ -119,6 +119,38 @@ features and architecture.
   Phase 5: Error handling and user feedback for mention-based content loading
   (structured `LoadError` types, graceful degradation with placeholders, CLI
   warnings and suggestions, tests, and documentation)
+
+- **[agent_skills_phase1_implementation.md](agent_skills_phase1_implementation.md)** -
+  Phase 1: Skill Discovery and Parsing Foundation - added `skills` module
+  foundation, `SkillsConfig`, deterministic skill discovery roots and
+  precedence rules, `SKILL.md` parsing and validation, diagnostics for invalid
+  and shadowed skills, catalog foundation, tests, and configuration examples
+
+- **[agent_skills_phase2_implementation.md](agent_skills_phase2_implementation.md)** -
+  Phase 2: Skill Catalog Disclosure and Prompt Integration - added disclosure
+  rendering, visibility filtering, trust-gated catalog disclosure, startup
+  prompt integration for chat and run flows, disclosure tests, and
+  implementation documentation
+
+- **[agent_skills_phase3_implementation.md](agent_skills_phase3_implementation.md)** -
+  Phase 3: Skill Activation and Active-Skill Registry - added
+  `ActiveSkillRegistry`, `ActiveSkill`, and `activate_skill` tool foundation,
+  activation deduplication, active-skill prompt injection support, runtime
+  registration helpers, and activation/tool integration tests
+
+- **[agent_skills_phase4_implementation.md](agent_skills_phase4_implementation.md)** -
+  Phase 4: Skill Resource Access, Trust Enforcement, and Lifecycle Management -
+  added persistent trust store support, trust-backed disclosure filtering,
+  resource resolution and enumeration constrained to the skill root,
+  session-local active skill lifecycle behavior, and trust/resource/lifecycle
+  test coverage
+
+- **[agent_skills_implementation.md](agent_skills_implementation.md)** -
+  Phase 5: Configuration, CLI, Documentation, and Hardening - completed the
+  `skills` CLI command surface, hardening for skills configuration and trust
+  operations, configuration examples, Diataxis documentation set, and
+  integration coverage for config and CLI behavior
+
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
   guides for managing and switching models)

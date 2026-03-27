@@ -25,6 +25,11 @@ use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
+use crate::skills::{
+    build_skill_disclosure_section, discover_skills, render_skill_catalog, ActiveSkillRegistry,
+    SkillCatalog, SkillRecord,
+};
+use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
@@ -49,6 +54,9 @@ pub mod replay;
 
 // MCP server management commands
 pub mod mcp;
+
+// Skills management commands
+pub mod skills;
 
 /// Detect if a user prompt requests subagent functionality
 ///
@@ -85,6 +93,281 @@ pub fn should_enable_subagents(prompt: &str) -> bool {
         || lower.contains("parallel agent")
         || lower.contains("agent delegation")
         || lower.contains("use agent")
+}
+
+/// Returns `true` if the given skill is visible for startup disclosure.
+///
+/// Visibility rules for Phase 2:
+///
+/// - invalid skills are already excluded by discovery
+/// - project skills require trust when `skills.project_trust_required == true`
+/// - user skills do not require project trust
+/// - custom paths require trust unless
+///   `skills.allow_custom_paths_without_trust == true`
+///
+/// # Arguments
+///
+/// * `config` - Global configuration
+/// * `record` - Valid discovered skill
+///
+/// # Returns
+///
+/// Returns `true` if the skill should be disclosed to the model.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use std::collections::HashSet;
+/// use std::path::{Path, PathBuf};
+/// use xzatoma::commands::is_skill_visible_for_disclosure;
+/// use xzatoma::config::Config;
+/// use xzatoma::skills::{SkillMetadata, SkillRecord, SkillSourceScope};
+///
+/// let config = Config::default();
+/// let record = SkillRecord {
+///     metadata: SkillMetadata {
+///         name: "example_skill".to_string(),
+///         description: "Example".to_string(),
+///         license: None,
+///         compatibility: None,
+///         metadata: BTreeMap::new(),
+///         allowed_tools_raw: None,
+///         allowed_tools: Vec::new(),
+///     },
+///     skill_dir: PathBuf::from("/tmp/example_skill"),
+///     skill_file: PathBuf::from("/tmp/example_skill/SKILL.md"),
+///     source_scope: SkillSourceScope::UserClientSpecific,
+///     source_order: 0,
+///     body: "Body".to_string(),
+/// };
+///
+/// assert!(is_skill_visible_for_disclosure(
+///     &config,
+///     &record,
+///     Path::new("."),
+///     &HashSet::new(),
+/// ));
+/// ```
+pub fn is_skill_visible_for_disclosure(
+    config: &Config,
+    record: &SkillRecord,
+    working_dir: &Path,
+    trusted_paths: &std::collections::HashSet<std::path::PathBuf>,
+) -> bool {
+    crate::skills::disclosure::is_skill_visible(record, &config.skills, working_dir, trusted_paths)
+}
+
+/// Builds the startup skill disclosure block for the current session.
+///
+/// This helper discovers skills, filters them by disclosure visibility rules,
+/// enforces `catalog_max_entries`, and renders the disclosure block that can be
+/// injected into the conversation before the first provider call.
+///
+/// # Arguments
+///
+/// * `config` - Global configuration
+/// * `working_dir` - Current working directory
+///
+/// # Returns
+///
+/// Returns a rendered disclosure block when at least one valid visible skill
+/// exists, otherwise `None`.
+///
+/// # Errors
+///
+/// Returns an error if skill discovery fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use xzatoma::commands::build_startup_skill_disclosure;
+/// use xzatoma::config::Config;
+///
+/// let disclosure = build_startup_skill_disclosure(&Config::default(), Path::new("."))?;
+/// let _ = disclosure;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn build_startup_skill_disclosure(
+    config: &Config,
+    working_dir: &Path,
+) -> Result<Option<String>> {
+    if !config.skills.enabled {
+        return Ok(None);
+    }
+
+    let discovery = discover_skills(&config.skills, working_dir)?;
+    let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
+    let rendered_catalog = render_skill_catalog(
+        &discovery.catalog,
+        &config.skills,
+        working_dir,
+        &trusted_paths,
+    );
+    let disclosure = build_skill_disclosure_section(
+        &discovery.catalog,
+        &discovery.invalid_diagnostics,
+        &config.skills,
+        working_dir,
+        &trusted_paths,
+    );
+
+    if rendered_catalog.is_empty() {
+        Ok(None)
+    } else {
+        Ok(disclosure.filter(|section| !section.trim().is_empty()))
+    }
+}
+
+/// Builds the visible startup skill catalog for activation and disclosure.
+///
+/// This helper discovers valid skills, applies Phase 2 visibility filtering, and
+/// returns a catalog containing only valid visible skills. The returned catalog
+/// is suitable for `activate_skill` registration and startup disclosure.
+///
+/// # Arguments
+///
+/// * `config` - Global configuration
+/// * `working_dir` - Current working directory
+///
+/// # Returns
+///
+/// Returns a valid visible skill catalog for the current session.
+///
+/// # Errors
+///
+/// Returns an error if discovery or catalog construction fails.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use xzatoma::commands::build_visible_skill_catalog;
+/// use xzatoma::config::Config;
+///
+/// let catalog = build_visible_skill_catalog(&Config::default(), Path::new("."))?;
+/// let _ = catalog;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn build_visible_skill_catalog(config: &Config, working_dir: &Path) -> Result<SkillCatalog> {
+    if !config.skills.enabled {
+        return Ok(SkillCatalog::new());
+    }
+
+    let discovery = discover_skills(&config.skills, working_dir)?;
+    let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
+    let visible_records = crate::skills::trust::filter_visible_skill_records(
+        &discovery.catalog,
+        &config.skills,
+        working_dir,
+        &trusted_paths,
+    );
+
+    SkillCatalog::from_records(visible_records)
+}
+
+/// Registers the `activate_skill` tool when visible skills exist and the
+/// activation tool feature is enabled.
+///
+/// # Arguments
+///
+/// * `tools` - Tool registry for the current session
+/// * `config` - Global configuration
+/// * `visible_catalog` - Visible valid skills available for activation
+/// * `active_skill_registry` - Shared active-skill registry for the session
+///
+/// # Returns
+///
+/// Returns `Ok(true)` if the tool was registered, otherwise `Ok(false)`.
+///
+/// # Errors
+///
+/// Returns an error if the tool cannot be initialized.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::sync::{Arc, Mutex};
+/// use xzatoma::commands::{build_visible_skill_catalog, register_activate_skill_tool};
+/// use xzatoma::config::Config;
+/// use xzatoma::skills::ActiveSkillRegistry;
+/// use xzatoma::tools::ToolRegistry;
+///
+/// let config = Config::default();
+/// let catalog = build_visible_skill_catalog(&config, Path::new("."))?;
+/// let registry = Arc::new(Mutex::new(ActiveSkillRegistry::new()));
+/// let mut tools = ToolRegistry::new();
+///
+/// let _registered = register_activate_skill_tool(&mut tools, &config, catalog, registry)?;
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn register_activate_skill_tool(
+    tools: &mut ToolRegistry,
+    config: &Config,
+    visible_catalog: SkillCatalog,
+    active_skill_registry: Arc<std::sync::Mutex<ActiveSkillRegistry>>,
+) -> Result<bool> {
+    if !config.skills.enabled
+        || !config.skills.activation_tool_enabled
+        || visible_catalog.is_empty()
+    {
+        return Ok(false);
+    }
+
+    let visible_skill_names = visible_catalog
+        .names()
+        .into_iter()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+
+    let tool = ActivateSkillTool::new(
+        Arc::new(visible_catalog),
+        active_skill_registry,
+        visible_skill_names,
+    );
+    tools.register("activate_skill", Arc::new(tool));
+
+    Ok(true)
+}
+
+/// Builds the prompt-injection block for currently active skills.
+///
+/// This keeps active skill content out of `Conversation.messages` until prompt
+/// assembly time.
+///
+/// # Arguments
+///
+/// * `active_skill_registry` - Shared active-skill registry
+///
+/// # Returns
+///
+/// Returns `Some(String)` when active skills exist, otherwise `None`.
+///
+/// # Errors
+///
+/// Returns an error if the registry lock cannot be acquired.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::{Arc, Mutex};
+/// use xzatoma::commands::build_active_skill_prompt_injection;
+/// use xzatoma::skills::ActiveSkillRegistry;
+///
+/// let registry = Arc::new(Mutex::new(ActiveSkillRegistry::new()));
+/// let prompt = build_active_skill_prompt_injection(&registry)?;
+/// assert!(prompt.is_none());
+/// # Ok::<(), anyhow::Error>(())
+/// ```
+pub fn build_active_skill_prompt_injection(
+    active_skill_registry: &Arc<std::sync::Mutex<ActiveSkillRegistry>>,
+) -> Result<Option<String>> {
+    let registry = active_skill_registry
+        .lock()
+        .map_err(|_| XzatomaError::Internal("Failed to lock active skill registry".to_string()))?;
+    Ok(registry.render_for_prompt_injection())
 }
 
 // Chat command handler
@@ -136,6 +419,9 @@ pub mod chat {
             .unwrap_or(&config.provider.provider_type);
 
         let working_dir = std::env::current_dir()?;
+        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
+        let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
+        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         // Initialize mode state from command-line arguments
         // Defaults: Planning mode, AlwaysConfirm (safe) safety mode
@@ -151,6 +437,12 @@ pub mod chat {
 
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
+        let _activate_skill_registered = register_activate_skill_tool(
+            &mut tools,
+            &config,
+            visible_skill_catalog,
+            Arc::clone(&active_skill_registry),
+        )?;
 
         // Build MCP client manager if auto_connect is enabled and servers are configured.
         // The manager Arc must stay alive for the entire duration of run_chat so that
@@ -253,12 +545,36 @@ pub mod chat {
                             config.agent.conversation.min_retain_turns,
                             config.agent.conversation.prune_threshold as f64,
                         );
-                        Agent::with_conversation_and_shared_provider(
+                        let mut agent = Agent::with_conversation_and_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
                             conversation,
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            if !agent.conversation().messages().iter().any(|message| {
+                                message.role == "system"
+                                    && message
+                                        .content
+                                        .as_deref()
+                                        .map(|content| content == disclosure)
+                                        .unwrap_or(false)
+                            }) {
+                                agent
+                                    .conversation_mut()
+                                    .add_system_message(disclosure.clone());
+                            }
+                        }
+
+                        let mut transient_system_messages = Vec::new();
+                        if let Some(active_skill_prompt) =
+                            build_active_skill_prompt_injection(&active_skill_registry)?
+                        {
+                            transient_system_messages.push(active_skill_prompt);
+                        }
+                        agent.set_transient_system_messages(transient_system_messages);
+
+                        agent
                     }
                     Ok(None) => {
                         println!(
@@ -266,20 +582,50 @@ pub mod chat {
                             format!("Conversation {} not found, starting new one.", resume_id)
                                 .yellow()
                         );
-                        Agent::new_from_shared_provider(
+                        let mut agent = Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            agent
+                                .conversation_mut()
+                                .add_system_message(disclosure.clone());
+                        }
+
+                        let mut transient_system_messages = Vec::new();
+                        if let Some(active_skill_prompt) =
+                            build_active_skill_prompt_injection(&active_skill_registry)?
+                        {
+                            transient_system_messages.push(active_skill_prompt);
+                        }
+                        agent.set_transient_system_messages(transient_system_messages);
+
+                        agent
                     }
                     Err(e) => {
                         tracing::error!("Failed to load conversation: {}", e);
                         println!("{}", "Failed to load conversation, starting new one.".red());
-                        Agent::new_from_shared_provider(
+                        let mut agent = Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?
+                        )?;
+                        if let Some(disclosure) = &skill_disclosure {
+                            agent
+                                .conversation_mut()
+                                .add_system_message(disclosure.clone());
+                        }
+
+                        let mut transient_system_messages = Vec::new();
+                        if let Some(active_skill_prompt) =
+                            build_active_skill_prompt_injection(&active_skill_registry)?
+                        {
+                            transient_system_messages.push(active_skill_prompt);
+                        }
+                        agent.set_transient_system_messages(transient_system_messages);
+
+                        agent
                     }
                 }
             } else {
@@ -287,10 +633,48 @@ pub mod chat {
                     "{}",
                     "Storage not available, starting new conversation.".yellow()
                 );
-                Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
+                let mut agent = Agent::new_from_shared_provider(
+                    Arc::clone(&provider),
+                    tools,
+                    config.agent.clone(),
+                )?;
+                if let Some(disclosure) = &skill_disclosure {
+                    agent
+                        .conversation_mut()
+                        .add_system_message(disclosure.clone());
+                }
+
+                let mut transient_system_messages = Vec::new();
+                if let Some(active_skill_prompt) =
+                    build_active_skill_prompt_injection(&active_skill_registry)?
+                {
+                    transient_system_messages.push(active_skill_prompt);
+                }
+                agent.set_transient_system_messages(transient_system_messages);
+
+                agent
             }
         } else {
-            Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
+            let mut agent = Agent::new_from_shared_provider(
+                Arc::clone(&provider),
+                tools,
+                config.agent.clone(),
+            )?;
+            if let Some(disclosure) = &skill_disclosure {
+                agent
+                    .conversation_mut()
+                    .add_system_message(disclosure.clone());
+            }
+
+            let mut transient_system_messages = Vec::new();
+            if let Some(active_skill_prompt) =
+                build_active_skill_prompt_injection(&active_skill_registry)?
+            {
+                transient_system_messages.push(active_skill_prompt);
+            }
+            agent.set_transient_system_messages(transient_system_messages);
+
+            agent
         };
 
         // Create readline instance
@@ -1576,6 +1960,9 @@ pub mod r#run {
 
         // Build tools & agent
         let working_dir = std::env::current_dir()?;
+        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
+        let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
+        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         if allow_dangerous {
             tracing::warn!("Dangerous commands are allowed for this run: allow_dangerous=true");
@@ -1599,6 +1986,12 @@ pub mod r#run {
             .with_tools_config(config.agent.tools.clone())
             .with_terminal_config(config.agent.terminal.clone())
             .build()?;
+        let _activate_skill_registered = register_activate_skill_tool(
+            &mut tools,
+            &config,
+            visible_skill_catalog,
+            Arc::clone(&active_skill_registry),
+        )?;
 
         // Build MCP client manager if auto_connect is enabled and servers are configured.
         // The manager Arc must stay alive for the entire duration of run_plan_with_options
@@ -1658,6 +2051,20 @@ pub mod r#run {
                 return Err(XzatomaError::Config(format!("Unknown provider: {}", other)).into());
             }
         };
+
+        if let Some(disclosure) = &skill_disclosure {
+            agent
+                .conversation_mut()
+                .add_system_message(disclosure.clone());
+        }
+
+        let mut transient_system_messages = Vec::new();
+        if let Some(active_skill_prompt) =
+            build_active_skill_prompt_injection(&active_skill_registry)?
+        {
+            transient_system_messages.push(active_skill_prompt);
+        }
+        agent.set_transient_system_messages(transient_system_messages);
 
         // Compose a textual task to send to the agent
         let task = if let Some(path) = plan_path {

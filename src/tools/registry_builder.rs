@@ -5,6 +5,9 @@
 //!
 //! In Planning mode, only read-only tools are registered.
 //! In Write mode, all tools are registered.
+//!
+//! When provided by the command layer, the builder may also register the
+//! synthetic `activate_skill` tool after standard mode-aware tool setup.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,6 +17,7 @@ use tracing::debug;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{TerminalConfig, ToolsConfig};
 use crate::error::Result;
+use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::copy_path::CopyPathTool;
 use crate::tools::create_directory::CreateDirectoryTool;
 use crate::tools::delete_path::DeletePathTool;
@@ -58,6 +62,8 @@ pub struct ToolRegistryBuilder {
     tools_config: ToolsConfig,
     /// Terminal configuration
     terminal_config: TerminalConfig,
+    /// Optional activate_skill tool registration
+    activate_skill_tool: Option<Arc<dyn ToolExecutor>>,
 }
 
 impl ToolRegistryBuilder {
@@ -79,6 +85,7 @@ impl ToolRegistryBuilder {
             working_dir,
             tools_config: ToolsConfig::default(),
             terminal_config: TerminalConfig::default(),
+            activate_skill_tool: None,
         }
     }
 
@@ -107,6 +114,23 @@ impl ToolRegistryBuilder {
     /// Returns self for method chaining
     pub fn with_terminal_config(mut self, config: TerminalConfig) -> Self {
         self.terminal_config = config;
+        self
+    }
+
+    /// Register an optional `activate_skill` tool.
+    ///
+    /// The tool is registered only when explicitly provided by the command
+    /// layer after skill discovery and visibility filtering.
+    ///
+    /// # Arguments
+    ///
+    /// * `tool` - Optional activate_skill tool executor
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_activate_skill_tool(mut self, tool: Option<Arc<dyn ToolExecutor>>) -> Self {
+        self.activate_skill_tool = tool;
         self
     }
 
@@ -225,6 +249,8 @@ impl ToolRegistryBuilder {
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
 
+        self.register_activate_skill_tool(&mut registry);
+
         Ok(registry)
     }
 
@@ -319,7 +345,15 @@ impl ToolRegistryBuilder {
         let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
         registry.register("terminal", terminal_tool_executor);
 
+        self.register_activate_skill_tool(&mut registry);
+
         Ok(registry)
+    }
+
+    fn register_activate_skill_tool(&self, registry: &mut ToolRegistry) {
+        if let Some(tool) = &self.activate_skill_tool {
+            registry.register("activate_skill", Arc::clone(tool));
+        }
     }
 
     /// Get the current chat mode

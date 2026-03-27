@@ -53,6 +53,7 @@ pub struct Agent {
     tools: ToolRegistry,
     config: AgentConfig,
     accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
+    transient_system_messages: Vec<String>,
 }
 
 impl Agent {
@@ -95,6 +96,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -140,6 +142,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -215,6 +218,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -287,6 +291,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -351,6 +356,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -430,6 +436,7 @@ impl Agent {
             tools,
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
+            transient_system_messages: Vec::new(),
         })
     }
 
@@ -521,9 +528,10 @@ impl Agent {
 
             // Get completion from provider
             let tool_definitions = self.tools.all_definitions();
+            let prompt_messages = self.messages_with_transient_system_messages();
             let completion_response = self
                 .provider
-                .complete(self.conversation.messages(), &tool_definitions)
+                .complete(&prompt_messages, &tool_definitions)
                 .await?;
 
             let message = completion_response.message;
@@ -742,6 +750,57 @@ impl Agent {
     /// Returns a mutable reference to the conversation
     pub fn conversation_mut(&mut self) -> &mut Conversation {
         &mut self.conversation
+    }
+
+    /// Sets transient system messages used only during prompt assembly.
+    ///
+    /// These messages are appended to the provider input immediately before each
+    /// completion request and are not stored in `Conversation.messages`.
+    pub fn set_transient_system_messages(&mut self, messages: Vec<String>) {
+        self.transient_system_messages = messages;
+    }
+
+    /// Clears all transient system messages.
+    ///
+    /// This removes any runtime-only prompt injections without modifying
+    /// `Conversation.messages`.
+    pub fn clear_transient_system_messages(&mut self) {
+        self.transient_system_messages.clear();
+    }
+
+    /// Returns the current transient system messages.
+    pub fn transient_system_messages(&self) -> &[String] {
+        &self.transient_system_messages
+    }
+
+    fn messages_with_transient_system_messages(&self) -> Vec<Message> {
+        if self.transient_system_messages.is_empty() {
+            return self.conversation.messages().to_vec();
+        }
+
+        let mut messages = Vec::with_capacity(
+            self.conversation.messages().len() + self.transient_system_messages.len(),
+        );
+
+        let mut inserted = false;
+        for message in self.conversation.messages() {
+            if !inserted && message.role != "system" {
+                for transient in &self.transient_system_messages {
+                    messages.push(Message::system(transient.clone()));
+                }
+                inserted = true;
+            }
+
+            messages.push(message.clone());
+        }
+
+        if !inserted {
+            for transient in &self.transient_system_messages {
+                messages.push(Message::system(transient.clone()));
+            }
+        }
+
+        messages
     }
 
     /// Returns a reference to the provider
