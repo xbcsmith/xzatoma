@@ -186,6 +186,13 @@ pub enum Commands {
         command: crate::commands::mcp::McpCommands,
     },
 
+    /// ACP server management commands
+    Acp {
+        /// ACP subcommand to execute
+        #[command(subcommand)]
+        command: AcpCommand,
+    },
+
     /// Manage agent skills
     Skills {
         /// Skills subcommand to execute
@@ -315,6 +322,50 @@ pub enum ModelCommand {
     },
 }
 
+/// ACP server management subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum AcpCommand {
+    /// Start the ACP HTTP discovery server
+    Serve {
+        /// Override bind host for the ACP server
+        #[arg(long)]
+        host: Option<String>,
+
+        /// Override bind port for the ACP server
+        #[arg(long)]
+        port: Option<u16>,
+
+        /// Override ACP route base path in versioned mode
+        #[arg(long)]
+        base_path: Option<String>,
+
+        /// Enable ACP root-compatible routing
+        #[arg(long)]
+        root_compatible: bool,
+    },
+
+    /// Print the effective ACP configuration after file and environment overrides
+    Config,
+
+    /// List active or recent ACP runs for inspection
+    Runs {
+        /// Optional session identifier to filter runs
+        #[arg(long)]
+        session_id: Option<String>,
+
+        /// Maximum number of runs to display
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Validate ACP manifest and configuration compatibility
+    Validate {
+        /// Optional manifest path to validate
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
+}
+
 /// History management subcommands
 #[derive(Subcommand, Debug, Clone)]
 pub enum HistoryCommand {
@@ -371,6 +422,7 @@ impl Default for Cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn test_cli_default() {
@@ -383,6 +435,124 @@ mod tests {
             assert_eq!(provider, Some("copilot".to_string()));
         } else {
             panic!("Expected default command to be Auth");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_serve_defaults() {
+        let cli = Cli::parse_from(["xzatoma", "acp", "serve"]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Serve {
+                    host,
+                    port,
+                    base_path,
+                    root_compatible,
+                } => {
+                    assert!(host.is_none());
+                    assert!(port.is_none());
+                    assert!(base_path.is_none());
+                    assert!(!root_compatible);
+                }
+                other => panic!("expected ACP serve command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_serve_overrides() {
+        let cli = Cli::parse_from([
+            "xzatoma",
+            "acp",
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9000",
+            "--base-path",
+            "/acp",
+            "--root-compatible",
+        ]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Serve {
+                    host,
+                    port,
+                    base_path,
+                    root_compatible,
+                } => {
+                    assert_eq!(host.as_deref(), Some("0.0.0.0"));
+                    assert_eq!(port, Some(9000));
+                    assert_eq!(base_path.as_deref(), Some("/acp"));
+                    assert!(root_compatible);
+                }
+                other => panic!("expected ACP serve command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_config_subcommand() {
+        let cli = Cli::parse_from(["xzatoma", "acp", "config"]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Config => {}
+                other => panic!("expected ACP config command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_runs_subcommand_with_filters() {
+        let cli = Cli::parse_from([
+            "xzatoma",
+            "acp",
+            "runs",
+            "--session-id",
+            "session_123",
+            "--limit",
+            "5",
+        ]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Runs { session_id, limit } => {
+                    assert_eq!(session_id.as_deref(), Some("session_123"));
+                    assert_eq!(limit, 5);
+                }
+                other => panic!("expected ACP runs command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_validate_subcommand() {
+        let cli = Cli::parse_from([
+            "xzatoma",
+            "acp",
+            "validate",
+            "--manifest",
+            "docs/reference/acp_manifest.json",
+        ]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Validate { manifest } => {
+                    assert_eq!(
+                        manifest,
+                        Some(PathBuf::from("docs/reference/acp_manifest.json"))
+                    );
+                }
+                other => panic!("expected ACP validate command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
         }
     }
 

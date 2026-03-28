@@ -25,6 +25,9 @@ pub struct Config {
     /// MCP client configuration
     #[serde(default)]
     pub mcp: McpConfig,
+    /// ACP server configuration
+    #[serde(default)]
+    pub acp: AcpConfig,
     /// Skills discovery and parsing configuration
     #[serde(default)]
     pub skills: SkillsConfig,
@@ -201,6 +204,146 @@ impl Default for AgentConfig {
             terminal: TerminalConfig::default(),
             chat: ChatConfig::default(),
             subagent: SubagentConfig::default(),
+        }
+    }
+}
+
+/// ACP server configuration.
+///
+/// Controls whether the ACP HTTP server is enabled, how it binds to the
+/// network, which route layout it exposes, and which default execution
+/// behavior it should advertise for future ACP run creation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcpConfig {
+    /// Enable the ACP HTTP server.
+    #[serde(default = "default_acp_enabled")]
+    pub enabled: bool,
+
+    /// Bind host for the ACP HTTP server.
+    #[serde(default = "default_acp_host")]
+    pub host: String,
+
+    /// Bind port for the ACP HTTP server.
+    #[serde(default = "default_acp_port")]
+    pub port: u16,
+
+    /// Route compatibility mode for ACP discovery endpoints.
+    #[serde(default)]
+    pub compatibility_mode: AcpCompatibilityMode,
+
+    /// Versioned base path used when `compatibility_mode` is `Versioned`.
+    #[serde(default = "default_acp_base_path")]
+    pub base_path: String,
+
+    /// Default ACP run mode to advertise for future run lifecycle support.
+    #[serde(default)]
+    pub default_run_mode: AcpDefaultRunMode,
+
+    /// Optional persistence tuning for future ACP session and event storage.
+    #[serde(default)]
+    pub persistence: AcpPersistenceConfig,
+}
+
+fn default_acp_enabled() -> bool {
+    false
+}
+
+fn default_acp_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_acp_port() -> u16 {
+    8765
+}
+
+fn default_acp_base_path() -> String {
+    "/api/v1/acp".to_string()
+}
+
+impl Default for AcpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_acp_enabled(),
+            host: default_acp_host(),
+            port: default_acp_port(),
+            compatibility_mode: AcpCompatibilityMode::default(),
+            base_path: default_acp_base_path(),
+            default_run_mode: AcpDefaultRunMode::default(),
+            persistence: AcpPersistenceConfig::default(),
+        }
+    }
+}
+
+/// ACP route compatibility mode.
+///
+/// `Versioned` serves ACP endpoints beneath a configurable versioned base path.
+/// `RootCompatible` reserves ACP-spec-style root paths such as `/ping` and
+/// `/agents`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpCompatibilityMode {
+    /// Serve ACP routes beneath a versioned base path such as `/api/v1/acp`.
+    #[default]
+    Versioned,
+    /// Serve ACP routes at ACP root-compatible paths such as `/ping`.
+    RootCompatible,
+}
+
+/// ACP default run mode configuration.
+///
+/// This value is configuration-only in Phase 2 and gives later ACP run
+/// lifecycle phases a stable place to read default behavior from.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpDefaultRunMode {
+    /// Prefer synchronous completion when possible.
+    Sync,
+    /// Prefer asynchronous acceptance with later polling or streaming.
+    #[default]
+    Async,
+    /// Prefer streaming output when supported by the transport.
+    Streaming,
+}
+
+/// ACP persistence tuning configuration.
+///
+/// Phase 2 stores only configuration for future ACP persistence support.
+/// Validation still ensures any provided limits are sensible.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcpPersistenceConfig {
+    /// Enable persistence-oriented ACP state retention.
+    #[serde(default = "default_acp_persistence_enabled")]
+    pub enabled: bool,
+
+    /// Maximum number of retained events per run when persistence is enabled.
+    #[serde(default = "default_acp_max_events_per_run")]
+    pub max_events_per_run: usize,
+
+    /// Maximum number of retained completed runs when persistence is enabled.
+    #[serde(default = "default_acp_max_completed_runs")]
+    pub max_completed_runs: usize,
+}
+
+fn default_acp_persistence_enabled() -> bool {
+    false
+}
+
+fn default_acp_max_events_per_run() -> usize {
+    1000
+}
+
+fn default_acp_max_completed_runs() -> usize {
+    1000
+}
+
+impl Default for AcpPersistenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_acp_persistence_enabled(),
+            max_events_per_run: default_acp_max_events_per_run(),
+            max_completed_runs: default_acp_max_completed_runs(),
         }
     }
 }
@@ -808,6 +951,7 @@ impl Config {
             agent: AgentConfig::default(),
             watcher: WatcherConfig::default(),
             mcp: McpConfig::default(),
+            acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
         }
     }
@@ -1298,6 +1442,132 @@ impl Config {
                 "Env override: XZATOMA_MCP_AUTO_CONNECT"
             );
         }
+
+        // ---------------------------------------------------------------------
+        // ACP environment variable overrides
+        // ---------------------------------------------------------------------
+        if let Ok(enabled) = std::env::var("XZATOMA_ACP_ENABLED") {
+            match parse_env_bool(&enabled) {
+                Some(value) => {
+                    self.acp.enabled = value;
+                    tracing::debug!(enabled = value, "Env override: XZATOMA_ACP_ENABLED");
+                }
+                None => tracing::warn!("Invalid XZATOMA_ACP_ENABLED: {}", enabled),
+            }
+        }
+
+        if let Ok(host) = std::env::var("XZATOMA_ACP_HOST") {
+            self.acp.host = host.clone();
+            tracing::debug!(host = %host, "Env override: XZATOMA_ACP_HOST");
+        }
+
+        if let Ok(port) = std::env::var("XZATOMA_ACP_PORT") {
+            if let Ok(value) = port.parse::<u16>() {
+                self.acp.port = value;
+                tracing::debug!(port = value, "Env override: XZATOMA_ACP_PORT");
+            } else {
+                tracing::warn!("Invalid XZATOMA_ACP_PORT: {}", port);
+            }
+        }
+
+        if let Ok(mode) = std::env::var("XZATOMA_ACP_COMPATIBILITY_MODE") {
+            match mode.to_ascii_lowercase().as_str() {
+                "versioned" => {
+                    self.acp.compatibility_mode = AcpCompatibilityMode::Versioned;
+                    tracing::debug!(
+                        compatibility_mode = "versioned",
+                        "Env override: XZATOMA_ACP_COMPATIBILITY_MODE"
+                    );
+                }
+                "root_compatible" => {
+                    self.acp.compatibility_mode = AcpCompatibilityMode::RootCompatible;
+                    tracing::debug!(
+                        compatibility_mode = "root_compatible",
+                        "Env override: XZATOMA_ACP_COMPATIBILITY_MODE"
+                    );
+                }
+                _ => {
+                    tracing::warn!("Invalid XZATOMA_ACP_COMPATIBILITY_MODE: {}", mode);
+                }
+            }
+        }
+
+        if let Ok(base_path) = std::env::var("XZATOMA_ACP_BASE_PATH") {
+            self.acp.base_path = base_path.clone();
+            tracing::debug!(base_path = %base_path, "Env override: XZATOMA_ACP_BASE_PATH");
+        }
+
+        if let Ok(run_mode) = std::env::var("XZATOMA_ACP_DEFAULT_RUN_MODE") {
+            match run_mode.to_ascii_lowercase().as_str() {
+                "sync" => {
+                    self.acp.default_run_mode = AcpDefaultRunMode::Sync;
+                    tracing::debug!(
+                        default_run_mode = "sync",
+                        "Env override: XZATOMA_ACP_DEFAULT_RUN_MODE"
+                    );
+                }
+                "async" => {
+                    self.acp.default_run_mode = AcpDefaultRunMode::Async;
+                    tracing::debug!(
+                        default_run_mode = "async",
+                        "Env override: XZATOMA_ACP_DEFAULT_RUN_MODE"
+                    );
+                }
+                "streaming" => {
+                    self.acp.default_run_mode = AcpDefaultRunMode::Streaming;
+                    tracing::debug!(
+                        default_run_mode = "streaming",
+                        "Env override: XZATOMA_ACP_DEFAULT_RUN_MODE"
+                    );
+                }
+                _ => {
+                    tracing::warn!("Invalid XZATOMA_ACP_DEFAULT_RUN_MODE: {}", run_mode);
+                }
+            }
+        }
+
+        if let Ok(enabled) = std::env::var("XZATOMA_ACP_PERSISTENCE_ENABLED") {
+            match parse_env_bool(&enabled) {
+                Some(value) => {
+                    self.acp.persistence.enabled = value;
+                    tracing::debug!(
+                        persistence_enabled = value,
+                        "Env override: XZATOMA_ACP_PERSISTENCE_ENABLED"
+                    );
+                }
+                None => tracing::warn!("Invalid XZATOMA_ACP_PERSISTENCE_ENABLED: {}", enabled),
+            }
+        }
+
+        if let Ok(max_events_per_run) = std::env::var("XZATOMA_ACP_MAX_EVENTS_PER_RUN") {
+            if let Ok(value) = max_events_per_run.parse::<usize>() {
+                self.acp.persistence.max_events_per_run = value;
+                tracing::debug!(
+                    max_events_per_run = value,
+                    "Env override: XZATOMA_ACP_MAX_EVENTS_PER_RUN"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_MAX_EVENTS_PER_RUN: {}",
+                    max_events_per_run
+                );
+            }
+        }
+
+        if let Ok(max_completed_runs) = std::env::var("XZATOMA_ACP_MAX_COMPLETED_RUNS") {
+            if let Ok(value) = max_completed_runs.parse::<usize>() {
+                self.acp.persistence.max_completed_runs = value;
+                tracing::debug!(
+                    max_completed_runs = value,
+                    "Env override: XZATOMA_ACP_MAX_COMPLETED_RUNS"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_MAX_COMPLETED_RUNS: {}",
+                    max_completed_runs
+                );
+            }
+        }
     }
 
     fn apply_cli_overrides(&mut self, cli: &crate::cli::Cli) {
@@ -1559,7 +1829,7 @@ impl Config {
 
         // Validate MCP configuration
         self.mcp.validate()?;
-
+        self.validate_acp_config()?;
         self.validate_skills_config()?;
 
         Ok(())
@@ -1572,6 +1842,70 @@ impl Config {
     /// Returns true if special commands should be persisted (default is true)
     pub fn should_persist_commands(&self) -> bool {
         self.agent.chat.persist_special_commands
+    }
+
+    fn validate_acp_config(&self) -> Result<()> {
+        if self.acp.host.trim().is_empty() {
+            return Err(XzatomaError::Config("acp.host cannot be empty".to_string()).into());
+        }
+
+        if self.acp.port == 0 {
+            return Err(XzatomaError::Config("acp.port must be greater than 0".to_string()).into());
+        }
+
+        match self.acp.compatibility_mode {
+            AcpCompatibilityMode::Versioned => {
+                if self.acp.base_path.trim().is_empty() {
+                    return Err(
+                        XzatomaError::Config("acp.base_path cannot be empty".to_string()).into(),
+                    );
+                }
+
+                if !self.acp.base_path.starts_with('/') {
+                    return Err(XzatomaError::Config(
+                        "acp.base_path must start with '/'".to_string(),
+                    )
+                    .into());
+                }
+
+                if self.acp.base_path == "/" {
+                    return Err(XzatomaError::Config(
+                        "acp.base_path cannot be '/' in versioned compatibility mode".to_string(),
+                    )
+                    .into());
+                }
+            }
+            AcpCompatibilityMode::RootCompatible => {
+                if self.acp.base_path.trim().is_empty() {
+                    return Err(
+                        XzatomaError::Config("acp.base_path cannot be empty".to_string()).into(),
+                    );
+                }
+
+                if !self.acp.base_path.starts_with('/') {
+                    return Err(XzatomaError::Config(
+                        "acp.base_path must start with '/'".to_string(),
+                    )
+                    .into());
+                }
+            }
+        }
+
+        if self.acp.persistence.max_events_per_run == 0 {
+            return Err(XzatomaError::Config(
+                "acp.persistence.max_events_per_run must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        if self.acp.persistence.max_completed_runs == 0 {
+            return Err(XzatomaError::Config(
+                "acp.persistence.max_completed_runs must be greater than 0".to_string(),
+            )
+            .into());
+        }
+
+        Ok(())
     }
 
     fn validate_skills_config(&self) -> Result<()> {
@@ -1669,6 +2003,29 @@ impl Default for Config {
 mod tests {
     use super::*;
 
+    struct EnvVarGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(original) = &self.original {
+                std::env::set_var(self.key, original);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     #[test]
     fn test_default_config() {
         let config = Config::default();
@@ -1676,6 +2033,18 @@ mod tests {
         assert_eq!(config.agent.max_turns, 50);
         assert_eq!(config.agent.timeout_seconds, 300);
         assert_eq!(config.watcher.watcher_type, WatcherType::XZepr);
+        assert!(!config.acp.enabled);
+        assert_eq!(config.acp.host, "127.0.0.1");
+        assert_eq!(config.acp.port, 8765);
+        assert_eq!(
+            config.acp.compatibility_mode,
+            AcpCompatibilityMode::Versioned
+        );
+        assert_eq!(config.acp.base_path, "/api/v1/acp");
+        assert_eq!(config.acp.default_run_mode, AcpDefaultRunMode::Async);
+        assert!(!config.acp.persistence.enabled);
+        assert_eq!(config.acp.persistence.max_events_per_run, 1000);
+        assert_eq!(config.acp.persistence.max_completed_runs, 1000);
         assert!(config.skills.enabled);
         assert!(config.skills.project_enabled);
         assert!(config.skills.user_enabled);
@@ -1686,6 +2055,84 @@ mod tests {
         assert!(config.skills.activation_tool_enabled);
         assert!(config.skills.project_trust_required);
         assert!(config.skills.strict_frontmatter);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_acp_config() {
+        let _enabled = EnvVarGuard::set("XZATOMA_ACP_ENABLED", "true");
+        let _host = EnvVarGuard::set("XZATOMA_ACP_HOST", "0.0.0.0");
+        let _port = EnvVarGuard::set("XZATOMA_ACP_PORT", "9001");
+        let _compatibility_mode =
+            EnvVarGuard::set("XZATOMA_ACP_COMPATIBILITY_MODE", "root_compatible");
+        let _base_path = EnvVarGuard::set("XZATOMA_ACP_BASE_PATH", "/acp");
+        let _default_run_mode = EnvVarGuard::set("XZATOMA_ACP_DEFAULT_RUN_MODE", "streaming");
+        let _persistence_enabled = EnvVarGuard::set("XZATOMA_ACP_PERSISTENCE_ENABLED", "true");
+        let _max_events_per_run = EnvVarGuard::set("XZATOMA_ACP_MAX_EVENTS_PER_RUN", "500");
+        let _max_completed_runs = EnvVarGuard::set("XZATOMA_ACP_MAX_COMPLETED_RUNS", "250");
+
+        let mut config = Config::default();
+        config.apply_env_vars();
+
+        assert!(config.acp.enabled);
+        assert_eq!(config.acp.host, "0.0.0.0");
+        assert_eq!(config.acp.port, 9001);
+        assert_eq!(
+            config.acp.compatibility_mode,
+            AcpCompatibilityMode::RootCompatible
+        );
+        assert_eq!(config.acp.base_path, "/acp");
+        assert_eq!(config.acp.default_run_mode, AcpDefaultRunMode::Streaming);
+        assert!(config.acp.persistence.enabled);
+        assert_eq!(config.acp.persistence.max_events_per_run, 500);
+        assert_eq!(config.acp.persistence.max_completed_runs, 250);
+    }
+
+    #[test]
+    fn test_config_validation_rejects_empty_acp_host() {
+        let mut config = Config::default();
+        config.acp.host = String::new();
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error.to_string().contains("acp.host cannot be empty"));
+    }
+
+    #[test]
+    fn test_config_validation_rejects_root_base_path_in_versioned_mode() {
+        let mut config = Config::default();
+        config.acp.base_path = "/".to_string();
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error
+            .to_string()
+            .contains("acp.base_path cannot be '/' in versioned compatibility mode"));
+    }
+
+    #[test]
+    fn test_config_validation_accepts_root_compatible_mode_with_custom_base_path() {
+        let mut config = Config::default();
+        config.acp.compatibility_mode = AcpCompatibilityMode::RootCompatible;
+        config.acp.base_path = "/ignored-but-valid".to_string();
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validation_rejects_zero_acp_persistence_limits() {
+        let mut config = Config::default();
+        config.acp.persistence.max_events_per_run = 0;
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error
+            .to_string()
+            .contains("acp.persistence.max_events_per_run must be greater than 0"));
+
+        config.acp.persistence.max_events_per_run = 1000;
+        config.acp.persistence.max_completed_runs = 0;
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error
+            .to_string()
+            .contains("acp.persistence.max_completed_runs must be greater than 0"));
     }
 
     #[test]

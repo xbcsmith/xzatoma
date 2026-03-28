@@ -151,6 +151,12 @@ features and architecture.
   operations, configuration examples, Diataxis documentation set, and
   integration coverage for config and CLI behavior
 
+- **[acp_phase1_implementation.md](acp_phase1_implementation.md)** -
+  Phase 1: ACP Domain Model and Core Abstractions - added the ACP module
+  foundation, protocol-facing manifest/message/run/session/event types,
+  ACP-specific validation and lifecycle abstractions, crate-level ACP error
+  integration, message-to-ACP adapters, and core contract test coverage
+
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
   guides for managing and switching models)

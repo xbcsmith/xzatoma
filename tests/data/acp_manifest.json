@@ -1,0 +1,37 @@
+{
+  "name": "xzatoma",
+  "version": "0.2.0",
+  "displayName": "XZatoma ACP Agent",
+  "description": "ACP-compatible autonomous AI agent server for task execution through conversation.",
+  "capabilities": [
+    "manifest.read",
+    "runs.create",
+    "runs.get",
+    "runs.events",
+    "runs.cancel",
+    "sessions.get",
+    "sessions.resume"
+  ],
+  "metadata": {
+    "implementation": "xzatoma_primary_agent",
+    "language": "rust",
+    "framework": "axum",
+    "supported_input_content_types": "text/plain,application/json",
+    "supported_output_content_types": "text/plain,application/json",
+    "generated_at": "2026-03-28T00:00:00Z"
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "http://127.0.0.1:8765/api/v1/acp/agents/xzatoma",
+      "type": "application/json",
+      "title": "XZatoma ACP manifest"
+    },
+    {
+      "rel": "documentation",
+      "href": "https://github.com/xbcsmith/xzatoma/tree/main/docs",
+      "type": "text/html",
+      "title": "XZatoma documentation"
+    }
+  ]
+}

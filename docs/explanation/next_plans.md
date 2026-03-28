@@ -14,13 +14,15 @@ We are giong to add Agent Skills support to xzatoma. The spec is here https://ag
 
 Write a plan with a phased approach to add Agent Skills support to XZAtoma. THINK HARD and follow the rules in @PLAN.md
 
-PLAN WRITTEN - [Agent Skills Support](./agent_skills_implementation_plan.md)
+COMPLETE - [Agent Skills Support](./agent_skills_implementation_plan.md)
 
 ## Demos
 
 We need demos for Chat, Run, Skills, MCP, Subagents, Vision, and Watcher. Demos should live in subfolders under @demos and include a README.md walking the user through running the demo, any scripts to setup the demo, and any config files required for the demos. Demos should be completely self contained and not need anything outside of the individual demo directory. XZatoma should be properly sandboxed to the demo directory. All created files and content should live in the tmp directory. All output from the demos should be contained in a tmp/output directory. The tmp dirs will include a .gitignore file to prevent any demo data being included in a git commit. All demos should use Ollama models only. Specifically "granite4:3b" except for the vision demo which will require the "granite3.2-vision:2b" model.
 
 Write a plan with a phased approach to create the Demos for XZatoma. THINK HARD and follow the rules in @PLAN.md
+
+ADD ACP to the demos
 
 PLAN WRITTEN - [Demo Plan](./demo_implementation_plan.md)
 
