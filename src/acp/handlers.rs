@@ -14,6 +14,7 @@
 /// let _ = handle_ping;
 /// ```
 pub use crate::acp::server::{
-    handle_agent_by_name, handle_agents, handle_ping, AcpHttpError, AcpHttpErrorBody,
-    AgentsListResponse, AgentsQuery, PingResponse,
+    handle_agent_by_name, handle_agents, handle_create_run, handle_get_run, handle_get_run_events,
+    handle_ping, AcpHttpError, AcpHttpErrorBody, AgentsListResponse, AgentsQuery,
+    CreateRunRequestBody, CreateRunResponseBody, PingResponse, RunEventsResponseBody,
 };
