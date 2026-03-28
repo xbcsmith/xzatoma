@@ -1359,11 +1359,8 @@ impl SqliteStorage {
             .context("Failed to deserialize stored ACP output")
             .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
-        let request = AcpRunCreateRequest {
-            session_id,
-            input,
-            metadata: BTreeMap::new(),
-        };
+        let mut request = AcpRunCreateRequest::new(session_id, input)?;
+        request.metadata = BTreeMap::new();
 
         let run_id = AcpRunId::new(stored.run_id.clone())?;
         let state = parse_run_state(&stored.state)?;

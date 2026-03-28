@@ -343,6 +343,27 @@ pub enum AcpCommand {
         #[arg(long)]
         root_compatible: bool,
     },
+
+    /// Print the effective ACP configuration after file and environment overrides
+    Config,
+
+    /// List active or recent ACP runs for inspection
+    Runs {
+        /// Optional session identifier to filter runs
+        #[arg(long)]
+        session_id: Option<String>,
+
+        /// Maximum number of runs to display
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Validate ACP manifest and configuration compatibility
+    Validate {
+        /// Optional manifest path to validate
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+    },
 }
 
 /// History management subcommands
@@ -434,6 +455,7 @@ mod tests {
                     assert!(base_path.is_none());
                     assert!(!root_compatible);
                 }
+                other => panic!("expected ACP serve command, got {:?}", other),
             },
             other => panic!("expected ACP command, got {:?}", other),
         }
@@ -467,6 +489,68 @@ mod tests {
                     assert_eq!(base_path.as_deref(), Some("/acp"));
                     assert!(root_compatible);
                 }
+                other => panic!("expected ACP serve command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_config_subcommand() {
+        let cli = Cli::parse_from(["xzatoma", "acp", "config"]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Config => {}
+                other => panic!("expected ACP config command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_runs_subcommand_with_filters() {
+        let cli = Cli::parse_from([
+            "xzatoma",
+            "acp",
+            "runs",
+            "--session-id",
+            "session_123",
+            "--limit",
+            "5",
+        ]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Runs { session_id, limit } => {
+                    assert_eq!(session_id.as_deref(), Some("session_123"));
+                    assert_eq!(limit, 5);
+                }
+                other => panic!("expected ACP runs command, got {:?}", other),
+            },
+            other => panic!("expected ACP command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_acp_validate_subcommand() {
+        let cli = Cli::parse_from([
+            "xzatoma",
+            "acp",
+            "validate",
+            "--manifest",
+            "docs/reference/acp_manifest.json",
+        ]);
+
+        match cli.command {
+            Commands::Acp { command } => match command {
+                AcpCommand::Validate { manifest } => {
+                    assert_eq!(
+                        manifest,
+                        Some(PathBuf::from("docs/reference/acp_manifest.json"))
+                    );
+                }
+                other => panic!("expected ACP validate command, got {:?}", other),
             },
             other => panic!("expected ACP command, got {:?}", other),
         }

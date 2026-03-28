@@ -195,8 +195,11 @@ async fn main() -> Result<()> {
         }
         Commands::Acp { command } => {
             tracing::info!("Starting ACP command");
-            match command {
-                AcpCommand::Serve { .. } => {
+            match &command {
+                AcpCommand::Serve { .. }
+                | AcpCommand::Config
+                | AcpCommand::Runs { .. }
+                | AcpCommand::Validate { .. } => {
                     commands::acp::handle_acp(command, config).await?;
                     Ok(())
                 }
