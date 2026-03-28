@@ -6,14 +6,9 @@
 /// execution state, and replay event history without tightly coupling HTTP
 /// routes to agent internals.
 ///
-/// Phase 3 intentionally keeps the runtime simple:
-///
-/// - in-memory run registry
-/// - in-memory ordered event history
-/// - Tokio broadcast channels for live subscribers
-/// - support for sync, async, and streaming-oriented orchestration
-///
-/// Persistence-backed recovery is intentionally deferred to a later phase.
+/// Phase 4 extends the runtime with durable backing through the shared SQLite
+/// storage layer so ACP sessions, runs, events, await state, and cancellation
+/// audit data survive process restarts.
 ///
 /// # Examples
 ///
@@ -42,13 +37,16 @@
 /// ```
 use crate::acp::{
     now_rfc3339, AcpEvent, AcpEventKind, AcpMessage, AcpMessagePart, AcpRole, AcpRun,
-    AcpRunCreateRequest, AcpRunId, AcpRunSession, AcpRunState, AcpSessionId,
+    AcpRunCreateRequest, AcpRunId, AcpRunResumeRequest, AcpRunSession, AcpRunState, AcpSessionId,
 };
 use crate::config::{AcpCompatibilityMode, AcpDefaultRunMode, Config};
 use crate::error::{Result, XzatomaError};
+use crate::storage::{
+    PublicStoredAcpAwaitState, PublicStoredAcpCancellation, PublicStoredAcpRunEvent, SqliteStorage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -472,6 +470,14 @@ pub struct AcpRuntimeRunRecord {
     pub sender: broadcast::Sender<AcpRuntimeEvent>,
     /// Aggregated plain-text prompt used by the current single-agent execution model.
     pub prompt_text: String,
+    /// Optional mapped conversation identifier in the shared history store.
+    pub conversation_id: Option<String>,
+    /// Whether cancellation has been requested for this run.
+    pub cancellation_requested: bool,
+    /// Optional cancellation reason.
+    pub cancellation_reason: Option<String>,
+    /// Await resume payload persisted for later continuation.
+    pub resume_payload: Option<Value>,
 }
 
 impl AcpRuntimeRunRecord {
@@ -484,6 +490,10 @@ impl AcpRuntimeRunRecord {
             completed: false,
             sender,
             prompt_text,
+            conversation_id: None,
+            cancellation_requested: false,
+            cancellation_reason: None,
+            resume_payload: None,
         }
     }
 }
@@ -512,6 +522,7 @@ struct AcpRuntimeState {
 pub struct AcpRuntime {
     config: Config,
     state: Arc<Mutex<AcpRuntimeState>>,
+    storage: Arc<Mutex<Option<SqliteStorage>>>,
 }
 
 impl std::fmt::Debug for AcpRuntime {
@@ -541,10 +552,15 @@ impl AcpRuntime {
     /// assert_eq!(runtime.run_count(), 0);
     /// ```
     pub fn new(config: Config) -> Self {
-        Self {
+        let storage = SqliteStorage::new().ok();
+        let runtime = Self {
             config,
             state: Arc::new(Mutex::new(AcpRuntimeState::default())),
-        }
+            storage: Arc::new(Mutex::new(storage)),
+        };
+
+        let _ = runtime.restore_from_storage();
+        runtime
     }
 
     /// Returns the configured default execution mode.
@@ -564,6 +580,28 @@ impl AcpRuntime {
     /// ```
     pub fn default_mode(&self) -> AcpRuntimeExecuteMode {
         AcpRuntimeExecuteMode::from_default_run_mode(self.config.acp.default_run_mode)
+    }
+
+    /// Returns true when durable storage is available.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the ACP runtime has an initialized SQLite backend.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new(Config::default());
+    /// let _ = runtime.has_storage();
+    /// ```
+    pub fn has_storage(&self) -> bool {
+        self.storage
+            .lock()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
     }
 
     /// Returns the configured ACP path compatibility mode.
@@ -622,11 +660,12 @@ impl AcpRuntime {
 
         let run_id = AcpRunId::new(generate_run_id())?;
         let session = AcpRunSession::new(session_id.clone())?;
-        let create_request = AcpRunCreateRequest::new(session_id, request.input.clone())?;
+        let create_request = AcpRunCreateRequest::new(session_id.clone(), request.input.clone())?;
         let run = AcpRun::new(run_id.clone(), create_request, session)?;
         let prompt_text = flatten_input_to_prompt(&request.input)?;
 
         let mut record = AcpRuntimeRunRecord::new(run.clone(), mode, prompt_text);
+        record.conversation_id = Some(session_id.as_str().to_string());
 
         let created_event = build_runtime_event(
             1,
@@ -636,6 +675,7 @@ impl AcpRuntime {
                 json!({
                     "event": "run.created",
                     "runId": run.id.as_str(),
+                    "sessionId": run.session.id.as_str(),
                     "state": run.status.state.to_string(),
                     "mode": mode.as_str(),
                     "createdAt": run.status.created_at,
@@ -649,7 +689,9 @@ impl AcpRuntime {
 
         let mut state = lock_runtime_state(&self.state)?;
         state.runs.insert(run.id.as_str().to_string(), record);
+        drop(state);
 
+        self.persist_run_state(run.id.as_str())?;
         Ok(run)
     }
 
@@ -1030,39 +1072,520 @@ impl AcpRuntime {
         event_name: &str,
         terminal: bool,
     ) -> Result<AcpRun> {
-        let mut state = lock_runtime_state(&self.state)?;
-        let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
-        })?;
+        let updated_run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(run_id).ok_or_else(|| {
+                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            })?;
 
-        if record.completed {
-            return Err(XzatomaError::AcpLifecycle(format!(
-                "cannot transition completed ACP run '{}'",
-                run_id
-            ))
-            .into());
+            if record.completed {
+                return Err(XzatomaError::AcpLifecycle(format!(
+                    "cannot transition completed ACP run '{}'",
+                    run_id
+                ))
+                .into());
+            }
+
+            record.run.transition_to(target_state)?;
+
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunStatusChanged,
+                    Some(run_id.to_string()),
+                    json!({
+                        "event": event_name,
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "updatedAt": record.run.status.updated_at,
+                    }),
+                )?,
+                terminal,
+            );
+            push_event(record, event);
+
+            record.run.clone()
+        };
+
+        self.persist_run_state(run_id)?;
+        Ok(updated_run)
+    }
+
+    /// Loads an ACP session, restoring persisted run state when necessary.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - ACP session identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns the canonical ACP session when found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session lookup or restoration fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new(Config::default());
+    /// let _ = runtime.get_session("session_missing");
+    /// ```
+    pub fn get_session(&self, session_id: &str) -> Result<Option<AcpRunSession>> {
+        if let Some(storage) = self.storage_handle()? {
+            if let Some(stored) = storage.load_acp_session(session_id)? {
+                return Ok(Some(AcpRunSession {
+                    id: AcpSessionId::new(stored.session_id)?,
+                    created_at: stored.created_at.to_rfc3339(),
+                }));
+            }
         }
 
-        record.run.transition_to(target_state)?;
-
-        let event = build_runtime_event(
-            next_sequence(record)?,
-            AcpEvent::new(
-                AcpEventKind::RunStatusChanged,
-                Some(run_id.to_string()),
-                json!({
-                    "event": event_name,
-                    "runId": run_id,
-                    "state": record.run.status.state.to_string(),
-                    "updatedAt": record.run.status.updated_at,
-                }),
-            )?,
-            terminal,
-        );
-        push_event(record, event);
-
-        Ok(record.run.clone())
+        let state = lock_runtime_state(&self.state)?;
+        let session = state
+            .runs
+            .values()
+            .find(|record| record.run.session.id.as_str() == session_id)
+            .map(|record| record.run.session.clone());
+        Ok(session)
     }
+
+    /// Returns all canonical runs currently known for a session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - ACP session identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns persisted and in-memory runs for the session ordered by creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if restoration or lookup fails.
+    pub fn get_session_runs(&self, session_id: &str) -> Result<Vec<AcpRun>> {
+        let mut seen = HashSet::new();
+        let mut runs = Vec::new();
+
+        if let Some(storage) = self.storage_handle()? {
+            for stored_run in storage.list_acp_runs_for_session(session_id)? {
+                if seen.insert(stored_run.run_id.clone()) {
+                    if let Some(restored) = storage.restore_acp_run(&stored_run.run_id)? {
+                        runs.push(restored);
+                    }
+                }
+            }
+        }
+
+        let state = lock_runtime_state(&self.state)?;
+        for record in state.runs.values() {
+            if record.run.session.id.as_str() == session_id
+                && seen.insert(record.run.id.as_str().to_string())
+            {
+                runs.push(record.run.clone());
+            }
+        }
+
+        runs.sort_by(|left, right| left.status.created_at.cmp(&right.status.created_at));
+        Ok(runs)
+    }
+
+    /// Sets a run into the awaiting state with a durable await payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `run_id` - ACP run identifier
+    /// * `kind` - Await discriminator
+    /// * `detail` - Await detail
+    ///
+    /// # Returns
+    ///
+    /// Returns the updated awaiting run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the run does not exist or the await transition fails.
+    pub fn set_awaiting(&self, run_id: &str, kind: String, detail: String) -> Result<AcpRun> {
+        let updated_run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(run_id).ok_or_else(|| {
+                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            })?;
+
+            if record.completed {
+                return Err(XzatomaError::AcpLifecycle(format!(
+                    "cannot await completed ACP run '{}'",
+                    run_id
+                ))
+                .into());
+            }
+
+            record.run.set_await_payload(kind.clone(), detail.clone())?;
+
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunAwaitingInput,
+                    Some(run_id.to_string()),
+                    json!({
+                        "event": "run.awaiting",
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "kind": kind,
+                        "detail": detail,
+                        "updatedAt": record.run.status.updated_at,
+                    }),
+                )?,
+                false,
+            );
+            push_event(record, event);
+
+            record.run.clone()
+        };
+
+        self.persist_run_state(run_id)?;
+        Ok(updated_run)
+    }
+
+    /// Resumes an awaiting run using a minimal persisted resume contract.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - Resume request identifying the awaiting run
+    /// * `resume_payload` - JSON payload supplied by the client
+    ///
+    /// # Returns
+    ///
+    /// Returns the resumed run after it transitions back to `running`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the run is missing, not awaiting, or the payload is
+    /// invalid.
+    pub fn resume_run(
+        &self,
+        request: AcpRunResumeRequest,
+        resume_payload: Value,
+    ) -> Result<AcpRun> {
+        if resume_payload.is_null() {
+            return Err(
+                XzatomaError::AcpValidation("resume payload cannot be null".to_string()).into(),
+            );
+        }
+
+        let run_id = request.run_id.as_str().to_string();
+        let updated_run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(&run_id).ok_or_else(|| {
+                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            })?;
+
+            if record.run.status.state != AcpRunState::Awaiting {
+                return Err(XzatomaError::AcpLifecycle(format!(
+                    "ACP run '{}' is not awaiting resume input",
+                    run_id
+                ))
+                .into());
+            }
+
+            record.resume_payload = Some(resume_payload.clone());
+            record.run.await_payload = None;
+            record.run.transition_to(AcpRunState::Running)?;
+
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunStatusChanged,
+                    Some(run_id.clone()),
+                    json!({
+                        "event": "run.resumed",
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "resumePayload": resume_payload,
+                        "updatedAt": record.run.status.updated_at,
+                    }),
+                )?,
+                false,
+            );
+            push_event(record, event);
+
+            record.run.clone()
+        };
+
+        self.persist_run_state(&run_id)?;
+        Ok(updated_run)
+    }
+
+    /// Requests cancellation for a run and applies minimal terminal cancellation
+    /// semantics.
+    ///
+    /// # Arguments
+    ///
+    /// * `run_id` - ACP run identifier
+    /// * `reason` - Human-readable cancellation reason
+    ///
+    /// # Returns
+    ///
+    /// Returns the cancelled run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the run does not exist or is already terminal.
+    pub fn cancel_run(&self, run_id: &str, reason: String) -> Result<AcpRun> {
+        let updated_run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(run_id).ok_or_else(|| {
+                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            })?;
+
+            if record.run.status.state.is_terminal() {
+                return Err(XzatomaError::AcpLifecycle(format!(
+                    "cannot cancel terminal ACP run '{}'",
+                    run_id
+                ))
+                .into());
+            }
+
+            record.cancellation_requested = true;
+            record.cancellation_reason = Some(reason.clone());
+            record.run.record_cancellation(reason.clone())?;
+            record.completed = true;
+
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunCancelled,
+                    Some(run_id.to_string()),
+                    json!({
+                        "event": "run.cancelled",
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "reason": reason,
+                        "completedAt": record.run.status.completed_at,
+                    }),
+                )?,
+                true,
+            );
+            push_event(record, event);
+
+            record.run.clone()
+        };
+
+        self.persist_run_state(run_id)?;
+        Ok(updated_run)
+    }
+
+    /// Restores a persisted run and its event history into the in-memory runtime.
+    ///
+    /// # Arguments
+    ///
+    /// * `run_id` - ACP run identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns the restored canonical run when found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if persistent restoration fails.
+    pub fn restore_run(&self, run_id: &str) -> Result<Option<AcpRun>> {
+        {
+            let state = lock_runtime_state(&self.state)?;
+            if let Some(record) = state.runs.get(run_id) {
+                return Ok(Some(record.run.clone()));
+            }
+        }
+
+        let Some(storage) = self.storage_handle()? else {
+            return Ok(None);
+        };
+
+        let Some(run) = storage.restore_acp_run(run_id)? else {
+            return Ok(None);
+        };
+
+        let stored_run = storage
+            .load_acp_run(run_id)?
+            .ok_or_else(|| XzatomaError::Storage(format!("Missing stored ACP run '{}'", run_id)))?;
+        let events = storage.restore_acp_runtime_events(run_id)?;
+        let prompt_text = flatten_input_to_prompt(&run.request.input)?;
+        let mut record = AcpRuntimeRunRecord::new(
+            run.clone(),
+            AcpRuntimeExecuteMode::parse(&stored_run.mode)?,
+            prompt_text,
+        );
+        record.events = events;
+        record.completed = run.status.state.is_terminal();
+        record.conversation_id = stored_run.conversation_id;
+        record.cancellation_reason = run.status.cancellation_reason.clone();
+
+        if let Some(await_state) = storage.load_acp_await_state(run_id)? {
+            if let Some(resume_payload_json) = await_state.resume_payload_json {
+                record.resume_payload =
+                    Some(serde_json::from_str(&resume_payload_json).map_err(|error| {
+                        XzatomaError::Storage(format!(
+                            "Failed to deserialize stored ACP resume payload: {}",
+                            error
+                        ))
+                    })?);
+            }
+        }
+
+        if let Some(cancellation) = storage.load_acp_cancellation(run_id)? {
+            record.cancellation_requested = true;
+            if record.cancellation_reason.is_none() {
+                record.cancellation_reason = cancellation.reason;
+            }
+        }
+
+        let mut state = lock_runtime_state(&self.state)?;
+        state.runs.insert(run_id.to_string(), record);
+
+        Ok(Some(run))
+    }
+
+    fn persist_run_state(&self, run_id: &str) -> Result<()> {
+        let Some(storage) = self.storage_handle()? else {
+            return Ok(());
+        };
+
+        let (
+            run,
+            mode,
+            events,
+            conversation_id,
+            await_payload,
+            cancellation_requested,
+            cancellation_reason,
+        ) = {
+            let state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get(run_id).ok_or_else(|| {
+                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            })?;
+
+            (
+                record.run.clone(),
+                record.mode,
+                record.events.clone(),
+                record.conversation_id.clone(),
+                record.run.await_payload.clone(),
+                record.cancellation_requested,
+                record.cancellation_reason.clone(),
+            )
+        };
+
+        storage.persist_acp_run(&run, mode, conversation_id)?;
+
+        let stored_events: Vec<PublicStoredAcpRunEvent> = events
+            .iter()
+            .map(|event| {
+                Ok(PublicStoredAcpRunEvent {
+                    run_id: run.id.as_str().to_string(),
+                    sequence: event.sequence,
+                    kind: event.event.kind.to_string(),
+                    created_at: parse_runtime_timestamp(&event.event.created_at)?,
+                    payload_json: serde_json::to_string(&event.event.payload).map_err(|error| {
+                        XzatomaError::Storage(format!(
+                            "Failed to serialize ACP event payload: {}",
+                            error
+                        ))
+                    })?,
+                    terminal: event.terminal,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        storage.save_acp_run_events(run.id.as_str(), &stored_events)?;
+
+        if let Some(payload) = await_payload {
+            let await_state = PublicStoredAcpAwaitState {
+                run_id: run.id.as_str().to_string(),
+                session_id: run.session.id.as_str().to_string(),
+                kind: payload.kind,
+                detail: payload.detail,
+                created_at: parse_runtime_timestamp(&run.status.updated_at)?,
+                updated_at: parse_runtime_timestamp(&run.status.updated_at)?,
+                resumed_at: None,
+                resume_payload_json: None,
+            };
+            storage.save_acp_await_state(&await_state)?;
+        }
+
+        if cancellation_requested {
+            let cancellation = PublicStoredAcpCancellation {
+                run_id: run.id.as_str().to_string(),
+                requested_at: parse_runtime_timestamp(&run.status.updated_at)?,
+                acknowledged_at: Some(parse_runtime_timestamp(&run.status.updated_at)?),
+                completed_at: run
+                    .status
+                    .completed_at
+                    .as_deref()
+                    .map(parse_runtime_timestamp)
+                    .transpose()?,
+                reason: cancellation_reason,
+                acknowledged: true,
+            };
+            storage.save_acp_cancellation(&cancellation)?;
+        }
+
+        Ok(())
+    }
+
+    fn storage_handle(&self) -> Result<Option<SqliteStorage>> {
+        let guard = self.storage.lock().map_err(|_| {
+            anyhow::Error::from(XzatomaError::Internal(
+                "ACP runtime storage lock was poisoned".to_string(),
+            ))
+        })?;
+
+        if let Some(storage) = guard.as_ref() {
+            Ok(Some(SqliteStorage::new_with_path(
+                storage.database_path().clone(),
+            )?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn restore_from_storage(&self) -> Result<()> {
+        let Some(storage) = self.storage_handle()? else {
+            return Ok(());
+        };
+
+        let conn = rusqlite::Connection::open(storage.database_path())
+            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT run_id FROM acp_runs ORDER BY created_at ASC")
+            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+
+        let mut run_ids = Vec::new();
+        for run_id in rows {
+            run_ids.push(run_id.map_err(|error| XzatomaError::Storage(error.to_string()))?);
+        }
+
+        for run_id in run_ids {
+            let _ = self.restore_run(&run_id)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .map_err(|error| {
+            XzatomaError::Storage(format!(
+                "Failed to parse persisted ACP runtime timestamp '{}': {}",
+                value, error
+            ))
+            .into()
+        })
 }
 
 /// Flattens ACP input messages into the prompt text used by the current
@@ -1373,7 +1896,7 @@ pub fn build_run_snapshot(run: &AcpRun, mode: AcpRuntimeExecuteMode) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::acp::AcpTextPart;
+    use crate::acp::{AcpRunResumeRequest, AcpTextPart};
 
     fn test_message(text: &str) -> AcpMessage {
         AcpMessage::new(
@@ -1581,5 +2104,268 @@ mod tests {
         assert_eq!(snapshot["runId"], run.id.as_str());
         assert_eq!(snapshot["mode"], "sync");
         assert_eq!(snapshot["state"], "created");
+    }
+
+    #[test]
+    fn test_runtime_get_session_returns_session_for_created_run() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "session lookup",
+            )]))
+            .unwrap();
+
+        let session = runtime
+            .get_session(run.session.id.as_str())
+            .unwrap()
+            .expect("session should exist");
+
+        assert_eq!(session.id.as_str(), run.session.id.as_str());
+
+        let restored_run = runtime
+            .restore_run(run.id.as_str())
+            .unwrap()
+            .expect("restored run should exist");
+        assert_eq!(
+            parse_runtime_timestamp(&session.created_at).unwrap(),
+            parse_runtime_timestamp(&restored_run.session.created_at).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_runtime_get_session_runs_returns_history_continuity() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let first_run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "first run",
+            )]))
+            .unwrap();
+
+        let second_run = runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![test_message("second run")])
+                    .with_session_id(first_run.session.id.as_str().to_string()),
+            )
+            .unwrap();
+
+        let runs = runtime
+            .get_session_runs(first_run.session.id.as_str())
+            .unwrap();
+
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].id.as_str(), first_run.id.as_str());
+        assert_eq!(runs[1].id.as_str(), second_run.id.as_str());
+    }
+
+    #[test]
+    fn test_runtime_set_awaiting_persists_await_state() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message("await me")]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+
+        let updated = runtime
+            .set_awaiting(
+                run.id.as_str(),
+                "approval_required".to_string(),
+                "Need confirmation before continuing".to_string(),
+            )
+            .unwrap();
+
+        assert_eq!(updated.status.state, AcpRunState::Awaiting);
+        assert_eq!(
+            updated
+                .await_payload
+                .as_ref()
+                .map(|payload| payload.kind.as_str()),
+            Some("approval_required")
+        );
+
+        let restored = runtime
+            .restore_run(run.id.as_str())
+            .unwrap()
+            .expect("restored run should exist");
+
+        assert_eq!(restored.status.state, AcpRunState::Awaiting);
+        assert_eq!(
+            restored
+                .await_payload
+                .as_ref()
+                .map(|payload| payload.detail.as_str()),
+            Some("Need confirmation before continuing")
+        );
+    }
+
+    #[test]
+    fn test_runtime_resume_run_transitions_awaiting_to_running() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "resume me",
+            )]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+        runtime
+            .set_awaiting(
+                run.id.as_str(),
+                "approval_required".to_string(),
+                "Need confirmation before continuing".to_string(),
+            )
+            .unwrap();
+
+        let resumed = runtime
+            .resume_run(
+                AcpRunResumeRequest::new(AcpRunId::new(run.id.as_str().to_string()).unwrap()),
+                serde_json::json!({"approved": true}),
+            )
+            .unwrap();
+
+        assert_eq!(resumed.status.state, AcpRunState::Running);
+        assert!(resumed.await_payload.is_none());
+
+        let events = runtime.get_events(run.id.as_str()).unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.event.payload["event"] == "run.resumed"));
+    }
+
+    #[test]
+    fn test_runtime_resume_run_rejects_invalid_null_payload() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "bad resume",
+            )]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+        runtime
+            .set_awaiting(
+                run.id.as_str(),
+                "approval_required".to_string(),
+                "Need confirmation before continuing".to_string(),
+            )
+            .unwrap();
+
+        let error = runtime
+            .resume_run(
+                AcpRunResumeRequest::new(AcpRunId::new(run.id.as_str().to_string()).unwrap()),
+                serde_json::Value::Null,
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("resume payload cannot be null"));
+    }
+
+    #[test]
+    fn test_runtime_cancel_run_transitions_in_progress_to_cancelled() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "cancel me",
+            )]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+
+        let cancelled = runtime
+            .cancel_run(run.id.as_str(), "user requested stop".to_string())
+            .unwrap();
+
+        assert_eq!(cancelled.status.state, AcpRunState::Cancelled);
+        assert_eq!(
+            cancelled.status.cancellation_reason.as_deref(),
+            Some("user requested stop")
+        );
+
+        let restored = runtime
+            .restore_run(run.id.as_str())
+            .unwrap()
+            .expect("restored cancelled run should exist");
+        assert_eq!(restored.status.state, AcpRunState::Cancelled);
+    }
+
+    #[test]
+    fn test_runtime_cancel_run_rejects_completed_run() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "already done",
+            )]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+        runtime
+            .append_output_message(
+                run.id.as_str(),
+                assistant_text_message("done".to_string()).unwrap(),
+            )
+            .unwrap();
+        runtime.complete_run(run.id.as_str()).unwrap();
+
+        let error = runtime
+            .cancel_run(run.id.as_str(), "too late".to_string())
+            .unwrap_err();
+
+        assert!(error.to_string().contains("cannot cancel terminal ACP run"));
+    }
+
+    #[test]
+    fn test_runtime_restore_run_restores_completed_run_and_events() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![test_message(
+                "restore me",
+            )]))
+            .unwrap();
+
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+        runtime
+            .append_output_message(
+                run.id.as_str(),
+                assistant_text_message("restored output".to_string()).unwrap(),
+            )
+            .unwrap();
+        runtime.complete_run(run.id.as_str()).unwrap();
+
+        let restored = runtime
+            .restore_run(run.id.as_str())
+            .unwrap()
+            .expect("restored run should exist");
+
+        assert_eq!(restored.id.as_str(), run.id.as_str());
+        assert_eq!(restored.status.state, AcpRunState::Completed);
+
+        let restored_events = runtime.get_events(run.id.as_str()).unwrap();
+        assert!(!restored_events.is_empty());
+        assert_eq!(
+            restored_events.last().unwrap().event.payload["event"],
+            "run.completed"
+        );
+    }
+
+    #[test]
+    fn test_runtime_get_session_returns_none_for_missing_session() {
+        let runtime = AcpRuntime::new(Config::default());
+
+        let session = runtime.get_session("session_missing").unwrap();
+        assert!(session.is_none());
     }
 }

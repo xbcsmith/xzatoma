@@ -105,6 +105,7 @@ pub enum AcpExecutorOutcome {
 pub struct AcpExecutor {
     config: Config,
     runtime: AcpRuntime,
+    mock_success_response: Option<String>,
 }
 
 impl std::fmt::Debug for AcpExecutor {
@@ -138,7 +139,52 @@ impl AcpExecutor {
     /// let _ = executor;
     /// ```
     pub fn new(config: Config, runtime: AcpRuntime) -> Self {
-        Self { config, runtime }
+        Self {
+            config,
+            runtime,
+            mock_success_response: None,
+        }
+    }
+
+    /// Creates a new ACP executor with a mocked successful response.
+    ///
+    /// This constructor is intended for tests that need deterministic ACP run
+    /// execution without invoking a real provider or requiring external
+    /// authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Application configuration
+    /// * `runtime` - ACP runtime coordinator
+    /// * `response` - Mock assistant response to record for each executed run
+    ///
+    /// # Returns
+    ///
+    /// Returns a new ACP executor configured to bypass provider execution and
+    /// return the supplied response.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::executor::AcpExecutor;
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// let runtime = AcpRuntime::new(config.clone());
+    /// let executor = AcpExecutor::new_mock_success(
+    ///     config,
+    ///     runtime,
+    ///     "mock response".to_string(),
+    /// );
+    /// let _ = executor;
+    /// ```
+    pub fn new_mock_success(config: Config, runtime: AcpRuntime, response: String) -> Self {
+        Self {
+            config,
+            runtime,
+            mock_success_response: Some(response),
+        }
     }
 
     /// Returns the shared runtime handle used by the executor.
@@ -357,6 +403,14 @@ impl AcpExecutor {
     }
 
     async fn execute_prompt(&self, prompt: &str) -> Result<String> {
+        if let Some(response) = &self.mock_success_response {
+            tracing::debug!(
+                prompt_length = prompt.len(),
+                "Using mock ACP execution response"
+            );
+            return Ok(response.clone());
+        }
+
         let working_dir = std::env::current_dir()?;
         let mut tools = self.build_tools(&working_dir).await?;
         let provider_box =
@@ -479,9 +533,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_background_returns_accepted_for_existing_run() {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
         let runtime = AcpRuntime::new(config.clone());
-        let executor = AcpExecutor::new(config, runtime.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config,
+            runtime.clone(),
+            "mock async response".to_string(),
+        );
 
         let run = runtime
             .create_run(test_request(AcpRuntimeExecuteMode::Async))
@@ -496,9 +555,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_async_returns_accepted() {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
         let runtime = AcpRuntime::new(config.clone());
-        let executor = AcpExecutor::new(config, runtime.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config,
+            runtime.clone(),
+            "mock async response".to_string(),
+        );
 
         let run = runtime
             .create_run(test_request(AcpRuntimeExecuteMode::Async))
@@ -513,9 +577,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_missing_run_returns_error() {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
         let runtime = AcpRuntime::new(config.clone());
-        let executor = AcpExecutor::new(config, runtime);
+        let executor =
+            AcpExecutor::new_mock_success(config, runtime, "mock missing response".to_string());
 
         let error = executor
             .execute("run_missing", AcpRuntimeExecuteMode::Async)
@@ -527,10 +593,65 @@ mod tests {
 
     #[test]
     fn test_executor_runtime_returns_clone() {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
         let runtime = AcpRuntime::new(config.clone());
-        let executor = AcpExecutor::new(config, runtime.clone());
+        let executor =
+            AcpExecutor::new_mock_success(config, runtime.clone(), "mock runtime".to_string());
 
         assert_eq!(executor.runtime().run_count(), runtime.run_count());
+    }
+
+    #[tokio::test]
+    async fn test_execute_sync_with_mock_success_returns_completed_run() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        let runtime = AcpRuntime::new(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config,
+            runtime.clone(),
+            "mock sync response".to_string(),
+        );
+
+        let run = runtime
+            .create_run(test_request(AcpRuntimeExecuteMode::Sync))
+            .unwrap();
+
+        let outcome = executor.execute_sync(run.id.as_str()).await.unwrap();
+
+        match outcome {
+            AcpExecutorOutcome::Completed(updated_run) => {
+                assert_eq!(updated_run.status.state, crate::acp::AcpRunState::Completed);
+                assert_eq!(updated_run.output.messages.len(), 1);
+            }
+            other => panic!("expected completed run outcome, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_and_execute_sync_with_mock_success_returns_completed_run() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        let runtime = AcpRuntime::new(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config,
+            runtime,
+            "mock create and execute response".to_string(),
+        );
+
+        let (run, outcome) = executor
+            .create_and_execute(test_request(AcpRuntimeExecuteMode::Sync))
+            .await
+            .unwrap();
+
+        assert!(!run.id.as_str().is_empty());
+
+        match outcome {
+            AcpExecutorOutcome::Completed(updated_run) => {
+                assert_eq!(updated_run.status.state, crate::acp::AcpRunState::Completed);
+                assert_eq!(updated_run.output.messages.len(), 1);
+            }
+            other => panic!("expected completed run outcome, got {:?}", other),
+        }
     }
 }

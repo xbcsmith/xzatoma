@@ -8,15 +8,19 @@
 ///   - `GET /ping`
 ///   - `GET /agents`
 ///   - `GET /agents/{name}`
-/// - Phase 3 run endpoints:
+/// - run lifecycle endpoints:
 ///   - `POST /runs`
 ///   - `GET /runs/{run_id}`
 ///   - `GET /runs/{run_id}/events`
+/// - Phase 4 stateful lifecycle endpoints:
+///   - `POST /runs/{run_id}`
+///   - `POST /runs/{run_id}/cancel`
+///   - `GET /sessions/{session_id}`
 ///
 /// The route layout is configurable through [`crate::config::AcpConfig`].
 /// XZatoma defaults to a versioned base path such as `/api/v1/acp`, but it can
-/// also expose ACP root-compatible paths like `/ping`, `/agents`, and `/runs`
-/// when `acp.compatibility_mode = "root_compatible"`.
+/// also expose ACP root-compatible paths like `/ping`, `/agents`, `/runs`, and
+/// `/sessions` when `acp.compatibility_mode = "root_compatible"`.
 ///
 /// # Examples
 ///
@@ -38,12 +42,15 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use crate::acp::executor::{AcpExecutor, AcpExecutorOutcome};
 use crate::acp::manifest::{AcpAgentCapability, AcpAgentManifest, AcpManifestLink};
 use crate::acp::runtime::{
     build_run_snapshot, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeEvent, AcpRuntimeExecuteMode,
 };
 use crate::acp::streaming::stream_run_events_sse;
+use crate::acp::{AcpRun, AcpRunId, AcpRunResumeRequest, AcpRunSession};
 use crate::config::{AcpCompatibilityMode, AcpConfig, Config};
 use crate::error::{Result, XzatomaError};
 
@@ -69,6 +76,7 @@ pub struct AcpServerState {
     manifests: Arc<Vec<AcpAgentManifest>>,
     path_strategy: AcpPathStrategy,
     runtime: AcpRuntime,
+    executor: AcpExecutor,
 }
 
 impl AcpServerState {
@@ -98,10 +106,14 @@ impl AcpServerState {
     /// ```
     pub fn from_config(config: &Config) -> Result<Self> {
         let manifest = build_primary_manifest(config)?;
+        let runtime = AcpRuntime::new(config.clone());
+        let executor = AcpExecutor::new(config.clone(), runtime.clone());
+
         Ok(Self {
             manifests: Arc::new(vec![manifest]),
             path_strategy: AcpPathStrategy::from_config(&config.acp),
-            runtime: AcpRuntime::new(config.clone()),
+            runtime,
+            executor,
         })
     }
 
@@ -168,6 +180,72 @@ impl AcpServerState {
     /// ```
     pub fn runtime(&self) -> &AcpRuntime {
         &self.runtime
+    }
+
+    /// Creates ACP server state from explicit runtime and executor dependencies.
+    ///
+    /// This constructor is primarily intended for tests that need deterministic
+    /// runtime and execution wiring without relying on the default production
+    /// initialization path.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Application configuration
+    /// * `runtime` - Prebuilt ACP runtime coordinator
+    /// * `executor` - Prebuilt ACP executor
+    ///
+    /// # Returns
+    ///
+    /// Returns initialized ACP server state with generated discovery manifests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if manifest generation fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::executor::AcpExecutor;
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::acp::server::AcpServerState;
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// let runtime = AcpRuntime::new(config.clone());
+    /// let executor = AcpExecutor::new(config.clone(), runtime.clone());
+    /// let state = AcpServerState::from_parts(&config, runtime, executor).unwrap();
+    ///
+    /// assert_eq!(state.manifests().len(), 1);
+    /// ```
+    pub fn from_parts(config: &Config, runtime: AcpRuntime, executor: AcpExecutor) -> Result<Self> {
+        let manifest = build_primary_manifest(config)?;
+        Ok(Self {
+            manifests: Arc::new(vec![manifest]),
+            path_strategy: AcpPathStrategy::from_config(&config.acp),
+            runtime,
+            executor,
+        })
+    }
+
+    /// Returns the shared ACP executor.
+    ///
+    /// # Returns
+    ///
+    /// Returns the ACP executor used to bridge HTTP run creation with the
+    /// existing XZatoma single-agent execution path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::server::AcpServerState;
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// let state = AcpServerState::from_config(&config).unwrap();
+    /// let _executor = state.executor();
+    /// ```
+    pub fn executor(&self) -> &AcpExecutor {
+        &self.executor
     }
 }
 
@@ -415,6 +493,72 @@ pub struct CreateRunRequestBody {
     pub agent_name: Option<String>,
 }
 
+/// Request body for `POST /runs/{run_id}` resume behavior.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+/// use xzatoma::acp::server::ResumeRunRequestBody;
+///
+/// let body = ResumeRunRequestBody {
+///     resume_payload: json!({"approved": true}),
+/// };
+///
+/// assert_eq!(body.resume_payload["approved"], true);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeRunRequestBody {
+    /// Opaque resume payload consumed by the ACP runtime.
+    pub resume_payload: Value,
+}
+
+/// Request body for `POST /runs/{run_id}/cancel`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::acp::server::CancelRunRequestBody;
+///
+/// let body = CancelRunRequestBody {
+///     reason: Some("user requested stop".to_string()),
+/// };
+///
+/// assert_eq!(body.reason.as_deref(), Some("user requested stop"));
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelRunRequestBody {
+    /// Optional cancellation reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Response body for `GET /sessions/{session_id}`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::acp::server::SessionResponseBody;
+///
+/// let body = SessionResponseBody {
+///     session: None,
+///     runs: Vec::new(),
+/// };
+///
+/// assert!(body.session.is_none());
+/// assert!(body.runs.is_empty());
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionResponseBody {
+    /// Canonical ACP session when found.
+    pub session: Option<AcpRunSession>,
+    /// Persisted and active runs linked to the session.
+    pub runs: Vec<AcpRun>,
+}
+
 /// Response body for `POST /runs`.
 ///
 /// # Examples
@@ -572,8 +716,10 @@ pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
         .route("/agents", get(handle_agents))
         .route("/agents/:name", get(handle_agent_by_name))
         .route("/runs", post(handle_create_run))
-        .route("/runs/:run_id", get(handle_get_run))
+        .route("/runs/:run_id", get(handle_get_run).post(handle_resume_run))
         .route("/runs/:run_id/events", get(handle_get_run_events))
+        .route("/runs/:run_id/cancel", post(handle_cancel_run))
+        .route("/sessions/:session_id", get(handle_get_session))
         .with_state(state.clone());
 
     match AcpPathStrategy::from_config(config) {
@@ -770,60 +916,60 @@ pub async fn handle_create_run(
         .validate()
         .map_err(acp_runtime_error_to_http_error)?;
 
-    let run = state
-        .runtime()
-        .create_run(request)
-        .map_err(acp_runtime_error_to_http_error)?;
-
     match mode {
         AcpRuntimeExecuteMode::Sync => {
-            let updated_run = state
-                .runtime()
-                .mark_queued(run.id.as_str())
-                .and_then(|_| state.runtime().mark_running(run.id.as_str()))
-                .and_then(|_| {
-                    let message = crate::acp::runtime::assistant_text_message(
-                        "Synchronous ACP execution is not yet wired in this server edit."
-                            .to_string(),
-                    )?;
-                    state
-                        .runtime()
-                        .append_output_message(run.id.as_str(), message)
-                })
-                .and_then(|_| state.runtime().complete_run(run.id.as_str()))
+            let (run, outcome) = state
+                .executor()
+                .create_and_execute(request)
+                .await
                 .map_err(acp_runtime_error_to_http_error)?;
+
+            let final_run = match outcome {
+                AcpExecutorOutcome::Completed(updated_run)
+                | AcpExecutorOutcome::Failed(updated_run) => updated_run,
+                AcpExecutorOutcome::Accepted => run,
+            };
 
             Ok((
                 StatusCode::OK,
                 Json(CreateRunResponseBody {
-                    run: updated_run,
+                    run: final_run,
                     mode,
                 }),
             )
                 .into_response())
         }
-        AcpRuntimeExecuteMode::Async => Ok((
-            StatusCode::ACCEPTED,
-            Json(CreateRunResponseBody { run, mode }),
-        )
-            .into_response()),
-        AcpRuntimeExecuteMode::Stream => {
-            let queued = state
-                .runtime()
-                .mark_queued(run.id.as_str())
-                .and_then(|_| state.runtime().mark_running(run.id.as_str()))
-                .and_then(|_| {
-                    let message = crate::acp::runtime::assistant_text_message(
-                        "Streaming ACP execution is not yet wired in this server edit.".to_string(),
-                    )?;
-                    state
-                        .runtime()
-                        .append_output_message(run.id.as_str(), message)
-                })
-                .and_then(|_| state.runtime().complete_run(run.id.as_str()))
+        AcpRuntimeExecuteMode::Async => {
+            let (run, outcome) = state
+                .executor()
+                .create_and_execute(request)
+                .await
                 .map_err(acp_runtime_error_to_http_error)?;
 
-            let _ = queued;
+            match outcome {
+                AcpExecutorOutcome::Accepted => Ok((
+                    StatusCode::ACCEPTED,
+                    Json(CreateRunResponseBody { run, mode }),
+                )
+                    .into_response()),
+                AcpExecutorOutcome::Completed(updated_run)
+                | AcpExecutorOutcome::Failed(updated_run) => Ok((
+                    StatusCode::ACCEPTED,
+                    Json(CreateRunResponseBody {
+                        run: updated_run,
+                        mode,
+                    }),
+                )
+                    .into_response()),
+            }
+        }
+        AcpRuntimeExecuteMode::Stream => {
+            let (run, _outcome) = state
+                .executor()
+                .create_and_execute(request)
+                .await
+                .map_err(acp_runtime_error_to_http_error)?;
+
             let sse = stream_run_events_sse(state.runtime().clone(), run.id.as_str())
                 .map_err(acp_runtime_error_to_http_error)?;
             Ok(sse.into_response())
@@ -845,10 +991,21 @@ pub async fn handle_get_run(
     State(state): State<AcpServerState>,
     Path(run_id): Path<String>,
 ) -> std::result::Result<Json<serde_json::Value>, AcpHttpError> {
-    let run = state
-        .runtime()
-        .get_run(&run_id)
-        .map_err(acp_runtime_error_to_http_error)?;
+    let run = match state.runtime().get_run(&run_id).or_else(|_| {
+        state
+            .runtime()
+            .restore_run(&run_id)
+            .and_then(|restored| match restored {
+                Some(run) => Ok(run),
+                None => Err(anyhow::Error::from(XzatomaError::AcpLifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                )))),
+            })
+    }) {
+        Ok(run) => run,
+        Err(error) => return Err(acp_runtime_error_to_http_error(error)),
+    };
 
     let events = state
         .runtime()
@@ -879,12 +1036,175 @@ pub async fn handle_get_run_events(
     State(state): State<AcpServerState>,
     Path(run_id): Path<String>,
 ) -> std::result::Result<Json<RunEventsResponseBody>, AcpHttpError> {
+    if state
+        .runtime()
+        .restore_run(&run_id)
+        .map_err(acp_runtime_error_to_http_error)?
+        .is_none()
+    {
+        return Err(AcpHttpError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("ACP run '{}' was not found", run_id),
+        ));
+    }
+
     let events = state
         .runtime()
         .get_events(&run_id)
         .map_err(acp_runtime_error_to_http_error)?;
 
     Ok(Json(RunEventsResponseBody { events }))
+}
+
+/// Handles `POST /runs/{run_id}` for await/resume behavior.
+///
+/// # Arguments
+///
+/// * `state` - Shared ACP server state
+/// * `run_id` - Requested ACP run identifier
+/// * `body` - Resume request payload
+///
+/// # Errors
+///
+/// Returns a not-found or invalid-request ACP HTTP error if the run cannot be
+/// resumed.
+pub async fn handle_resume_run(
+    State(state): State<AcpServerState>,
+    Path(run_id): Path<String>,
+    Json(body): Json<ResumeRunRequestBody>,
+) -> std::result::Result<Json<CreateRunResponseBody>, AcpHttpError> {
+    if state
+        .runtime()
+        .restore_run(&run_id)
+        .map_err(acp_runtime_error_to_http_error)?
+        .is_none()
+    {
+        return Err(AcpHttpError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("ACP run '{}' was not found", run_id),
+        ));
+    }
+
+    let resumed = state
+        .runtime()
+        .resume_run(
+            AcpRunResumeRequest::new(
+                AcpRunId::new(run_id.clone()).map_err(acp_runtime_error_to_http_error)?,
+            ),
+            body.resume_payload,
+        )
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    let events = state
+        .runtime()
+        .get_events(&run_id)
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    let mode = events
+        .first()
+        .and_then(|event| event.event.payload.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| AcpRuntimeExecuteMode::parse(value).ok())
+        .unwrap_or_else(|| state.runtime().default_mode());
+
+    Ok(Json(CreateRunResponseBody { run: resumed, mode }))
+}
+
+/// Handles `POST /runs/{run_id}/cancel`.
+///
+/// # Arguments
+///
+/// * `state` - Shared ACP server state
+/// * `run_id` - Requested ACP run identifier
+/// * `body` - Cancellation request payload
+///
+/// # Errors
+///
+/// Returns a not-found or invalid-request ACP HTTP error if the run cannot be
+/// cancelled.
+pub async fn handle_cancel_run(
+    State(state): State<AcpServerState>,
+    Path(run_id): Path<String>,
+    Json(body): Json<CancelRunRequestBody>,
+) -> std::result::Result<Json<CreateRunResponseBody>, AcpHttpError> {
+    if state
+        .runtime()
+        .restore_run(&run_id)
+        .map_err(acp_runtime_error_to_http_error)?
+        .is_none()
+    {
+        return Err(AcpHttpError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("ACP run '{}' was not found", run_id),
+        ));
+    }
+
+    let cancelled = state
+        .runtime()
+        .cancel_run(
+            &run_id,
+            body.reason
+                .unwrap_or_else(|| "ACP client requested cancellation".to_string()),
+        )
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    let events = state
+        .runtime()
+        .get_events(&run_id)
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    let mode = events
+        .first()
+        .and_then(|event| event.event.payload.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| AcpRuntimeExecuteMode::parse(value).ok())
+        .unwrap_or_else(|| state.runtime().default_mode());
+
+    Ok(Json(CreateRunResponseBody {
+        run: cancelled,
+        mode,
+    }))
+}
+
+/// Handles `GET /sessions/{session_id}`.
+///
+/// # Arguments
+///
+/// * `state` - Shared ACP server state
+/// * `session_id` - Requested ACP session identifier
+///
+/// # Errors
+///
+/// Returns a not-found ACP HTTP error if the session does not exist.
+pub async fn handle_get_session(
+    State(state): State<AcpServerState>,
+    Path(session_id): Path<String>,
+) -> std::result::Result<Json<SessionResponseBody>, AcpHttpError> {
+    let session = state
+        .runtime()
+        .get_session(&session_id)
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    let Some(session) = session else {
+        return Err(AcpHttpError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            format!("ACP session '{}' was not found", session_id),
+        ));
+    };
+
+    let runs = state
+        .runtime()
+        .get_session_runs(&session_id)
+        .map_err(acp_runtime_error_to_http_error)?;
+
+    Ok(Json(SessionResponseBody {
+        session: Some(session),
+        runs,
+    }))
 }
 
 fn acp_runtime_error_to_http_error(error: anyhow::Error) -> AcpHttpError {
@@ -904,10 +1224,12 @@ fn acp_runtime_error_to_http_error(error: anyhow::Error) -> AcpHttpError {
 }
 
 fn build_primary_manifest(config: &Config) -> Result<AcpAgentManifest> {
+    let preview_runtime = AcpRuntime::new(config.clone());
     let state_preview = AcpServerState {
         manifests: Arc::new(Vec::new()),
         path_strategy: AcpPathStrategy::from_config(&config.acp),
-        runtime: AcpRuntime::new(config.clone()),
+        runtime: preview_runtime.clone(),
+        executor: AcpExecutor::new(config.clone(), preview_runtime),
     };
 
     let documentation_href = "https://github.com/xbcsmith/xzatoma/tree/main/docs".to_string();
@@ -1124,5 +1446,244 @@ mod tests {
             .contains_key("supported_output_content_types"));
         assert!(manifest.metadata.contains_key("generated_at"));
         assert!(!manifest.links.is_empty());
+    }
+
+    fn test_create_run_request_body(
+        mode: AcpRuntimeExecuteMode,
+        prompt: &str,
+        agent_name: &str,
+    ) -> CreateRunRequestBody {
+        CreateRunRequestBody {
+            input: vec![crate::acp::AcpMessage::new(
+                crate::acp::AcpRole::User,
+                vec![crate::acp::AcpMessagePart::Text(
+                    crate::acp::AcpTextPart::new(prompt.to_string()),
+                )],
+            )
+            .unwrap()],
+            mode: Some(mode),
+            session_id: None,
+            agent_name: Some(agent_name.to_string()),
+        }
+    }
+
+    fn test_server_state() -> AcpServerState {
+        let mut config = test_config();
+        config.provider.provider_type = "ollama".to_string();
+        let runtime = AcpRuntime::new(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config.clone(),
+            runtime.clone(),
+            "mock ACP server test response".to_string(),
+        );
+
+        AcpServerState::from_parts(&config, runtime, executor).unwrap()
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_sync_returns_completed_run() {
+        let state = test_server_state();
+
+        let response = handle_create_run(
+            State(state),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Sync,
+                "Reply with a short greeting",
+                "xzatoma",
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let json = response_json(response).await;
+        assert_eq!(json["mode"], "sync");
+        assert_eq!(json["run"]["status"]["state"], "completed");
+
+        let output_messages = json["run"]["output"]["messages"].as_array().unwrap();
+        assert_eq!(output_messages.len(), 1);
+        assert_eq!(output_messages[0]["role"], "assistant");
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_async_returns_accepted() {
+        let state = test_server_state();
+
+        let response = handle_create_run(
+            State(state),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Async,
+                "Count to three",
+                "xzatoma",
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let json = response_json(response).await;
+        assert_eq!(json["mode"], "async");
+        assert_eq!(json["run"]["status"]["state"], "created");
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_stream_returns_sse_response() {
+        let state = test_server_state();
+
+        let response = handle_create_run(
+            State(state),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Stream,
+                "Stream a short answer",
+                "xzatoma",
+            )),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap();
+        assert!(content_type.starts_with("text/event-stream"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_run_returns_snapshot_after_sync_run() {
+        let state = test_server_state();
+
+        let create_response = handle_create_run(
+            State(state.clone()),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Sync,
+                "Generate one sentence",
+                "xzatoma",
+            )),
+        )
+        .await
+        .unwrap();
+
+        let create_json = response_json(create_response).await;
+        let run_id = create_json["run"]["id"].as_str().unwrap().to_string();
+
+        let run_response = handle_get_run(State(state), Path(run_id.clone()))
+            .await
+            .unwrap()
+            .0;
+
+        assert_eq!(run_response["runId"], run_id);
+        assert_eq!(run_response["state"], "completed");
+        assert_eq!(run_response["mode"], "sync");
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_run_returns_not_found_for_missing_run() {
+        let state = test_server_state();
+
+        let result = handle_get_run(State(state), Path("run_missing".to_string())).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_run_events_returns_not_found_for_missing_run() {
+        let state = test_server_state();
+
+        let result = handle_get_run_events(State(state), Path("run_missing".to_string())).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_rejects_unknown_agent() {
+        let state = test_server_state();
+
+        let result = handle_create_run(
+            State(state),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Sync,
+                "Hello",
+                "missing-agent",
+            )),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_rejects_unsupported_artifact_input() {
+        let state = test_server_state();
+
+        let result = handle_create_run(
+            State(state),
+            Json(CreateRunRequestBody {
+                input: vec![crate::acp::AcpMessage::new(
+                    crate::acp::AcpRole::User,
+                    vec![crate::acp::AcpMessagePart::Artifact(
+                        crate::acp::AcpArtifact::new_remote(
+                            "image.png".to_string(),
+                            "image/png".to_string(),
+                            "https://example.com/image.png".to_string(),
+                        )
+                        .unwrap(),
+                    )],
+                )
+                .unwrap()],
+                mode: Some(AcpRuntimeExecuteMode::Sync),
+                session_id: None,
+                agent_name: Some("xzatoma".to_string()),
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_handle_get_run_events_returns_ordered_history_after_sync_run() {
+        let state = test_server_state();
+
+        let create_response = handle_create_run(
+            State(state.clone()),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Sync,
+                "Generate another sentence",
+                "xzatoma",
+            )),
+        )
+        .await
+        .unwrap();
+
+        let create_json = response_json(create_response).await;
+        let run_id = create_json["run"]["id"].as_str().unwrap().to_string();
+
+        let events = handle_get_run_events(State(state), Path(run_id))
+            .await
+            .unwrap()
+            .0;
+
+        assert!(events.events.len() >= 5);
+
+        let sequences: Vec<u64> = events.events.iter().map(|event| event.sequence).collect();
+        let mut sorted = sequences.clone();
+        sorted.sort_unstable();
+        assert_eq!(sequences, sorted);
     }
 }
