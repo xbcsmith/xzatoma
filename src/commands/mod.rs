@@ -55,6 +55,9 @@ pub mod replay;
 // MCP server management commands
 pub mod mcp;
 
+// ACP server management commands
+pub mod acp;
+
 // Skills management commands
 pub mod skills;
 

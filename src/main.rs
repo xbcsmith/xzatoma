@@ -9,7 +9,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 // Removed unused grouped imports to satisfy clippy
 
-use xzatoma::cli::{Cli, Commands, ModelCommand, SkillsCommand};
+use xzatoma::cli::{AcpCommand, Cli, Commands, ModelCommand, SkillsCommand};
 use xzatoma::commands;
 
 use xzatoma::config::Config;
@@ -192,6 +192,15 @@ async fn main() -> Result<()> {
             tracing::info!("Starting MCP command");
             commands::mcp::handle_mcp(command, config).await?;
             Ok(())
+        }
+        Commands::Acp { command } => {
+            tracing::info!("Starting ACP command");
+            match command {
+                AcpCommand::Serve { .. } => {
+                    commands::acp::handle_acp(command, config).await?;
+                    Ok(())
+                }
+            }
         }
         Commands::Skills { command } => {
             tracing::info!("Starting skills command");

@@ -510,6 +510,7 @@ mod tests {
                 execution: Default::default(),
             },
             mcp: crate::mcp::config::McpConfig::default(),
+            acp: crate::config::AcpConfig::default(),
             skills: crate::config::SkillsConfig::default(),
         };
 

@@ -547,8 +547,8 @@ impl GenericWatcher {
 mod tests {
     use super::*;
     use crate::config::{
-        AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig, SkillsConfig,
-        WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
+        AcpConfig, AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig,
+        SkillsConfig, WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
     };
     use crate::mcp::config::McpConfig;
     use serde_json::json;
@@ -582,6 +582,7 @@ mod tests {
                 },
             },
             mcp: McpConfig::default(),
+            acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
         }
     }
