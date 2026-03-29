@@ -15,8 +15,8 @@
 //! - When no match fields are configured, all `"plan"` events are accepted.
 
 use crate::config::GenericMatchConfig;
+use crate::error::Result;
 use crate::watcher::generic::message::GenericPlanEvent;
-use anyhow::Result;
 use regex::Regex;
 use std::sync::Arc;
 
@@ -309,7 +309,12 @@ fn compile_pattern(pattern: &str) -> Result<Regex> {
         format!("(?i){pattern}")
     };
 
-    Ok(Regex::new(&effective_pattern)?)
+    Regex::new(&effective_pattern).map_err(|error| {
+        crate::error::XzatomaError::Watcher(format!(
+            "Invalid generic watcher regex pattern '{}': {}",
+            pattern, error
+        ))
+    })
 }
 
 /// Return `true` if the regex pattern starts with inline flags.

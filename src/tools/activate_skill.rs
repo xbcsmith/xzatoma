@@ -183,8 +183,11 @@ impl ActivateSkillTool {
     }
 
     fn parse_input(args: Value) -> Result<ActivateSkillInput> {
-        serde_json::from_value(args).map_err(|error| {
-            XzatomaError::Tool(format!("Invalid activate_skill input: {}", error)).into()
+        crate::tools::parse_tool_args(args).map_err(|error| match error {
+            XzatomaError::Tool(message) => XzatomaError::Tool(
+                message.replace("Invalid tool parameters", "Invalid activate_skill input"),
+            ),
+            other => other,
         })
     }
 
@@ -199,8 +202,7 @@ impl ActivateSkillTool {
             Err(XzatomaError::Tool(format!(
                 "Skill '{}' is not visible or not available for activation",
                 skill_name
-            ))
-            .into())
+            )))
         }
     }
 

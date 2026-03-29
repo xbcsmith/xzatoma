@@ -199,10 +199,10 @@ impl Transport for FakeTransport {
     /// channel is closed (i.e. the [`FakeTransportHandle`] was dropped).
     async fn send(&self, message: String) -> Result<()> {
         self.outbound_tx.send(message).map_err(|e| {
-            anyhow::anyhow!(crate::error::XzatomaError::McpTransport(format!(
+            crate::error::XzatomaError::McpTransport(format!(
                 "FakeTransport outbound channel closed: {}",
                 e
-            )))
+            ))
         })
     }
 

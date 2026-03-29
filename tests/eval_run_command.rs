@@ -157,7 +157,10 @@ fn run_parse_only_scenario(scenario: &Scenario) -> Result<(), String> {
     let plan_path = plans_dir().join(plan_file);
     let result = PlanParser::from_file(&plan_path);
 
-    check_result(result.map(|_| ()), &scenario.expect)
+    check_result(
+        result.map(|_| ()).map_err(anyhow::Error::from),
+        &scenario.expect,
+    )
 }
 
 /// Scenarios that exercise the full `run_plan_with_options` path.
@@ -178,7 +181,7 @@ async fn run_full_scenario(scenario: &Scenario) -> Result<(), String> {
     let allow_dangerous = scenario.input.allow_dangerous;
 
     let result = run_plan_with_options(cfg, plan_path, prompt, allow_dangerous).await;
-    check_result(result, &scenario.expect)
+    check_result(result.map_err(anyhow::Error::from), &scenario.expect)
 }
 
 /// Assert that a result matches the expected outcome and error substring.

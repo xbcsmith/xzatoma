@@ -35,7 +35,7 @@
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 use crate::acp::runtime::{AcpRuntime, AcpRuntimeEvent};
-use crate::error::{Result, XzatomaError};
+use crate::error::Result;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures::stream::{self, BoxStream, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -381,7 +381,10 @@ fn runtime_event_name(runtime_event: &AcpRuntimeEvent) -> String {
 /// assert!(error.to_string().contains("ACP streaming error"));
 /// ```
 pub fn streaming_error<T>(message: impl Into<String>) -> Result<T> {
-    Err(XzatomaError::AcpLifecycle(format!("ACP streaming error: {}", message.into())).into())
+    Err(
+        crate::acp::error::AcpError::lifecycle(format!("ACP streaming error: {}", message.into()))
+            .into(),
+    )
 }
 
 #[cfg(test)]

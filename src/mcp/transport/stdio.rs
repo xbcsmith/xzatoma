@@ -206,12 +206,9 @@ impl Transport for StdioTransport {
     /// Returns [`XzatomaError::McpTransport`] if the internal channel is
     /// closed (i.e. the background writer task has exited).
     async fn send(&self, message: String) -> Result<()> {
-        self.stdin_tx.send(message).map_err(|e| {
-            anyhow::anyhow!(XzatomaError::McpTransport(format!(
-                "stdin channel closed: {}",
-                e
-            )))
-        })
+        self.stdin_tx
+            .send(message)
+            .map_err(|e| XzatomaError::McpTransport(format!("stdin channel closed: {}", e)))
     }
 
     /// Returns a stream of JSON-RPC messages received from the child's

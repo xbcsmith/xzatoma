@@ -592,8 +592,7 @@ impl McpClientManager {
             return Err(XzatomaError::McpToolNotFound {
                 server: server_id.to_string(),
                 tool: tool_name.to_string(),
-            }
-            .into());
+            });
         }
 
         let protocol = entry
@@ -606,7 +605,7 @@ impl McpClientManager {
 
         // On 401, attempt re-auth and retry once.
         match result {
-            Err(ref e) if is_mcp_auth_error(e) => {
+            Err(ref error) if is_mcp_auth_error(error) => {
                 if let (Some(auth_manager), Some(metadata)) =
                     (&entry.auth_manager, &entry.server_metadata)
                 {
@@ -615,7 +614,7 @@ impl McpClientManager {
                         "401 detected, re-authenticating"
                     );
                     // Obtain a fresh token (handle_401 clears stale token).
-                    let _new_token = auth_manager
+                    auth_manager
                         .handle_401(server_id, "", metadata)
                         .await
                         .map_err(|auth_err| {
@@ -670,8 +669,7 @@ impl McpClientManager {
             return Err(XzatomaError::McpToolNotFound {
                 server: server_id.to_string(),
                 tool: tool_name.to_string(),
-            }
-            .into());
+            });
         }
 
         let protocol = entry
@@ -920,7 +918,7 @@ impl McpClientManager {
             .get(server_id)
             .and_then(|e| e.protocol.as_ref())
             .map(Arc::clone)
-            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()).into())
+            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()))
     }
 
     /// Insert a pre-built [`McpServerEntry`] directly into the server map.
@@ -1002,15 +1000,10 @@ pub fn xzatoma_client_capabilities() -> ClientCapabilities {
 // Private utilities
 // ---------------------------------------------------------------------------
 
-/// Returns `true` when the error chain contains an [`XzatomaError::McpAuth`]
-/// variant, signalling a `401 Unauthorized` response.
-fn is_mcp_auth_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|e| {
-        matches!(
-            e.downcast_ref::<XzatomaError>(),
-            Some(XzatomaError::McpAuth(_))
-        )
-    })
+/// Returns `true` when the error is an [`XzatomaError::McpAuth`] variant,
+/// signalling a `401 Unauthorized` response.
+fn is_mcp_auth_error(err: &XzatomaError) -> bool {
+    matches!(err, XzatomaError::McpAuth(_))
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,19 +1236,11 @@ mod tests {
         let result = manager.call_tool("srv", "missing_tool", None).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // Should be McpToolNotFound
-        let root = err.root_cause();
-        let is_tool_not_found = err.chain().any(|e| {
-            matches!(
-                e.downcast_ref::<XzatomaError>(),
-                Some(XzatomaError::McpToolNotFound { .. })
-            )
-        });
-        // Fallback: error message contains expected substrings.
+        assert!(matches!(err, XzatomaError::McpToolNotFound { .. }));
         let msg = err.to_string();
         assert!(
-            is_tool_not_found || msg.contains("missing_tool") || msg.contains("tool not found"),
-            "unexpected error: {root}"
+            msg.contains("missing_tool") || msg.contains("tool not found"),
+            "unexpected error: {msg}"
         );
     }
 
@@ -1295,13 +1280,13 @@ mod tests {
 
     #[test]
     fn test_is_mcp_auth_error_true_for_mcp_auth_variant() {
-        let err = anyhow::anyhow!(XzatomaError::McpAuth("denied".to_string()));
+        let err = XzatomaError::McpAuth("denied".to_string());
         assert!(is_mcp_auth_error(&err));
     }
 
     #[test]
     fn test_is_mcp_auth_error_false_for_other_variant() {
-        let err = anyhow::anyhow!(XzatomaError::McpTransport("io error".to_string()));
+        let err = XzatomaError::McpTransport("io error".to_string());
         assert!(!is_mcp_auth_error(&err));
     }
 

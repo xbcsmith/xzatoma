@@ -685,8 +685,13 @@ pub mod chat {
             for msg in agent.conversation().messages() {
                 if msg.role == "user" {
                     if let Some(content) = &msg.content {
-                        // Add each user message to readline history so up/down arrows work
-                        let _ = rl.add_history_entry(content);
+                        // Intentionally discard duplicate/history-capacity failures: they do not
+                        // prevent chat resume, and readline history is best-effort.
+                        if rl.add_history_entry(content).is_err() {
+                            tracing::debug!(
+                                "Skipped adding a resumed user message to readline history"
+                            );
+                        }
                         history_count += 1;
                     }
                 }
@@ -1464,7 +1469,9 @@ pub mod chat {
         let messages = agent.conversation().messages().to_vec();
 
         if messages.is_empty() {
-            return Err(anyhow::anyhow!("No messages to summarize"));
+            return Err(XzatomaError::Internal(
+                "No messages to summarize".to_string(),
+            ));
         }
 
         // Create summarization prompt
@@ -1949,8 +1956,7 @@ pub mod r#run {
         if plan_path.is_none() && prompt.is_none() {
             return Err(XzatomaError::Config(
                 "Either --plan or --prompt must be provided".to_string(),
-            )
-            .into());
+            ));
         }
 
         // Build tools & agent
@@ -2043,7 +2049,7 @@ pub mod r#run {
                 Agent::new(p, tools, config.agent.clone())?
             }
             other => {
-                return Err(XzatomaError::Config(format!("Unknown provider: {}", other)).into());
+                return Err(XzatomaError::Config(format!("Unknown provider: {}", other)));
             }
         };
 
@@ -2134,8 +2140,7 @@ pub mod r#run {
             _ => Err(XzatomaError::Provider(format!(
                 "Unsupported provider type: {}",
                 config.provider.provider_type
-            ))
-            .into()),
+            ))),
         }
     }
 
@@ -2258,7 +2263,10 @@ pub mod auth {
                 println!("Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set.");
                 Ok(())
             }
-            other => Err(XzatomaError::Provider(format!("Unsupported provider: {}", other)).into()),
+            other => Err(XzatomaError::Provider(format!(
+                "Unsupported provider: {}",
+                other
+            ))),
         }
     }
 
@@ -2353,8 +2361,8 @@ pub mod watch {
         );
 
         let kafka_config = config.watcher.kafka.clone().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            XzatomaError::Config(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars".to_string()
             )
         })?;
 
@@ -2374,7 +2382,8 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)
+                    .map_err(|error| XzatomaError::Watcher(error.to_string()))?;
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2384,7 +2393,11 @@ pub mod watch {
                     match tokio::signal::ctrl_c().await {
                         Ok(()) => {
                             tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
-                            let _ = shutdown_tx.send(()).await;
+                            if shutdown_tx.send(()).await.is_err() {
+                                tracing::debug!(
+                                    "Shutdown signal receiver already dropped for xzepr watcher"
+                                );
+                            }
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "Failed to set up signal handler");
@@ -2394,7 +2407,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result
+                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");
@@ -2414,7 +2427,11 @@ pub mod watch {
                     match tokio::signal::ctrl_c().await {
                         Ok(()) => {
                             tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
-                            let _ = shutdown_tx.send(()).await;
+                            if shutdown_tx.send(()).await.is_err() {
+                                tracing::debug!(
+                                    "Shutdown signal receiver already dropped for generic watcher"
+                                );
+                            }
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "Failed to set up signal handler");
@@ -2424,7 +2441,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result
+                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");
@@ -2451,8 +2468,8 @@ pub mod watch {
     fn apply_cli_overrides(config: &mut Config, overrides: &WatchCliOverrides) -> Result<()> {
         // Ensure Kafka configuration exists
         if config.watcher.kafka.is_none() {
-            return Err(anyhow::anyhow!(
-                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            return Err(XzatomaError::Config(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars".to_string()
             ));
         }
 
@@ -2460,10 +2477,10 @@ pub mod watch {
         if let Some(cli_watcher_type) = &overrides.watcher_type {
             let parsed_watcher_type = crate::config::WatcherType::from_str_name(cli_watcher_type)
                 .ok_or_else(|| {
-                anyhow::anyhow!(
+                XzatomaError::Config(format!(
                     "Invalid watcher type: {}. Must be one of: xzepr, generic",
                     cli_watcher_type
-                )
+                ))
             })?;
 
             config.watcher.watcher_type = parsed_watcher_type;

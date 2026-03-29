@@ -4,7 +4,7 @@
 //! Integrates with the tracing ecosystem for structured event logging.
 
 use crate::config::WatcherLoggingConfig;
-use anyhow::Result;
+use crate::error::{Result, XzatomaError};
 use std::fs::OpenOptions;
 use std::sync::Arc;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -39,8 +39,14 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 /// assert!(result.is_ok());
 /// ```
 pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
-    let env_filter =
-        EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new(&config.level))?;
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new(&config.level))
+        .map_err(|error| {
+            XzatomaError::Config(format!(
+                "Invalid watcher logging filter '{}': {}",
+                config.level, error
+            ))
+        })?;
 
     let registry = tracing_subscriber::registry().with(env_filter);
 

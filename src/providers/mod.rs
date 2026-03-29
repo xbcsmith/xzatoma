@@ -45,8 +45,7 @@ pub fn create_provider(
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
-        ))
-        .into()),
+        ))),
     }
 }
 
@@ -136,8 +135,7 @@ pub fn create_provider_with_override(
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
-        ))
-        .into()),
+        ))),
     }
 }
 

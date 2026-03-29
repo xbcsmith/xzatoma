@@ -3,7 +3,7 @@
 //! Provides a tool to write or overwrite file contents with automatic parent directory creation.
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_utils, ToolExecutor, ToolResult};
+use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -96,7 +96,7 @@ impl ToolExecutor for WriteFileTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: WriteFileParams = serde_json::from_value(args)?;
+        let params: WriteFileParams = parse_tool_args(args)?;
 
         // Check content size before validation
         if params.content.len() as u64 > self.max_file_size {

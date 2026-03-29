@@ -63,7 +63,7 @@ the filename, and stale project status sections in `README.md` and
 ### Phase 1: Dead Code Removal and Warning Cleanup
 
 Remove blanket warning suppressions to let the compiler identify genuine dead
-code, then either wire up or delete what it finds.
+code, then either wire up or delete what it finds. Use the file_edit tool and go file by file CAREFULLY to ensure consistent renaming and avoid missing any references.
 
 #### Task 1.1: Remove Vestigial `agent/executor.rs` Module
 
@@ -177,7 +177,7 @@ tests pass including previously-ignored tests.
 ### Phase 2: Error Handling Consolidation
 
 Unify the error handling strategy across the codebase to use a single `Result`
-type, add missing `From` implementations, and audit silent error discards.
+type, add missing `From` implementations, and audit silent error discards. Use the file_edit tool and go file by file CAREFULLY to ensure consistent renaming and avoid missing any references.
 
 #### Task 2.1: Migrate to Typed `Result<T, XzatomaError>`
 

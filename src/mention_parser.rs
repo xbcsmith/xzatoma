@@ -140,19 +140,17 @@ impl MentionContent {
         end_line: usize,
     ) -> crate::error::Result<String> {
         if start_line == 0 || end_line == 0 || start_line > end_line {
-            return Err(anyhow::anyhow!(
+            return Err(crate::error::XzatomaError::MentionParse(format!(
                 "Invalid line range: {}-{} (must be 1-based and start <= end)",
-                start_line,
-                end_line
-            ));
+                start_line, end_line
+            )));
         }
 
         if start_line > self.line_count {
-            return Err(anyhow::anyhow!(
+            return Err(crate::error::XzatomaError::MentionParse(format!(
                 "Start line {} exceeds file line count {}",
-                start_line,
-                self.line_count
-            ));
+                start_line, self.line_count
+            )));
         }
 
         let end = std::cmp::min(end_line, self.line_count);
@@ -578,10 +576,10 @@ pub fn resolve_mention_path(
 ) -> crate::error::Result<PathBuf> {
     // Reject absolute paths
     if mention_path.starts_with('/') {
-        return Err(anyhow::anyhow!(
+        return Err(crate::error::XzatomaError::MentionParse(format!(
             "Absolute paths are not allowed: {}",
             mention_path
-        ));
+        )));
     }
 
     // Reject directory traversal
@@ -589,10 +587,10 @@ pub fn resolve_mention_path(
         || mention_path.ends_with("..")
         || mention_path.starts_with("..")
     {
-        return Err(anyhow::anyhow!(
+        return Err(crate::error::XzatomaError::MentionParse(format!(
             "Directory traversal is not allowed: {}",
             mention_path
-        ));
+        )));
     }
 
     let path = working_dir.join(mention_path);
@@ -618,10 +616,10 @@ pub fn resolve_mention_path(
     // joined path (`working_dir.join(mention_path)`) and will start with the
     // possibly symlinked `working_dir` rather than its canonicalized target.
     if !(canonical.starts_with(&canonical_wd) || canonical.starts_with(working_dir)) {
-        return Err(anyhow::anyhow!(
+        return Err(crate::error::XzatomaError::MentionParse(format!(
             "Path escapes working directory: {}",
             mention_path
-        ));
+        )));
     }
 
     Ok(canonical)
@@ -656,25 +654,30 @@ pub async fn load_file_content(
 
     // Check file exists
     if !file_path.exists() {
-        return Err(anyhow::anyhow!("File not found: {}", mention.path));
+        return Err(crate::error::XzatomaError::FileLoad(format!(
+            "File not found: {}",
+            mention.path
+        )));
     }
 
     // Get file metadata
     let metadata = fs::metadata(&file_path).await?;
 
     if !metadata.is_file() {
-        return Err(anyhow::anyhow!("Not a file: {}", mention.path));
+        return Err(crate::error::XzatomaError::FileLoad(format!(
+            "Not a file: {}",
+            mention.path
+        )));
     }
 
     let file_size = metadata.len();
 
     // Check size limit
     if file_size > max_size_bytes {
-        return Err(anyhow::anyhow!(
+        return Err(crate::error::XzatomaError::FileLoad(format!(
             "File too large: {} bytes exceeds limit of {} bytes",
-            file_size,
-            max_size_bytes
-        ));
+            file_size, max_size_bytes
+        )));
     }
 
     // Read file contents
@@ -682,10 +685,10 @@ pub async fn load_file_content(
 
     // Check for binary file (simple heuristic: contains null bytes)
     if contents.contains('\0') {
-        return Err(anyhow::anyhow!(
+        return Err(crate::error::XzatomaError::FileLoad(format!(
             "Binary file cannot be loaded: {}",
             mention.path
-        ));
+        )));
     }
 
     // Get modification time
@@ -952,7 +955,7 @@ impl std::fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 /// Heuristic classification for file loading errors
-fn classify_file_error(e: &anyhow::Error) -> LoadErrorKind {
+fn classify_file_error(e: &crate::error::XzatomaError) -> LoadErrorKind {
     let s = e.to_string().to_lowercase();
     if s.contains("file not found") || s.contains("no such file") {
         LoadErrorKind::FileNotFound
@@ -976,7 +979,7 @@ fn classify_file_error(e: &anyhow::Error) -> LoadErrorKind {
 }
 
 /// Heuristic classification for URL loading errors
-fn classify_url_error(e: &anyhow::Error) -> LoadErrorKind {
+fn classify_url_error(e: &crate::error::XzatomaError) -> LoadErrorKind {
     let s = e.to_string().to_lowercase();
     if s.contains("not allowed")
         && (s.contains("private") || s.contains("localhost") || s.contains("loopback"))
@@ -1064,11 +1067,10 @@ pub async fn load_url_content(
         }
         Err(e) => {
             debug!("Failed to fetch URL {}: {}", url_mention.url, e);
-            Err(anyhow::anyhow!(
+            Err(crate::error::XzatomaError::Fetch(format!(
                 "Failed to fetch URL {}: {}",
-                url_mention.url,
-                e
-            ))
+                url_mention.url, e
+            )))
         }
     }
 }

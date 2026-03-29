@@ -256,7 +256,7 @@ impl JsonRpcClient {
         let value = rpc_result.map_err(|e| XzatomaError::Mcp(e.message))?;
 
         // Deserialize the result into the caller's expected type.
-        serde_json::from_value(value).map_err(|e| XzatomaError::Serialization(e).into())
+        serde_json::from_value(value).map_err(XzatomaError::Serialization)
     }
 
     /// Send a JSON-RPC notification (no response expected).
@@ -548,8 +548,10 @@ async fn handle_response(value: serde_json::Value, client: &Arc<JsonRpcClient>) 
                 .unwrap_or(serde_json::Value::Null))
         };
 
-    // Ignore send errors: the caller may have already timed out.
-    let _ = tx.send(outcome);
+    // The caller may already have timed out and dropped the receiver.
+    if tx.send(outcome).is_err() {
+        tracing::debug!("Dropping MCP response delivery because the receiver was closed");
+    }
 }
 
 /// Call the registered server-request handler and send a response.
@@ -599,7 +601,11 @@ async fn handle_server_request(value: serde_json::Value, client: &Arc<JsonRpcCli
     };
 
     if let Ok(serialized) = serde_json::to_string(&response) {
-        let _ = client.outbound_tx.send(serialized);
+        if client.outbound_tx.send(serialized).is_err() {
+            tracing::debug!(
+                "Failed to forward MCP server response because outbound channel was closed"
+            );
+        }
     }
 }
 

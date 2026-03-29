@@ -21,26 +21,10 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Result alias for ACP-local operations.
+/// ACP-local validation and lifecycle helpers return crate-level
+/// `xzatoma::error::Result<T>` values after conversion through
+/// [`crate::error::XzatomaError`].
 ///
-/// This result type is used within the ACP domain layer for strongly typed ACP
-/// validation and lifecycle failures.
-///
-/// # Examples
-///
-/// ```
-/// use xzatoma::acp::error::{AcpError, Result};
-///
-/// fn example() -> Result<()> {
-///     Ok(())
-/// }
-///
-/// assert!(example().is_ok());
-/// let error = AcpError::validation("invalid payload");
-/// assert!(error.to_string().contains("invalid payload"));
-/// ```
-pub type Result<T> = std::result::Result<T, AcpError>;
-
 /// ACP field-level validation error.
 ///
 /// This error captures a specific ACP field path and a descriptive validation
@@ -257,6 +241,11 @@ impl AcpError {
     }
 }
 
+/// Converts a field-level ACP validation error into the broader ACP domain
+/// error type.
+///
+/// This preserves ACP-specific validation context so callers can later convert
+/// the resulting [`AcpError`] into [`crate::error::XzatomaError::Acp`].
 impl From<AcpValidationError> for AcpError {
     fn from(value: AcpValidationError) -> Self {
         Self::Validation(value.to_string())
@@ -286,7 +275,7 @@ impl From<AcpValidationError> for AcpError {
 /// assert!(validate_non_empty("message.role", "user").is_ok());
 /// assert!(validate_non_empty("message.role", "   ").is_err());
 /// ```
-pub fn validate_non_empty(field: &str, value: &str) -> Result<()> {
+pub fn validate_non_empty(field: &str, value: &str) -> crate::error::Result<()> {
     if value.trim().is_empty() {
         return Err(AcpValidationError::new(field, "value cannot be empty").into());
     }
@@ -318,7 +307,7 @@ pub fn validate_non_empty(field: &str, value: &str) -> Result<()> {
 /// assert!(validate_optional_non_empty("artifact.name", Some("result.txt")).is_ok());
 /// assert!(validate_optional_non_empty("artifact.name", Some("")).is_err());
 /// ```
-pub fn validate_optional_non_empty(field: &str, value: Option<&str>) -> Result<()> {
+pub fn validate_optional_non_empty(field: &str, value: Option<&str>) -> crate::error::Result<()> {
     if let Some(value) = value {
         validate_non_empty(field, value)?;
     }
@@ -357,7 +346,7 @@ pub fn validate_mutually_exclusive(
     left_present: bool,
     right_field: &str,
     right_present: bool,
-) -> Result<()> {
+) -> crate::error::Result<()> {
     if left_present && right_present {
         return Err(AcpValidationError::new(
             format!("{left_field},{right_field}"),
@@ -405,7 +394,7 @@ pub fn validate_with_predicate<F>(
     value: &str,
     predicate: F,
     message: &str,
-) -> Result<()>
+) -> crate::error::Result<()>
 where
     F: FnOnce(&str) -> bool,
 {

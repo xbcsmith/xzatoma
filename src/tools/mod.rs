@@ -214,6 +214,49 @@ impl ToolResult {
     }
 }
 
+/// Parses raw JSON tool arguments into a typed input structure.
+///
+/// This helper re-exports the crate-wide parsing utility from the tools module
+/// so tool implementations can use a single consistent import path.
+///
+/// # Type Parameters
+///
+/// * `T` - Target deserialization type
+///
+/// # Arguments
+///
+/// * `args` - Raw JSON arguments passed to the tool
+///
+/// # Returns
+///
+/// Returns the deserialized tool input.
+///
+/// # Errors
+///
+/// Returns an error when the JSON payload does not match the expected schema.
+///
+/// # Examples
+///
+/// ```
+/// use serde::Deserialize;
+/// use serde_json::json;
+/// use xzatoma::tools::parse_tool_args;
+///
+/// #[derive(Debug, Deserialize, PartialEq)]
+/// struct ExampleArgs {
+///     path: String,
+/// }
+///
+/// let parsed: ExampleArgs = parse_tool_args(json!({ "path": "src/main.rs" })).unwrap();
+/// assert_eq!(
+///     parsed,
+///     ExampleArgs {
+///         path: "src/main.rs".to_string(),
+///     }
+/// );
+/// ```
+pub use crate::error::parse_tool_args;
+
 /// Tool executor trait for implementing tool execution logic
 ///
 /// Each tool must implement this trait to provide execution logic

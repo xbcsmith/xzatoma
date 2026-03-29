@@ -4,7 +4,7 @@
 //! Handles image files by returning outline information instead of raw content.
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_metadata, file_utils, ToolExecutor, ToolResult};
+use crate::tools::{file_metadata, file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -161,7 +161,7 @@ impl ToolExecutor for ReadFileTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: ReadFileParams = serde_json::from_value(args)?;
+        let params: ReadFileParams = parse_tool_args(args)?;
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;

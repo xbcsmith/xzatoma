@@ -113,7 +113,7 @@ impl QuotaTracker {
     fn lock_usage(&self) -> Result<MutexGuard<'_, QuotaUsage>> {
         self.usage
             .lock()
-            .map_err(|e| XzatomaError::Internal(format!("Quota usage lock poisoned: {}", e)).into())
+            .map_err(|e| XzatomaError::Internal(format!("Quota usage lock poisoned: {}", e)))
     }
 
     fn recover_usage(&self) -> QuotaUsage {
@@ -167,21 +167,21 @@ impl QuotaTracker {
         // Check execution limit
         if let Some(max) = self.limits.max_executions {
             if usage.executions >= max {
-                return Err(anyhow::anyhow!(XzatomaError::QuotaExceeded(format!(
+                return Err(XzatomaError::QuotaExceeded(format!(
                     "Execution limit reached: {}/{}",
                     usage.executions, max
-                ))));
+                )));
             }
         }
 
         // Check time limit
         if let Some(max_time) = self.limits.max_total_time {
             if usage.start_time.elapsed() >= max_time {
-                return Err(anyhow::anyhow!(XzatomaError::QuotaExceeded(format!(
+                return Err(XzatomaError::QuotaExceeded(format!(
                     "Time limit exceeded: {:?} >= {:?}",
                     usage.start_time.elapsed(),
                     max_time
-                ))));
+                )));
             }
         }
 
@@ -234,10 +234,10 @@ impl QuotaTracker {
         // Check token limit
         if let Some(max) = self.limits.max_total_tokens {
             if usage.total_tokens > max {
-                return Err(anyhow::anyhow!(XzatomaError::QuotaExceeded(format!(
+                return Err(XzatomaError::QuotaExceeded(format!(
                     "Token limit exceeded: {}/{}",
                     usage.total_tokens, max
-                ))));
+                )));
             }
         }
 

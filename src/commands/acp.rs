@@ -197,8 +197,7 @@ pub fn list_recent_runs(session_id: &Option<String>, limit: usize) -> Result<()>
     if limit == 0 {
         return Err(XzatomaError::Config(
             "ACP run listing limit must be greater than 0".to_string(),
-        )
-        .into());
+        ));
     }
 
     let storage = SqliteStorage::new()?;
@@ -303,13 +302,11 @@ pub fn load_manifest(path: &Path) -> Result<AcpAgentManifest> {
         Some(other) => Err(XzatomaError::Config(format!(
             "Unsupported ACP manifest extension '{}'; expected .json or .yaml",
             other
-        ))
-        .into()),
+        ))),
         None => Err(XzatomaError::Config(format!(
             "ACP manifest '{}' must have a .json or .yaml extension",
             path.display()
-        ))
-        .into()),
+        ))),
     }
 }
 

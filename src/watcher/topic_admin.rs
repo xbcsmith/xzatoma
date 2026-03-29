@@ -52,10 +52,10 @@
 //! ```
 
 use crate::config::{KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::error::{Result, XzatomaError};
 use crate::watcher::xzepr::consumer::config::{
     SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
-use anyhow::{anyhow, Result};
 use std::time::Duration;
 use tracing::info;
 
@@ -376,18 +376,18 @@ impl WatcherTopicAdmin {
         }
 
         if let Some(mechanism) = &security.sasl_mechanism {
-            let username = security
-                .sasl_username
-                .clone()
-                .ok_or_else(|| anyhow!("SASL username is required when mechanism is set"))?;
+            let username = security.sasl_username.clone().ok_or_else(|| {
+                XzatomaError::Config("SASL username is required when mechanism is set".to_string())
+            })?;
 
             let password = security
                 .sasl_password
                 .clone()
                 .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
                 .ok_or_else(|| {
-                    anyhow!(
+                    XzatomaError::Config(
                         "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
+                            .to_string(),
                     )
                 })?;
 
@@ -404,7 +404,9 @@ impl WatcherTopicAdmin {
 
 fn validate_topic_name(topic: &str) -> Result<()> {
     if topic.trim().is_empty() {
-        return Err(anyhow!("Kafka topic name cannot be empty"));
+        return Err(XzatomaError::Config(
+            "Kafka topic name cannot be empty".to_string(),
+        ));
     }
 
     Ok(())
@@ -416,7 +418,10 @@ fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
         "SSL" => Ok(SecurityProtocol::Ssl),
         "SASL_PLAINTEXT" => Ok(SecurityProtocol::SaslPlaintext),
         "SASL_SSL" => Ok(SecurityProtocol::SaslSsl),
-        _ => Err(anyhow!("Invalid security protocol: {}", protocol)),
+        _ => Err(XzatomaError::Config(format!(
+            "Invalid security protocol: {}",
+            protocol
+        ))),
     }
 }
 
@@ -425,7 +430,10 @@ fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
         "PLAIN" => Ok(SaslMechanism::Plain),
         "SCRAM-SHA-256" => Ok(SaslMechanism::ScramSha256),
         "SCRAM-SHA-512" => Ok(SaslMechanism::ScramSha512),
-        _ => Err(anyhow!("Invalid SASL mechanism: {}", mechanism)),
+        _ => Err(XzatomaError::Config(format!(
+            "Invalid SASL mechanism: {}",
+            mechanism
+        ))),
     }
 }
 

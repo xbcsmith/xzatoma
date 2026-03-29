@@ -394,8 +394,7 @@ impl OllamaProvider {
             return Err(XzatomaError::Provider(format!(
                 "Ollama returned error {}: {}",
                 status, error_text
-            ))
-            .into());
+            )));
         }
 
         let ollama_response: OllamaTagsResponse = response.json().await.map_err(|e| {
@@ -474,7 +473,10 @@ impl OllamaProvider {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::Provider(format!("Model not found: {}", model_name)).into());
+            return Err(XzatomaError::Provider(format!(
+                "Model not found: {}",
+                model_name
+            )));
         }
 
         // Read the response body as text first so we can handle varying response shapes
@@ -724,20 +726,15 @@ impl Provider for OllamaProvider {
             .json(&ollama_request)
             .send()
             .await
-            .map_err(|e| {
-                tracing::error!("Ollama request failed: {}", e);
-                XzatomaError::Provider(format!("Ollama request failed: {}", e))
-            })?;
+            .map_err(|e| XzatomaError::Provider(format!("Ollama request failed: {}", e)))?;
 
         let status = response.status();
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("Ollama returned error {}: {}", status, error_text);
             return Err(XzatomaError::Provider(format!(
                 "Ollama returned error {}: {}",
                 status, error_text
-            ))
-            .into());
+            )));
         }
 
         let ollama_response: OllamaResponse = response.json().await.map_err(|e| {
@@ -814,7 +811,7 @@ impl Provider for OllamaProvider {
         self.config
             .read()
             .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string()).into()
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
             })
             .map(|config| config.model.clone())
     }
@@ -836,7 +833,10 @@ impl Provider for OllamaProvider {
         let model_info = models.iter().find(|m| m.name == model_name);
 
         if model_info.is_none() {
-            return Err(XzatomaError::Provider(format!("Model not found: {}", model_name)).into());
+            return Err(XzatomaError::Provider(format!(
+                "Model not found: {}",
+                model_name
+            )));
         }
 
         // Check if the model supports tool calling (required for XZatoma)
@@ -845,7 +845,7 @@ impl Provider for OllamaProvider {
             return Err(XzatomaError::Provider(format!(
                 "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
                 model_name
-            )).into());
+            )));
         }
 
         // Update the model in the config

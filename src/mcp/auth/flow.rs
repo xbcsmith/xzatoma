@@ -51,14 +51,19 @@ pub type BrowserOpenerFn = fn(&str);
 pub fn open_browser(url: &str) {
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg(url).spawn();
+        if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
+            tracing::warn!("Failed to launch browser with open: {}", error);
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        if let Err(error) = std::process::Command::new("xdg-open").arg(url).spawn() {
+            tracing::warn!("Failed to launch browser with xdg-open: {}", error);
+        }
     }
     // On other platforms (e.g. Windows) we do not attempt to open the
     // browser; the user must copy the URL manually.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = url;
 }
 
@@ -466,8 +471,7 @@ impl OAuthFlow {
             let body = resp.text().await.unwrap_or_default();
             return Err(XzatomaError::McpAuth(format!(
                 "refresh token endpoint returned {status}: {body}"
-            ))
-            .into());
+            )));
         }
 
         let raw: TokenResponse = resp.json().await.map_err(|e| {
@@ -516,8 +520,7 @@ impl OAuthFlow {
                     if attempt == 3 {
                         return Err(XzatomaError::McpAuth(
                             "step-up authorization loop limit reached".to_string(),
-                        )
-                        .into());
+                        ));
                     }
                     // Log the error and retry.
                     eprintln!("Step-up authorization attempt {attempt} failed: {e}. Retrying...");
@@ -527,7 +530,9 @@ impl OAuthFlow {
 
         // Unreachable: the loop always returns on attempt 3, but the compiler
         // needs a value here.
-        Err(XzatomaError::McpAuth("step-up authorization loop limit reached".to_string()).into())
+        Err(XzatomaError::McpAuth(
+            "step-up authorization loop limit reached".to_string(),
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -572,7 +577,9 @@ impl OAuthFlow {
         }
 
         // None of the mechanisms apply.
-        Err(XzatomaError::McpAuth("no viable client registration mechanism".to_string()).into())
+        Err(XzatomaError::McpAuth(
+            "no viable client registration mechanism".to_string(),
+        ))
     }
 
     /// Performs Dynamic Client Registration (RFC 7591).
@@ -606,8 +613,7 @@ impl OAuthFlow {
             let text = resp.text().await.unwrap_or_default();
             return Err(XzatomaError::McpAuth(format!(
                 "client registration endpoint returned {status}: {text}"
-            ))
-            .into());
+            )));
         }
 
         let dcr: DcrResponse = resp.json().await.map_err(|e| {
@@ -678,72 +684,75 @@ impl OAuthFlow {
         // Move to a blocking task so we can use std I/O for simple HTTP
         // request parsing without pulling in a full HTTP server.
         let expected_state = expected_state.to_string();
-        let (code, _) =
-            tokio::task::spawn_blocking(move || -> Result<(String, ())> {
-                let std_stream = stream.into_std().map_err(|e| {
-                    XzatomaError::McpAuth(format!("stream conversion failed: {e}"))
+        let callback_result = tokio::task::spawn_blocking(move || -> Result<(String, ())> {
+            let std_stream = stream.into_std().map_err(|e| {
+                XzatomaError::McpAuth(format!("stream conversion failed: {e}"))
+            })?;
+
+            let mut write_stream = std_stream.try_clone().map_err(|e| {
+                XzatomaError::McpAuth(format!("stream clone failed: {e}"))
+            })?;
+
+            let reader = BufReader::new(std_stream);
+            let mut request_line = String::new();
+
+            for line in reader.lines() {
+                let line = line.map_err(|e| {
+                    XzatomaError::McpAuth(format!("failed to read callback request: {e}"))
                 })?;
-
-                let mut write_stream = std_stream.try_clone().map_err(|e| {
-                    XzatomaError::McpAuth(format!("stream clone failed: {e}"))
-                })?;
-
-                let reader = BufReader::new(std_stream);
-                let mut request_line = String::new();
-
-                for line in reader.lines() {
-                    let line = line.map_err(|e| {
-                        XzatomaError::McpAuth(format!("failed to read callback request: {e}"))
-                    })?;
-                    // HTTP headers end at the first empty line.
-                    if line.is_empty() {
-                        break;
-                    }
-                    if request_line.is_empty() {
-                        request_line = line;
-                    }
+                // HTTP headers end at the first empty line.
+                if line.is_empty() {
+                    break;
                 }
+                if request_line.is_empty() {
+                    request_line = line;
+                }
+            }
 
-                // Send HTTP 200 response immediately so the browser does not
-                // spin indefinitely.
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nAuthorization successful. You may close this tab.";
-                let _ = write_stream.write_all(response.as_bytes());
+            // Send HTTP 200 response immediately so the browser does not
+            // spin indefinitely.
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nAuthorization successful. You may close this tab.";
+            if let Err(error) = write_stream.write_all(response.as_bytes()) {
+                tracing::warn!("Failed to write HTTP response to browser: {}", error);
+            } else if let Err(error) = write_stream.flush() {
+                tracing::warn!("Failed to flush HTTP response to browser: {}", error);
+            }
 
-                // Parse request line: "GET /callback?code=...&state=... HTTP/1.1"
-                let path = request_line
-                    .split_whitespace()
-                    .nth(1)
-                    .unwrap_or("/");
+            // Parse request line: "GET /callback?code=...&state=... HTTP/1.1"
+            let path = request_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("/");
 
-                let query_string = path.split_once('?').map(|x| x.1).unwrap_or("");
-                let params = parse_query_string(query_string);
+            let query_string = path.split_once('?').map(|x| x.1).unwrap_or("");
+            let params = parse_query_string(query_string);
 
-                let state = params
-                    .get("state")
-                    .cloned()
-                    .unwrap_or_default();
+            let state = params
+                .get("state")
+                .cloned()
+                .unwrap_or_default();
 
-                if state != expected_state {
-                    return Err(XzatomaError::McpAuth(
-                        "state mismatch in OAuth callback".to_string(),
+            if state != expected_state {
+                return Err(XzatomaError::McpAuth(
+                    "state mismatch in OAuth callback".to_string(),
+                ));
+            }
+
+            let code = params
+                .get("code")
+                .cloned()
+                .ok_or_else(|| {
+                    XzatomaError::McpAuth(
+                        "authorization code missing from callback".to_string(),
                     )
-                    .into());
-                }
+                })?;
 
-                let code = params
-                    .get("code")
-                    .cloned()
-                    .ok_or_else(|| {
-                        XzatomaError::McpAuth(
-                            "authorization code missing from callback".to_string(),
-                        )
-                    })?;
+            Ok((code, ()))
+        })
+        .await
+        .map_err(|e| XzatomaError::McpAuth(format!("callback task panicked: {e}")))?;
 
-                Ok((code, ()))
-            })
-            .await
-            .map_err(|e| XzatomaError::McpAuth(format!("callback task panicked: {e}")))?
-            .map_err(|e: anyhow::Error| e)?;
+        let (code, _) = callback_result?;
 
         Ok(code)
     }
@@ -785,9 +794,9 @@ impl OAuthFlow {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(
-                XzatomaError::McpAuth(format!("token endpoint returned {status}: {body}")).into(),
-            );
+            return Err(XzatomaError::McpAuth(format!(
+                "token endpoint returned {status}: {body}"
+            )));
         }
 
         let raw: TokenResponse = resp

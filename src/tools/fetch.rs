@@ -7,7 +7,7 @@
 //! - Rate limiting
 //! - Caching support
 
-use crate::error::Result;
+use crate::error::{Result, XzatomaError};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
@@ -138,7 +138,8 @@ impl SsrfValidator {
     /// Returns error if URL is invalid or potentially dangerous
     pub fn validate(&self, url: &str) -> Result<()> {
         // Parse URL
-        let parsed_url = Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
+        let parsed_url =
+            Url::parse(url).map_err(|e| XzatomaError::Fetch(format!("Invalid URL: {}", e)))?;
 
         // Validate scheme
         self.validate_scheme(parsed_url.scheme())?;
@@ -147,7 +148,7 @@ impl SsrfValidator {
         if let Some(host) = parsed_url.host_str() {
             self.validate_host(host)?;
         } else {
-            return Err(anyhow::anyhow!("URL has no host"));
+            return Err(XzatomaError::Fetch("URL has no host".to_string()));
         }
 
         Ok(())
@@ -165,13 +166,16 @@ impl SsrfValidator {
     fn validate_scheme(&self, scheme: &str) -> Result<()> {
         match scheme {
             "http" | "https" => Ok(()),
-            "file" => Err(anyhow::anyhow!(
-                "file:// URLs are not allowed for security reasons"
+            "file" => Err(XzatomaError::Fetch(
+                "file:// URLs are not allowed for security reasons".to_string(),
             )),
-            "ftp" => Err(anyhow::anyhow!(
-                "ftp:// URLs are not allowed for security reasons"
+            "ftp" => Err(XzatomaError::Fetch(
+                "ftp:// URLs are not allowed for security reasons".to_string(),
             )),
-            _ => Err(anyhow::anyhow!("Unsupported URL scheme: {}", scheme)),
+            _ => Err(XzatomaError::Fetch(format!(
+                "Unsupported URL scheme: {}",
+                scheme
+            ))),
         }
     }
 
@@ -188,7 +192,9 @@ impl SsrfValidator {
         // Check for localhost variants
         if !self.allow_private_ips && (host == "localhost" || host == "127.0.0.1" || host == "::1")
         {
-            return Err(anyhow::anyhow!("Requests to localhost are not allowed"));
+            return Err(XzatomaError::Fetch(
+                "Requests to localhost are not allowed".to_string(),
+            ));
         }
 
         // Try to parse as IP address
@@ -206,9 +212,9 @@ impl SsrfValidator {
 
     /// Resolve a hostname to IP addresses for SSRF validation
     fn resolve_host_ips(&self, host: &str) -> Result<Vec<IpAddr>> {
-        let addrs = (host, 80)
-            .to_socket_addrs()
-            .map_err(|e| anyhow::anyhow!("Failed to resolve host '{}': {}", host, e))?;
+        let addrs = (host, 80).to_socket_addrs().map_err(|e| {
+            XzatomaError::Fetch(format!("Failed to resolve host '{}': {}", host, e))
+        })?;
 
         let mut ips = Vec::new();
         for addr in addrs {
@@ -216,10 +222,10 @@ impl SsrfValidator {
         }
 
         if ips.is_empty() {
-            return Err(anyhow::anyhow!(
+            return Err(XzatomaError::Fetch(format!(
                 "Failed to resolve host '{}': no addresses",
                 host
-            ));
+            )));
         }
 
         Ok(ips)
@@ -244,42 +250,38 @@ impl SsrfValidator {
             IpAddr::V4(v4) => {
                 // 127.0.0.0/8 (localhost)
                 if v4.octets()[0] == 127 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to loopback addresses are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to loopback addresses are not allowed".to_string(),
                     ));
                 }
-                // 10.0.0.0/8 (private)
                 if v4.octets()[0] == 10 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to private IP ranges are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to private IP ranges are not allowed".to_string(),
                     ));
                 }
-                // 172.16.0.0/12 (private)
                 if v4.octets()[0] == 172 && (v4.octets()[1] >= 16 && v4.octets()[1] <= 31) {
-                    return Err(anyhow::anyhow!(
-                        "Requests to private IP ranges are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to private IP ranges are not allowed".to_string(),
                     ));
                 }
-                // 192.168.0.0/16 (private)
                 if v4.octets()[0] == 192 && v4.octets()[1] == 168 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to private IP ranges are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to private IP ranges are not allowed".to_string(),
                     ));
                 }
-                // 169.254.0.0/16 (link-local)
                 if v4.octets()[0] == 169 && v4.octets()[1] == 254 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to link-local addresses are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to link-local addresses are not allowed".to_string(),
                     ));
                 }
-                // 0.0.0.0/8 (this network)
                 if v4.octets()[0] == 0 {
-                    return Err(anyhow::anyhow!("Requests to this network are not allowed"));
+                    return Err(XzatomaError::Fetch(
+                        "Requests to this network are not allowed".to_string(),
+                    ));
                 }
-                // 255.255.255.255 (broadcast)
                 if v4 == std::net::Ipv4Addr::BROADCAST {
-                    return Err(anyhow::anyhow!(
-                        "Requests to broadcast address are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to broadcast address are not allowed".to_string(),
                     ));
                 }
                 Ok(())
@@ -287,20 +289,18 @@ impl SsrfValidator {
             IpAddr::V6(v6) => {
                 // Block IPv6 loopback (::1)
                 if v6.octets() == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1] {
-                    return Err(anyhow::anyhow!(
-                        "Requests to loopback addresses are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to loopback addresses are not allowed".to_string(),
                     ));
                 }
-                // Block IPv6 private addresses (fc00::/7)
                 if (v6.segments()[0] & 0xfe00) == 0xfc00 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to private IP ranges are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to private IP ranges are not allowed".to_string(),
                     ));
                 }
-                // Block IPv6 link-local (fe80::/10)
                 if (v6.segments()[0] & 0xffc0) == 0xfe80 {
-                    return Err(anyhow::anyhow!(
-                        "Requests to link-local addresses are not allowed"
+                    return Err(XzatomaError::Fetch(
+                        "Requests to link-local addresses are not allowed".to_string(),
                     ));
                 }
                 Ok(())
@@ -357,10 +357,10 @@ impl RateLimiter {
 
         // Check if limit exceeded
         if self.requests.len() >= self.max_requests_per_minute as usize {
-            return Err(anyhow::anyhow!(
+            return Err(XzatomaError::Fetch(format!(
                 "Rate limit exceeded: {} requests per minute",
                 self.max_requests_per_minute
-            ));
+            )));
         }
 
         // Record new request
@@ -478,7 +478,7 @@ impl FetchTool {
             .get(url)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to fetch URL: {}", e))?;
+            .map_err(|e| XzatomaError::Fetch(format!("Failed to fetch URL: {}", e)))?;
 
         let status = response.status();
         let content_type = response
@@ -490,14 +490,18 @@ impl FetchTool {
 
         // Handle HTTP errors
         if !status.is_success() {
-            return Err(anyhow::anyhow!("HTTP {} for {}", status.as_u16(), url));
+            return Err(XzatomaError::Fetch(format!(
+                "HTTP {} for {}",
+                status.as_u16(),
+                url
+            )));
         }
 
         // Get content
         let bytes = response
             .bytes()
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to read response body: {}", e))?;
+            .map_err(|e| XzatomaError::Fetch(format!("Failed to read response body: {}", e)))?;
 
         // Check size limit
         let mut truncated = false;

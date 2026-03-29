@@ -15,7 +15,7 @@ delegating to `file_utils::PathValidator`.
 */
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_utils, ToolExecutor, ToolResult};
+use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
@@ -144,7 +144,7 @@ impl ToolExecutor for EditFileTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: EditFileParams = serde_json::from_value(args)?;
+        let params: EditFileParams = parse_tool_args(args)?;
 
         // Quick guard: content size limit
         if params.content.len() as u64 > self.max_file_size {

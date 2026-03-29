@@ -3,6 +3,7 @@
 //! Provides a tool to delete files and directories with optional recursive deletion.
 
 use crate::error::{Result, XzatomaError};
+use crate::tools::parse_tool_args;
 use crate::tools::{file_utils, ToolExecutor, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -91,7 +92,7 @@ impl ToolExecutor for DeletePathTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: DeletePathParams = serde_json::from_value(args)?;
+        let params: DeletePathParams = parse_tool_args(args)?;
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;

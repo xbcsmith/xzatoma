@@ -300,8 +300,7 @@ impl McpProtocol {
                     .map(|s| s.to_string())
                     .collect(),
                 got: response.protocol_version,
-            }
-            .into());
+            });
         }
 
         // Fire-and-forget the initialized notification; errors are not fatal.

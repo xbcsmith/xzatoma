@@ -3,7 +3,7 @@
 //! Provides a tool to list directory contents with optional recursive listing and pattern filtering.
 
 use crate::error::Result;
-use crate::tools::{file_utils, ToolExecutor, ToolResult};
+use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -162,7 +162,7 @@ impl ToolExecutor for ListDirectoryTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: ListDirectoryParams = serde_json::from_value(args)?;
+        let params: ListDirectoryParams = parse_tool_args(args)?;
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;

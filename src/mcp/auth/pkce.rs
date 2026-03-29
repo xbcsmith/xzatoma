@@ -179,10 +179,9 @@ pub fn verify_s256_support(metadata: &AuthorizationServerMetadata) -> Result<()>
     if supported.iter().any(|m| m == "S256") {
         Ok(())
     } else {
-        Err(
-            XzatomaError::McpAuth("PKCE S256 not supported by authorization server".to_string())
-                .into(),
-        )
+        Err(XzatomaError::McpAuth(
+            "PKCE S256 not supported by authorization server".to_string(),
+        ))
     }
 }
 

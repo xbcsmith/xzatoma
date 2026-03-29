@@ -729,8 +729,7 @@ pub trait Provider: Send + Sync {
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         Err(crate::error::XzatomaError::Provider(
             "Model listing is not supported by this provider".to_string(),
-        )
-        .into())
+        ))
     }
 
     /// Get detailed information about a specific model
@@ -755,8 +754,7 @@ pub trait Provider: Send + Sync {
     async fn get_model_info(&self, _model_name: &str) -> Result<ModelInfo> {
         Err(crate::error::XzatomaError::Provider(
             "Detailed model information is not supported by this provider".to_string(),
-        )
-        .into())
+        ))
     }
 
     /// Get the name of the currently active model
@@ -771,8 +769,7 @@ pub trait Provider: Send + Sync {
     fn get_current_model(&self) -> Result<String> {
         Err(crate::error::XzatomaError::Provider(
             "Current model information is not available from this provider".to_string(),
-        )
-        .into())
+        ))
     }
 
     /// Get the capabilities of this provider
@@ -811,8 +808,7 @@ pub trait Provider: Send + Sync {
     async fn set_model(&mut self, _model_name: String) -> Result<()> {
         Err(crate::error::XzatomaError::Provider(
             "Model switching is not supported by this provider".to_string(),
-        )
-        .into())
+        ))
     }
 
     /// List models with full summary data

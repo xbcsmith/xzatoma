@@ -420,8 +420,7 @@ fn yaml_value_to_string(value: &serde_yaml::Value) -> Result<Option<String>> {
         _ => {
             return Err(XzatomaError::Config(
                 "Expected a scalar YAML value in skill frontmatter".to_string(),
-            )
-            .into())
+            ))
         }
     };
 

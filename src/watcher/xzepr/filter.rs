@@ -7,8 +7,8 @@
 //! as part of the generic watcher architecture (Phase 1).
 
 use crate::config::EventFilterConfig;
+use crate::error::Result;
 use crate::watcher::xzepr::consumer::CloudEventMessage;
-use anyhow::Result;
 use regex::Regex;
 
 /// Event filter for determining which CloudEvents to process.
@@ -56,7 +56,14 @@ impl EventFilter {
     /// ```
     pub fn new(config: EventFilterConfig) -> Result<Self> {
         let source_regex = if let Some(pattern) = &config.source_pattern {
-            Some(std::sync::Arc::new(Regex::new(pattern)?))
+            Some(std::sync::Arc::new(Regex::new(pattern).map_err(
+                |error| {
+                    crate::error::XzatomaError::Watcher(format!(
+                        "Invalid event source regex pattern '{}': {}",
+                        pattern, error
+                    ))
+                },
+            )?))
         } else {
             None
         };

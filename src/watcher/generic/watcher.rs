@@ -27,11 +27,11 @@
 //! premature coupling to a not-yet-shared watcher execution entry point.
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::error::Result;
 use crate::watcher::generic::matcher::GenericMatcher;
 use crate::watcher::generic::message::{GenericPlanEvent, GenericPlanResult};
 use crate::watcher::generic::producer::GenericResultProducer;
 use crate::watcher::topic_admin::WatcherTopicAdmin;
-use anyhow::Result;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use thiserror::Error;

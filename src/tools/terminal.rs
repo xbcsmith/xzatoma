@@ -94,11 +94,11 @@ pub async fn execute_command(
     if tool_result.success {
         Ok(tool_result.output)
     } else {
-        Err(anyhow::Error::from(XzatomaError::Tool(
+        Err(XzatomaError::Tool(
             tool_result
                 .error
                 .unwrap_or_else(|| "command failed".to_string()),
-        )))
+        ))
     }
 }
 
@@ -503,14 +503,10 @@ impl ToolExecutor for TerminalTool {
     async fn execute(&self, params: Value) -> Result<ToolResult> {
         let command = params["command"]
             .as_str()
-            .ok_or_else(|| {
-                anyhow::anyhow!(XzatomaError::Tool(
-                    "Missing 'command' parameter".to_string()
-                ))
-            })?
+            .ok_or_else(|| XzatomaError::Tool("Missing 'command' parameter".to_string()))?
             .to_string();
 
-        let parsed = parse_command_line(&command).map_err(|e| anyhow::anyhow!(e))?;
+        let parsed = parse_command_line(&command)?;
 
         let confirm = params["confirm"].as_bool().unwrap_or(false);
         let timeout_seconds = params["timeout_seconds"]
@@ -557,12 +553,9 @@ impl ToolExecutor for TerminalTool {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Spawn and obtain a child
-        let child = cmd.spawn().map_err(|e| {
-            anyhow::anyhow!(XzatomaError::Tool(format!(
-                "Failed to spawn command: {}",
-                e
-            )))
-        })?;
+        let child = cmd
+            .spawn()
+            .map_err(|e| XzatomaError::Tool(format!("Failed to spawn command: {}", e)))?;
 
         let start = std::time::Instant::now();
 
@@ -582,8 +575,18 @@ impl ToolExecutor for TerminalTool {
             join_res = &mut join_fut => {
                 match join_res {
                     Ok(Ok(out)) => out,
-                    Ok(Err(e)) => return Err(anyhow::anyhow!(XzatomaError::Tool(format!("Failed waiting for command output: {}", e)))),
-                    Err(e) => return Err(anyhow::anyhow!(XzatomaError::Tool(format!("Join error waiting for command: {}", e)))),
+                    Ok(Err(e)) => {
+                        return Err(XzatomaError::Tool(format!(
+                            "Failed waiting for command output: {}",
+                            e
+                        )))
+                    }
+                    Err(e) => {
+                        return Err(XzatomaError::Tool(format!(
+                            "Join error waiting for command: {}",
+                            e
+                        )))
+                    }
                 }
             }
             _ = &mut sleep => {
@@ -601,8 +604,18 @@ impl ToolExecutor for TerminalTool {
                 // Await join handle after kill to collect any output
                 match join_fut.await {
                     Ok(Ok(out)) => out,
-                    Ok(Err(e)) => return Err(anyhow::anyhow!(XzatomaError::Tool(format!("Failed waiting for command output after kill: {}", e)))),
-                    Err(e) => return Err(anyhow::anyhow!(XzatomaError::Tool(format!("Join error after kill: {}", e)))),
+                    Ok(Err(e)) => {
+                        return Err(XzatomaError::Tool(format!(
+                            "Failed waiting for command output after kill: {}",
+                            e
+                        )))
+                    }
+                    Err(e) => {
+                        return Err(XzatomaError::Tool(format!(
+                            "Join error after kill: {}",
+                            e
+                        )))
+                    }
                 }
             }
         };
@@ -655,7 +668,7 @@ impl ToolExecutor for TerminalTool {
 /// Validate a command for safety (convenience)
 pub fn validate_command(command: &str, mode: ExecutionMode, working_dir: PathBuf) -> Result<()> {
     let validator = CommandValidator::new(mode, working_dir);
-    validator.validate(command).map_err(Into::into)
+    validator.validate(command)
 }
 
 /// Return true when the command is considered dangerous or not allowed

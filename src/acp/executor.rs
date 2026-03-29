@@ -310,17 +310,30 @@ impl AcpExecutor {
     ///
     /// Returns an error if the run cannot be loaded before spawning.
     pub async fn spawn_background(&self, run_id: String) -> Result<AcpExecutorOutcome> {
-        let _ = self.runtime.get_run(&run_id)?;
+        self.runtime.get_run(&run_id)?;
 
         let executor = self.clone();
         tokio::spawn(async move {
             let result = executor.execute_run_internal(&run_id).await;
             if let Err(error) = result {
-                let _ = executor.runtime.record_error_event(
+                if let Err(record_error) = executor.runtime.record_error_event(
                     &run_id,
                     format!("background ACP execution failed: {}", error),
-                );
-                let _ = executor.runtime.fail_run(&run_id, error.to_string());
+                ) {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %record_error,
+                        "Failed to record background ACP execution error event"
+                    );
+                }
+
+                if let Err(fail_error) = executor.runtime.fail_run(&run_id, error.to_string()) {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %fail_error,
+                        "Failed to mark background ACP run as failed"
+                    );
+                }
             }
         });
 
@@ -379,8 +392,8 @@ impl AcpExecutor {
     }
 
     async fn execute_run_internal(&self, run_id: &str) -> Result<()> {
-        let _ = self.runtime.mark_queued(run_id)?;
-        let _ = self.runtime.mark_running(run_id)?;
+        self.runtime.mark_queued(run_id)?;
+        self.runtime.mark_running(run_id)?;
 
         let prompt = self.runtime.prompt_for_run(run_id)?;
         let execution = self.execute_prompt(&prompt).await;
@@ -388,15 +401,23 @@ impl AcpExecutor {
         match execution {
             Ok(output) => {
                 let message = assistant_text_message(output)?;
-                let _ = self.runtime.append_output_message(run_id, message)?;
-                let _ = self.runtime.complete_run(run_id)?;
+                self.runtime.append_output_message(run_id, message)?;
+                self.runtime.complete_run(run_id)?;
                 Ok(())
             }
             Err(error) => {
-                let _ = self
+                if let Err(record_error) = self
                     .runtime
-                    .record_error_event(run_id, format!("ACP executor error: {}", error));
-                let _ = self.runtime.fail_run(run_id, error.to_string())?;
+                    .record_error_event(run_id, format!("ACP executor error: {}", error))
+                {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %record_error,
+                        "Failed to record ACP executor error event"
+                    );
+                }
+
+                self.runtime.fail_run(run_id, error.to_string())?;
                 Err(error)
             }
         }

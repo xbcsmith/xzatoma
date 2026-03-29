@@ -170,19 +170,17 @@ impl HttpTransport {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let response = req.send().await.map_err(|e| {
-            anyhow::anyhow!(XzatomaError::McpTransport(format!(
-                "GET stream request failed: {}",
-                e
-            )))
-        })?;
+        let response = req
+            .send()
+            .await
+            .map_err(|e| XzatomaError::McpTransport(format!("GET stream request failed: {}", e)))?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(anyhow::anyhow!(XzatomaError::McpTransport(format!(
+            return Err(XzatomaError::McpTransport(format!(
                 "GET stream returned HTTP {}",
                 status
-            ))));
+            )));
         }
 
         let byte_stream = response.bytes_stream();
@@ -251,12 +249,10 @@ impl Transport for HttpTransport {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let response = req.send().await.map_err(|e| {
-            anyhow::anyhow!(XzatomaError::McpTransport(format!(
-                "HTTP POST failed: {}",
-                e
-            )))
-        })?;
+        let response = req
+            .send()
+            .await
+            .map_err(|e| XzatomaError::McpTransport(format!("HTTP POST failed: {}", e)))?;
 
         let status = response.status();
 
@@ -269,7 +265,7 @@ impl Transport for HttpTransport {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("")
                 .to_string();
-            return Err(anyhow::anyhow!(XzatomaError::McpAuth(www_auth)));
+            return Err(XzatomaError::McpAuth(www_auth));
         }
 
         // Handle 404: if we have an active session it has expired.
@@ -281,13 +277,9 @@ impl Transport for HttpTransport {
             if has_session {
                 let mut sid = self.session_id.write().await;
                 *sid = None;
-                return Err(anyhow::anyhow!(XzatomaError::Mcp(
-                    "mcp session expired".into()
-                )));
+                return Err(XzatomaError::Mcp("mcp session expired".into()));
             }
-            return Err(anyhow::anyhow!(XzatomaError::McpTransport(
-                "HTTP 404 Not Found".into()
-            )));
+            return Err(XzatomaError::McpTransport("HTTP 404 Not Found".into()));
         }
 
         // 202 Accepted = notification acknowledgement, no body expected.
@@ -297,10 +289,10 @@ impl Transport for HttpTransport {
 
         // Any other non-success status is a transport error.
         if !status.is_success() {
-            return Err(anyhow::anyhow!(XzatomaError::McpTransport(format!(
+            return Err(XzatomaError::McpTransport(format!(
                 "HTTP POST returned status {}",
                 status
-            ))));
+            )));
         }
 
         // Capture session ID from the response header after a successful
@@ -335,10 +327,7 @@ impl Transport for HttpTransport {
         } else {
             // application/json or any other content type: read the full body.
             let body = response.text().await.map_err(|e| {
-                anyhow::anyhow!(XzatomaError::McpTransport(format!(
-                    "failed to read response body: {}",
-                    e
-                )))
+                XzatomaError::McpTransport(format!("failed to read response body: {}", e))
             })?;
             if !body.is_empty() {
                 let _ = self.response_tx.send(body);

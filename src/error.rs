@@ -1,11 +1,24 @@
-//! Error types for XZatoma
-//!
-//! This module defines all error types used throughout the application,
-//! using `thiserror` for ergonomic error handling.
-
+/// Error types for XZatoma.
+///
+/// This module defines the shared crate-wide error enum and the primary
+/// `Result<T>` alias used across the project. It also centralizes conversions
+/// from module-local error types into [`XzatomaError`] so callers can use `?`
+/// without losing typed error information.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::error::{Result, XzatomaError};
+///
+/// fn example() -> Result<()> {
+///     Err(XzatomaError::Tool("example failure".to_string()))
+/// }
+///
+/// assert!(matches!(example(), Err(XzatomaError::Tool(_))));
+/// ```
 use thiserror::Error;
 
-/// Main error type for XZatoma operations
+/// Main error type for XZatoma operations.
 ///
 /// This enum encompasses all possible errors that can occur during
 /// agent execution, configuration loading, provider interactions,
@@ -23,6 +36,14 @@ pub enum XzatomaError {
     /// Tool execution errors
     #[error("Tool execution error: {0}")]
     Tool(String),
+
+    /// Watcher-related errors
+    #[error("Watcher error: {0}")]
+    Watcher(String),
+
+    /// Command execution errors
+    #[error("Command error: {0}")]
+    Command(String),
 
     /// Fetch-related errors (HTTP fetch, SSRF, timeouts, rate limits)
     #[error("Fetch error: {0}")]
@@ -97,6 +118,14 @@ pub enum XzatomaError {
     /// HTTP request errors
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
+
+    /// Regex parsing and compilation errors
+    #[error("Regex error: {0}")]
+    Regex(#[from] regex::Error),
+
+    /// Tracing filter parsing errors
+    #[error("Tracing filter error: {0}")]
+    TracingFilter(#[from] tracing_subscriber::filter::ParseError),
 
     /// Keyring/credential storage errors
     #[error("Keyring error: {0}")]
@@ -189,37 +218,211 @@ pub enum XzatomaError {
     #[error("MCP task error: {0}")]
     McpTask(String),
 
-    /// ACP protocol validation or payload-shape error
-    #[error("ACP validation error: {0}")]
-    AcpValidation(String),
-
-    /// ACP transport-independent lifecycle error
-    #[error("ACP lifecycle error: {0}")]
-    AcpLifecycle(String),
-
-    /// ACP persistence or state storage error
-    #[error("ACP persistence error: {0}")]
-    AcpPersistence(String),
-
-    /// ACP unsupported lifecycle transition
-    #[error("ACP unsupported transition: from={from}, to={to}")]
-    AcpUnsupportedTransition {
-        /// Previous lifecycle state
-        from: String,
-        /// Requested lifecycle state
-        to: String,
-    },
+    /// ACP protocol error (consolidated from multiple variants)
+    #[error("ACP error: {0}")]
+    Acp(#[from] crate::acp::error::AcpError),
 }
 
-/// Result type alias for XZatoma operations
+/// Result type alias for XZatoma operations.
 ///
-/// This is a convenience alias that uses `anyhow::Error` as the error type,
-/// allowing for rich error context and easy error propagation.
-pub type Result<T> = anyhow::Result<T>;
+/// This is the primary result type used throughout the codebase,
+/// using `XzatomaError` as the error type for precise error handling.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::error::{Result, XzatomaError};
+///
+/// fn example() -> Result<()> {
+///     Ok(())
+/// }
+///
+/// assert!(example().is_ok());
+/// assert!(matches!(
+///     Err::<(), _>(XzatomaError::Config("bad config".to_string())),
+///     Err(XzatomaError::Config(_))
+/// ));
+/// ```
+pub type Result<T> = std::result::Result<T, XzatomaError>;
+
+/// Parses tool arguments into a strongly typed input structure.
+///
+/// This helper centralizes tool argument deserialization so all tool entry
+/// points report invalid JSON parameters consistently through
+/// [`XzatomaError::Tool`].
+///
+/// # Type Parameters
+///
+/// * `T` - The deserialized tool input type
+///
+/// # Arguments
+///
+/// * `args` - Raw JSON tool arguments
+///
+/// # Returns
+///
+/// Returns the deserialized tool input.
+///
+/// # Errors
+///
+/// Returns [`XzatomaError::Tool`] when the provided JSON does not match the
+/// expected input schema.
+///
+/// # Examples
+///
+/// ```
+/// use serde::Deserialize;
+/// use serde_json::json;
+/// use xzatoma::error::parse_tool_args;
+///
+/// #[derive(Debug, Deserialize, PartialEq)]
+/// struct ExampleArgs {
+///     path: String,
+/// }
+///
+/// let parsed: ExampleArgs = parse_tool_args(json!({ "path": "src/main.rs" })).unwrap();
+/// assert_eq!(
+///     parsed,
+///     ExampleArgs {
+///         path: "src/main.rs".to_string(),
+///     }
+/// );
+/// ```
+pub fn parse_tool_args<T>(args: serde_json::Value) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    serde_json::from_value(args)
+        .map_err(|error| XzatomaError::Tool(format!("Invalid tool parameters: {}", error)))
+}
+
+// From implementations for module-local error types
+
+/// Converts `AcpValidationError` to `XzatomaError::Acp`
+impl From<crate::acp::error::AcpValidationError> for XzatomaError {
+    fn from(err: crate::acp::error::AcpValidationError) -> Self {
+        crate::acp::error::AcpError::from(err).into()
+    }
+}
+
+/// Converts `FileMetadataError` to `XzatomaError::Tool`
+impl From<crate::tools::file_metadata::FileMetadataError> for XzatomaError {
+    fn from(err: crate::tools::file_metadata::FileMetadataError) -> Self {
+        XzatomaError::Tool(err.to_string())
+    }
+}
+
+/// Converts `FileUtilsError` to `XzatomaError::Tool`
+impl From<crate::tools::file_utils::FileUtilsError> for XzatomaError {
+    fn from(err: crate::tools::file_utils::FileUtilsError) -> Self {
+        XzatomaError::Tool(err.to_string())
+    }
+}
+
+/// Converts `CommandError` to `XzatomaError::Command`
+impl From<crate::commands::special_commands::CommandError> for XzatomaError {
+    fn from(err: crate::commands::special_commands::CommandError) -> Self {
+        XzatomaError::Command(err.to_string())
+    }
+}
+
+/// Converts `ReadlineError` to `XzatomaError::Command`
+impl From<rustyline::error::ReadlineError> for XzatomaError {
+    fn from(err: rustyline::error::ReadlineError) -> Self {
+        XzatomaError::Command(format!("readline error: {}", err))
+    }
+}
+
+/// Converts `GenericWatcherError` to `XzatomaError::Watcher`
+impl From<crate::watcher::generic::watcher::GenericWatcherError> for XzatomaError {
+    fn from(err: crate::watcher::generic::watcher::GenericWatcherError) -> Self {
+        XzatomaError::Watcher(err.to_string())
+    }
+}
+
+/// Converts `WatcherError` to `XzatomaError::Watcher`
+impl From<crate::watcher::xzepr::watcher::WatcherError> for XzatomaError {
+    fn from(err: crate::watcher::xzepr::watcher::WatcherError) -> Self {
+        XzatomaError::Watcher(err.to_string())
+    }
+}
+
+/// Converts `ConsumerError` to `XzatomaError::Watcher`
+impl From<crate::watcher::xzepr::consumer::kafka::ConsumerError> for XzatomaError {
+    fn from(err: crate::watcher::xzepr::consumer::kafka::ConsumerError) -> Self {
+        XzatomaError::Watcher(err.to_string())
+    }
+}
+
+/// Converts `ClientError` to `XzatomaError::Provider`
+impl From<crate::watcher::xzepr::consumer::client::ClientError> for XzatomaError {
+    fn from(err: crate::watcher::xzepr::consumer::client::ClientError) -> Self {
+        XzatomaError::Provider(err.to_string())
+    }
+}
+
+/// Converts watcher `ConfigError` to `XzatomaError::Config`
+impl From<crate::watcher::xzepr::consumer::config::ConfigError> for XzatomaError {
+    fn from(err: crate::watcher::xzepr::consumer::config::ConfigError) -> Self {
+        XzatomaError::Config(err.to_string())
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_tool_args_with_valid_input() {
+        #[derive(Debug, serde::Deserialize, PartialEq)]
+        struct ExampleArgs {
+            path: String,
+            recursive: bool,
+        }
+
+        let parsed: ExampleArgs = parse_tool_args(serde_json::json!({
+            "path": "src/main.rs",
+            "recursive": true
+        }))
+        .unwrap();
+
+        assert_eq!(
+            parsed,
+            ExampleArgs {
+                path: "src/main.rs".to_string(),
+                recursive: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_args_with_invalid_input_returns_tool_error() {
+        #[derive(Debug, serde::Deserialize)]
+        struct ExampleArgs {
+            _path: String,
+        }
+
+        let error = parse_tool_args::<ExampleArgs>(serde_json::json!({
+            "recursive": true
+        }))
+        .unwrap_err();
+
+        assert!(matches!(error, XzatomaError::Tool(_)));
+        assert!(error.to_string().contains("Invalid tool parameters"));
+    }
+
+    #[test]
+    fn test_from_acp_validation_error_converts_to_acp_variant() {
+        let error = XzatomaError::from(crate::acp::error::AcpValidationError::new(
+            "run.id",
+            "run id cannot be empty",
+        ));
+
+        assert!(matches!(
+            error,
+            XzatomaError::Acp(crate::acp::error::AcpError::Validation(_))
+        ));
+    }
 
     #[test]
     fn test_config_error_display() {
@@ -237,6 +440,18 @@ mod tests {
     fn test_tool_error_display() {
         let error = XzatomaError::Tool("file not found".to_string());
         assert_eq!(error.to_string(), "Tool execution error: file not found");
+    }
+
+    #[test]
+    fn test_watcher_error_display() {
+        let error = XzatomaError::Watcher("consumer failed".to_string());
+        assert_eq!(error.to_string(), "Watcher error: consumer failed");
+    }
+
+    #[test]
+    fn test_command_error_display() {
+        let error = XzatomaError::Command("unknown command".to_string());
+        assert_eq!(error.to_string(), "Command error: unknown command");
     }
 
     #[test]
@@ -276,45 +491,6 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Streaming is not supported by this provider"
-        );
-    }
-
-    #[test]
-    fn test_acp_validation_error_display() {
-        let error = XzatomaError::AcpValidation("invalid message payload".to_string());
-        assert_eq!(
-            error.to_string(),
-            "ACP validation error: invalid message payload"
-        );
-    }
-
-    #[test]
-    fn test_acp_lifecycle_error_display() {
-        let error = XzatomaError::AcpLifecycle("run cannot be resumed".to_string());
-        assert_eq!(
-            error.to_string(),
-            "ACP lifecycle error: run cannot be resumed"
-        );
-    }
-
-    #[test]
-    fn test_acp_persistence_error_display() {
-        let error = XzatomaError::AcpPersistence("failed to store session".to_string());
-        assert_eq!(
-            error.to_string(),
-            "ACP persistence error: failed to store session"
-        );
-    }
-
-    #[test]
-    fn test_acp_unsupported_transition_error_display() {
-        let error = XzatomaError::AcpUnsupportedTransition {
-            from: "running".to_string(),
-            to: "pending".to_string(),
-        };
-        assert_eq!(
-            error.to_string(),
-            "ACP unsupported transition: from=running, to=pending"
         );
     }
 
@@ -504,13 +680,21 @@ mod tests {
 
     #[test]
     fn test_error_propagation() {
-        fn failing_function() -> crate::error::Result<()> {
-            Err(anyhow::anyhow!(XzatomaError::SseParseError(
-                "Test error".to_string()
-            )))
+        fn failing_function() -> Result<()> {
+            Err(XzatomaError::SseParseError("Test error".to_string()))
         }
 
         let result = failing_function();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_acp_error_conversion() {
+        use crate::acp::error::AcpError;
+
+        let acp_err = AcpError::validation("invalid payload");
+        let error: XzatomaError = acp_err.into();
+        assert!(matches!(error, XzatomaError::Acp(_)));
+        assert!(error.to_string().contains("ACP error"));
     }
 }

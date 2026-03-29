@@ -196,8 +196,7 @@ impl SkillTrustStore {
         if path.as_os_str().is_empty() {
             return Err(XzatomaError::Config(
                 "skills trust store path cannot be empty".to_string(),
-            )
-            .into());
+            ));
         }
 
         Ok(Self {
@@ -798,15 +797,13 @@ pub fn resolve_skill_resource_path(skill_root: &Path, relative_path: &str) -> Re
     if relative.is_absolute() {
         return Err(XzatomaError::Tool(
             "Skill resource path must be relative to the skill root".to_string(),
-        )
-        .into());
+        ));
     }
 
     if path_contains_parent_traversal(relative) {
         return Err(XzatomaError::Tool(
             "Skill resource path traversal outside skill root is not allowed".to_string(),
-        )
-        .into());
+        ));
     }
 
     let joined = canonical_root.join(relative);
@@ -814,8 +811,7 @@ pub fn resolve_skill_resource_path(skill_root: &Path, relative_path: &str) -> Re
     if !resolved.starts_with(&canonical_root) {
         return Err(XzatomaError::Tool(
             "Resolved skill resource escaped the skill root".to_string(),
-        )
-        .into());
+        ));
     }
 
     Ok(resolved)
@@ -883,8 +879,7 @@ fn enumerate_resource_group(skill_root: &Path, directory_name: &str) -> Result<V
         return Err(XzatomaError::Tool(format!(
             "Skill resource directory '{}' exists but is not a directory",
             directory.display()
-        ))
-        .into());
+        )));
     }
 
     let mut results = Vec::new();
@@ -926,8 +921,7 @@ fn walk_resource_directory(
         if !canonical_or_normalized.starts_with(skill_root) {
             return Err(XzatomaError::Tool(
                 "Skill resource enumeration escaped the skill root".to_string(),
-            )
-            .into());
+            ));
         }
 
         if file_type.is_dir() {
@@ -952,7 +946,6 @@ fn canonicalize_existing_path(path: &Path) -> Result<PathBuf> {
             path.display(),
             error
         ))
-        .into()
     })
 }
 

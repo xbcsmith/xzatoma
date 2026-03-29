@@ -159,8 +159,9 @@ impl GrepTool {
             format!("(?i){}", regex)
         };
 
-        let pattern =
-            Regex::new(&regex_str).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))?;
+        let pattern = Regex::new(&regex_str).map_err(|e| {
+            crate::error::XzatomaError::Search(format!("Invalid regex pattern: {}", e))
+        })?;
 
         let mut all_matches = Vec::new();
 
@@ -468,10 +469,9 @@ impl ToolExecutor for GrepTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let regex = args
-            .get("regex")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: regex"))?;
+        let regex = args.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
+            crate::error::XzatomaError::Search("Missing required parameter: regex".to_string())
+        })?;
 
         let include_pattern = args.get("include_pattern").and_then(|v| v.as_str());
         let case_sensitive = args

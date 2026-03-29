@@ -396,8 +396,8 @@ fn load_skill_candidate(
     _config: &SkillsConfig,
 ) -> std::result::Result<Option<SkillRecord>, SkillDiagnostic> {
     let parsed = parse_skill_file(skill_file, root.scope).map_err(|error| {
-        let kind = match error.downcast_ref::<XzatomaError>() {
-            Some(XzatomaError::Config(message))
+        let kind = match &error {
+            XzatomaError::Config(message)
                 if message.contains("frontmatter")
                     || message.contains("Skill frontmatter")
                     || message.contains("Failed to parse skill frontmatter") =>
@@ -513,8 +513,7 @@ fn resolve_config_path(path: &str, working_dir: &Path) -> Result<PathBuf> {
     if trimmed.is_empty() {
         return Err(XzatomaError::Config(
             "skills.additional_paths cannot contain empty entries".to_string(),
-        )
-        .into());
+        ));
     }
 
     let resolved = if let Some(stripped) = trimmed.strip_prefix("~/") {

@@ -573,16 +573,14 @@ pub(crate) fn convert_messages_to_response_input(
                 } else {
                     return Err(XzatomaError::MessageConversionError(
                         "Tool message missing tool_call_id".to_string(),
-                    )
-                    .into());
+                    ));
                 }
             }
             role => {
                 return Err(XzatomaError::MessageConversionError(format!(
                     "Unknown message role: {}",
                     role
-                ))
-                .into());
+                )));
             }
         }
     }
@@ -672,8 +670,7 @@ pub(crate) fn convert_response_input_to_messages(
                         return Err(XzatomaError::MessageConversionError(format!(
                             "Unknown role in response: {}",
                             unknown_role
-                        ))
-                        .into());
+                        )));
                     }
                 }
             }
@@ -927,7 +924,7 @@ fn parse_sse_event(data: &str) -> Result<StreamEvent> {
     }
 
     serde_json::from_str(data)
-        .map_err(|e| anyhow::anyhow!(XzatomaError::SseParseError(format!("Invalid JSON: {}", e))))
+        .map_err(|e| XzatomaError::SseParseError(format!("Invalid JSON: {}", e)))
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
@@ -1074,8 +1071,7 @@ impl CopilotProvider {
             return Err(XzatomaError::Provider(format!(
                 "Device code request returned {}: {}",
                 status, body
-            ))
-            .into());
+            )));
         }
 
         let device_response: DeviceCodeResponse = resp
@@ -1135,15 +1131,13 @@ impl CopilotProvider {
                     "expired_token" => {
                         return Err(XzatomaError::Provider(
                             "Device flow expired before authorization".to_string(),
-                        )
-                        .into());
+                        ));
                     }
                     other => {
                         return Err(XzatomaError::Provider(format!(
                             "Device flow error from provider: {}",
                             other
-                        ))
-                        .into());
+                        )));
                     }
                 }
             } else {
@@ -1154,10 +1148,9 @@ impl CopilotProvider {
             tracing::debug!("Polling attempt {}/{}", attempt + 1, max_attempts);
         }
 
-        Err(
-            XzatomaError::Provider("Device flow timed out waiting for authorization".to_string())
-                .into(),
-        )
+        Err(XzatomaError::Provider(
+            "Device flow timed out waiting for authorization".to_string(),
+        ))
     }
 
     /// Exchange GitHub token for Copilot token
@@ -1472,7 +1465,7 @@ impl CopilotProvider {
                                         );
                                     }
                                 }
-                                return Err(format_copilot_api_error(status2, &error_text2).into());
+                                return Err(format_copilot_api_error(status2, &error_text2));
                             }
 
                             // Parse and return models from the successful retry response
@@ -1551,7 +1544,7 @@ impl CopilotProvider {
                             if let Err(e) = self.clear_cached_token() {
                                 tracing::warn!("Failed to clear cached Copilot token: {}", e);
                             }
-                            return Err(format_copilot_api_error(status, &error_text).into());
+                            return Err(format_copilot_api_error(status, &error_text));
                         }
                     }
                 } else {
@@ -1559,12 +1552,12 @@ impl CopilotProvider {
                     if let Err(e) = self.clear_cached_token() {
                         tracing::warn!("Failed to clear cached Copilot token: {}", e);
                     }
-                    return Err(format_copilot_api_error(status, &error_text).into());
+                    return Err(format_copilot_api_error(status, &error_text));
                 }
             }
 
             // Non-auth failures fall back to provider error
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -1654,7 +1647,7 @@ impl CopilotProvider {
                 status,
                 error_text
             );
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -1763,15 +1756,12 @@ impl CopilotProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+            .map_err(|e| XzatomaError::Provider(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
-                "HTTP {}: {}",
-                status, body
-            ))));
+            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
         // Create async stream from response body
@@ -1804,9 +1794,7 @@ impl CopilotProvider {
                         }
                         Some(Err(e)) => {
                             return Some((
-                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
-                                    e.to_string()
-                                ))),
+                                Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
                             ))
                         }
@@ -1876,15 +1864,12 @@ impl CopilotProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+            .map_err(|e| XzatomaError::Provider(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
-                "HTTP {}: {}",
-                status, body
-            ))));
+            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
         // Create stream (similar to stream_response but for completions format)
@@ -1917,9 +1902,7 @@ impl CopilotProvider {
                         }
                         Some(Err(e)) => {
                             return Some((
-                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
-                                    e.to_string()
-                                ))),
+                                Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
                             ))
                         }
@@ -2148,7 +2131,7 @@ impl CopilotProvider {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             tracing::error!("/responses returned error {}: {}", status, error_text);
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         // Parse response - for /responses endpoint, we expect a message-like response
@@ -2323,7 +2306,7 @@ impl CopilotProvider {
                                 retry_status,
                                 error_text
                             );
-                            return Err(format_copilot_api_error(retry_status, &error_text).into());
+                            return Err(format_copilot_api_error(retry_status, &error_text));
                         }
 
                         let copilot_response: CopilotResponse =
@@ -2354,7 +2337,7 @@ impl CopilotProvider {
                 }
             }
 
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let copilot_response: CopilotResponse = response.json().await.map_err(|e| {
@@ -2435,8 +2418,7 @@ impl CopilotProvider {
         Err(XzatomaError::Provider(format!(
             "No supported endpoint found for model: {}",
             model_name
-        ))
-        .into())
+        )))
     }
 
     /// Check if a model supports a specific endpoint
@@ -2524,9 +2506,9 @@ impl Provider for CopilotProvider {
                 )
                 .await
             }
-            ModelEndpoint::Unknown => {
-                Err(XzatomaError::Provider("Unknown endpoint selected".to_string()).into())
-            }
+            ModelEndpoint::Unknown => Err(XzatomaError::Provider(
+                "Unknown endpoint selected".to_string(),
+            )),
         }
     }
 
@@ -2541,16 +2523,14 @@ impl Provider for CopilotProvider {
         models
             .into_iter()
             .find(|m| m.name == model_name)
-            .ok_or_else(|| {
-                XzatomaError::Provider(format!("Model not found: {}", model_name)).into()
-            })
+            .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
 
     fn get_current_model(&self) -> Result<String> {
         self.config
             .read()
             .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string()).into()
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
             })
             .map(|config| config.model.clone())
     }
@@ -2618,8 +2598,7 @@ impl Provider for CopilotProvider {
                 "Model '{}' does not support tool calling, which is required for XZatoma. Models with tool support: {}",
                 model_name,
                 tool_models.join(", ")
-            ))
-            .into());
+            )));
         }
 
         // Update the model in the config
@@ -2651,10 +2630,13 @@ fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> 
             "authorization_pending" => return Ok(None),
             "slow_down" => return Ok(None),
             "expired_token" => {
-                return Err(XzatomaError::Provider("Device flow expired".to_string()).into());
+                return Err(XzatomaError::Provider("Device flow expired".to_string()));
             }
             other => {
-                return Err(XzatomaError::Provider(format!("Device flow error: {}", other)).into());
+                return Err(XzatomaError::Provider(format!(
+                    "Device flow error: {}",
+                    other
+                )));
             }
         }
     }

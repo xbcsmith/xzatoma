@@ -227,8 +227,7 @@ impl SkillCatalog {
             return Err(XzatomaError::Config(format!(
                 "duplicate skill '{}' cannot be inserted into catalog",
                 name
-            ))
-            .into());
+            )));
         }
 
         self.skills.insert(name, record);

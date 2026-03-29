@@ -32,7 +32,7 @@
 /// let timestamp = now_rfc3339();
 /// assert!(chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok());
 /// ```
-use crate::error::{Result, XzatomaError};
+use crate::error::Result;
 use crate::providers;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -88,13 +88,15 @@ pub fn now_rfc3339() -> String {
 /// ```
 pub fn validate_acp_identifier(field: &str, value: &str) -> Result<()> {
     if value.is_empty() {
-        return Err(
-            XzatomaError::AcpValidation(format!("field '{}' cannot be empty", field)).into(),
-        );
+        return Err(crate::acp::error::AcpError::validation(format!(
+            "field '{}' cannot be empty",
+            field
+        ))
+        .into());
     }
 
     if value.trim() != value {
-        return Err(XzatomaError::AcpValidation(format!(
+        return Err(crate::acp::error::AcpError::validation(format!(
             "field '{}' cannot contain leading or trailing whitespace",
             field
         ))
@@ -103,13 +105,15 @@ pub fn validate_acp_identifier(field: &str, value: &str) -> Result<()> {
 
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
-        return Err(
-            XzatomaError::AcpValidation(format!("field '{}' cannot be empty", field)).into(),
-        );
+        return Err(crate::acp::error::AcpError::validation(format!(
+            "field '{}' cannot be empty",
+            field
+        ))
+        .into());
     };
 
     if !first.is_ascii_lowercase() {
-        return Err(XzatomaError::AcpValidation(format!(
+        return Err(crate::acp::error::AcpError::validation(format!(
             "field '{}' must start with an ASCII lowercase letter",
             field
         ))
@@ -120,7 +124,7 @@ pub fn validate_acp_identifier(field: &str, value: &str) -> Result<()> {
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | '-' | '.'))
     {
-        return Err(XzatomaError::AcpValidation(format!(
+        return Err(crate::acp::error::AcpError::validation(format!(
             "field '{}' must contain only ASCII lowercase letters, digits, '_', '-', or '.'",
             field
         ))
@@ -158,7 +162,7 @@ pub fn validate_acp_identifier(field: &str, value: &str) -> Result<()> {
 pub fn validate_acp_role(role: &str) -> Result<()> {
     match role {
         "system" | "user" | "assistant" | "tool" => Ok(()),
-        _ => Err(XzatomaError::AcpValidation(format!(
+        _ => Err(crate::acp::error::AcpError::validation(format!(
             "unsupported ACP role '{}'; expected one of: system, user, assistant, tool",
             role
         ))
@@ -295,8 +299,8 @@ impl AcpTextPart {
     /// ```
     pub fn validate(&self) -> Result<()> {
         if self.text.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "text message part cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "text message part cannot be empty",
             )
             .into());
         }
@@ -401,13 +405,13 @@ impl AcpArtifact {
     pub fn validate(&self) -> Result<()> {
         if self.name.trim().is_empty() {
             return Err(
-                XzatomaError::AcpValidation("artifact name cannot be empty".to_string()).into(),
+                crate::acp::error::AcpError::validation("artifact name cannot be empty").into(),
             );
         }
 
         if self.mime_type.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "artifact mime_type cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "artifact mime_type cannot be empty",
             )
             .into());
         }
@@ -425,12 +429,12 @@ impl AcpArtifact {
 
         match (has_content, has_content_url) {
             (true, false) | (false, true) => Ok(()),
-            (true, true) => Err(XzatomaError::AcpValidation(
-                "artifact fields 'content' and 'content_url' are mutually exclusive".to_string(),
+            (true, true) => Err(crate::acp::error::AcpError::validation(
+                "artifact fields 'content' and 'content_url' are mutually exclusive",
             )
             .into()),
-            (false, false) => Err(XzatomaError::AcpValidation(
-                "artifact requires exactly one of 'content' or 'content_url'".to_string(),
+            (false, false) => Err(crate::acp::error::AcpError::validation(
+                "artifact requires exactly one of 'content' or 'content_url'",
             )
             .into()),
         }
@@ -525,8 +529,8 @@ impl AcpMessage {
     /// Returns an error if the message has no parts or any part is invalid.
     pub fn validate(&self) -> Result<()> {
         if self.parts.is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "ACP message must contain at least one message part".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "ACP message must contain at least one message part",
             )
             .into());
         }
@@ -602,15 +606,15 @@ impl AcpAgentManifest {
         validate_acp_identifier("manifest.name", &self.name)?;
 
         if self.version.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "manifest.version cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "manifest.version cannot be empty",
             )
             .into());
         }
 
         if self.display_name.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "manifest.display_name cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "manifest.display_name cannot be empty",
             )
             .into());
         }
@@ -857,15 +861,15 @@ impl AcpAwaitPayload {
     /// Returns an error if required fields are empty.
     pub fn validate(&self) -> Result<()> {
         if self.kind.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "await payload kind cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "await payload kind cannot be empty",
             )
             .into());
         }
 
         if self.detail.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "await payload detail cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "await payload detail cannot be empty",
             )
             .into());
         }
@@ -1006,8 +1010,8 @@ impl AcpRunCreateRequest {
     /// Returns an error if no input messages are provided or any message is invalid.
     pub fn validate(&self) -> Result<()> {
         if self.input.is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "run create request requires input messages".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "run create request requires input messages",
             )
             .into());
         }
@@ -1131,7 +1135,7 @@ impl AcpRun {
     /// Returns an error if the transition is unsupported.
     pub fn transition_to(&mut self, next: AcpRunState) -> Result<()> {
         if !self.status.state.can_transition_to(&next) {
-            return Err(XzatomaError::AcpUnsupportedTransition {
+            return Err(crate::acp::error::AcpError::UnsupportedTransition {
                 from: self.status.state.to_string(),
                 to: next.to_string(),
             }
@@ -1346,7 +1350,7 @@ impl AcpEvent {
 
         if run_scoped {
             let Some(run_id) = &self.run_id else {
-                return Err(XzatomaError::AcpValidation(format!(
+                return Err(crate::acp::error::AcpError::validation(format!(
                     "event kind '{}' requires a run_id",
                     self.kind
                 ))
@@ -1414,10 +1418,10 @@ impl std::fmt::Display for AcpError {
 /// Returns an error if the timestamp is not valid RFC 3339.
 pub fn validate_rfc3339(value: &str, field: &str) -> Result<()> {
     chrono::DateTime::parse_from_rfc3339(value).map_err(|error| {
-        anyhow::Error::from(XzatomaError::AcpValidation(format!(
+        crate::acp::error::AcpError::validation(format!(
             "field '{}' must be a valid RFC 3339 timestamp: {}",
             field, error
-        )))
+        ))
     })?;
     Ok(())
 }

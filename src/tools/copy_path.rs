@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::PathValidator;
-use crate::tools::{ToolExecutor, ToolResult, TOOL_COPY_PATH};
+use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_COPY_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -92,8 +92,7 @@ impl ToolExecutor for CopyPathTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: CopyPathParams = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("Invalid parameters: {}", e))?;
+        let params: CopyPathParams = parse_tool_args(args)?;
 
         let source = match self.path_validator.validate(&params.source_path) {
             Ok(path) => path,
@@ -189,7 +188,12 @@ impl CopyPathTool {
         let mut count = 0;
 
         for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
-            let rel_path = entry.path().strip_prefix(source)?;
+            let rel_path = entry.path().strip_prefix(source).map_err(|error| {
+                crate::error::XzatomaError::Tool(format!(
+                    "Failed to compute relative path while copying directory: {}",
+                    error
+                ))
+            })?;
             let dest_path = destination.join(rel_path);
 
             if entry.file_type().is_dir() {

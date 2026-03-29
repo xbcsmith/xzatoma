@@ -14,11 +14,11 @@
 //! used for input.
 
 use crate::config::{KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::error::{Result, XzatomaError};
 use crate::watcher::generic::message::GenericPlanResult;
 use crate::watcher::xzepr::consumer::config::{
     SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
-use anyhow::{anyhow, Result};
 use std::time::Duration;
 use tracing::info;
 
@@ -253,7 +253,12 @@ impl GenericResultProducer {
     /// # });
     /// ```
     pub async fn publish(&self, result: &GenericPlanResult) -> Result<()> {
-        let payload = serde_json::to_string(result)?;
+        let payload = serde_json::to_string(result).map_err(|error| {
+            XzatomaError::Watcher(format!(
+                "Failed to serialize generic watcher result payload: {}",
+                error
+            ))
+        })?;
 
         info!(
             topic = %self.output_topic,
@@ -282,18 +287,18 @@ impl GenericResultProducer {
         }
 
         if let Some(mechanism) = &security.sasl_mechanism {
-            let username = security
-                .sasl_username
-                .clone()
-                .ok_or_else(|| anyhow!("SASL username is required when mechanism is set"))?;
+            let username = security.sasl_username.clone().ok_or_else(|| {
+                XzatomaError::Watcher("SASL username is required when mechanism is set".to_string())
+            })?;
 
             let password = security
                 .sasl_password
                 .clone()
                 .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
                 .ok_or_else(|| {
-                    anyhow!(
+                    XzatomaError::Watcher(
                         "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
+                            .to_string(),
                     )
                 })?;
 
@@ -314,7 +319,10 @@ fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
         "SSL" => Ok(SecurityProtocol::Ssl),
         "SASL_PLAINTEXT" => Ok(SecurityProtocol::SaslPlaintext),
         "SASL_SSL" => Ok(SecurityProtocol::SaslSsl),
-        _ => Err(anyhow!("Invalid security protocol: {}", protocol)),
+        _ => Err(XzatomaError::Watcher(format!(
+            "Invalid security protocol: {}",
+            protocol
+        ))),
     }
 }
 
@@ -323,7 +331,10 @@ fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
         "PLAIN" => Ok(SaslMechanism::Plain),
         "SCRAM-SHA-256" => Ok(SaslMechanism::ScramSha256),
         "SCRAM-SHA-512" => Ok(SaslMechanism::ScramSha512),
-        _ => Err(anyhow!("Invalid SASL mechanism: {}", mechanism)),
+        _ => Err(XzatomaError::Watcher(format!(
+            "Invalid SASL mechanism: {}",
+            mechanism
+        ))),
     }
 }
 

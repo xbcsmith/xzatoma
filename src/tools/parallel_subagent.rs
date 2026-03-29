@@ -8,7 +8,7 @@ use crate::agent::{quota::QuotaTracker, Agent, SubagentMetrics};
 use crate::config::AgentConfig;
 use crate::error::Result;
 use crate::providers::Provider;
-use crate::tools::{ToolExecutor, ToolRegistry, ToolResult};
+use crate::tools::{parse_tool_args, ToolExecutor, ToolRegistry, ToolResult};
 use async_trait::async_trait;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -247,11 +247,11 @@ impl ToolExecutor for ParallelSubagentTool {
         }
 
         // Parse input
-        let input: ParallelSubagentInput = match serde_json::from_value(args) {
+        let input: ParallelSubagentInput = match parse_tool_args(args) {
             Ok(input) => input,
             Err(e) => {
                 batch_metrics.record_error("invalid_input");
-                return Ok(ToolResult::error(format!("Invalid input: {}", e)));
+                return Ok(ToolResult::error(e.to_string()));
             }
         };
 
