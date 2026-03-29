@@ -20,7 +20,7 @@
 //! [`crate::mcp::approval::should_auto_approve`]. No inline policy checks are
 //! permitted here.
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::config::ExecutionMode;

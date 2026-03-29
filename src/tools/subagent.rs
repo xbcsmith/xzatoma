@@ -953,7 +953,7 @@ impl ToolExecutor for SubagentTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{CompletionResponse, Message, Provider, TokenUsage};
+    use crate::providers::{CompletionResponse, Message, Provider};
     use std::sync::Mutex;
 
     // Mock provider for testing

@@ -388,6 +388,7 @@ impl KafkaConsumerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_new_config_defaults() {
@@ -478,6 +479,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_defaults() {
         // Clear any existing env vars
         // SAFETY: Test environment, no concurrent access
@@ -496,12 +498,8 @@ mod tests {
         assert_eq!(config.security_protocol, SecurityProtocol::Plaintext);
     }
 
-    // NOTE: These tests are marked #[ignore] because they modify environment
-    // variables which can interfere with parallel test execution. Run them
-    // with: cargo test -- --ignored --test-threads=1
-
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_from_env_custom_values() {
         // SAFETY: Test environment, no concurrent access
         unsafe {
@@ -529,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_from_env_invalid_protocol() {
         // SAFETY: Test environment, no concurrent access
         unsafe {
@@ -549,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_from_env_sasl_missing_username() {
         // SAFETY: Test environment, no concurrent access
         unsafe {

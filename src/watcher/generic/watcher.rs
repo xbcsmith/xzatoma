@@ -39,6 +39,9 @@ use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, error, info};
 
 /// Errors that can occur in the generic watcher service.
+// Variants are defined for completeness and future use; the generic watcher
+// is actively developed and these error types will be surfaced once real
+// Kafka execution is wired in (Phase 4).
 #[derive(Error, Debug)]
 #[allow(dead_code)]
 pub enum GenericWatcherError {

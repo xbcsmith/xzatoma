@@ -193,7 +193,7 @@ pub fn verify_s256_support(metadata: &AuthorizationServerMetadata) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
+
     use sha2::{Digest, Sha256};
     use std::collections::HashMap;
 

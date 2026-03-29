@@ -13,15 +13,12 @@ These handlers are intentionally small and use the library components:
 providers, tools, and the agent.
 */
 
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    parse_special_command, print_help, print_mention_help, print_models_help, SpecialCommand,
+    parse_special_command, print_help, print_models_help, SpecialCommand,
 };
-use crate::config::{Config, ExecutionMode};
+use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
@@ -32,8 +29,7 @@ use crate::skills::{
 use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
-use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::{SubagentTool, ToolExecutor, ToolRegistry};
+use crate::tools::{SubagentTool, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -1168,8 +1164,6 @@ pub mod chat {
     /// assert!(safety.description().len() > 0);
     /// ```
     fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
-        use colored::Colorize;
-
         println!("\n╔══════════════════════════════════════════════════════════════╗");
         println!("║         XZatoma Interactive Chat Mode - Welcome!             ║");
         println!("╚══════════════════════════════════════════════════════════════╝\n");
@@ -1507,8 +1501,6 @@ pub mod chat {
     ///
     /// Returns a prompt string for summarization
     fn create_summary_prompt(messages: &[crate::providers::Message]) -> String {
-        use crate::providers::Message;
-
         // Format messages for the summary prompt
         let conversation_text = messages
             .iter()

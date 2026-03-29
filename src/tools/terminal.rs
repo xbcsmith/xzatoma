@@ -30,7 +30,7 @@
 //! }
 //! ```
 
-use std::path::{Component, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command as StdCommand, Stdio};
 use std::time::Duration;
 

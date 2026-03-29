@@ -23,8 +23,6 @@
 //! - `transport`    -- `Transport` trait and concrete implementations (stdio, HTTP,
 //!   fake)
 //! - `types`        -- All MCP 2025-11-25 protocol types and JSON-RPC primitives
-#![allow(dead_code)]
-#![allow(unused_imports)]
 
 pub mod approval;
 pub mod auth;

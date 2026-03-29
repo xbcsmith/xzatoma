@@ -3,9 +3,6 @@
 //! This module defines all error types used throughout the application,
 //! using `thiserror` for ergonomic error handling.
 
-// Phase 1: Allow unused variants for placeholder implementations
-#![allow(dead_code)]
-
 use thiserror::Error;
 
 /// Main error type for XZatoma operations

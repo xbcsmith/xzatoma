@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::Path;
+
 use tokio::fs;
 
 /// Mode of operation for the edit_file tool
@@ -464,8 +464,6 @@ impl ToolExecutor for EditFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "prometheus")]
-    use metrics_exporter_prometheus::PrometheusBuilder;
     use serde_json::json;
     use serial_test::serial;
     use std::fs;

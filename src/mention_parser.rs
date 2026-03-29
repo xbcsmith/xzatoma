@@ -81,6 +81,8 @@ pub struct UrlMention {
 #[derive(Debug, Clone)]
 pub struct MentionContent {
     /// The resolved file path (used in cache operations)
+    // Available to callers that need the resolved path; currently read in tests
+    // and available for cache key construction by external consumers.
     #[allow(dead_code)]
     pub path: PathBuf,
     /// The original mention path for display purposes
@@ -88,7 +90,6 @@ pub struct MentionContent {
     /// File contents
     pub contents: String,
     /// File size in bytes
-    #[allow(dead_code)]
     pub size_bytes: u64,
     /// Total number of lines in file
     pub line_count: usize,
@@ -247,18 +248,21 @@ impl MentionCache {
     }
 
     /// Clear the entire cache
+    // Available for session-level cache clearing; currently used in tests only.
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.cache.clear();
     }
 
     /// Get number of entries in cache
+    // Provides cache size inspection for monitoring and testing.
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
     /// Check if cache is empty
+    // Companion to len(); part of the standard collection API surface.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
@@ -568,7 +572,6 @@ fn is_valid_url(url: &str) -> bool {
 /// - The resolved path escapes the working directory
 /// - Path contains invalid characters
 /// - The mention path is absolute
-#[allow(dead_code)]
 pub fn resolve_mention_path(
     mention_path: &str,
     working_dir: &Path,
@@ -706,6 +709,8 @@ pub async fn load_file_content(
 /// # Returns
 ///
 /// Formatted string with search results suitable for prompt inclusion
+// Retained for @search and @grep mention handling; will be called when
+// search/grep mention execution is wired into augment_prompt_with_mentions.
 #[allow(dead_code)]
 pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &str) -> String {
     if matches.is_empty() {
@@ -731,7 +736,6 @@ pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &st
 /// Stores both the formatted content and a small set of metadata so the
 /// mention pipeline can present concise success messages (size, type, status).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct UrlContentCache {
     pub url: String,
     pub content: String,
@@ -754,15 +758,6 @@ impl UrlContentCache {
             .map(|elapsed| elapsed > std::time::Duration::from_secs(5 * 60))
             .unwrap_or(true)
     }
-}
-
-/// Cache entry for search results
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct SearchResultsCache {
-    pattern: String,
-    matches: Vec<crate::tools::SearchMatch>,
-    timestamp: std::time::SystemTime,
 }
 
 /// Expand a short or abbreviated mention into a likely path in the repository.

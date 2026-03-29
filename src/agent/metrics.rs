@@ -24,7 +24,7 @@
 //! metrics.record_completion(5, 1500, "success");
 //! ```
 
-use metrics::{counter, decrement_gauge, histogram, increment_counter, increment_gauge};
+use metrics::{decrement_gauge, histogram, increment_counter, increment_gauge};
 use std::cell::Cell;
 use std::time::Instant;
 

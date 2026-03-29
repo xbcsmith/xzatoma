@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Plan parsing tool for XZatoma
 //!
 //! This module provides plan file parsing functionality.
@@ -292,7 +291,7 @@ pub async fn load_plan(path: &str) -> Result<Plan> {
 mod tests {
     use super::*;
     use std::fs as stdfs;
-    use std::path::{Path, PathBuf};
+
     use tempfile::tempdir;
 
     #[test]

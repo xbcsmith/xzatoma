@@ -3,10 +3,6 @@
 //! This module contains the AI provider abstraction and implementations
 //! for GitHub Copilot and Ollama.
 
-// Phase 1: Allow unused code for placeholder implementations
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 pub mod base;
 pub mod copilot;
 pub mod ollama;
@@ -18,7 +14,7 @@ pub use base::{
 pub use copilot::CopilotProvider;
 pub use ollama::OllamaProvider;
 
-use crate::config::{CopilotConfig, OllamaConfig, ProviderConfig};
+use crate::config::ProviderConfig;
 use crate::error::Result;
 
 /// Create a provider instance based on configuration
@@ -148,6 +144,7 @@ pub fn create_provider_with_override(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{CopilotConfig, OllamaConfig};
 
     #[test]
     fn test_create_provider_invalid_type() {

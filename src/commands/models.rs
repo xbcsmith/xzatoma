@@ -8,9 +8,8 @@ use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::providers;
 use crate::providers::{ModelInfo, ModelInfoSummary};
-use prettytable::{cell, row, Table};
+use prettytable::{row, Table};
 use serde_json;
-use std::io::Write;
 
 /// List available models from a provider
 ///

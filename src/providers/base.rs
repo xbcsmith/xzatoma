@@ -208,9 +208,6 @@ impl std::fmt::Display for ModelCapability {
     }
 }
 
-/// Default context window size when not provided by API
-const DEFAULT_CONTEXT_WINDOW: usize = 4096;
-
 /// Token usage information from a completion
 ///
 /// Tracks the number of tokens used in prompts and completions,

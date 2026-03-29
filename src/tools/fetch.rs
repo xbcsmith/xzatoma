@@ -897,7 +897,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // URL crate normalizes IPv6 addresses differently
     fn test_ipv6_loopback() {
         let validator = SsrfValidator::new();
         let result = validator.validate("http://[::1]");
@@ -905,7 +904,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // URL crate normalizes IPv6 addresses differently
     fn test_ipv6_private() {
         let validator = SsrfValidator::new();
         let result = validator.validate("http://[fd00::1]");

@@ -175,6 +175,10 @@ pub struct McpClientManager {
     ///
     /// Guarded by a `Mutex` so that notification callbacks registered during
     /// `connect` can enqueue updates from background threads.
+    // Retained for Phase 6: task lifecycle tracking via notifications/tasks/status.
+    // The field must stay alive so the Arc keeps the Mutex live for future
+    // background-thread callbacks.
+    #[allow(dead_code)]
     task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
 }
 
@@ -1016,38 +1020,15 @@ fn is_mcp_auth_error(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::server::{McpServerTransportConfig, OAuthServerConfig};
+    use crate::mcp::server::McpServerTransportConfig;
     use crate::mcp::transport::fake::FakeTransport;
-    use crate::mcp::types::{
-        Implementation, InitializeResponse, ListToolsResponse, McpTool, ServerCapabilities,
-    };
-    use serde_json::json;
-
+    use crate::mcp::types::{Implementation, InitializeResponse, McpTool, ServerCapabilities};
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
     fn make_manager() -> McpClientManager {
         McpClientManager::new(Arc::new(reqwest::Client::new()), Arc::new(TokenStore))
-    }
-
-    fn stdio_config(id: &str) -> McpServerConfig {
-        McpServerConfig {
-            id: id.to_string(),
-            transport: McpServerTransportConfig::Stdio {
-                executable: "true".to_string(), // /usr/bin/true exits immediately
-                args: vec![],
-                env: HashMap::new(),
-                working_dir: None,
-            },
-            enabled: true,
-            timeout_seconds: 5,
-            tools_enabled: true,
-            resources_enabled: false,
-            prompts_enabled: false,
-            sampling_enabled: false,
-            elicitation_enabled: false,
-        }
     }
 
     /// Build a pre-wired manager entry that uses a [`FakeTransport`].

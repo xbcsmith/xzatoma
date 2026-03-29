@@ -23,6 +23,9 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
 /// Errors that can occur in the XZepr watcher service.
+// Variants are defined for completeness and future use; the XZepr watcher
+// is actively developed and these error types will be surfaced once real
+// Kafka execution is wired in (Phase 4).
 #[derive(Error, Debug)]
 #[allow(dead_code)]
 pub enum WatcherError {

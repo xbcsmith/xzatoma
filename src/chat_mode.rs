@@ -13,7 +13,6 @@ use std::fmt;
 ///
 /// Determines which tools are available and how the agent behaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ChatMode {
     /// Planning mode: read-only access to files
     ///
@@ -56,7 +55,6 @@ impl ChatMode {
     /// let mode = ChatMode::parse_str("planning").unwrap();
     /// assert_eq!(mode, ChatMode::Planning);
     /// ```
-    #[allow(dead_code)]
     pub fn parse_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "planning" => Ok(Self::Planning),
@@ -70,7 +68,6 @@ impl ChatMode {
     /// # Returns
     ///
     /// A description of what the mode does
-    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Self::Planning => "Read-only mode for creating plans",
@@ -93,7 +90,6 @@ impl ChatMode {
     /// // The tag should contain the mode name
     /// assert!(tag.contains("PLANNING"));
     /// ```
-    #[allow(dead_code)]
     pub fn colored_tag(&self) -> String {
         match self {
             Self::Planning => format!("[{}]", "PLANNING".purple()),
@@ -106,7 +102,6 @@ impl ChatMode {
 ///
 /// Controls whether the agent must confirm dangerous operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum SafetyMode {
     /// Always confirm dangerous operations
     ///
@@ -149,7 +144,6 @@ impl SafetyMode {
     /// let mode = SafetyMode::parse_str("yolo").unwrap();
     /// assert_eq!(mode, SafetyMode::NeverConfirm);
     /// ```
-    #[allow(dead_code)]
     pub fn parse_str(s: &str) -> Result<Self, String> {
         match s.to_lowercase().as_str() {
             "confirm" | "always" | "safe" | "on" => Ok(Self::AlwaysConfirm),
@@ -163,7 +157,6 @@ impl SafetyMode {
     /// # Returns
     ///
     /// A description of what the mode does
-    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Self::AlwaysConfirm => "Confirm dangerous operations",
@@ -186,7 +179,6 @@ impl SafetyMode {
     /// // The tag should contain the mode name
     /// assert!(tag.contains("SAFE"));
     /// ```
-    #[allow(dead_code)]
     pub fn colored_tag(&self) -> String {
         match self {
             Self::AlwaysConfirm => format!("[{}]", "SAFE".cyan()),
@@ -199,7 +191,6 @@ impl SafetyMode {
 ///
 /// Tracks the active chat mode and safety mode during a session.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ChatModeState {
     /// The current chat mode
     pub chat_mode: ChatMode,
@@ -209,7 +200,6 @@ pub struct ChatModeState {
     pub subagents_enabled: bool,
 }
 
-#[allow(dead_code)]
 impl ChatModeState {
     /// Create a new chat mode state
     ///

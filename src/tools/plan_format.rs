@@ -7,7 +7,7 @@
 //!
 //! Validation ensures plans are well-formed and contain required structure.
 
-use crate::error::{Result, XzatomaError};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// Supported plan formats

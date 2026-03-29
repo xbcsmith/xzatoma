@@ -459,50 +459,76 @@ impl XzeprClient {
             })
         }
     }
+}
 
+/// Common parameters shared by all work lifecycle event methods.
+///
+/// Bundle the six shared identifiers into this struct to keep
+/// `post_work_started`, `post_work_completed`, and `post_work_failed`
+/// below the `clippy::too_many_arguments` threshold.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use xzatoma::xzepr::consumer::client::WorkEvent;
+///
+/// let event = WorkEvent {
+///     receiver_id: "receiver-123",
+///     work_id: "work-456",
+///     work_name: "my-task",
+///     version: "1.0.0",
+///     platform_id: "kubernetes",
+///     package: "my-service",
+/// };
+/// ```
+pub struct WorkEvent<'a> {
+    /// Event receiver ID that owns this work item.
+    pub receiver_id: &'a str,
+    /// Unique work identifier for correlation.
+    pub work_id: &'a str,
+    /// Human-readable name of the work being performed.
+    pub work_name: &'a str,
+    /// Version of the work definition.
+    pub version: &'a str,
+    /// Platform identifier (e.g. "kubernetes").
+    pub platform_id: &'a str,
+    /// Package or service name that is performing the work.
+    pub package: &'a str,
+}
+
+impl XzeprClient {
     /// Posts a work started event.
     ///
     /// Creates an event indicating that work has started processing.
     ///
     /// # Arguments
     ///
-    /// * `receiver_id` - Event receiver ID
-    /// * `work_id` - Unique work identifier
-    /// * `work_name` - Name of the work
-    /// * `version` - Work version
-    /// * `platform_id` - Platform identifier
-    /// * `package` - Package name
+    /// * `event` - Common work event parameters
     /// * `payload` - Additional payload data
     ///
     /// # Returns
     ///
     /// The created event ID.
-    #[allow(clippy::too_many_arguments)]
     pub async fn post_work_started(
         &self,
-        receiver_id: &str,
-        work_id: &str,
-        work_name: &str,
-        version: &str,
-        platform_id: &str,
-        package: &str,
+        event: WorkEvent<'_>,
         payload: JsonValue,
     ) -> Result<String, ClientError> {
         let request = CreateEventRequest {
-            name: format!("{}.started", work_name),
-            version: version.to_string(),
-            release: version.to_string(),
-            platform_id: platform_id.to_string(),
-            package: package.to_string(),
-            description: format!("Work started: {} ({})", work_name, work_id),
+            name: format!("{}.started", event.work_name),
+            version: event.version.to_string(),
+            release: event.version.to_string(),
+            platform_id: event.platform_id.to_string(),
+            package: event.package.to_string(),
+            description: format!("Work started: {} ({})", event.work_name, event.work_id),
             payload: serde_json::json!({
-                "work_id": work_id,
+                "work_id": event.work_id,
                 "status": "started",
                 "started_at": chrono::Utc::now().to_rfc3339(),
                 "details": payload
             }),
             success: true,
-            event_receiver_id: receiver_id.to_string(),
+            event_receiver_id: event.receiver_id.to_string(),
         };
 
         self.create_event(request).await
@@ -514,47 +540,39 @@ impl XzeprClient {
     ///
     /// # Arguments
     ///
-    /// * `receiver_id` - Event receiver ID
-    /// * `work_id` - Unique work identifier
-    /// * `work_name` - Name of the work
-    /// * `version` - Work version
-    /// * `platform_id` - Platform identifier
-    /// * `package` - Package name
+    /// * `event` - Common work event parameters
     /// * `success` - Whether the work completed successfully
-    /// * `payload` - Additional payload data (e.g., error details if failed)
+    /// * `payload` - Additional payload data (e.g. error details if failed)
     ///
     /// # Returns
     ///
     /// The created event ID.
-    #[allow(clippy::too_many_arguments)]
     pub async fn post_work_completed(
         &self,
-        receiver_id: &str,
-        work_id: &str,
-        work_name: &str,
-        version: &str,
-        platform_id: &str,
-        package: &str,
+        event: WorkEvent<'_>,
         success: bool,
         payload: JsonValue,
     ) -> Result<String, ClientError> {
         let status_suffix = if success { "completed" } else { "failed" };
         let request = CreateEventRequest {
-            name: format!("{}.{}", work_name, status_suffix),
-            version: version.to_string(),
-            release: version.to_string(),
-            platform_id: platform_id.to_string(),
-            package: package.to_string(),
-            description: format!("Work {}: {} ({})", status_suffix, work_name, work_id),
+            name: format!("{}.{}", event.work_name, status_suffix),
+            version: event.version.to_string(),
+            release: event.version.to_string(),
+            platform_id: event.platform_id.to_string(),
+            package: event.package.to_string(),
+            description: format!(
+                "Work {}: {} ({})",
+                status_suffix, event.work_name, event.work_id
+            ),
             payload: serde_json::json!({
-                "work_id": work_id,
+                "work_id": event.work_id,
                 "status": status_suffix,
                 "completed_at": chrono::Utc::now().to_rfc3339(),
                 "success": success,
                 "details": payload
             }),
             success,
-            event_receiver_id: receiver_id.to_string(),
+            event_receiver_id: event.receiver_id.to_string(),
         };
 
         self.create_event(request).await
@@ -566,27 +584,16 @@ impl XzeprClient {
     ///
     /// # Arguments
     ///
-    /// * `receiver_id` - Event receiver ID
-    /// * `work_id` - Unique work identifier
-    /// * `work_name` - Name of the work
-    /// * `version` - Work version
-    /// * `platform_id` - Platform identifier
-    /// * `package` - Package name
+    /// * `event` - Common work event parameters
     /// * `error_message` - Error message describing the failure
     /// * `error_code` - Optional error code
     ///
     /// # Returns
     ///
     /// The created event ID.
-    #[allow(clippy::too_many_arguments)]
     pub async fn post_work_failed(
         &self,
-        receiver_id: &str,
-        work_id: &str,
-        work_name: &str,
-        version: &str,
-        platform_id: &str,
-        package: &str,
+        event: WorkEvent<'_>,
         error_message: &str,
         error_code: Option<&str>,
     ) -> Result<String, ClientError> {
@@ -598,30 +605,26 @@ impl XzeprClient {
             payload["error_code"] = serde_json::Value::String(code.to_string());
         }
 
-        self.post_work_completed(
-            receiver_id,
-            work_id,
-            work_name,
-            version,
-            platform_id,
-            package,
-            false,
-            payload,
-        )
-        .await
+        let completed = WorkEvent {
+            receiver_id: event.receiver_id,
+            work_id: event.work_id,
+            work_name: event.work_name,
+            version: event.version,
+            platform_id: event.platform_id,
+            package: event.package,
+        };
+
+        self.post_work_completed(completed, false, payload).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // NOTE: This test is marked #[ignore] because it modifies environment
-    // variables which can interfere with parallel test execution. Run with:
-    // cargo test -- --ignored --test-threads=1
+    use serial_test::serial;
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_client_config_from_env() {
         // SAFETY: These tests run single-threaded and manage their own env var cleanup
         unsafe {

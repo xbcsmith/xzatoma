@@ -21,11 +21,8 @@
 //!
 //! See the [`consumer`] module for detailed examples and usage.
 
-#![allow(dead_code)]
-
 pub use crate::watcher::xzepr::consumer;
 
-#[allow(unused_imports)]
 pub use crate::watcher::xzepr::consumer::{
     ClientError, CloudEventData, CloudEventMessage, ConfigError, ConsumerError,
     CreateEventReceiverRequest, CreateEventRequest, EventEntity, EventReceiverEntity,

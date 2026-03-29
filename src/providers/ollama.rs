@@ -41,11 +41,17 @@ use std::time::{Duration, Instant};
 /// # Ok(())
 /// # }
 /// ```
+/// Type alias for the in-memory model cache shared across async operations.
+///
+/// Caches the list of available models together with the timestamp of the last
+/// fetch so that repeated calls to `list_models` can avoid hitting the API on
+/// every invocation.
+type ModelCache = Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>;
+
 pub struct OllamaProvider {
     client: Client,
     config: Arc<RwLock<OllamaConfig>>,
-    #[allow(clippy::type_complexity)]
-    model_cache: Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>,
+    model_cache: ModelCache,
 }
 
 /// Response from Ollama's /api/tags endpoint
@@ -60,6 +66,9 @@ struct OllamaModelTag {
     name: String,
     #[serde(default)]
     size: u64,
+    // Required for JSON deserialization; digest is present in the API response
+    // but not currently read by the model listing path.
+    #[allow(dead_code)]
     #[serde(default)]
     digest: String,
     #[serde(default)]
@@ -73,8 +82,12 @@ struct OllamaShowResponse {
     name: Option<String>,
     #[serde(default)]
     model_info: serde_json::Value,
+    // Required for JSON deserialization; parameters and template are returned
+    // by /api/show but not currently consumed by the provider.
+    #[allow(dead_code)]
     #[serde(default)]
     parameters: String,
+    #[allow(dead_code)]
     #[serde(default)]
     template: String,
     #[serde(default)]
@@ -161,6 +174,9 @@ struct OllamaResponse {
     prompt_eval_count: usize,
     #[serde(default)]
     eval_count: usize,
+    // Required for JSON deserialization; total_duration is returned by the API
+    // but only prompt_eval_count and eval_count are used for token tracking.
+    #[allow(dead_code)]
     #[serde(default)]
     total_duration: u64,
 }

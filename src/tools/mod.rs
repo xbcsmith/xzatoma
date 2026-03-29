@@ -3,10 +3,6 @@
 //! This module contains tool definitions, tool registry, and tool implementations
 //! for file operations, terminal execution, and plan parsing.
 
-// Phase 1: Allow unused code for placeholder implementations
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 pub mod activate_skill;
 pub mod copy_path;
 pub mod create_directory;
@@ -37,21 +33,11 @@ pub use terminal::{
 // Re-export grep tool and search types
 pub use grep::{GrepTool, SearchMatch};
 
-// Re-export fetch tool and types
-pub(crate) use fetch::{FetchTool, FetchedContent, RateLimiter, SsrfValidator};
+// Re-export fetch tool
+pub(crate) use fetch::FetchTool;
 
-// Re-export subagent tool and types
-pub(crate) use subagent::{SubagentTool, SubagentToolInput};
-
-// Re-export parallel subagent tool and types
-pub(crate) use parallel_subagent::{
-    ParallelSubagentInput, ParallelSubagentOutput, ParallelSubagentTool, ParallelTask, TaskResult,
-};
-
-// Re-export plan parser symbols for convenience
-pub(crate) use plan::{load_plan, parse_plan, Plan, PlanParser, PlanStep};
-pub(crate) use plan_format::{detect_plan_format, validate_plan, PlanFormat, ValidatedPlan};
-pub(crate) use registry_builder::ToolRegistryBuilder;
+// Re-export subagent tool
+pub(crate) use subagent::SubagentTool;
 
 // Re-export file utilities and metadata types
 pub use file_metadata::{

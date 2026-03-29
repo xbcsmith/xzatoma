@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -64,6 +64,9 @@ impl ModelEndpoint {
     /// assert_eq!(ModelEndpoint::from_name("responses"), ModelEndpoint::Responses);
     /// assert_eq!(ModelEndpoint::from_name("chat_completions"), ModelEndpoint::ChatCompletions);
     /// ```
+    // Used in tests for endpoint name parsing; retained for future endpoint
+    // configuration wiring from string config values.
+    #[allow(dead_code)]
     fn from_name(name: &str) -> Self {
         match name {
             "chat_completions" => ModelEndpoint::ChatCompletions,
@@ -165,16 +168,6 @@ struct TokenRequest {
     grant_type: String,
 }
 
-/// Response containing GitHub access token
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    #[allow(dead_code)]
-    token_type: String,
-    #[allow(dead_code)]
-    scope: String,
-}
-
 /// Cached token information stored in keyring
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedToken {
@@ -239,7 +232,7 @@ struct CopilotFunctionCall {
 #[derive(Debug, Deserialize)]
 struct CopilotResponse {
     choices: Vec<CopilotChoice>,
-    #[allow(dead_code)]
+    // Required for JSON deserialization; usage is read in complete_completions_blocking
     usage: Option<CopilotUsage>,
 }
 
@@ -247,6 +240,8 @@ struct CopilotResponse {
 #[derive(Debug, Deserialize)]
 struct CopilotChoice {
     message: CopilotMessage,
+    // Required for JSON deserialization; value present in API response but not
+    // currently read by the completion path.
     #[allow(dead_code)]
     finish_reason: String,
 }
@@ -254,10 +249,12 @@ struct CopilotChoice {
 /// Token usage information from Copilot
 #[derive(Debug, Deserialize)]
 struct CopilotUsage {
-    #[allow(dead_code)]
+    // Required for JSON deserialization; read in complete_completions_blocking
     prompt_tokens: usize,
-    #[allow(dead_code)]
+    // Required for JSON deserialization; read in complete_completions_blocking
     completion_tokens: usize,
+    // Required for JSON deserialization; total available but computed from
+    // prompt + completion at the call site instead of being read directly.
     #[allow(dead_code)]
     total_tokens: usize,
 }
@@ -867,6 +864,8 @@ pub(crate) fn convert_tools_to_response_format(
 /// let choice = convert_tool_choice(None);
 /// assert!(choice.is_none());
 /// ```
+// Used in tests; retained for Responses-endpoint tool-choice wiring.
+#[allow(dead_code)]
 pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
     choice.map(|c| match c {
         "auto" => ToolChoice::Auto { auto: true },
@@ -1261,6 +1260,11 @@ impl CopilotProvider {
     }
 
     /// Convert tool schemas to Copilot format
+    ///
+    /// Accepts raw JSON schema values as produced by the tool registry for
+    /// the Responses endpoint path. Used in tests; retained for future
+    /// Responses-endpoint integration.
+    #[allow(dead_code)]
     fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<CopilotTool> {
         tools
             .iter()
@@ -2633,6 +2637,10 @@ impl Provider for CopilotProvider {
 /// - Ok(Some(token)) when an access token is present
 /// - Ok(None) when polling should continue (authorization_pending / slow_down)
 /// - Err(...) for fatal errors (expired_token or unknown error)
+// Used in tests; retained as a clean extraction of device-flow poll parsing
+// logic that can be re-wired into device_flow if the inline version is
+// refactored.
+#[allow(dead_code)]
 fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> {
     if let Some(tok) = value.get("access_token").and_then(|v| v.as_str()) {
         return Ok(Some(tok.to_string()));

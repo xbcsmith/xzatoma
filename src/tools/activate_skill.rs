@@ -8,7 +8,7 @@
 use crate::error::{Result, XzatomaError};
 use crate::skills::activation::{ActiveSkill, ActiveSkillRegistry};
 use crate::skills::catalog::SkillCatalog;
-use crate::skills::types::SkillRecord;
+
 use crate::tools::{ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -201,18 +201,6 @@ impl ActivateSkillTool {
                 skill_name
             ))
             .into())
-        }
-    }
-
-    fn record_to_active_skill(record: &SkillRecord) -> ActiveSkill {
-        ActiveSkill {
-            skill_name: record.metadata.name.clone(),
-            skill_directory: record.skill_dir.clone(),
-            skill_file: record.skill_file.clone(),
-            description: record.metadata.description.clone(),
-            allowed_tools: record.metadata.allowed_tools.clone(),
-            body_content: record.body.clone(),
-            resources: Vec::new(),
         }
     }
 

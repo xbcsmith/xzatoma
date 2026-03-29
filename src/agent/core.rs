@@ -10,7 +10,7 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
 use crate::prompts;
-use crate::providers::{CompletionResponse, Message, Provider, TokenUsage, ToolCall};
+use crate::providers::{Message, Provider, TokenUsage, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -932,6 +932,8 @@ mod tests {
             }
         }
 
+        // Required for assertions in tests that verify the provider was called
+        #[allow(dead_code)]
         fn call_count(&self) -> usize {
             *self.call_count.lock().unwrap()
         }

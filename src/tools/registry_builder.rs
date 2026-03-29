@@ -17,7 +17,7 @@ use tracing::debug;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{TerminalConfig, ToolsConfig};
 use crate::error::Result;
-use crate::tools::activate_skill::ActivateSkillTool;
+
 use crate::tools::copy_path::CopyPathTool;
 use crate::tools::create_directory::CreateDirectoryTool;
 use crate::tools::delete_path::DeletePathTool;

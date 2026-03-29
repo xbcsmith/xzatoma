@@ -79,6 +79,9 @@ pub struct HttpTransport {
     /// Shared receiver exposed via `receive()`.
     response_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
     /// Sender for transport-level error/diagnostic strings.
+    // Kept alive so the channel remains open; the paired error_rx is exposed
+    // via receive_err() for callers that need diagnostic messages.
+    #[allow(dead_code)]
     error_tx: mpsc::UnboundedSender<String>,
     /// Shared receiver exposed via `receive_err()`.
     error_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
