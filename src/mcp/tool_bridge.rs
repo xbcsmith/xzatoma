@@ -26,14 +26,13 @@
 //! checks are permitted here.
 
 use std::collections::HashMap;
-use std::io::{BufRead, Write};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
 use crate::config::ExecutionMode;
 use crate::error::{Result, XzatomaError};
-use crate::mcp::approval::should_auto_approve;
+use crate::mcp::approval::{prompt_user_approval, should_auto_approve};
 use crate::mcp::manager::McpClientManager;
 use crate::mcp::types::{
     MessageContent, PromptMessage, ResourceContents, TaskSupport, ToolResponseContent,
@@ -177,22 +176,11 @@ impl ToolExecutor for McpToolExecutor {
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
         // --- Approval check ---
         if !should_auto_approve(self.execution_mode, self.headless) {
-            eprint!(
-                "MCP tool call: {}/{} with args: {}. Allow? [y/N] ",
+            let description = format!(
+                "MCP tool call: {}/{} with args: {}.",
                 self.server_id, self.tool_name, args
             );
-            // Flush stderr so the prompt is visible before we block on stdin.
-            let _ = std::io::stderr().flush();
-
-            let mut line = String::new();
-            let stdin = std::io::stdin();
-            let mut locked = stdin.lock();
-            locked.read_line(&mut line).map_err(|e| {
-                XzatomaError::Tool(format!("Failed to read approval from stdin: {}", e))
-            })?;
-
-            let trimmed = line.trim().to_lowercase();
-            if trimmed != "y" && trimmed != "yes" {
+            if !prompt_user_approval(&description)? {
                 return Ok(ToolResult::error(format!(
                     "User rejected MCP tool call: {}",
                     self.registry_name
@@ -356,24 +344,13 @@ impl ToolExecutor for McpResourceToolExecutor {
             .ok_or_else(|| XzatomaError::Tool("mcp_read_resource: missing 'uri'".into()))?
             .to_string();
 
-        if !should_auto_approve(self.execution_mode, self.headless) {
-            eprint!("MCP resource read: {}/{} Allow? [y/N] ", server_id, uri);
-            let _ = std::io::stderr().flush();
-
-            let mut line = String::new();
-            let stdin = std::io::stdin();
-            let mut locked = stdin.lock();
-            locked.read_line(&mut line).map_err(|e| {
-                XzatomaError::Tool(format!("Failed to read approval from stdin: {}", e))
-            })?;
-
-            let trimmed = line.trim().to_lowercase();
-            if trimmed != "y" && trimmed != "yes" {
-                return Ok(ToolResult::error(format!(
-                    "User rejected MCP resource read: {}/{}",
-                    server_id, uri
-                )));
-            }
+        if !should_auto_approve(self.execution_mode, self.headless)
+            && !prompt_user_approval(&format!("MCP resource read: {}/{}", server_id, uri))?
+        {
+            return Ok(ToolResult::error(format!(
+                "User rejected MCP resource read: {}/{}",
+                server_id, uri
+            )));
         }
 
         let guard = self.manager.read().await;
@@ -520,27 +497,13 @@ impl ToolExecutor for McpPromptToolExecutor {
             _ => HashMap::new(),
         };
 
-        if !should_auto_approve(self.execution_mode, self.headless) {
-            eprint!(
-                "MCP prompt get: {}/{} Allow? [y/N] ",
+        if !should_auto_approve(self.execution_mode, self.headless)
+            && !prompt_user_approval(&format!("MCP prompt get: {}/{}", server_id, prompt_name))?
+        {
+            return Ok(ToolResult::error(format!(
+                "User rejected MCP prompt get: {}/{}",
                 server_id, prompt_name
-            );
-            let _ = std::io::stderr().flush();
-
-            let mut line = String::new();
-            let stdin = std::io::stdin();
-            let mut locked = stdin.lock();
-            locked.read_line(&mut line).map_err(|e| {
-                XzatomaError::Tool(format!("Failed to read approval from stdin: {}", e))
-            })?;
-
-            let trimmed = line.trim().to_lowercase();
-            if trimmed != "y" && trimmed != "yes" {
-                return Ok(ToolResult::error(format!(
-                    "User rejected MCP prompt get: {}/{}",
-                    server_id, prompt_name
-                )));
-            }
+            )));
         }
 
         let guard = self.manager.read().await;

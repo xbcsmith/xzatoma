@@ -6,8 +6,9 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary,
-    Provider, ProviderCapabilities, TokenUsage, ToolCall,
+    convert_tools_from_json, CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo,
+    ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage,
+    ToolCall,
 };
 
 use async_trait::async_trait;
@@ -182,7 +183,7 @@ struct CopilotRequest {
     model: String,
     messages: Vec<CopilotMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<CopilotTool>,
+    tools: Vec<ProviderTool>,
     stream: bool,
 }
 
@@ -198,20 +199,13 @@ struct CopilotMessage {
     tool_call_id: Option<String>,
 }
 
-/// Tool definition for Copilot API
-#[derive(Debug, Serialize)]
-struct CopilotTool {
-    r#type: String,
-    function: CopilotFunction,
-}
-
-/// Function definition for Copilot tools
-#[derive(Debug, Serialize)]
-struct CopilotFunction {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
+/// Type alias kept for backwards compatibility within this module.
+///
+/// Both `CopilotTool` and `CopilotFunction` are now the shared
+/// `ProviderTool`/`ProviderFunction` types defined in `providers::base`.
+type CopilotTool = ProviderTool;
+/// Function metadata within a Copilot tool definition.
+type CopilotFunction = ProviderFunction;
 
 /// Tool call in Copilot format
 #[derive(Debug, Serialize, Deserialize)]
@@ -1252,31 +1246,18 @@ impl CopilotProvider {
             .collect()
     }
 
-    /// Convert tool schemas to Copilot format
+    /// Convert tool schemas to Copilot format.
     ///
     /// Accepts raw JSON schema values as produced by the tool registry for
     /// the Responses endpoint path. Used in tests; retained for future
     /// Responses-endpoint integration.
+    ///
+    /// Delegates to the shared [`convert_tools_from_json`] helper in
+    /// `providers::base` which replaces the formerly duplicated
+    /// implementation.
     #[allow(dead_code)]
     fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<CopilotTool> {
-        tools
-            .iter()
-            .filter_map(|t| {
-                let obj = t.as_object()?;
-                let name = obj.get("name")?.as_str()?.to_string();
-                let description = obj.get("description")?.as_str()?.to_string();
-                let parameters = obj.get("parameters")?.clone();
-
-                Some(CopilotTool {
-                    r#type: "function".to_string(),
-                    function: CopilotFunction {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .collect()
+        convert_tools_from_json(tools)
     }
 
     /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.

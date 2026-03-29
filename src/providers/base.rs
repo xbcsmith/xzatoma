@@ -662,6 +662,291 @@ impl CompletionResponse {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shared provider wire types
+// ---------------------------------------------------------------------------
+
+/// Shared tool definition sent to AI providers in request bodies.
+///
+/// Both the Copilot and Ollama providers use an identical JSON shape for tool
+/// definitions. This single type replaces the formerly duplicated
+/// `CopilotTool`/`OllamaTool` structs.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::{ProviderTool, ProviderFunction};
+/// use serde_json::json;
+///
+/// let tool = ProviderTool {
+///     r#type: "function".to_string(),
+///     function: ProviderFunction {
+///         name: "read_file".to_string(),
+///         description: "Read a file from disk".to_string(),
+///         parameters: json!({"type": "object", "properties": {}}),
+///     },
+/// };
+/// assert_eq!(tool.function.name, "read_file");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderTool {
+    /// Always `"function"` for the tool definitions sent to current providers.
+    pub r#type: String,
+    /// Function metadata: name, description, and JSON-Schema parameters.
+    pub function: ProviderFunction,
+}
+
+/// Function metadata within a [`ProviderTool`].
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::ProviderFunction;
+/// use serde_json::json;
+///
+/// let f = ProviderFunction {
+///     name: "search".to_string(),
+///     description: "Search the codebase".to_string(),
+///     parameters: json!({"type": "object"}),
+/// };
+/// assert_eq!(f.name, "search");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderFunction {
+    /// Tool name used by the model when calling the tool.
+    pub name: String,
+    /// Human-readable description of what the tool does.
+    pub description: String,
+    /// JSON Schema describing the tool's input parameters.
+    pub parameters: serde_json::Value,
+}
+
+/// Canonical function-call arguments within a provider tool call.
+///
+/// Stores arguments as [`serde_json::Value`]. Providers that use a JSON-string
+/// wire format (Copilot) must convert via [`arguments_as_string`][Self::arguments_as_string]
+/// when building the outgoing request; providers that use a JSON-object wire
+/// format (Ollama) can serialize this struct directly.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::ProviderFunctionCall;
+/// use serde_json::json;
+///
+/// let fc = ProviderFunctionCall {
+///     name: "read_file".to_string(),
+///     arguments: json!({"path": "/tmp/foo.txt"}),
+/// };
+/// assert_eq!(fc.arguments_as_string(), r#"{"path":"/tmp/foo.txt"}"#);
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderFunctionCall {
+    /// Name of the function being called.
+    pub name: String,
+    /// Arguments in canonical JSON value form.
+    ///
+    /// Use [`arguments_as_string`][Self::arguments_as_string] when the
+    /// provider wire format requires a serialized JSON string rather than an
+    /// inline JSON object.
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+}
+
+impl ProviderFunctionCall {
+    /// Returns `arguments` serialized as a compact JSON string.
+    ///
+    /// This is the wire format required by the Copilot completions endpoint.
+    /// Returns `"{}"` if serialization fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::base::ProviderFunctionCall;
+    /// use serde_json::json;
+    ///
+    /// let fc = ProviderFunctionCall {
+    ///     name: "greet".to_string(),
+    ///     arguments: json!({"name": "Alice"}),
+    /// };
+    /// assert_eq!(fc.arguments_as_string(), r#"{"name":"Alice"}"#);
+    /// ```
+    pub fn arguments_as_string(&self) -> String {
+        serde_json::to_string(&self.arguments).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+/// Shared tool-call record within a provider message.
+///
+/// The `id` and `type` fields are given default values so that providers
+/// which omit them in responses (e.g. older Ollama builds) still deserialize
+/// correctly.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::{ProviderToolCall, ProviderFunctionCall};
+/// use serde_json::json;
+///
+/// let tc = ProviderToolCall {
+///     id: "call_abc".to_string(),
+///     r#type: "function".to_string(),
+///     function: ProviderFunctionCall {
+///         name: "read_file".to_string(),
+///         arguments: json!({"path": "a.rs"}),
+///     },
+/// };
+/// assert_eq!(tc.id, "call_abc");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderToolCall {
+    /// Unique identifier for this tool call, assigned by the provider.
+    #[serde(default)]
+    pub id: String,
+    /// Always `"function"` for current providers.
+    #[serde(default = "provider_tool_call_type")]
+    pub r#type: String,
+    /// Function name and arguments.
+    pub function: ProviderFunctionCall,
+}
+
+fn provider_tool_call_type() -> String {
+    "function".to_string()
+}
+
+/// Unified message type for provider request and response serialization.
+///
+/// The `tool_call_id` field is present only in Copilot's wire format; Ollama
+/// messages omit it. Using `skip_serializing_if` on the field means this
+/// single struct serializes correctly for both wire formats.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::{ProviderMessage};
+///
+/// let msg = ProviderMessage {
+///     role: "user".to_string(),
+///     content: "Hello!".to_string(),
+///     tool_calls: None,
+///     tool_call_id: None,
+/// };
+/// assert_eq!(msg.role, "user");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderMessage {
+    /// Sender role: `"user"`, `"assistant"`, `"system"`, or `"tool"`.
+    pub role: String,
+    /// Message text content.
+    #[serde(default)]
+    pub content: String,
+    /// Tool calls requested by the assistant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ProviderToolCall>>,
+    /// Tool-result identifier linking this message to an assistant tool call.
+    ///
+    /// Populated only when `role == "tool"` (Copilot wire format).
+    /// Ollama does not use this field; it is omitted during serialization when
+    /// `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+/// Unified request body sent to provider completions endpoints.
+///
+/// Both Copilot (`/chat/completions`) and Ollama (`/api/chat`) accept a
+/// request body with this exact shape. Provider modules build a
+/// `ProviderRequest` and serialize it directly instead of maintaining
+/// separate duplicated structs.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::base::{ProviderRequest, ProviderMessage};
+///
+/// let req = ProviderRequest {
+///     model: "gpt-4o".to_string(),
+///     messages: vec![ProviderMessage {
+///         role: "user".to_string(),
+///         content: "Hi".to_string(),
+///         tool_calls: None,
+///         tool_call_id: None,
+///     }],
+///     tools: vec![],
+///     stream: false,
+/// };
+/// assert_eq!(req.model, "gpt-4o");
+/// ```
+#[derive(Debug, Serialize)]
+pub struct ProviderRequest {
+    /// Model identifier to invoke.
+    pub model: String,
+    /// Ordered conversation messages.
+    pub messages: Vec<ProviderMessage>,
+    /// Tool definitions available to the model.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ProviderTool>,
+    /// Whether to stream the response token-by-token.
+    pub stream: bool,
+}
+
+/// Convert raw tool-definition JSON values from the tool registry into
+/// [`ProviderTool`] instances suitable for provider request serialization.
+///
+/// Entries that are missing `name`, `description`, or `parameters` are
+/// silently dropped so partial schemas from dynamically registered tools
+/// never cause a request failure.
+///
+/// This free function replaces the structurally identical `convert_tools`
+/// methods that previously existed in both `copilot.rs` and `ollama.rs`.
+///
+/// # Arguments
+///
+/// * `tools` - Slice of raw JSON tool definitions from the tool registry.
+///
+/// # Returns
+///
+/// A `Vec<ProviderTool>` containing only well-formed entries.
+///
+/// # Examples
+///
+/// ```
+/// use serde_json::json;
+/// use xzatoma::providers::base::convert_tools_from_json;
+///
+/// let tools = vec![
+///     json!({
+///         "name": "read_file",
+///         "description": "Read a file from disk",
+///         "parameters": {"type": "object", "properties": {}}
+///     }),
+/// ];
+/// let converted = convert_tools_from_json(&tools);
+/// assert_eq!(converted.len(), 1);
+/// assert_eq!(converted[0].function.name, "read_file");
+/// assert_eq!(converted[0].r#type, "function");
+/// ```
+pub fn convert_tools_from_json(tools: &[serde_json::Value]) -> Vec<ProviderTool> {
+    tools
+        .iter()
+        .filter_map(|t| {
+            let obj = t.as_object()?;
+            let name = obj.get("name")?.as_str()?.to_string();
+            let description = obj.get("description")?.as_str()?.to_string();
+            let parameters = obj.get("parameters")?.clone();
+
+            Some(ProviderTool {
+                r#type: "function".to_string(),
+                function: ProviderFunction {
+                    name,
+                    description,
+                    parameters,
+                },
+            })
+        })
+        .collect()
+}
+
 /// Provider trait for AI providers
 ///
 /// All AI providers (Copilot, Ollama, etc.) must implement this trait.
@@ -1457,5 +1742,245 @@ mod tests {
         assert_eq!(summary.max_completion_tokens, Some(2048));
         assert_eq!(summary.supports_tool_calls, Some(true));
         assert_eq!(summary.supports_vision, Some(false));
+    }
+
+    // -----------------------------------------------------------------------
+    // convert_tools_from_json
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_convert_tools_from_json_single_tool() {
+        let tools = vec![serde_json::json!({
+            "name": "read_file",
+            "description": "Read a file from disk",
+            "parameters": {"type": "object", "properties": {}}
+        })];
+        let converted = convert_tools_from_json(&tools);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].r#type, "function");
+        assert_eq!(converted[0].function.name, "read_file");
+        assert_eq!(converted[0].function.description, "Read a file from disk");
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_multiple_tools() {
+        let tools = vec![
+            serde_json::json!({
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object"}
+            }),
+            serde_json::json!({
+                "name": "write_file",
+                "description": "Write a file",
+                "parameters": {"type": "object"}
+            }),
+        ];
+        let converted = convert_tools_from_json(&tools);
+        assert_eq!(converted.len(), 2);
+        assert_eq!(converted[0].function.name, "read_file");
+        assert_eq!(converted[1].function.name, "write_file");
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_drops_missing_name() {
+        let tools = vec![serde_json::json!({
+            "description": "No name field",
+            "parameters": {"type": "object"}
+        })];
+        let converted = convert_tools_from_json(&tools);
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_drops_missing_description() {
+        let tools = vec![serde_json::json!({
+            "name": "tool_without_description",
+            "parameters": {"type": "object"}
+        })];
+        let converted = convert_tools_from_json(&tools);
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_drops_missing_parameters() {
+        let tools = vec![serde_json::json!({
+            "name": "tool_without_params",
+            "description": "A tool"
+        })];
+        let converted = convert_tools_from_json(&tools);
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_empty_slice_returns_empty() {
+        let converted = convert_tools_from_json(&[]);
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn test_convert_tools_from_json_skips_invalid_keeps_valid() {
+        let tools = vec![
+            serde_json::json!({"name": "good_tool", "description": "ok", "parameters": {}}),
+            serde_json::json!({"description": "missing name"}),
+            serde_json::json!({"name": "another_good", "description": "also ok", "parameters": {}}),
+        ];
+        let converted = convert_tools_from_json(&tools);
+        assert_eq!(converted.len(), 2);
+        assert_eq!(converted[0].function.name, "good_tool");
+        assert_eq!(converted[1].function.name, "another_good");
+    }
+
+    // -----------------------------------------------------------------------
+    // ProviderTool / ProviderFunction serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_provider_tool_serializes_to_expected_json() {
+        let tool = ProviderTool {
+            r#type: "function".to_string(),
+            function: ProviderFunction {
+                name: "search".to_string(),
+                description: "Search the codebase".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        };
+        let json = serde_json::to_value(&tool).unwrap();
+        assert_eq!(json["type"], "function");
+        assert_eq!(json["function"]["name"], "search");
+        assert_eq!(json["function"]["description"], "Search the codebase");
+    }
+
+    #[test]
+    fn test_provider_tool_round_trips_through_json() {
+        let original = ProviderTool {
+            r#type: "function".to_string(),
+            function: ProviderFunction {
+                name: "grep".to_string(),
+                description: "Search files".to_string(),
+                parameters: serde_json::json!({"type": "object", "properties": {"pattern": {"type": "string"}}}),
+            },
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: ProviderTool = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.function.name, "grep");
+        assert_eq!(decoded.function.description, "Search files");
+    }
+
+    // -----------------------------------------------------------------------
+    // ProviderFunctionCall
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_provider_function_call_arguments_as_string_object() {
+        let fc = ProviderFunctionCall {
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({"path": "/tmp/foo.txt"}),
+        };
+        let s = fc.arguments_as_string();
+        let reparsed: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(reparsed["path"], "/tmp/foo.txt");
+    }
+
+    #[test]
+    fn test_provider_function_call_arguments_as_string_empty_object() {
+        let fc = ProviderFunctionCall {
+            name: "no_args".to_string(),
+            arguments: serde_json::Value::Object(serde_json::Map::new()),
+        };
+        assert_eq!(fc.arguments_as_string(), "{}");
+    }
+
+    #[test]
+    fn test_provider_function_call_default_arguments_is_null() {
+        let json = r#"{"name": "tool"}"#;
+        let fc: ProviderFunctionCall = serde_json::from_str(json).unwrap();
+        assert_eq!(fc.name, "tool");
+        assert_eq!(fc.arguments, serde_json::Value::Null);
+    }
+
+    // -----------------------------------------------------------------------
+    // ProviderMessage serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_provider_message_omits_tool_call_id_when_none() {
+        let msg = ProviderMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("tool_call_id"));
+        assert!(!json.as_object().unwrap().contains_key("tool_calls"));
+    }
+
+    #[test]
+    fn test_provider_message_includes_tool_call_id_when_set() {
+        let msg = ProviderMessage {
+            role: "tool".to_string(),
+            content: "result".to_string(),
+            tool_calls: None,
+            tool_call_id: Some("call_xyz".to_string()),
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["tool_call_id"], "call_xyz");
+    }
+
+    #[test]
+    fn test_provider_message_deserializes_missing_tool_call_id_as_none() {
+        let json = r#"{"role": "assistant", "content": "Hi"}"#;
+        let msg: ProviderMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.role, "assistant");
+        assert!(msg.tool_call_id.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // ProviderToolCall default fields
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_provider_tool_call_type_defaults_to_function() {
+        let json = r#"{"function": {"name": "foo", "arguments": {}}}"#;
+        let tc: ProviderToolCall = serde_json::from_str(json).unwrap();
+        assert_eq!(tc.r#type, "function");
+        assert_eq!(tc.id, "");
+    }
+
+    // -----------------------------------------------------------------------
+    // ProviderRequest serialization
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_provider_request_omits_empty_tools_array() {
+        let req = ProviderRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("tools"));
+    }
+
+    #[test]
+    fn test_provider_request_includes_tools_when_non_empty() {
+        let req = ProviderRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![],
+            tools: vec![ProviderTool {
+                r#type: "function".to_string(),
+                function: ProviderFunction {
+                    name: "search".to_string(),
+                    description: "Search".to_string(),
+                    parameters: serde_json::json!({}),
+                },
+            }],
+            stream: false,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.as_object().unwrap().contains_key("tools"));
+        assert_eq!(json["tools"].as_array().unwrap().len(), 1);
     }
 }

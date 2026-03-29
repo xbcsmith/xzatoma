@@ -20,6 +20,8 @@ use crate::commands::special_commands::{
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
+use crate::mcp::manager::build_mcp_manager_from_config;
+use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::skills::{
@@ -56,6 +58,10 @@ pub mod acp;
 
 // Skills management commands
 pub mod skills;
+
+// Agent environment builder (shared tool/skill/MCP initialization)
+pub mod environment;
+pub use environment::{build_agent_environment, AgentEnvironment};
 
 /// Detect if a user prompt requests subagent functionality
 ///
@@ -250,20 +256,11 @@ pub fn build_startup_skill_disclosure(
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn build_visible_skill_catalog(config: &Config, working_dir: &Path) -> Result<SkillCatalog> {
-    if !config.skills.enabled {
-        return Ok(SkillCatalog::new());
-    }
-
-    let discovery = discover_skills(&config.skills, working_dir)?;
+    // Thin wrapper: load trusted paths then delegate to the canonical
+    // 3-parameter version in `commands::skills` so the filtering logic
+    // lives in exactly one place.
     let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
-    let visible_records = crate::skills::trust::filter_visible_skill_records(
-        &discovery.catalog,
-        &config.skills,
-        working_dir,
-        &trusted_paths,
-    );
-
-    SkillCatalog::from_records(visible_records)
+    crate::commands::skills::build_visible_skill_catalog(config, working_dir, &trusted_paths)
 }
 
 /// Registers the `activate_skill` tool when visible skills exist and the
@@ -430,9 +427,7 @@ pub mod chat {
             .unwrap_or(ChatMode::Planning);
 
         // Default to safe mode (AlwaysConfirm)
-        let initial_safety = SafetyMode::AlwaysConfirm;
-
-        let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
+        let mut mode_state = ChatModeState::new(initial_mode, SafetyMode::AlwaysConfirm);
 
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
@@ -443,38 +438,14 @@ pub mod chat {
             Arc::clone(&active_skill_registry),
         )?;
 
-        // Build MCP client manager if auto_connect is enabled and servers are configured.
-        // The manager Arc must stay alive for the entire duration of run_chat so that
-        // McpToolExecutor instances can call back to it during agent turns.
-        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
-            use crate::mcp::auth::token_store::TokenStore;
-            use crate::mcp::manager::McpClientManager;
-            use tokio::sync::RwLock;
-
-            let http_client = Arc::new(reqwest::Client::new());
-            let token_store = Arc::new(TokenStore);
-            let mut manager = McpClientManager::new(http_client, token_store);
-
-            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
-                if let Err(e) = manager.connect(server_config.clone()).await {
-                    tracing::warn!(
-                        server_id = %server_config.id,
-                        error = %e,
-                        "Failed to connect to MCP server during chat startup"
-                    );
-                }
-            }
-
-            Some(Arc::new(RwLock::new(manager)))
-        } else {
-            None
-        };
+        // Build MCP client manager using the shared factory.
+        // Chat is interactive (headless=false); the Arc must stay alive for the
+        // entire duration of run_chat so that McpToolExecutor instances can call
+        // back to it during agent turns.
+        let mcp_manager = build_mcp_manager_from_config(&config).await?;
 
         // Register MCP tools into the registry.
-        // Chat is interactive so headless=false.
         if let Some(ref manager) = mcp_manager {
-            use crate::mcp::tool_bridge::register_mcp_tools;
-
             let execution_mode = config.agent.terminal.default_mode;
             match register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, false).await {
                 Ok(count) if count > 0 => {
@@ -1961,97 +1932,25 @@ pub mod r#run {
 
         // Build tools & agent
         let working_dir = std::env::current_dir()?;
-        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
-        let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
-        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         if allow_dangerous {
             tracing::warn!("Dangerous commands are allowed for this run: allow_dangerous=true");
         }
 
-        // Build tools using registry builder for consistent tool selection based on mode
-        use crate::chat_mode::{ChatMode, SafetyMode};
-        use crate::tools::registry_builder::ToolRegistryBuilder;
+        // Build tools, skills, and MCP stack via the shared environment builder.
+        // The run command is always headless (non-interactive).
+        let env = build_agent_environment(&config, &working_dir, true).await?;
+        let tools = env.tool_registry;
+        let active_skill_registry = env.active_skill_registry;
+        let skill_disclosure = env.skill_disclosure;
+        // Keep the MCP manager Arc alive for the entire function so that
+        // McpToolExecutor instances (registered in tools) can call back to it.
+        let _mcp_manager = env.mcp_manager;
 
-        // Parse chat mode from config
-        let chat_mode =
-            ChatMode::parse_str(&config.agent.chat.default_mode).unwrap_or(ChatMode::Planning);
-
-        // Parse safety mode from config
-        let safety_mode = match config.agent.chat.default_safety.to_lowercase().as_str() {
-            "yolo" => SafetyMode::NeverConfirm,
-            _ => SafetyMode::AlwaysConfirm,
-        };
-
-        let mut tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.clone())
-            .with_tools_config(config.agent.tools.clone())
-            .with_terminal_config(config.agent.terminal.clone())
-            .build()?;
-        let _activate_skill_registered = register_activate_skill_tool(
-            &mut tools,
-            &config,
-            visible_skill_catalog,
-            Arc::clone(&active_skill_registry),
-        )?;
-
-        // Build MCP client manager if auto_connect is enabled and servers are configured.
-        // The manager Arc must stay alive for the entire duration of run_plan_with_options
-        // so that McpToolExecutor instances can call back to it during agent execution.
-        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
-            use crate::mcp::auth::token_store::TokenStore;
-            use crate::mcp::manager::McpClientManager;
-            use tokio::sync::RwLock;
-
-            let http_client = Arc::new(reqwest::Client::new());
-            let token_store = Arc::new(TokenStore);
-            let mut manager = McpClientManager::new(http_client, token_store);
-
-            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
-                if let Err(e) = manager.connect(server_config.clone()).await {
-                    tracing::warn!(
-                        server_id = %server_config.id,
-                        error = %e,
-                        "Failed to connect to MCP server during run command startup"
-                    );
-                }
-            }
-
-            Some(Arc::new(RwLock::new(manager)))
-        } else {
-            None
-        };
-
-        // Register MCP tools into the registry after it is built.
-        if let Some(ref manager) = mcp_manager {
-            use crate::mcp::tool_bridge::register_mcp_tools;
-
-            // run command is always headless.
-            let execution_mode = config.agent.terminal.default_mode;
-            let count = register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, true)
-                .await
-                .map_err(|e| {
-                    XzatomaError::Config(format!("Failed to register MCP tools: {}", e))
-                })?;
-
-            if count > 0 {
-                tracing::info!(count = %count, "Registered MCP tools for run command");
-            }
-        }
-
-        // Create agent using concrete providers
-        let mut agent = match config.provider.provider_type.as_str() {
-            "ollama" => {
-                let p = OllamaProvider::new(config.provider.ollama.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            "copilot" => {
-                let p = CopilotProvider::new(config.provider.copilot.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            other => {
-                return Err(XzatomaError::Config(format!("Unknown provider: {}", other)));
-            }
-        };
+        // Create agent using the shared provider factory.
+        let provider_box = create_provider(&config.provider.provider_type, &config.provider)?;
+        let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
+        let mut agent = Agent::new_from_shared_provider(provider, tools, config.agent.clone())?;
 
         if let Some(disclosure) = &skill_disclosure {
             agent

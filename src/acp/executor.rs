@@ -40,26 +40,16 @@
 /// # Ok(())
 /// # }
 /// ```
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::acp::runtime::{
     assistant_text_message, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode,
 };
 use crate::agent::Agent;
-use crate::chat_mode::{ChatMode, SafetyMode};
-use crate::commands::{
-    build_startup_skill_disclosure, build_visible_skill_catalog, register_activate_skill_tool,
-};
+use crate::commands::build_agent_environment;
 use crate::config::Config;
-use crate::error::{Result, XzatomaError};
-use crate::mcp::auth::token_store::TokenStore;
-use crate::mcp::manager::McpClientManager;
-use crate::mcp::tool_bridge::register_mcp_tools;
+use crate::error::Result;
 use crate::providers::{create_provider, Provider};
-use crate::skills::ActiveSkillRegistry;
-use crate::tools::registry_builder::ToolRegistryBuilder;
-use tokio::sync::RwLock;
 
 /// ACP executor outcome.
 ///
@@ -433,7 +423,23 @@ impl AcpExecutor {
         }
 
         let working_dir = std::env::current_dir()?;
-        let mut tools = self.build_tools(&working_dir).await?;
+
+        // Build tools, skills, and MCP stack via the shared environment builder.
+        // ACP execution is always headless (non-interactive).
+        let env = build_agent_environment(&self.config, &working_dir, true).await?;
+        let mut tools = env.tool_registry;
+
+        if let Some(disclosure) = &env.skill_disclosure {
+            tracing::debug!(
+                disclosure_length = disclosure.len(),
+                "Built ACP skill disclosure for run execution"
+            );
+        }
+
+        // Keep the MCP manager Arc alive for the entire prompt execution so that
+        // McpToolExecutor instances (registered in tools) can call back to it.
+        let _mcp_manager = env.mcp_manager;
+
         let provider_box =
             create_provider(&self.config.provider.provider_type, &self.config.provider)?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
@@ -450,88 +456,6 @@ impl AcpExecutor {
         let mut agent =
             Agent::new_from_shared_provider(provider, tools, self.config.agent.clone())?;
         agent.execute(prompt.to_string()).await
-    }
-
-    async fn build_tools(&self, working_dir: &Path) -> Result<crate::tools::ToolRegistry> {
-        let chat_mode =
-            ChatMode::parse_str(&self.config.agent.chat.default_mode).unwrap_or(ChatMode::Planning);
-
-        let safety_mode = match self
-            .config
-            .agent
-            .chat
-            .default_safety
-            .to_lowercase()
-            .as_str()
-        {
-            "yolo" => SafetyMode::NeverConfirm,
-            _ => SafetyMode::AlwaysConfirm,
-        };
-
-        let visible_skill_catalog = build_visible_skill_catalog(&self.config, working_dir)?;
-        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
-
-        let mut tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.to_path_buf())
-            .with_tools_config(self.config.agent.tools.clone())
-            .with_terminal_config(self.config.agent.terminal.clone())
-            .build()?;
-
-        let _activate_skill_registered = register_activate_skill_tool(
-            &mut tools,
-            &self.config,
-            visible_skill_catalog,
-            Arc::clone(&active_skill_registry),
-        )?;
-
-        if let Some(disclosure) = build_startup_skill_disclosure(&self.config, working_dir)? {
-            tracing::debug!(
-                disclosure_length = disclosure.len(),
-                "Built ACP skill disclosure for run execution"
-            );
-        }
-
-        if let Some(manager) = self.build_mcp_manager().await? {
-            let execution_mode = self.config.agent.terminal.default_mode;
-            let count = register_mcp_tools(&mut tools, manager, execution_mode, true)
-                .await
-                .map_err(|error| {
-                    XzatomaError::Config(format!("Failed to register MCP tools for ACP: {}", error))
-                })?;
-
-            if count > 0 {
-                tracing::info!(count = count, "Registered MCP tools for ACP executor");
-            }
-        }
-
-        Ok(tools)
-    }
-
-    async fn build_mcp_manager(&self) -> Result<Option<Arc<RwLock<McpClientManager>>>> {
-        if !self.config.mcp.auto_connect || self.config.mcp.servers.is_empty() {
-            return Ok(None);
-        }
-
-        let http_client = Arc::new(reqwest::Client::new());
-        let token_store = Arc::new(TokenStore);
-        let mut manager = McpClientManager::new(http_client, token_store);
-
-        for server_config in self
-            .config
-            .mcp
-            .servers
-            .iter()
-            .filter(|server| server.enabled)
-        {
-            if let Err(error) = manager.connect(server_config.clone()).await {
-                tracing::warn!(
-                    server_id = %server_config.id,
-                    error = %error,
-                    "Failed to connect MCP server during ACP executor startup"
-                );
-            }
-        }
-
-        Ok(Some(Arc::new(RwLock::new(manager))))
     }
 }
 

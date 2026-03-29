@@ -7,8 +7,9 @@
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
-    ProviderCapabilities, TokenUsage, ToolCall,
+    convert_tools_from_json, CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo,
+    Provider, ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest,
+    ProviderToolCall, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -107,63 +108,15 @@ struct OllamaModelDetails {
     family: String,
 }
 
-/// Request structure for Ollama API
-#[derive(Debug, Serialize)]
-struct OllamaRequest {
-    model: String,
-    messages: Vec<OllamaMessage>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<OllamaTool>,
-    stream: bool,
-}
-
-/// Message structure for Ollama API
-#[derive(Debug, Serialize, Deserialize)]
-struct OllamaMessage {
-    role: String,
-    #[serde(default)]
-    content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OllamaToolCall>>,
-}
-
-/// Tool definition for Ollama API
-#[derive(Debug, Serialize)]
-struct OllamaTool {
-    r#type: String,
-    function: OllamaFunction,
-}
-
-/// Function definition for Ollama tools
-#[derive(Debug, Serialize)]
-struct OllamaFunction {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
-
-/// Tool call in Ollama format
-#[derive(Debug, Serialize, Deserialize)]
-struct OllamaToolCall {
-    #[serde(default)]
-    id: String,
-    #[serde(default = "default_tool_type")]
-    r#type: String,
-    function: OllamaFunctionCall,
-}
-
-/// Function call details in Ollama format
-#[derive(Debug, Serialize, Deserialize)]
-struct OllamaFunctionCall {
-    name: String,
-    #[serde(default)]
-    arguments: serde_json::Value,
-}
-
-/// Default type for tool calls (used when field is missing)
-fn default_tool_type() -> String {
-    "function".to_string()
-}
+/// Shared type aliases for Ollama's wire format.
+///
+/// Ollama's JSON schema for requests and responses is structurally identical
+/// to the canonical shared types defined in `providers::base`.  These aliases
+/// keep internal code readable without duplicating struct definitions.
+type OllamaRequest = ProviderRequest;
+type OllamaMessage = ProviderMessage;
+type OllamaToolCall = ProviderToolCall;
+type OllamaFunctionCall = ProviderFunctionCall;
 
 /// Response structure from Ollama API
 #[derive(Debug, Deserialize)]
@@ -273,7 +226,11 @@ impl OllamaProvider {
             .unwrap_or_default()
     }
 
-    /// Convert XZatoma messages to Ollama format
+    /// Convert XZatoma messages to Ollama wire format.
+    ///
+    /// Uses the shared [`ProviderMessage`] type (aliased as `OllamaMessage`)
+    /// which maps directly to Ollama's JSON schema.  `tool_call_id` is set to
+    /// `None` because Ollama does not use that field.
     fn convert_messages(&self, messages: &[Message]) -> Vec<OllamaMessage> {
         let validated_messages = crate::providers::validate_message_sequence(messages);
         validated_messages
@@ -303,31 +260,19 @@ impl OllamaProvider {
                     role: m.role.clone(),
                     content: m.content.clone().unwrap_or_default(),
                     tool_calls,
+                    // Ollama does not use tool_call_id in messages.
+                    tool_call_id: None,
                 })
             })
             .collect()
     }
 
-    /// Convert tool schemas to Ollama format
-    fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<OllamaTool> {
-        tools
-            .iter()
-            .filter_map(|t| {
-                let obj = t.as_object()?;
-                let name = obj.get("name")?.as_str()?.to_string();
-                let description = obj.get("description")?.as_str()?.to_string();
-                let parameters = obj.get("parameters")?.clone();
-
-                Some(OllamaTool {
-                    r#type: "function".to_string(),
-                    function: OllamaFunction {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .collect()
+    /// Convert tool schemas to Ollama wire format.
+    ///
+    /// Delegates to the shared [`convert_tools_from_json`] helper which
+    /// replaces the formerly duplicated implementation in this module.
+    fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<crate::providers::ProviderTool> {
+        convert_tools_from_json(tools)
     }
 
     /// Convert Ollama response message back to XZatoma format
@@ -713,6 +658,8 @@ impl Provider for OllamaProvider {
             tools: self.convert_tools(tools),
             stream: false,
         };
+        // OllamaRequest is an alias for ProviderRequest which serializes
+        // tools as a JSON object -- the format Ollama expects.
 
         tracing::debug!(
             "Sending Ollama request: {} messages, {} tools",
@@ -978,6 +925,7 @@ mod tests {
             role: "assistant".to_string(),
             content: "Hello!".to_string(),
             tool_calls: None,
+            tool_call_id: None,
         };
 
         let msg = provider.convert_response_message(ollama_msg);
@@ -1005,6 +953,7 @@ mod tests {
                     arguments: serde_json::json!({"path": "test.txt"}),
                 },
             }]),
+            tool_call_id: None,
         };
 
         let msg = provider.convert_response_message(ollama_msg);
