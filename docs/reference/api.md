@@ -2,13 +2,19 @@
 
 ## Overview
 
-This document describes how to consume XZatoma as a library, how to generate and view the Rust API documentation locally, and summarizes the primary public modules and examples that are useful when embedding the crate into other tooling or tests.
+This document describes how to consume XZatoma as a library, how to generate and
+view the Rust API documentation locally, and summarizes the primary public
+modules and examples that are useful when embedding the crate into other tooling
+or tests.
 
-The repository provides both a binary (`xzatoma`) and a library crate that exposes building blocks (CLI parser, configuration loader, providers, plan parsing, and command handlers) suitable for programmatic usage.
+The repository provides both a binary (`xzatoma`) and a library crate that
+exposes building blocks (CLI parser, configuration loader, providers, plan
+parsing, and command handlers) suitable for programmatic usage.
 
 ## Generating library documentation
 
-To generate the crate API docs locally, use `cargo doc`. Common useful invocations:
+To generate the crate API docs locally, use `cargo doc`. Common useful
+invocations:
 
 - Generate and open the docs for the current crate (without dependencies):
 
@@ -30,12 +36,18 @@ RUSTDOCFLAGS="--document-private-items" cargo doc --no-deps --open
 ```
 
 Notes:
-- Doc examples embedded in `///` doc comments are executed as part of `cargo test` (they are doc tests). You can run `cargo test` to validate doc examples.
-- When updating public API or doc comments, run `cargo test` and `cargo doc --no-deps --open` to validate both examples and generated documentation.
+
+- Doc examples embedded in `///` doc comments are executed as part of
+  `cargo test` (they are doc tests). You can run `cargo test` to validate doc
+  examples.
+- When updating public API or doc comments, run `cargo test` and
+  `cargo doc --no-deps --open` to validate both examples and generated
+  documentation.
 
 ## Using XZatoma as a dependency
 
-If you want to use XZatoma programmatically in another Rust project, add it as a dependency. During local development, using a path dependency is convenient:
+If you want to use XZatoma programmatically in another Rust project, add it as a
+dependency. During local development, using a path dependency is convenient:
 
 ```toml
 # In your Cargo.toml
@@ -50,55 +62,113 @@ Alternatively, if the crate is published, use a standard versioned dependency:
 xzatoma = "0.1"
 ```
 
-After adding the dependency, you can import and use library types and helpers directly from your code.
+After adding the dependency, you can import and use library types and helpers
+directly from your code.
 
 ## Primary modules & public surface (summary)
 
-This is a concise guide to the main modules and important public types you will likely interact with. For full details and function signatures, refer to the generated `cargo doc` output.
+This is a concise guide to the main modules and important public types you will
+likely interact with. For full details and function signatures, refer to the
+generated `cargo doc` output.
 
 - `xzatoma::cli`
- - `Cli` — Clap-based CLI argument structure.
- - `Cli::parse_args()` — Parse command-line arguments programmatically.
+
+  - `Cli` — Clap-based CLI argument structure.
+  - `Cli::parse_args()` — Parse command-line arguments programmatically.
 
 - `xzatoma::config`
- - `Config` — The central configuration type.
- - `Config::load(path, &Cli)` — Load configuration from file with environment and CLI overrides.
- - `Config::validate()` — Validate the configuration.
+
+  - `Config` — The central configuration type.
+  - `Config::load(path, &Cli)` — Load configuration from file with environment
+    and CLI overrides.
+  - `Config::validate()` — Validate the configuration.
 
 - `xzatoma::tools::plan`
- - `Plan` / `PlanStep` — The plan data model.
- - `PlanParser` — Parse plans from YAML, JSON, and Markdown.
- - `PlanParser::from_file(path)` / `from_yaml` / `from_json` / `from_markdown` — Parsing helpers.
- - `PlanParser::validate(&plan)` — Structural validation.
+
+  - `Plan` / `PlanStep` — The plan data model.
+  - `PlanParser` — Parse plans from YAML, JSON, and Markdown.
+  - `PlanParser::from_file(path)` / `from_yaml` / `from_json` / `from_markdown`
+    — Parsing helpers.
+  - `PlanParser::validate(&plan)` — Structural validation.
 
 - `xzatoma::providers`
- - `Provider` (trait) — Abstraction for AI providers (methods for completion and metadata).
- - Implementations:
-  - `CopilotProvider` — GitHub Copilot integration (includes device-flow auth).
-  - `OllamaProvider` — Ollama local/remote server support.
- - Provider helpers include model listing, info, and authentication flows.
+
+  - `Provider` (trait) — Abstraction for AI providers (methods for completion
+    and metadata).
+  - Implementations:
+    - `CopilotProvider` — GitHub Copilot integration (includes device-flow
+      auth).
+    - `OllamaProvider` — Ollama local/remote server support.
+  - Provider helpers include model listing, info, and authentication flows.
 
 - `xzatoma::commands`
- - `run::run_plan(...)` — Programmatic entry for executing a plan or prompt.
- - `auth::authenticate(...)` — Programmatic entry for provider authentication.
- - These wrappers mirror the CLI behavior and are useful for integration tests or embedding.
+
+  - `run::run_plan(...)` — Programmatic entry for executing a plan or prompt.
+  - `auth::authenticate(...)` — Programmatic entry for provider authentication.
+  - `watch::run_watch(...)` — Programmatic entry for watcher execution.
+  - `mcp::run_mcp(...)` — Programmatic entry for MCP server management.
+  - `acp::run_acp(...)` — Programmatic entry for ACP server startup.
+  - `skills::run_skills(...)` — Programmatic entry for skill discovery and
+    management.
+  - `replay::run_replay(...)` — Programmatic entry for conversation replay.
+  - These wrappers mirror the CLI behavior and are useful for integration tests
+    or embedding.
 
 - `xzatoma::agent`
- - `Agent` — The high-level agent orchestration (creates providers and tools, coordinates execution).
+
+  - `Agent` — The high-level agent orchestration (creates providers and tools,
+    coordinates execution).
 
 - `xzatoma::tools` (various)
- - `terminal::TerminalTool` — Executes shell commands with validation.
- - `file_ops::FileOpsTool` — File read/write helpers used by the agent.
- - Tool executors implement a `ToolExecutor` trait to allow the agent to execute them.
+
+  - `terminal::TerminalTool` — Executes shell commands with validation.
+  - `file_ops::FileOpsTool` — File read/write helpers used by the agent.
+  - Tool executors implement a `ToolExecutor` trait to allow the agent to
+    execute them.
+
+- `xzatoma::mcp`
+
+  - `McpClientManager` — Manages connections to MCP servers and tool discovery.
+  - `McpConfig` — Top-level MCP configuration.
+  - `McpServerConfig` — Per-server configuration (command, args, env, auth).
+  - `ToolBridge` — Bridges MCP-provided tools into the agent tool system so the
+    agent can invoke them like native tools.
+
+- `xzatoma::acp`
+
+  - `AcpServer` — HTTP server exposing agent capabilities via the Agent
+    Communication Protocol.
+  - `AgentManifest` — Describes agent capabilities to ACP clients.
+  - Route definitions, request handlers, and SSE streaming support for
+    incremental output.
+  - Session and run tracking for stateful multi-request interactions.
+
+- `xzatoma::skills`
+
+  - `SkillCatalog` — In-memory catalog of discovered and validated skills.
+  - `discover_skills(...)` — Filesystem-based skill discovery across
+    project-level and user-level paths.
+  - Trust management functions for verifying skill provenance before activation.
+  - Skill parsing (YAML frontmatter + Markdown body), validation, and runtime
+    activation.
+
+- `xzatoma::storage`
+
+  - Persistence layer for conversation history and session state.
+  - Storage types used by the agent to persist and resume conversations across
+    runs.
 
 - `xzatoma::error`
- - Central error types and conversions (e.g., `XzatomaError`).
+  - Central error types and conversions (e.g., `XzatomaError`).
 
-Note: See `docs/reference/quick_reference.md` for overview examples and `cargo doc` for detailed API docs.
+Note: See `docs/reference/quick_reference.md` for overview examples and
+`cargo doc` for detailed API docs.
 
 ## Example: Programmatic plan execution
 
-Below is a minimal example that demonstrates loading configuration, and executing a plan via the library API. This mirrors what the CLI does when you run `xzatoma run`.
+Below is a minimal example that demonstrates loading configuration, and
+executing a plan via the library API. This mirrors what the CLI does when you
+run `xzatoma run`.
 
 ```rust
 use xzatoma::cli::Cli;
@@ -123,7 +193,8 @@ async fn main() -> xzatoma::error::Result<()> {
 
 ## Example: Calling a provider directly
 
-If you need to call providers programmatically (for example, to build tests or custom flows), here's a small example using the Copilot provider API:
+If you need to call providers programmatically (for example, to build tests or
+custom flows), here's a small example using the Copilot provider API:
 
 ```rust
 use xzatoma::config::CopilotConfig;
@@ -147,20 +218,24 @@ async fn example() -> xzatoma::error::Result<()> {
 }
 ```
 
-Refer to the provider module docs (`cargo doc`) for precise types and return structures.
+Refer to the provider module docs (`cargo doc`) for precise types and return
+structures.
 
 ## Writing & testing API docs and examples
 
-- Doc comments (`///`) placed on public functions, enums, structs are automatically included in the generated docs.
-- Inline Rust code examples in doc comments are executed as doc tests by `cargo test`. Use annotations as needed:
- - `/// ```rust,no_run` to avoid executing long-running examples.
- - `/// ```rust,ignore` if the example cannot be executed in CI.
+- Doc comments (`///`) placed on public functions, enums, structs are
+  automatically included in the generated docs.
+- Inline Rust code examples in doc comments are executed as doc tests by
+  `cargo test`. Use annotations as needed:
+  - ` /// ```rust,no_run ` to avoid executing long-running examples.
+  - ` /// ```rust,ignore ` if the example cannot be executed in CI.
 - Run `cargo test` to validate doc examples and unit tests.
-- Keep examples small, deterministic, and with clear `use` statements to increase likelihood doc tests pass.
+- Keep examples small, deterministic, and with clear `use` statements to
+  increase likelihood doc tests pass.
 
 Example doc comment style:
 
-```rust
+````rust
 /// Calculates the factorial of a number.
 ///
 /// # Examples
@@ -170,28 +245,36 @@ Example doc comment style:
 /// assert_eq!(factorial(5).unwrap(), 120);
 /// ```
 pub fn factorial(n: u64) -> Result<u64, MathError> { /* ... */ }
-```
+````
 
 ## Publishing docs (brief)
 
-If you publish the crate, `docs.rs` will generate and host API documentation automatically for released crate versions. For project-hosted documentation (GitHub Pages) you can publish the output of `cargo doc` (for example using CI to push `target/doc` to a `gh-pages` branch). Typical steps:
+If you publish the crate, `docs.rs` will generate and host API documentation
+automatically for released crate versions. For project-hosted documentation
+(GitHub Pages) you can publish the output of `cargo doc` (for example using CI
+to push `target/doc` to a `gh-pages` branch). Typical steps:
 
 1. Generate docs locally: `cargo doc --no-deps`.
-2. Use a GitHub Action to run `cargo doc` and deploy `target/doc` to GitHub Pages, or use `ghp-import` locally to push the generated docs.
+2. Use a GitHub Action to run `cargo doc` and deploy `target/doc` to GitHub
+   Pages, or use `ghp-import` locally to push the generated docs.
 
 ## Troubleshooting & tips
 
-- If doc examples fail during `cargo test`, prefer adding `no_run` or `ignore` to the example while you adjust the sample to be deterministic for CI.
-- Use `cargo doc --no-deps` when you only care about your crate's documentation (faster).
-- Keep `///` comments and public API stable to avoid churn in published doc pages.
-- When adding a new public module, include at least one example usage in the module-level docs so consumers have a starting point.
+- If doc examples fail during `cargo test`, prefer adding `no_run` or `ignore`
+  to the example while you adjust the sample to be deterministic for CI.
+- Use `cargo doc --no-deps` when you only care about your crate's documentation
+  (faster).
+- Keep `///` comments and public API stable to avoid churn in published doc
+  pages.
+- When adding a new public module, include at least one example usage in the
+  module-level docs so consumers have a starting point.
 
 ## See also
 
 - Tutorials and how-to docs:
- - `../tutorials/quickstart.md`
- - `../how-to/create_workflows.md`
- - `../how-to/configure_providers.md`
+  - `../tutorials/quickstart.md`
+  - `../how-to/create_workflows.md`
+  - `../how-to/configure_providers.md`
 - CLI reference: `../reference/cli.md`
 - Workflow format: `../reference/workflow_format.md`
 - Plan parsing & examples: `src/tools/plan.rs` (implementation)

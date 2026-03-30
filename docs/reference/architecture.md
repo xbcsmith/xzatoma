@@ -38,6 +38,8 @@ src/
 ├── commands/
 ├── mcp/
 ├── storage/
+├── skills/              # Extensible agent capabilities via discoverable skill definitions
+├── acp/                 # Agent Communication Protocol HTTP server
 ├── watcher/
 │   ├── mod.rs
 │   ├── logging.rs
@@ -356,7 +358,7 @@ Important files:
 - `consumer/config.rs`
   - Kafka consumer configuration types
 - `consumer/kafka.rs`
-  - stub-first Kafka consumer behavior and message processing
+  - real `rdkafka StreamConsumer` Kafka consumer behavior and message processing
 - `consumer/message.rs`
   - XZepr CloudEvents wire-format message types
 - `consumer/client.rs`
@@ -506,7 +508,7 @@ Responsibilities:
 - resolve the effective output topic
 - serialize `GenericPlanResult`
 - expose Kafka configuration assembly for future client integration
-- publish results through the current stub-first path
+- publish results through the real `rdkafka FutureProducer` path
 
 Output topic behavior:
 
@@ -654,8 +656,8 @@ Dry-run means:
 - execution is skipped
 - logging remains observable
 
-For the generic watcher, dry-run still produces a result event through the
-stub-first producer path, which makes behavior easy to test and reason about.
+For the generic watcher, dry-run still produces a result event through the real
+producer path, which makes behavior easy to test and reason about.
 
 ## Error Handling Strategy
 
@@ -709,3 +711,114 @@ This structure provides:
 - a new generic plan-event watcher for non-XZepr producers
 - clear code ownership boundaries
 - a straightforward place to extend watcher functionality in later phases
+
+## Skills Architecture
+
+The skills system provides extensible agent capabilities through discoverable
+skill definitions.
+
+### Module Structure
+
+```text
+src/skills/
+├── mod.rs           # Module root and re-exports
+├── types.rs         # Skill metadata and record types
+├── discovery.rs     # Filesystem-based skill discovery
+├── parser.rs        # Skill file parsing (YAML frontmatter + Markdown body)
+├── catalog.rs       # In-memory skill catalog
+├── activation.rs    # Runtime skill activation
+├── trust.rs         # Trust store management
+├── validation.rs    # Skill validation rules
+└── disclosure.rs    # Skill catalog disclosure to agent
+```
+
+### Discovery Paths
+
+Skill files are discovered from the following locations, in order:
+
+- Project-level: `./.xzatoma/skills/`, `./.agents/skills/`
+- User-level: `~/.xzatoma/skills/`, `~/.agents/skills/`
+- Additional paths from configuration
+
+### Skills Data Flow
+
+```text
+filesystem skill files
+   |
+   v
+discovery.rs (walk configured paths)
+   |
+   v
+parser.rs (parse YAML frontmatter + Markdown body)
+   |
+   v
+validation.rs (validate skill definitions)
+   |
+   v
+catalog.rs (register in-memory catalog)
+   |
+   v
+trust.rs (verify trust status)
+   |
+   v
+activation.rs (activate for runtime use)
+   |
+   v
+disclosure.rs (expose catalog to agent)
+```
+
+## ACP Architecture
+
+The ACP (Agent Communication Protocol) module implements an HTTP server that
+exposes agent capabilities as a standardized API.
+
+### Module Structure
+
+```text
+src/acp/
+├── mod.rs           # Module root
+├── server.rs        # HTTP server setup
+├── routes.rs        # Route definitions
+├── handlers.rs      # Request handlers
+├── runtime.rs       # Agent runtime management
+├── executor.rs      # Plan execution
+├── run.rs           # Run tracking
+├── session.rs       # Session management
+├── streaming.rs     # SSE streaming support
+├── events.rs        # Event types
+├── manifest.rs      # Agent manifest types
+├── types.rs         # Shared types
+└── error.rs         # ACP-specific errors
+```
+
+### ACP Request Flow
+
+```text
+HTTP request
+   |
+   v
+server.rs (accept connection)
+   |
+   v
+routes.rs (route matching)
+   |
+   v
+handlers.rs (request handling)
+   |
+   +--> runtime.rs (agent lifecycle)
+   +--> executor.rs (plan execution)
+   +--> session.rs (session state)
+   |
+   v
+streaming.rs (SSE response if streaming)
+   |
+   v
+HTTP response
+```
+
+### Key Components
+
+- `AcpServer` manages the HTTP listener and route registration
+- `AgentManifest` describes agent capabilities to ACP clients
+- Sessions track stateful interactions across multiple requests
+- SSE streaming allows clients to receive incremental agent output

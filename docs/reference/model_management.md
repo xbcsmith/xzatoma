@@ -2,7 +2,10 @@
 
 ## Overview
 
-This document provides a comprehensive API reference for XZatoma's model management capabilities. The model management system allows users to discover available AI models, inspect model details, switch between models, and monitor context window usage.
+This document provides a comprehensive API reference for XZatoma's model
+management capabilities. The model management system allows users to discover
+available AI models, inspect model details, switch between models, and monitor
+context window usage.
 
 ## Core Types
 
@@ -23,7 +26,8 @@ pub struct ModelInfo {
 **Fields:**
 
 - `name`: Unique identifier for the model (e.g., "gpt-5.3-codex", "llama3.2:3b")
-- `display_name`: Human-readable name for UI display (e.g., "GPT-5.3 Codex", "llama3.2:3b")
+- `display_name`: Human-readable name for UI display (e.g., "GPT-5.3 Codex",
+  "llama3.2:3b")
 - `context_window`: Maximum number of tokens the model can handle
 - `capabilities`: List of supported features (function calling, vision, etc.)
 - `provider_specific`: Additional provider-specific metadata
@@ -60,7 +64,8 @@ pub enum ModelCapability {
 
 **Variants:**
 
-- `LongContext`: Model supports extended context windows (typically 100k+ tokens)
+- `LongContext`: Model supports extended context windows (typically 100k+
+  tokens)
 - `FunctionCalling`: Model supports tool/function calling
 - `Vision`: Model can process and understand images
 - `Streaming`: Model supports streaming responses
@@ -118,7 +123,8 @@ pub fn new(max_tokens: usize, used_tokens: usize) -> Self
 
 **Overflow Protection:**
 
-The constructor automatically clamps `used_tokens` to `max_tokens` to prevent underflow in `remaining_tokens` calculation.
+The constructor automatically clamps `used_tokens` to `max_tokens` to prevent
+underflow in `remaining_tokens` calculation.
 
 ### ProviderCapabilities
 
@@ -347,8 +353,12 @@ xzatoma models list [--provider <provider>] [--json] [--summary]
 **Options:**
 
 - `--provider`, `-p`: Override configured provider (copilot, ollama)
-- `--json`, `-j`: Output in pretty JSON format (useful for scripting and exporting). When used with `--summary`, JSON will include summary fields such as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and `raw_data`.
-- `--summary`, `-s`: Output a human-readable summary table (compact view). Combine with `--json` to serialize the summary data to JSON.
+- `--json`, `-j`: Output in pretty JSON format (useful for scripting and
+  exporting). When used with `--summary`, JSON will include summary fields such
+  as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`,
+  `supports_tool_calls`, `supports_vision`, and `raw_data`.
+- `--summary`, `-s`: Output a human-readable summary table (compact view).
+  Combine with `--json` to serialize the summary data to JSON.
 
 **Examples:**
 
@@ -371,10 +381,16 @@ xzatoma models list --json --summary > all_models_with_summary.json
 
 **Output Summary:**
 
-- Default (no flags): Displays a table with columns: `Model Name`, `Display Name`, `Context Window`, and `Capabilities`.
-- `--json`: Produces pretty-printed JSON containing an array of `ModelInfo` objects (suitable for downstream tools like `jq`).
-- `--summary`: Produces a compact human-readable table with columns: `Model Name`, `Display Name`, `Context Window`, `State`, `Tool Calls`, and `Vision`. Optional boolean fields are displayed as `Yes`, `No`, or `Unknown`.
-- `--json --summary`: Produces pretty-printed JSON containing an array of `ModelInfoSummary` objects which include both summary fields and provider-specific metadata.
+- Default (no flags): Displays a table with columns: `Model Name`,
+  `Display Name`, `Context Window`, and `Capabilities`.
+- `--json`: Produces pretty-printed JSON containing an array of `ModelInfo`
+  objects (suitable for downstream tools like `jq`).
+- `--summary`: Produces a compact human-readable table with columns:
+  `Model Name`, `Display Name`, `Context Window`, `State`, `Tool Calls`, and
+  `Vision`. Optional boolean fields are displayed as `Yes`, `No`, or `Unknown`.
+- `--json --summary`: Produces pretty-printed JSON containing an array of
+  `ModelInfoSummary` objects which include both summary fields and
+  provider-specific metadata.
 
 ### models info
 
@@ -388,8 +404,13 @@ xzatoma models info --model <name> [--provider <provider>] [--json] [--summary]
 
 - `--model`, `-m`: Model name or identifier (required)
 - `--provider`, `-p`: Override configured provider (copilot, ollama)
-- `--json`, `-j`: Output in pretty JSON format. When used with `--summary`, JSON will include summary fields such as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and `raw_data`.
-- `--summary`, `-s`: Output a compact human-readable summary for the specified model, showing capabilities and provider metadata. Combine with `--json` to serialize the summary to JSON.
+- `--json`, `-j`: Output in pretty JSON format. When used with `--summary`, JSON
+  will include summary fields such as `info`, `state`, `max_prompt_tokens`,
+  `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and
+  `raw_data`.
+- `--summary`, `-s`: Output a compact human-readable summary for the specified
+  model, showing capabilities and provider metadata. Combine with `--json` to
+  serialize the summary to JSON.
 
 **Examples:**
 
@@ -409,10 +430,15 @@ xzatoma models info --model gpt-4 --json --summary > gpt4_summary.json
 
 **Output Summary:**
 
-- Default (no flags): Displays model name, display name, context window, capabilities, and provider-specific metadata.
-- `--json`: Produces pretty-printed JSON of a `ModelInfo` object for programmatic analysis.
-- `--summary`: Produces a compact summary view including state, limits (when available), capabilities (Tool Calls, Vision), provider metadata, and an indicator if raw API data is available.
-- `--json --summary`: Produces pretty-printed JSON of a `ModelInfoSummary` object that includes summary fields and provider-specific information.
+- Default (no flags): Displays model name, display name, context window,
+  capabilities, and provider-specific metadata.
+- `--json`: Produces pretty-printed JSON of a `ModelInfo` object for
+  programmatic analysis.
+- `--summary`: Produces a compact summary view including state, limits (when
+  available), capabilities (Tool Calls, Vision), provider metadata, and an
+  indicator if raw API data is available.
+- `--json --summary`: Produces pretty-printed JSON of a `ModelInfoSummary`
+  object that includes summary fields and provider-specific information.
 
 ### models current
 
@@ -442,7 +468,7 @@ Displays the provider name and currently active model.
 
 Lists available models during an interactive chat session.
 
-```
+```text
 /models list
 ```
 
@@ -454,13 +480,13 @@ Table of available models with the current model highlighted in green.
 
 Switches to a different model during chat.
 
-```
+```text
 /model <model-name>
 ```
 
 **Example:**
 
-```
+```text
 /model gpt-4-turbo
 /model qwen2.5-coder:14b
 ```
@@ -476,13 +502,14 @@ Switches to a different model during chat.
 
 Displays context window information.
 
-```
+```text
 /context
 ```
 
 **Output:**
 
-Shows current model, context window size, tokens used, remaining tokens, usage percentage, and color-coded usage level.
+Shows current model, context window size, tokens used, remaining tokens, usage
+percentage, and color-coded usage level.
 
 ## Provider-Specific Details
 
@@ -541,7 +568,8 @@ provider:
 
 **Dynamic Discovery:**
 
-Ollama queries the running Ollama instance to discover available models dynamically.
+Ollama queries the running Ollama instance to discover available models
+dynamically.
 
 ## Error Handling
 
@@ -671,6 +699,9 @@ loop {
 
 - How-To Guide: Managing Models (docs/how-to/manage_models.md)
 - How-To Guide: Switching Models (docs/how-to/switch_models.md)
-- Architecture: Model Management (docs/explanation/model_management_implementation_plan.md)
-- Phase 4 Implementation: Agent Integration (docs/explanation/phase4_agent_integration_implementation.md)
-- Phase 6 Implementation: Chat Mode Model Management (docs/explanation/phase6_chat_mode_model_management_implementation.md)
+- Architecture: Model Management
+  (docs/explanation/model_management_implementation_plan.md)
+- Agent Integration Implementation
+  (docs/explanation/phase4_agent_integration_implementation.md)
+- Chat Mode Model Management Implementation
+  (docs/explanation/phase6_chat_mode_model_management_implementation.md)

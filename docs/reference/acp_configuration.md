@@ -1,7 +1,7 @@
 # ACP configuration reference
 
 This reference documents the ACP server configuration surface in XZatoma for
-Phase 5 operator use.
+operator use.
 
 ## Overview
 

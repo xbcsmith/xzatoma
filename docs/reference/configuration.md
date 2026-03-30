@@ -684,13 +684,46 @@ watcher:
 
 ## MCP Configuration
 
-The `mcp` section controls MCP client behavior.
+The `mcp` section controls MCP (Model Context Protocol) client behavior,
+including which MCP servers to connect to, global timeouts, and synthetic tool
+exposure.
 
-### Common Fields
+### Fields
+
+- `servers`
+
+  - Type: array of server definitions
+  - Default: `[]`
+  - Each entry describes a single MCP server with its transport, capability
+    flags, and optional OAuth configuration. Server IDs must be unique.
+
+- `request_timeout_seconds`
+
+  - Type: integer
+  - Default: `30`
+  - Default timeout in seconds for individual MCP requests. Can be overridden
+    per-server.
 
 - `auto_connect`
-- `request_timeout_seconds`
-- server definitions
+
+  - Type: boolean
+  - Default: `true`
+  - Automatically connect to all enabled servers on startup. When `false`,
+    servers must be connected explicitly via the `mcp connect` command.
+
+- `expose_resources_tool`
+
+  - Type: boolean
+  - Default: `true`
+  - Expose a synthetic `mcp_resources` tool that lists and reads resources from
+    all connected servers.
+
+- `expose_prompts_tool`
+
+  - Type: boolean
+  - Default: `true`
+  - Expose a synthetic `mcp_prompts` tool that lists and retrieves prompts from
+    all connected servers.
 
 ### Example
 
@@ -698,6 +731,232 @@ The `mcp` section controls MCP client behavior.
 mcp:
   auto_connect: true
   request_timeout_seconds: 30
+  expose_resources_tool: true
+  expose_prompts_tool: true
+  servers:
+    - id: "filesystem"
+      transport:
+        type: stdio
+        executable: "npx"
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      tools_enabled: true
+      resources_enabled: true
+    - id: "remote-api"
+      transport:
+        type: http
+        endpoint: "https://mcp.example.com/api"
+      tools_enabled: true
+```
+
+For full MCP configuration reference including server definitions and transport
+options, see `mcp_configuration.md`.
+
+## Skills Configuration
+
+The `skills` section controls agent skill discovery, validation, disclosure, and
+activation. Skills are loaded from `SKILL.md` files found in project-level,
+user-level, and explicitly configured directories.
+
+### Fields
+
+- `enabled`
+
+  - Type: boolean
+  - Default: `true`
+  - Global feature flag for agent skills. When `false`, all skills behavior is
+    disabled.
+
+- `project_enabled`
+
+  - Type: boolean
+  - Default: `true`
+  - Enable project-level discovery roots relative to the current working
+    directory.
+
+- `user_enabled`
+
+  - Type: boolean
+  - Default: `true`
+  - Enable user-level discovery roots under the current user's home directory.
+
+- `additional_paths`
+
+  - Type: array of strings
+  - Default: `[]`
+  - Extra discovery roots added after the built-in project and user roots.
+
+- `max_discovered_skills`
+
+  - Type: integer
+  - Default: `256`
+  - Hard cap on the number of valid loaded skills.
+
+- `max_scan_directories`
+
+  - Type: integer
+  - Default: `2000`
+  - Hard cap on the number of directories visited during discovery.
+
+- `max_scan_depth`
+
+  - Type: integer
+  - Default: `6`
+  - Maximum traversal depth for each discovery root.
+
+- `catalog_max_entries`
+
+  - Type: integer
+  - Default: `128`
+  - Maximum number of skill catalog entries disclosed to the model at startup.
+
+- `activation_tool_enabled`
+
+  - Type: boolean
+  - Default: `true`
+  - Register the synthetic `activate_skill` tool when visible skills are
+    available.
+
+- `project_trust_required`
+
+  - Type: boolean
+  - Default: `true`
+  - Require explicit trust for project-level skills before they become visible.
+
+- `trust_store_path`
+
+  - Type: string or null
+  - Default: `null`
+  - Optional override for the persistent trust store file path.
+
+- `allow_custom_paths_without_trust`
+
+  - Type: boolean
+  - Default: `false`
+  - Whether custom paths in `additional_paths` bypass trust checks.
+
+- `strict_frontmatter`
+
+  - Type: boolean
+  - Default: `true`
+  - Reject invalid skills without lenient fallback behavior.
+
+### Example
+
+```yaml
+skills:
+  enabled: true
+  project_enabled: true
+  user_enabled: true
+  additional_paths: []
+  max_discovered_skills: 256
+  max_scan_directories: 2000
+  max_scan_depth: 6
+  catalog_max_entries: 128
+  activation_tool_enabled: true
+  project_trust_required: true
+  # trust_store_path: ~/.xzatoma/skills_trust.yaml
+  allow_custom_paths_without_trust: false
+  strict_frontmatter: true
+```
+
+For detailed skills configuration, behavior, and trust model documentation, see
+`agent_skills_configuration.md`.
+
+## ACP Configuration
+
+The `acp` section controls the ACP (Agent Communication Protocol) HTTP server.
+The ACP server is disabled by default and only starts when explicitly invoked.
+
+### Fields
+
+- `enabled`
+
+  - Type: boolean
+  - Default: `false`
+  - Controls whether ACP server mode is considered enabled in the effective
+    config.
+
+- `host`
+
+  - Type: string
+  - Default: `"127.0.0.1"`
+  - The bind host for the ACP HTTP server.
+
+- `port`
+
+  - Type: integer
+  - Default: `8765`
+  - The TCP port used by the ACP HTTP server.
+
+- `compatibility_mode`
+
+  - Type: string
+  - Default: `versioned`
+  - Route layout mode. Accepted values: `versioned`, `root_compatible`.
+
+- `base_path`
+
+  - Type: string
+  - Default: `"/api/v1/acp"`
+  - Base path for versioned route layout.
+
+- `default_run_mode`
+
+  - Type: string
+  - Default: `async`
+  - Default ACP run execution mode. Accepted values: `sync`, `async`,
+    `streaming`.
+
+- `persistence`
+  - Nested persistence tuning configuration with `enabled`,
+    `max_events_per_run`, and `max_completed_runs` fields.
+
+### Example
+
+```yaml
+acp:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8765
+  compatibility_mode: versioned
+  base_path: "/api/v1/acp"
+  default_run_mode: async
+  persistence:
+    enabled: false
+    max_events_per_run: 1000
+    max_completed_runs: 1000
+```
+
+For detailed ACP configuration, see `acp_configuration.md`.
+
+## Storage Configuration
+
+XZatoma uses a SQLite database for conversation history and ACP state
+persistence. Storage configuration is controlled through the CLI rather than the
+YAML configuration file.
+
+### CLI Flag
+
+- `--storage-path`
+  - Override the path to the history database.
+  - Can also be set via the `XZATOMA_HISTORY_DB` environment variable.
+
+### Default Behavior
+
+When no override is provided, XZatoma uses its built-in default storage
+location. The database file is created automatically on first use.
+
+### Example
+
+```bash
+xzatoma --storage-path /tmp/my-history.db chat
+```
+
+Or via environment variable:
+
+```bash
+export XZATOMA_HISTORY_DB=/tmp/my-history.db
+xzatoma chat
 ```
 
 ## Environment Variable Overrides
@@ -826,3 +1085,6 @@ watcher:
   `docs/reference/watcher_environment_variables.md`
 - architecture reference: `docs/reference/architecture.md`
 - generic watcher example config: `config/generic_watcher.yaml`
+- MCP configuration reference: `docs/reference/mcp_configuration.md`
+- skills configuration reference: `docs/reference/agent_skills_configuration.md`
+- ACP configuration reference: `docs/reference/acp_configuration.md`
