@@ -20,7 +20,7 @@
 //! [`crate::mcp::approval::should_auto_approve`]. No inline policy checks are
 //! permitted here.
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::config::ExecutionMode;
@@ -135,8 +135,7 @@ impl SamplingHandler for XzatomaSamplingHandler {
                 if !matches!(line.trim().to_lowercase().as_str(), "y" | "yes") {
                     return Err(XzatomaError::McpElicitation(
                         "user rejected sampling request".into(),
-                    )
-                    .into());
+                    ));
                 }
             }
 
@@ -175,8 +174,7 @@ impl SamplingHandler for XzatomaSamplingHandler {
             if messages.is_empty() {
                 return Err(XzatomaError::Mcp(
                     "sampling/createMessage: no usable text content in request messages".into(),
-                )
-                .into());
+                ));
             }
 
             // Step 4: Call the provider with no tool definitions.
@@ -259,7 +257,7 @@ mod tests {
         }
 
         async fn get_model_info(&self, _name: &str) -> Result<crate::providers::ModelInfo> {
-            Err(XzatomaError::Provider("no model info in mock".into()).into())
+            Err(XzatomaError::Provider("no model info in mock".into()))
         }
 
         fn get_current_model(&self) -> Result<String> {

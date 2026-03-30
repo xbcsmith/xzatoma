@@ -1,5 +1,3 @@
-#![allow(deprecated)]
-
 use crate::cli::HistoryCommand;
 use crate::error::{Result, XzatomaError};
 use crate::providers::Message;
@@ -181,10 +179,9 @@ fn print_message(idx: usize, msg: &Message) {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
-    use crate::cli::HistoryCommand;
+
     use crate::providers::Message;
     use crate::storage::SqliteStorage;
     use assert_cmd::Command;
@@ -207,6 +204,9 @@ mod tests {
             .expect("save2 failed");
 
         // Run the CLI binary, pointing it at our temp DB, and assert output contains expected rows
+        // FIXME: Using deprecated cargo_bin; should use cargo::cargo_bin_cmd! once project
+        // structure allows environment variables to be set at compile time
+        #[allow(deprecated)]
         let mut cmd = Command::cargo_bin("xzatoma").expect("failed to find binary");
         cmd.arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())
@@ -239,6 +239,9 @@ mod tests {
             .is_some());
 
         // Run the CLI binary to delete the session
+        // FIXME: Using deprecated cargo_bin; should use cargo::cargo_bin_cmd! once project
+        // structure allows environment variables to be set at compile time
+        #[allow(deprecated)]
         let mut cmd = Command::cargo_bin("xzatoma").expect("failed to find binary");
         cmd.arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())

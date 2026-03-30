@@ -114,6 +114,14 @@ pub enum Commands {
         #[arg(long)]
         name: Option<String>,
 
+        /// Generic matcher: regex pattern for the version field (case-insensitive)
+        #[arg(long = "match-version")]
+        match_version: Option<String>,
+
+        /// Kafka broker addresses (comma-separated, overrides config)
+        #[arg(long)]
+        brokers: Option<String>,
+
         /// Dry run mode (parse but don't execute plans)
         #[arg(long)]
         dry_run: bool,
@@ -757,6 +765,8 @@ mod tests {
             create_topics,
             action,
             name,
+            match_version,
+            brokers,
             dry_run,
         } = cli.command
         {
@@ -771,6 +781,8 @@ mod tests {
             assert!(!create_topics);
             assert_eq!(action, None);
             assert_eq!(name, None);
+            assert_eq!(match_version, None);
+            assert_eq!(brokers, None);
             assert!(!dry_run);
         } else {
             panic!("Expected Watch command");
@@ -813,6 +825,33 @@ mod tests {
             assert_eq!(action, Some("deploy.*".to_string()));
             assert_eq!(name, Some("service-a".to_string()));
             assert!(dry_run);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_with_brokers_flag() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "watch", "--brokers", "broker1:9092,broker2:9092"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+
+        if let Commands::Watch { brokers, .. } = cli.command {
+            assert_eq!(brokers, Some("broker1:9092,broker2:9092".to_string()));
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_with_match_version_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--match-version", "^1\\.2\\..*"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+
+        if let Commands::Watch { match_version, .. } = cli.command {
+            assert_eq!(match_version, Some("^1\\.2\\..*".to_string()));
         } else {
             panic!("Expected Watch command");
         }

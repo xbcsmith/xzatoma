@@ -6,15 +6,16 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary,
-    Provider, ProviderCapabilities, TokenUsage, ToolCall,
+    convert_tools_from_json, CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo,
+    ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage,
+    ToolCall,
 };
 
 use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -64,6 +65,9 @@ impl ModelEndpoint {
     /// assert_eq!(ModelEndpoint::from_name("responses"), ModelEndpoint::Responses);
     /// assert_eq!(ModelEndpoint::from_name("chat_completions"), ModelEndpoint::ChatCompletions);
     /// ```
+    // Used in tests for endpoint name parsing; retained for future endpoint
+    // configuration wiring from string config values.
+    #[allow(dead_code)]
     fn from_name(name: &str) -> Self {
         match name {
             "chat_completions" => ModelEndpoint::ChatCompletions,
@@ -165,16 +169,6 @@ struct TokenRequest {
     grant_type: String,
 }
 
-/// Response containing GitHub access token
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    #[allow(dead_code)]
-    token_type: String,
-    #[allow(dead_code)]
-    scope: String,
-}
-
 /// Cached token information stored in keyring
 #[derive(Debug, Serialize, Deserialize)]
 struct CachedToken {
@@ -189,7 +183,7 @@ struct CopilotRequest {
     model: String,
     messages: Vec<CopilotMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<CopilotTool>,
+    tools: Vec<ProviderTool>,
     stream: bool,
 }
 
@@ -205,20 +199,13 @@ struct CopilotMessage {
     tool_call_id: Option<String>,
 }
 
-/// Tool definition for Copilot API
-#[derive(Debug, Serialize)]
-struct CopilotTool {
-    r#type: String,
-    function: CopilotFunction,
-}
-
-/// Function definition for Copilot tools
-#[derive(Debug, Serialize)]
-struct CopilotFunction {
-    name: String,
-    description: String,
-    parameters: serde_json::Value,
-}
+/// Type alias kept for backwards compatibility within this module.
+///
+/// Both `CopilotTool` and `CopilotFunction` are now the shared
+/// `ProviderTool`/`ProviderFunction` types defined in `providers::base`.
+type CopilotTool = ProviderTool;
+/// Function metadata within a Copilot tool definition.
+type CopilotFunction = ProviderFunction;
 
 /// Tool call in Copilot format
 #[derive(Debug, Serialize, Deserialize)]
@@ -239,7 +226,7 @@ struct CopilotFunctionCall {
 #[derive(Debug, Deserialize)]
 struct CopilotResponse {
     choices: Vec<CopilotChoice>,
-    #[allow(dead_code)]
+    // Required for JSON deserialization; usage is read in complete_completions_blocking
     usage: Option<CopilotUsage>,
 }
 
@@ -247,6 +234,8 @@ struct CopilotResponse {
 #[derive(Debug, Deserialize)]
 struct CopilotChoice {
     message: CopilotMessage,
+    // Required for JSON deserialization; value present in API response but not
+    // currently read by the completion path.
     #[allow(dead_code)]
     finish_reason: String,
 }
@@ -254,10 +243,12 @@ struct CopilotChoice {
 /// Token usage information from Copilot
 #[derive(Debug, Deserialize)]
 struct CopilotUsage {
-    #[allow(dead_code)]
+    // Required for JSON deserialization; read in complete_completions_blocking
     prompt_tokens: usize,
-    #[allow(dead_code)]
+    // Required for JSON deserialization; read in complete_completions_blocking
     completion_tokens: usize,
+    // Required for JSON deserialization; total available but computed from
+    // prompt + completion at the call site instead of being read directly.
     #[allow(dead_code)]
     total_tokens: usize,
 }
@@ -576,16 +567,14 @@ pub(crate) fn convert_messages_to_response_input(
                 } else {
                     return Err(XzatomaError::MessageConversionError(
                         "Tool message missing tool_call_id".to_string(),
-                    )
-                    .into());
+                    ));
                 }
             }
             role => {
                 return Err(XzatomaError::MessageConversionError(format!(
                     "Unknown message role: {}",
                     role
-                ))
-                .into());
+                )));
             }
         }
     }
@@ -675,8 +664,7 @@ pub(crate) fn convert_response_input_to_messages(
                         return Err(XzatomaError::MessageConversionError(format!(
                             "Unknown role in response: {}",
                             unknown_role
-                        ))
-                        .into());
+                        )));
                     }
                 }
             }
@@ -706,9 +694,26 @@ pub(crate) fn convert_response_input_to_messages(
                     tool_call_id: Some(call_id.clone()),
                 });
             }
-            ResponseInputItem::Reasoning { .. } => {
-                // Reasoning content is not stored in Message, skip for now
-                // Could be extended in future to add reasoning metadata
+            ResponseInputItem::Reasoning { content } => {
+                let full_text: String = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ResponseInputContent::OutputText { text } => Some(text.as_str()),
+                        ResponseInputContent::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<&str>>()
+                    .join("");
+                let preview = if full_text.len() > 200 {
+                    format!("{}...", &full_text[..200])
+                } else {
+                    full_text.clone()
+                };
+                tracing::debug!(
+                    reasoning_chars = full_text.len(),
+                    preview = %preview,
+                    "Reasoning content received but not stored in Message format"
+                );
             }
         }
     }
@@ -867,6 +872,8 @@ pub(crate) fn convert_tools_to_response_format(
 /// let choice = convert_tool_choice(None);
 /// assert!(choice.is_none());
 /// ```
+// Used in tests; retained for Responses-endpoint tool-choice wiring.
+#[allow(dead_code)]
 pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
     choice.map(|c| match c {
         "auto" => ToolChoice::Auto { auto: true },
@@ -928,7 +935,7 @@ fn parse_sse_event(data: &str) -> Result<StreamEvent> {
     }
 
     serde_json::from_str(data)
-        .map_err(|e| anyhow::anyhow!(XzatomaError::SseParseError(format!("Invalid JSON: {}", e))))
+        .map_err(|e| XzatomaError::SseParseError(format!("Invalid JSON: {}", e)))
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
@@ -1075,8 +1082,7 @@ impl CopilotProvider {
             return Err(XzatomaError::Provider(format!(
                 "Device code request returned {}: {}",
                 status, body
-            ))
-            .into());
+            )));
         }
 
         let device_response: DeviceCodeResponse = resp
@@ -1136,15 +1142,13 @@ impl CopilotProvider {
                     "expired_token" => {
                         return Err(XzatomaError::Provider(
                             "Device flow expired before authorization".to_string(),
-                        )
-                        .into());
+                        ));
                     }
                     other => {
                         return Err(XzatomaError::Provider(format!(
                             "Device flow error from provider: {}",
                             other
-                        ))
-                        .into());
+                        )));
                     }
                 }
             } else {
@@ -1155,10 +1159,9 @@ impl CopilotProvider {
             tracing::debug!("Polling attempt {}/{}", attempt + 1, max_attempts);
         }
 
-        Err(
-            XzatomaError::Provider("Device flow timed out waiting for authorization".to_string())
-                .into(),
-        )
+        Err(XzatomaError::Provider(
+            "Device flow timed out waiting for authorization".to_string(),
+        ))
     }
 
     /// Exchange GitHub token for Copilot token
@@ -1260,26 +1263,18 @@ impl CopilotProvider {
             .collect()
     }
 
-    /// Convert tool schemas to Copilot format
+    /// Convert tool schemas to Copilot format.
+    ///
+    /// Accepts raw JSON schema values as produced by the tool registry for
+    /// the Responses endpoint path. Used in tests; retained for future
+    /// Responses-endpoint integration.
+    ///
+    /// Delegates to the shared [`convert_tools_from_json`] helper in
+    /// `providers::base` which replaces the formerly duplicated
+    /// implementation.
+    #[allow(dead_code)]
     fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<CopilotTool> {
-        tools
-            .iter()
-            .filter_map(|t| {
-                let obj = t.as_object()?;
-                let name = obj.get("name")?.as_str()?.to_string();
-                let description = obj.get("description")?.as_str()?.to_string();
-                let parameters = obj.get("parameters")?.clone();
-
-                Some(CopilotTool {
-                    r#type: "function".to_string(),
-                    function: CopilotFunction {
-                        name,
-                        description,
-                        parameters,
-                    },
-                })
-            })
-            .collect()
+        convert_tools_from_json(tools)
     }
 
     /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.
@@ -1468,7 +1463,7 @@ impl CopilotProvider {
                                         );
                                     }
                                 }
-                                return Err(format_copilot_api_error(status2, &error_text2).into());
+                                return Err(format_copilot_api_error(status2, &error_text2));
                             }
 
                             // Parse and return models from the successful retry response
@@ -1547,7 +1542,7 @@ impl CopilotProvider {
                             if let Err(e) = self.clear_cached_token() {
                                 tracing::warn!("Failed to clear cached Copilot token: {}", e);
                             }
-                            return Err(format_copilot_api_error(status, &error_text).into());
+                            return Err(format_copilot_api_error(status, &error_text));
                         }
                     }
                 } else {
@@ -1555,12 +1550,12 @@ impl CopilotProvider {
                     if let Err(e) = self.clear_cached_token() {
                         tracing::warn!("Failed to clear cached Copilot token: {}", e);
                     }
-                    return Err(format_copilot_api_error(status, &error_text).into());
+                    return Err(format_copilot_api_error(status, &error_text));
                 }
             }
 
             // Non-auth failures fall back to provider error
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -1650,7 +1645,7 @@ impl CopilotProvider {
                 status,
                 error_text
             );
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -1759,15 +1754,12 @@ impl CopilotProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+            .map_err(|e| XzatomaError::Provider(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
-                "HTTP {}: {}",
-                status, body
-            ))));
+            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
         // Create async stream from response body
@@ -1800,9 +1792,7 @@ impl CopilotProvider {
                         }
                         Some(Err(e)) => {
                             return Some((
-                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
-                                    e.to_string()
-                                ))),
+                                Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
                             ))
                         }
@@ -1872,15 +1862,12 @@ impl CopilotProvider {
             .json(&request)
             .send()
             .await
-            .map_err(|e| anyhow::anyhow!(XzatomaError::Provider(e.to_string())))?;
+            .map_err(|e| XzatomaError::Provider(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!(XzatomaError::Provider(format!(
-                "HTTP {}: {}",
-                status, body
-            ))));
+            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
         // Create stream (similar to stream_response but for completions format)
@@ -1913,9 +1900,7 @@ impl CopilotProvider {
                         }
                         Some(Err(e)) => {
                             return Some((
-                                Err(anyhow::anyhow!(XzatomaError::StreamInterrupted(
-                                    e.to_string()
-                                ))),
+                                Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
                             ))
                         }
@@ -2144,7 +2129,7 @@ impl CopilotProvider {
         if !status.is_success() {
             let error_text = response.text().await.unwrap_or_default();
             tracing::error!("/responses returned error {}: {}", status, error_text);
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         // Parse response - for /responses endpoint, we expect a message-like response
@@ -2319,7 +2304,7 @@ impl CopilotProvider {
                                 retry_status,
                                 error_text
                             );
-                            return Err(format_copilot_api_error(retry_status, &error_text).into());
+                            return Err(format_copilot_api_error(retry_status, &error_text));
                         }
 
                         let copilot_response: CopilotResponse =
@@ -2350,7 +2335,7 @@ impl CopilotProvider {
                 }
             }
 
-            return Err(format_copilot_api_error(status, &error_text).into());
+            return Err(format_copilot_api_error(status, &error_text));
         }
 
         let copilot_response: CopilotResponse = response.json().await.map_err(|e| {
@@ -2431,8 +2416,7 @@ impl CopilotProvider {
         Err(XzatomaError::Provider(format!(
             "No supported endpoint found for model: {}",
             model_name
-        ))
-        .into())
+        )))
     }
 
     /// Check if a model supports a specific endpoint
@@ -2510,7 +2494,10 @@ impl Provider for CopilotProvider {
                 .await
             }
             ModelEndpoint::Messages => {
-                // Messages endpoint not yet implemented, fall back to completions
+                tracing::warn!(
+                    model = %model,
+                    "Messages endpoint not yet implemented; falling back to completions endpoint"
+                );
                 self.complete_with_completions_endpoint(
                     &model,
                     messages,
@@ -2520,9 +2507,9 @@ impl Provider for CopilotProvider {
                 )
                 .await
             }
-            ModelEndpoint::Unknown => {
-                Err(XzatomaError::Provider("Unknown endpoint selected".to_string()).into())
-            }
+            ModelEndpoint::Unknown => Err(XzatomaError::Provider(
+                "Unknown endpoint selected".to_string(),
+            )),
         }
     }
 
@@ -2537,16 +2524,14 @@ impl Provider for CopilotProvider {
         models
             .into_iter()
             .find(|m| m.name == model_name)
-            .ok_or_else(|| {
-                XzatomaError::Provider(format!("Model not found: {}", model_name)).into()
-            })
+            .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
 
     fn get_current_model(&self) -> Result<String> {
         self.config
             .read()
             .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string()).into()
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
             })
             .map(|config| config.model.clone())
     }
@@ -2614,8 +2599,7 @@ impl Provider for CopilotProvider {
                 "Model '{}' does not support tool calling, which is required for XZatoma. Models with tool support: {}",
                 model_name,
                 tool_models.join(", ")
-            ))
-            .into());
+            )));
         }
 
         // Update the model in the config
@@ -2633,6 +2617,10 @@ impl Provider for CopilotProvider {
 /// - Ok(Some(token)) when an access token is present
 /// - Ok(None) when polling should continue (authorization_pending / slow_down)
 /// - Err(...) for fatal errors (expired_token or unknown error)
+// Used in tests; retained as a clean extraction of device-flow poll parsing
+// logic that can be re-wired into device_flow if the inline version is
+// refactored.
+#[allow(dead_code)]
 fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> {
     if let Some(tok) = value.get("access_token").and_then(|v| v.as_str()) {
         return Ok(Some(tok.to_string()));
@@ -2643,10 +2631,13 @@ fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> 
             "authorization_pending" => return Ok(None),
             "slow_down" => return Ok(None),
             "expired_token" => {
-                return Err(XzatomaError::Provider("Device flow expired".to_string()).into());
+                return Err(XzatomaError::Provider("Device flow expired".to_string()));
             }
             other => {
-                return Err(XzatomaError::Provider(format!("Device flow error: {}", other)).into());
+                return Err(XzatomaError::Provider(format!(
+                    "Device flow error: {}",
+                    other
+                )));
             }
         }
     }
@@ -2909,30 +2900,41 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_set_model_with_valid_model() {
-        // This test requires API authentication and would make real API calls
-        // In a real test environment with proper mocking, we would:
-        // 1. Mock the Copilot models API to return test data
-        // 2. Call set_model with a known-good model from that data
-        // 3. Verify the model was updated
-        // For now, we just verify the structure compiles
+        // set_model requires a live or mocked Copilot models endpoint.
+        // Use wiremock or mockito to return test model data,
+        // then call set_model with a known-good model name.
+        let config = CopilotConfig::default();
+        let mut provider = CopilotProvider::new(config).unwrap();
+        let result = provider.set_model("gpt-4o".to_string()).await;
+        // Without a mock server this will fail with an auth error
+        assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_set_model_with_invalid_model() {
-        // This test requires API authentication and would make real API calls
-        // In a real test environment with proper mocking, we would:
-        // 1. Mock the Copilot models API to return test data
-        // 2. Call set_model with an invalid model name
-        // 3. Verify it returns an error with helpful message
-        // For now, we just verify the structure compiles
+        // set_model requires a live or mocked Copilot models endpoint.
+        // Use wiremock or mockito to validate that an invalid model name
+        // produces a descriptive error.
+        let config = CopilotConfig::default();
+        let mut provider = CopilotProvider::new(config).unwrap();
+        let result = provider
+            .set_model("nonexistent-model-xyz".to_string())
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_list_models_returns_all_supported_models() {
-        // This test requires API authentication and would make real API calls
-        // The actual model count varies based on what GitHub enables
-        // See test_parse_models_from_testdata for parsing validation
+        // list_models requires a live or mocked Copilot models endpoint.
+        // See test_parse_models_from_testdata for offline parsing validation.
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+        let result = provider.list_models().await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

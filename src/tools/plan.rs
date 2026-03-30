@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Plan parsing tool for XZatoma
 //!
 //! This module provides plan file parsing functionality.
@@ -96,12 +95,8 @@ impl PlanParser {
     ///
     /// Supports `.yaml`, `.yml`, `.json`, and `.md` extensions.
     pub fn from_file(path: &Path) -> Result<Plan> {
-        let content = fs::read_to_string(path).map_err(|e| {
-            anyhow::Error::from(XzatomaError::Tool(format!(
-                "Failed to read plan file: {}",
-                e
-            )))
-        })?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| XzatomaError::Tool(format!("Failed to read plan file: {}", e)))?;
 
         let extension = path
             .extension()
@@ -112,25 +107,23 @@ impl PlanParser {
             "yaml" | "yml" => Self::from_yaml(&content),
             "json" => Self::from_json(&content),
             "md" => Self::from_markdown(&content),
-            _ => Err(anyhow::Error::from(XzatomaError::Tool(format!(
+            _ => Err(XzatomaError::Tool(format!(
                 "Unsupported plan format: {}",
                 extension
-            )))),
+            ))),
         }
     }
 
     /// Parse YAML plan content
     pub fn from_yaml(content: &str) -> Result<Plan> {
-        let plan: Plan = serde_yaml::from_str(content)
-            .map_err(|e| anyhow::Error::from(XzatomaError::Yaml(e)))?;
+        let plan: Plan = serde_yaml::from_str(content).map_err(XzatomaError::Yaml)?;
         Self::validate(&plan)?;
         Ok(plan)
     }
 
     /// Parse JSON plan content
     pub fn from_json(content: &str) -> Result<Plan> {
-        let plan: Plan = serde_json::from_str(content)
-            .map_err(|e| anyhow::Error::from(XzatomaError::Serialization(e)))?;
+        let plan: Plan = serde_json::from_str(content).map_err(XzatomaError::Serialization)?;
         Self::validate(&plan)?;
         Ok(plan)
     }
@@ -246,29 +239,24 @@ impl PlanParser {
     /// Validate a plan instance (structure and content)
     pub fn validate(plan: &Plan) -> Result<()> {
         if plan.name.trim().is_empty() {
-            return Err(anyhow::Error::from(XzatomaError::Tool(
-                "Plan name cannot be empty".to_string(),
-            )));
+            return Err(XzatomaError::Tool("Plan name cannot be empty".to_string()));
         }
 
         if plan.steps.is_empty() {
-            return Err(anyhow::Error::from(XzatomaError::Tool(
+            return Err(XzatomaError::Tool(
                 "Plan must have at least one step".to_string(),
-            )));
+            ));
         }
 
         for (i, step) in plan.steps.iter().enumerate() {
             if step.name.trim().is_empty() {
-                return Err(anyhow::Error::from(XzatomaError::Tool(format!(
-                    "Step {} has no name",
-                    i + 1
-                ))));
+                return Err(XzatomaError::Tool(format!("Step {} has no name", i + 1)));
             }
             if step.action.trim().is_empty() {
-                return Err(anyhow::Error::from(XzatomaError::Tool(format!(
+                return Err(XzatomaError::Tool(format!(
                     "Step '{}' has no action",
                     step.name
-                ))));
+                )));
             }
         }
 
@@ -292,7 +280,7 @@ pub async fn load_plan(path: &str) -> Result<Plan> {
 mod tests {
     use super::*;
     use std::fs as stdfs;
-    use std::path::{Path, PathBuf};
+
     use tempfile::tempdir;
 
     #[test]

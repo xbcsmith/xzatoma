@@ -20,7 +20,7 @@
 ///     .capabilities
 ///     .contains(&AcpAgentCapability::RunsCreate));
 /// ```
-use crate::error::{Result, XzatomaError};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -55,30 +55,30 @@ use std::collections::BTreeMap;
 /// ```
 pub fn validate_agent_name(value: &str) -> Result<()> {
     if value.is_empty() {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP agent name: value cannot be empty".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP agent name: value cannot be empty",
         )
         .into());
     }
 
     if value.len() > 128 {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP agent name: value cannot exceed 128 characters".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP agent name: value cannot exceed 128 characters",
         )
         .into());
     }
 
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP agent name: value cannot be empty".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP agent name: value cannot be empty",
         )
         .into());
     };
 
     if !first.is_ascii_lowercase() {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP agent name: value must start with an ASCII lowercase letter".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP agent name: value must start with an ASCII lowercase letter",
         )
         .into());
     }
@@ -88,8 +88,8 @@ pub fn validate_agent_name(value: &str) -> Result<()> {
             || character.is_ascii_digit()
             || matches!(character, '_' | '-' | '.')
     }) {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP agent name: value must contain only ASCII lowercase letters, digits, underscores, hyphens, or dots".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP agent name: value must contain only ASCII lowercase letters, digits, underscores, hyphens, or dots",
         )
         .into());
     }
@@ -127,23 +127,22 @@ pub fn validate_agent_name(value: &str) -> Result<()> {
 /// ```
 pub fn validate_manifest_version(value: &str) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP manifest version: value cannot be empty".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP manifest version: value cannot be empty",
         )
         .into());
     }
 
     if value.len() > 64 {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP manifest version: value cannot exceed 64 characters".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP manifest version: value cannot exceed 64 characters",
         )
         .into());
     }
 
     if value.trim() != value {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP manifest version: value cannot contain leading or trailing whitespace"
-                .to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP manifest version: value cannot contain leading or trailing whitespace",
         )
         .into());
     }
@@ -175,15 +174,15 @@ pub fn validate_manifest_version(value: &str) -> Result<()> {
 /// ```
 pub fn validate_manifest_display_name(value: &str) -> Result<()> {
     if value.trim().is_empty() {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP manifest display name: value cannot be empty".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP manifest display name: value cannot be empty",
         )
         .into());
     }
 
     if value.len() > 256 {
-        return Err(XzatomaError::AcpValidation(
-            "invalid ACP manifest display name: value cannot exceed 256 characters".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "invalid ACP manifest display name: value cannot exceed 256 characters",
         )
         .into());
     }
@@ -661,8 +660,8 @@ impl AcpAgentManifest {
         }
 
         if self.capabilities.is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "invalid ACP manifest: capabilities cannot be empty".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "invalid ACP manifest: capabilities cannot be empty",
             )
             .into());
         }
@@ -682,7 +681,7 @@ impl AcpAgentManifest {
 
 fn validate_non_empty_field(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
-        Err(XzatomaError::AcpValidation(format!(
+        Err(crate::acp::error::AcpError::validation(format!(
             "invalid ACP value for '{}': value cannot be empty",
             field
         ))
@@ -696,11 +695,14 @@ fn validate_absolute_url(value: &str, field: &str) -> Result<()> {
     validate_non_empty_field(value, field)?;
 
     let parsed = url::Url::parse(value).map_err(|error| {
-        XzatomaError::AcpValidation(format!("invalid ACP URL for '{}': {}", field, error))
+        crate::acp::error::AcpError::validation(format!(
+            "invalid ACP URL for '{}': {}",
+            field, error
+        ))
     })?;
 
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(XzatomaError::AcpValidation(format!(
+        return Err(crate::acp::error::AcpError::validation(format!(
             "invalid ACP URL for '{}': scheme must be http or https",
             field
         ))

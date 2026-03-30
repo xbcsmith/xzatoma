@@ -32,9 +32,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
 
+use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::auth::discovery::{
     fetch_authorization_server_metadata, fetch_protected_resource_metadata,
@@ -175,6 +176,10 @@ pub struct McpClientManager {
     ///
     /// Guarded by a `Mutex` so that notification callbacks registered during
     /// `connect` can enqueue updates from background threads.
+    // Retained for Phase 6: task lifecycle tracking via notifications/tasks/status.
+    // The field must stay alive so the Arc keeps the Mutex live for future
+    // background-thread callbacks.
+    #[allow(dead_code)]
     task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
 }
 
@@ -386,16 +391,12 @@ impl McpClientManager {
 
         // Register sampling handler stub if enabled.
         if config.sampling_enabled {
-            tracing::debug!(id = %id, "Registering sampling handler (stub)");
-            // Phase 5B will replace this with a real XzatomaSamplingHandler.
-            // For now we register a no-op so that `capabilities.sampling` is
-            // honoured at the protocol level.
+            tracing::warn!(id = %id, "Sampling handler not yet implemented; MCP servers requiring sampling will fail");
         }
 
         // Register elicitation handler stub if enabled.
         if config.elicitation_enabled {
-            tracing::debug!(id = %id, "Registering elicitation handler (stub)");
-            // Phase 5B will replace this with a real XzatomaElicitationHandler.
+            tracing::warn!(id = %id, "Elicitation handler not yet implemented; MCP servers requiring elicitation will fail");
         }
 
         // Fetch and cache the tool list.
@@ -588,8 +589,7 @@ impl McpClientManager {
             return Err(XzatomaError::McpToolNotFound {
                 server: server_id.to_string(),
                 tool: tool_name.to_string(),
-            }
-            .into());
+            });
         }
 
         let protocol = entry
@@ -602,7 +602,7 @@ impl McpClientManager {
 
         // On 401, attempt re-auth and retry once.
         match result {
-            Err(ref e) if is_mcp_auth_error(e) => {
+            Err(ref error) if is_mcp_auth_error(error) => {
                 if let (Some(auth_manager), Some(metadata)) =
                     (&entry.auth_manager, &entry.server_metadata)
                 {
@@ -611,7 +611,7 @@ impl McpClientManager {
                         "401 detected, re-authenticating"
                     );
                     // Obtain a fresh token (handle_401 clears stale token).
-                    let _new_token = auth_manager
+                    auth_manager
                         .handle_401(server_id, "", metadata)
                         .await
                         .map_err(|auth_err| {
@@ -666,8 +666,7 @@ impl McpClientManager {
             return Err(XzatomaError::McpToolNotFound {
                 server: server_id.to_string(),
                 tool: tool_name.to_string(),
-            }
-            .into());
+            });
         }
 
         let protocol = entry
@@ -680,19 +679,19 @@ impl McpClientManager {
             .call_tool(tool_name, arguments, Some(task_params))
             .await?;
 
-        // If the response meta indicates a task was created, wait for it.
-        // Phase 6 will implement full task polling via TaskManager; for now
-        // we return the initial response directly.
+        // If the response meta indicates a task was created, log a warning.
+        // Full task polling is not yet implemented; we return the initial
+        // response directly.
         if response
             .meta
             .as_ref()
             .and_then(|m| m.get("taskId"))
             .is_some()
         {
-            tracing::debug!(
+            tracing::warn!(
                 server_id = %server_id,
                 tool = %tool_name,
-                "Task created; returning initial response (Phase 6 will add polling)"
+                "Long-running MCP task detected but polling is not yet implemented; returning partial result"
             );
         }
 
@@ -916,7 +915,7 @@ impl McpClientManager {
             .get(server_id)
             .and_then(|e| e.protocol.as_ref())
             .map(Arc::clone)
-            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()).into())
+            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()))
     }
 
     /// Insert a pre-built [`McpServerEntry`] directly into the server map.
@@ -998,15 +997,81 @@ pub fn xzatoma_client_capabilities() -> ClientCapabilities {
 // Private utilities
 // ---------------------------------------------------------------------------
 
-/// Returns `true` when the error chain contains an [`XzatomaError::McpAuth`]
-/// variant, signalling a `401 Unauthorized` response.
-fn is_mcp_auth_error(err: &anyhow::Error) -> bool {
-    err.chain().any(|e| {
-        matches!(
-            e.downcast_ref::<XzatomaError>(),
-            Some(XzatomaError::McpAuth(_))
-        )
-    })
+/// Returns `true` when the error is an [`XzatomaError::McpAuth`] variant,
+/// signalling a `401 Unauthorized` response.
+fn is_mcp_auth_error(err: &XzatomaError) -> bool {
+    matches!(err, XzatomaError::McpAuth(_))
+}
+
+// ---------------------------------------------------------------------------
+// build_mcp_manager_from_config
+// ---------------------------------------------------------------------------
+
+/// Build an `McpClientManager` from the given global configuration.
+///
+/// This is the single canonical factory for constructing a live
+/// [`McpClientManager`]. It inspects `config.mcp.auto_connect` and
+/// `config.mcp.servers`; when neither condition is met it returns `Ok(None)`
+/// immediately so callers do not need to repeat the guard logic.
+///
+/// When construction succeeds the manager is wrapped in an
+/// `Arc<RwLock<…>>` so it can be shared cheaply across async tasks for the
+/// lifetime of the calling command or executor.
+///
+/// Individual server connection failures are logged as warnings but do not
+/// abort the build — the remaining servers are still attempted and the
+/// partially-connected manager is returned.
+///
+/// # Arguments
+///
+/// * `config` - Global application configuration.
+///
+/// # Returns
+///
+/// `Ok(Some(manager))` when `auto_connect` is enabled and at least one server
+/// is configured; `Ok(None)` otherwise.
+///
+/// # Errors
+///
+/// Currently never returns `Err`; per-server failures are downgraded to
+/// warnings. This may change in future versions.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::Config;
+/// use xzatoma::mcp::manager::build_mcp_manager_from_config;
+///
+/// # async fn example() -> xzatoma::error::Result<()> {
+/// let config = Config::default();
+/// let manager = build_mcp_manager_from_config(&config).await?;
+/// // With the default config (auto_connect=false) we expect None.
+/// assert!(manager.is_none());
+/// # Ok(())
+/// # }
+/// ```
+pub async fn build_mcp_manager_from_config(
+    config: &Config,
+) -> Result<Option<Arc<RwLock<McpClientManager>>>> {
+    if !config.mcp.auto_connect || config.mcp.servers.is_empty() {
+        return Ok(None);
+    }
+
+    let http_client = Arc::new(reqwest::Client::new());
+    let token_store = Arc::new(TokenStore);
+    let mut manager = McpClientManager::new(http_client, token_store);
+
+    for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
+        if let Err(e) = manager.connect(server_config.clone()).await {
+            tracing::warn!(
+                server_id = %server_config.id,
+                error = %e,
+                "Failed to connect to MCP server during startup"
+            );
+        }
+    }
+
+    Ok(Some(Arc::new(RwLock::new(manager))))
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,38 +1081,15 @@ fn is_mcp_auth_error(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::server::{McpServerTransportConfig, OAuthServerConfig};
+    use crate::mcp::server::McpServerTransportConfig;
     use crate::mcp::transport::fake::FakeTransport;
-    use crate::mcp::types::{
-        Implementation, InitializeResponse, ListToolsResponse, McpTool, ServerCapabilities,
-    };
-    use serde_json::json;
-
+    use crate::mcp::types::{Implementation, InitializeResponse, McpTool, ServerCapabilities};
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
     fn make_manager() -> McpClientManager {
         McpClientManager::new(Arc::new(reqwest::Client::new()), Arc::new(TokenStore))
-    }
-
-    fn stdio_config(id: &str) -> McpServerConfig {
-        McpServerConfig {
-            id: id.to_string(),
-            transport: McpServerTransportConfig::Stdio {
-                executable: "true".to_string(), // /usr/bin/true exits immediately
-                args: vec![],
-                env: HashMap::new(),
-                working_dir: None,
-            },
-            enabled: true,
-            timeout_seconds: 5,
-            tools_enabled: true,
-            resources_enabled: false,
-            prompts_enabled: false,
-            sampling_enabled: false,
-            elicitation_enabled: false,
-        }
     }
 
     /// Build a pre-wired manager entry that uses a [`FakeTransport`].
@@ -1262,19 +1304,11 @@ mod tests {
         let result = manager.call_tool("srv", "missing_tool", None).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // Should be McpToolNotFound
-        let root = err.root_cause();
-        let is_tool_not_found = err.chain().any(|e| {
-            matches!(
-                e.downcast_ref::<XzatomaError>(),
-                Some(XzatomaError::McpToolNotFound { .. })
-            )
-        });
-        // Fallback: error message contains expected substrings.
+        assert!(matches!(err, XzatomaError::McpToolNotFound { .. }));
         let msg = err.to_string();
         assert!(
-            is_tool_not_found || msg.contains("missing_tool") || msg.contains("tool not found"),
-            "unexpected error: {root}"
+            msg.contains("missing_tool") || msg.contains("tool not found"),
+            "unexpected error: {msg}"
         );
     }
 
@@ -1314,13 +1348,13 @@ mod tests {
 
     #[test]
     fn test_is_mcp_auth_error_true_for_mcp_auth_variant() {
-        let err = anyhow::anyhow!(XzatomaError::McpAuth("denied".to_string()));
+        let err = XzatomaError::McpAuth("denied".to_string());
         assert!(is_mcp_auth_error(&err));
     }
 
     #[test]
     fn test_is_mcp_auth_error_false_for_other_variant() {
-        let err = anyhow::anyhow!(XzatomaError::McpTransport("io error".to_string()));
+        let err = XzatomaError::McpTransport("io error".to_string());
         assert!(!is_mcp_auth_error(&err));
     }
 
@@ -1336,5 +1370,95 @@ mod tests {
         let formatted = format!("[base64 {}] {}", mime, blob);
         assert!(formatted.starts_with("[base64 image/png]"));
         assert!(formatted.contains("abc123=="));
+    }
+
+    // -----------------------------------------------------------------------
+    // build_mcp_manager_from_config
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_build_mcp_manager_from_config_returns_none_when_auto_connect_disabled() {
+        let config = Config::default();
+        // Default config has auto_connect=false, so we expect None.
+        let result = build_mcp_manager_from_config(&config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_mcp_manager_from_config_returns_none_when_no_servers() {
+        let mut config = Config::default();
+        // Enable auto_connect but leave servers empty.
+        config.mcp.auto_connect = true;
+        config.mcp.servers = vec![];
+
+        let result = build_mcp_manager_from_config(&config).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_mcp_manager_from_config_returns_some_when_servers_configured() {
+        use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+
+        let mut config = Config::default();
+        config.mcp.auto_connect = true;
+        // Add a server that will fail to connect (no real server running),
+        // but the manager should still be returned (failures are downgraded
+        // to warnings by build_mcp_manager_from_config).
+        config.mcp.servers = vec![McpServerConfig {
+            id: "test-server".to_string(),
+            enabled: true,
+            transport: McpServerTransportConfig::Stdio {
+                executable: "nonexistent-mcp-server".to_string(),
+                args: vec![],
+                env: std::collections::HashMap::new(),
+                working_dir: None,
+            },
+            timeout_seconds: 30,
+            tools_enabled: true,
+            resources_enabled: false,
+            prompts_enabled: false,
+            sampling_enabled: false,
+            elicitation_enabled: true,
+        }];
+
+        let result = build_mcp_manager_from_config(&config).await;
+        // Connection will fail but the manager Arc is still returned.
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_build_mcp_manager_from_config_skips_disabled_servers() {
+        use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+
+        let mut config = Config::default();
+        config.mcp.auto_connect = true;
+        // Only a disabled server -- manager is returned but has no connections.
+        config.mcp.servers = vec![McpServerConfig {
+            id: "disabled-server".to_string(),
+            enabled: false,
+            transport: McpServerTransportConfig::Stdio {
+                executable: "nonexistent".to_string(),
+                args: vec![],
+                env: std::collections::HashMap::new(),
+                working_dir: None,
+            },
+            timeout_seconds: 30,
+            tools_enabled: true,
+            resources_enabled: false,
+            prompts_enabled: false,
+            sampling_enabled: false,
+            elicitation_enabled: true,
+        }];
+
+        let result = build_mcp_manager_from_config(&config).await;
+        assert!(result.is_ok());
+        // auto_connect=true and non-empty servers list → Some, even though
+        // the only server is disabled (disabled servers are simply skipped).
+        let manager_arc = result.unwrap().unwrap();
+        let manager = manager_arc.read().await;
+        assert_eq!(manager.connected_servers().len(), 0);
     }
 }

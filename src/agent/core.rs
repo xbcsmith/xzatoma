@@ -10,7 +10,7 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
 use crate::prompts;
-use crate::providers::{CompletionResponse, Message, Provider, TokenUsage, ToolCall};
+use crate::providers::{Message, Provider, TokenUsage, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -79,9 +79,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         let conversation = Conversation::new(
@@ -125,9 +125,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         let conversation = Conversation::new(
@@ -201,9 +201,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration (same as new() method)
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         let conversation = Conversation::new(
@@ -280,9 +280,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -345,9 +345,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -413,9 +413,9 @@ impl Agent {
     ) -> Result<Self> {
         // Validate configuration
         if config.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         let mut conversation = Conversation::new(
@@ -504,8 +504,7 @@ impl Agent {
                         "Agent exceeded maximum iteration limit of {}",
                         self.config.max_turns
                     ),
-                }
-                .into());
+                });
             }
 
             // Check timeout
@@ -514,8 +513,7 @@ impl Agent {
                 return Err(XzatomaError::Config(format!(
                     "Agent execution timeout after {} seconds",
                     self.config.timeout_seconds
-                ))
-                .into());
+                )));
             }
 
             debug!(
@@ -615,8 +613,7 @@ impl Agent {
             warn!("Provider returned neither content nor tool calls");
             return Err(XzatomaError::Provider(
                 "Provider returned invalid response (no content or tool calls)".to_string(),
-            )
-            .into());
+            ));
         }
 
         // Get the final response
@@ -667,18 +664,15 @@ impl Agent {
         // Parse arguments
         let args: serde_json::Value =
             serde_json::from_str(&tool_call.function.arguments).map_err(|e| {
-                anyhow::Error::from(XzatomaError::Tool(format!(
+                XzatomaError::Tool(format!(
                     "Failed to parse tool arguments for '{}': {}",
                     tool_name, e
-                )))
+                ))
             })?;
 
         // Execute tool
         let result = tool_executor.execute(args).await.map_err(|e| {
-            anyhow::Error::from(XzatomaError::Tool(format!(
-                "Tool '{}' execution failed: {}",
-                tool_name, e
-            )))
+            XzatomaError::Tool(format!("Tool '{}' execution failed: {}", tool_name, e))
         })?;
 
         // Truncate output if needed
@@ -932,6 +926,8 @@ mod tests {
             }
         }
 
+        // Required for assertions in tests that verify the provider was called
+        #[allow(dead_code)]
         fn call_count(&self) -> usize {
             *self.call_count.lock().unwrap()
         }

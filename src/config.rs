@@ -960,7 +960,7 @@ impl Config {
         let contents = std::fs::read_to_string(path)
             .map_err(|e| XzatomaError::Config(format!("Failed to read config file: {}", e)))?;
         serde_yaml::from_str(&contents)
-            .map_err(|e| XzatomaError::Config(format!("Failed to parse config: {}", e)).into())
+            .map_err(|e| XzatomaError::Config(format!("Failed to parse config: {}", e)))
     }
 
     fn apply_env_vars(&mut self) {
@@ -1175,6 +1175,8 @@ impl Config {
                     output_topic: Some(output_topic.clone()),
                     group_id: default_watcher_group_id(),
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security: None,
                 });
             }
@@ -1195,6 +1197,8 @@ impl Config {
                     output_topic: None,
                     group_id: group_id.clone(),
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security: None,
                 });
             }
@@ -1414,6 +1418,8 @@ impl Config {
                     output_topic: None,
                     group_id,
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
@@ -1590,7 +1596,9 @@ impl Config {
     /// Returns error if any validation check fails
     pub fn validate(&self) -> Result<()> {
         if self.provider.provider_type.is_empty() {
-            return Err(XzatomaError::Config("Provider type cannot be empty".to_string()).into());
+            return Err(XzatomaError::Config(
+                "Provider type cannot be empty".to_string(),
+            ));
         }
 
         let valid_providers = ["copilot", "ollama"];
@@ -1599,34 +1607,31 @@ impl Config {
                 "Invalid provider type: {}. Must be one of: {}",
                 self.provider.provider_type,
                 valid_providers.join(", ")
-            ))
-            .into());
+            )));
         }
 
         if self.agent.max_turns == 0 {
-            return Err(
-                XzatomaError::Config("max_turns must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "max_turns must be greater than 0".to_string(),
+            ));
         }
 
         if self.agent.max_turns > 1000 {
             return Err(XzatomaError::Config(
                 "max_turns must be less than or equal to 1000".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.timeout_seconds == 0 {
-            return Err(
-                XzatomaError::Config("timeout_seconds must be greater than 0".to_string()).into(),
-            );
+            return Err(XzatomaError::Config(
+                "timeout_seconds must be greater than 0".to_string(),
+            ));
         }
 
         if self.agent.conversation.max_tokens == 0 {
             return Err(XzatomaError::Config(
                 "conversation.max_tokens must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.conversation.prune_threshold <= 0.0
@@ -1634,8 +1639,7 @@ impl Config {
         {
             return Err(XzatomaError::Config(
                 "conversation.prune_threshold must be between 0.0 and 1.0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.conversation.warning_threshold <= 0.0
@@ -1643,8 +1647,7 @@ impl Config {
         {
             return Err(XzatomaError::Config(
                 "conversation.warning_threshold must be between 0.0 and 1.0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.conversation.auto_summary_threshold <= 0.0
@@ -1652,8 +1655,7 @@ impl Config {
         {
             return Err(XzatomaError::Config(
                 "conversation.auto_summary_threshold must be between 0.0 and 1.0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.conversation.auto_summary_threshold
@@ -1661,58 +1663,50 @@ impl Config {
         {
             return Err(XzatomaError::Config(
                 "conversation.auto_summary_threshold must be >= warning_threshold".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.tools.max_output_size == 0 {
             return Err(XzatomaError::Config(
                 "tools.max_output_size must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.tools.max_file_read_size == 0 {
             return Err(XzatomaError::Config(
                 "tools.max_file_read_size must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         // Validate subagent configuration
         if self.agent.subagent.max_depth == 0 {
             return Err(XzatomaError::Config(
                 "agent.subagent.max_depth must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.subagent.max_depth > 10 {
             return Err(XzatomaError::Config(
                 "agent.subagent.max_depth cannot exceed 10 (stack overflow risk)".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.subagent.default_max_turns == 0 {
             return Err(XzatomaError::Config(
                 "agent.subagent.default_max_turns must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.subagent.default_max_turns > 100 {
             return Err(XzatomaError::Config(
                 "agent.subagent.default_max_turns cannot exceed 100".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.agent.subagent.output_max_size < 1024 {
             return Err(XzatomaError::Config(
                 "agent.subagent.output_max_size must be at least 1024 bytes".to_string(),
-            )
-            .into());
+            ));
         }
 
         // Validate subagent provider override if specified
@@ -1723,8 +1717,7 @@ impl Config {
                     "Invalid subagent provider override: {}. Must be one of: {}",
                     provider,
                     valid_providers.join(", ")
-                ))
-                .into());
+                )));
             }
         }
 
@@ -1732,38 +1725,33 @@ impl Config {
             if kafka.brokers.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "watcher.kafka.brokers cannot be empty".to_string(),
-                )
-                .into());
+                ));
             }
 
             if kafka.topic.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "watcher.kafka.topic cannot be empty".to_string(),
-                )
-                .into());
+                ));
             }
 
             if kafka.group_id.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "watcher.kafka.group_id cannot be empty".to_string(),
-                )
-                .into());
+                ));
             }
 
             if let Some(output_topic) = &kafka.output_topic {
                 if output_topic.trim().is_empty() {
                     return Err(XzatomaError::Config(
                         "watcher.kafka.output_topic cannot be empty when set".to_string(),
-                    )
-                    .into());
+                    ));
                 }
             }
 
             if kafka.group_id.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "watcher.kafka.group_id cannot be empty".to_string(),
-                )
-                .into());
+                ));
             }
         }
 
@@ -1773,8 +1761,7 @@ impl Config {
                     return Err(XzatomaError::Config(
                         "watcher.kafka is required when watcher.watcher_type is generic"
                             .to_string(),
-                    )
-                    .into());
+                    ));
                 }
 
                 let mut configured_patterns = Vec::new();
@@ -1846,47 +1833,46 @@ impl Config {
 
     fn validate_acp_config(&self) -> Result<()> {
         if self.acp.host.trim().is_empty() {
-            return Err(XzatomaError::Config("acp.host cannot be empty".to_string()).into());
+            return Err(XzatomaError::Config("acp.host cannot be empty".to_string()));
         }
 
         if self.acp.port == 0 {
-            return Err(XzatomaError::Config("acp.port must be greater than 0".to_string()).into());
+            return Err(XzatomaError::Config(
+                "acp.port must be greater than 0".to_string(),
+            ));
         }
 
         match self.acp.compatibility_mode {
             AcpCompatibilityMode::Versioned => {
                 if self.acp.base_path.trim().is_empty() {
-                    return Err(
-                        XzatomaError::Config("acp.base_path cannot be empty".to_string()).into(),
-                    );
+                    return Err(XzatomaError::Config(
+                        "acp.base_path cannot be empty".to_string(),
+                    ));
                 }
 
                 if !self.acp.base_path.starts_with('/') {
                     return Err(XzatomaError::Config(
                         "acp.base_path must start with '/'".to_string(),
-                    )
-                    .into());
+                    ));
                 }
 
                 if self.acp.base_path == "/" {
                     return Err(XzatomaError::Config(
                         "acp.base_path cannot be '/' in versioned compatibility mode".to_string(),
-                    )
-                    .into());
+                    ));
                 }
             }
             AcpCompatibilityMode::RootCompatible => {
                 if self.acp.base_path.trim().is_empty() {
-                    return Err(
-                        XzatomaError::Config("acp.base_path cannot be empty".to_string()).into(),
-                    );
+                    return Err(XzatomaError::Config(
+                        "acp.base_path cannot be empty".to_string(),
+                    ));
                 }
 
                 if !self.acp.base_path.starts_with('/') {
                     return Err(XzatomaError::Config(
                         "acp.base_path must start with '/'".to_string(),
-                    )
-                    .into());
+                    ));
                 }
             }
         }
@@ -1894,15 +1880,13 @@ impl Config {
         if self.acp.persistence.max_events_per_run == 0 {
             return Err(XzatomaError::Config(
                 "acp.persistence.max_events_per_run must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.acp.persistence.max_completed_runs == 0 {
             return Err(XzatomaError::Config(
                 "acp.persistence.max_completed_runs must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         Ok(())
@@ -1912,45 +1896,39 @@ impl Config {
         if self.skills.max_discovered_skills == 0 {
             return Err(XzatomaError::Config(
                 "skills.max_discovered_skills must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.skills.max_scan_directories == 0 {
             return Err(XzatomaError::Config(
                 "skills.max_scan_directories must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.skills.max_scan_depth == 0 {
             return Err(XzatomaError::Config(
                 "skills.max_scan_depth must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.skills.catalog_max_entries == 0 {
             return Err(XzatomaError::Config(
                 "skills.catalog_max_entries must be greater than 0".to_string(),
-            )
-            .into());
+            ));
         }
 
         if self.skills.catalog_max_entries > self.skills.max_discovered_skills {
             return Err(XzatomaError::Config(
                 "skills.catalog_max_entries must be less than or equal to skills.max_discovered_skills"
                     .to_string(),
-            )
-            .into());
+            ));
         }
 
         for path in &self.skills.additional_paths {
             if path.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "skills.additional_paths cannot contain empty entries".to_string(),
-                )
-                .into());
+                ));
             }
         }
 
@@ -1958,16 +1936,14 @@ impl Config {
             if path.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "skills.trust_store_path cannot be empty when set".to_string(),
-                )
-                .into());
+                ));
             }
 
             let resolved = resolve_config_like_path(path);
             if resolved.as_os_str().is_empty() {
                 return Err(XzatomaError::Config(
                     "skills.trust_store_path resolved to an empty path".to_string(),
-                )
-                .into());
+                ));
             }
         }
 
@@ -2638,6 +2614,8 @@ kafka:
             output_topic: Some("plans.out".to_string()),
             group_id: "watchers".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         };
 
@@ -2659,6 +2637,8 @@ kafka:
             output_topic: None,
             group_id: "watchers".to_string(),
             auto_create_topics: false,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         };
 
@@ -3121,6 +3101,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3151,6 +3133,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "original-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3207,6 +3191,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3223,6 +3209,8 @@ chat_enabled: true
             output_topic: Some("plans.output".to_string()),
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
         cfg.watcher.generic_match = GenericMatchConfig {
@@ -3244,6 +3232,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
@@ -3261,6 +3251,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "   ".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3990,14 +3982,37 @@ pub struct KafkaWatcherConfig {
 
     /// Automatically create input/output topics when watcher mode starts.
     ///
-    /// This is a stub-first configuration flag used by watcher startup logic to
-    /// decide whether missing topics should be provisioned automatically.
+    /// When enabled, the watcher uses the Kafka AdminClient to create missing
+    /// topics before entering the consume loop.
     #[serde(default = "default_auto_create_topics")]
     pub auto_create_topics: bool,
+
+    /// Number of partitions for auto-created topics.
+    ///
+    /// Only used when `auto_create_topics` is `true`. Defaults to `1`.
+    #[serde(default = "default_num_partitions")]
+    pub num_partitions: i32,
+
+    /// Replication factor for auto-created topics.
+    ///
+    /// Only used when `auto_create_topics` is `true`. Defaults to `1`.
+    /// For production deployments with multiple brokers, set this to `3`.
+    #[serde(default = "default_replication_factor")]
+    pub replication_factor: i32,
 
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
+}
+
+/// Default number of partitions for auto-created Kafka topics.
+fn default_num_partitions() -> i32 {
+    1
+}
+
+/// Default replication factor for auto-created Kafka topics.
+fn default_replication_factor() -> i32 {
+    1
 }
 
 /// Kafka security configuration

@@ -57,7 +57,7 @@ impl Provider for MockProvider {
     }
 
     async fn get_model_info(&self, _name: &str) -> Result<ModelInfo> {
-        Err(XzatomaError::Provider("no model info in mock".into()).into())
+        Err(XzatomaError::Provider("no model info in mock".into()))
     }
 
     fn get_current_model(&self) -> Result<String> {

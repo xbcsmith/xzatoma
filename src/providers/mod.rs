@@ -3,22 +3,20 @@
 //! This module contains the AI provider abstraction and implementations
 //! for GitHub Copilot and Ollama.
 
-// Phase 1: Allow unused code for placeholder implementations
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 pub mod base;
 pub mod copilot;
 pub mod ollama;
 
 pub use base::{
-    validate_message_sequence, CompletionResponse, FunctionCall, Message, ModelCapability,
-    ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, TokenUsage, ToolCall,
+    convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
+    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
+    ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderTool, ProviderToolCall,
+    TokenUsage, ToolCall,
 };
 pub use copilot::CopilotProvider;
 pub use ollama::OllamaProvider;
 
-use crate::config::{CopilotConfig, OllamaConfig, ProviderConfig};
+use crate::config::ProviderConfig;
 use crate::error::Result;
 
 /// Create a provider instance based on configuration
@@ -49,8 +47,7 @@ pub fn create_provider(
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
-        ))
-        .into()),
+        ))),
     }
 }
 
@@ -140,14 +137,14 @@ pub fn create_provider_with_override(
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
-        ))
-        .into()),
+        ))),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{CopilotConfig, OllamaConfig};
 
     #[test]
     fn test_create_provider_invalid_type() {

@@ -153,8 +153,7 @@ impl McpConfig {
                 return Err(XzatomaError::Config(format!(
                     "duplicate MCP server id: {}",
                     server.id
-                ))
-                .into());
+                )));
             }
         }
 

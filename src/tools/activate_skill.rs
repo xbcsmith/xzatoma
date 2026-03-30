@@ -8,7 +8,7 @@
 use crate::error::{Result, XzatomaError};
 use crate::skills::activation::{ActiveSkill, ActiveSkillRegistry};
 use crate::skills::catalog::SkillCatalog;
-use crate::skills::types::SkillRecord;
+
 use crate::tools::{ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -183,8 +183,11 @@ impl ActivateSkillTool {
     }
 
     fn parse_input(args: Value) -> Result<ActivateSkillInput> {
-        serde_json::from_value(args).map_err(|error| {
-            XzatomaError::Tool(format!("Invalid activate_skill input: {}", error)).into()
+        crate::tools::parse_tool_args(args).map_err(|error| match error {
+            XzatomaError::Tool(message) => XzatomaError::Tool(
+                message.replace("Invalid tool parameters", "Invalid activate_skill input"),
+            ),
+            other => other,
         })
     }
 
@@ -199,20 +202,7 @@ impl ActivateSkillTool {
             Err(XzatomaError::Tool(format!(
                 "Skill '{}' is not visible or not available for activation",
                 skill_name
-            ))
-            .into())
-        }
-    }
-
-    fn record_to_active_skill(record: &SkillRecord) -> ActiveSkill {
-        ActiveSkill {
-            skill_name: record.metadata.name.clone(),
-            skill_directory: record.skill_dir.clone(),
-            skill_file: record.skill_file.clone(),
-            description: record.metadata.description.clone(),
-            allowed_tools: record.metadata.allowed_tools.clone(),
-            body_content: record.body.clone(),
-            resources: Vec::new(),
+            )))
         }
     }
 

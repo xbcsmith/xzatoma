@@ -24,7 +24,7 @@
 //! metrics.record_completion(5, 1500, "success");
 //! ```
 
-use metrics::{counter, decrement_gauge, histogram, increment_counter, increment_gauge};
+use metrics::{decrement_gauge, histogram, increment_counter, increment_gauge};
 use std::cell::Cell;
 use std::time::Instant;
 
@@ -247,9 +247,9 @@ pub fn init_metrics_exporter() {
     {
         use metrics_exporter_prometheus::PrometheusBuilder;
         let builder = PrometheusBuilder::new();
-        let _ = builder.install().map_err(|e| {
-            tracing::warn!("Failed to install Prometheus exporter: {}", e);
-        });
+        if let Err(error) = builder.install() {
+            tracing::warn!("Failed to install Prometheus exporter: {}", error);
+        }
     }
 }
 

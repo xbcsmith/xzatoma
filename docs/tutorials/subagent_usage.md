@@ -2,9 +2,13 @@
 
 ## Overview
 
-Subagents are autonomous agent instances that you can spawn to delegate focused tasks without polluting your main conversation history. This tutorial teaches you how to use subagents to break down complex problems into manageable sub-tasks and execute them in parallel or sequence.
+Subagents are autonomous agent instances that you can spawn to delegate focused
+tasks without polluting your main conversation history. This tutorial teaches
+you how to use subagents to break down complex problems into manageable
+sub-tasks and execute them in parallel or sequence.
 
 **Key Benefits:**
+
 - Isolate sub-problems from main conversation context
 - Delegate specialized tasks (research, analysis, code review)
 - Control execution with tool whitelisting and turn limits
@@ -13,7 +17,8 @@ Subagents are autonomous agent instances that you can spawn to delegate focused 
 
 ## Prerequisites
 
-- XZatoma installed and configured with a working AI provider (Copilot or Ollama)
+- XZatoma installed and configured with a working AI provider (Copilot or
+  Ollama)
 - Basic familiarity with XZatoma chat mode
 - A text editor to create configuration files
 
@@ -41,7 +46,7 @@ xzatoma chat
 
 Ask the agent to research something using the subagent tool:
 
-```
+```text
 Research the history of artificial intelligence using the fetch and grep tools.
 Focus on key milestones and breakthroughs. Create a comprehensive summary.
 ```
@@ -99,7 +104,8 @@ Only `file_ops` is available (no terminal execution for safety).
 
 ### Tool filtering rules
 
-- If `allowed_tools` is omitted: subagent gets ALL parent tools (except "subagent")
+- If `allowed_tools` is omitted: subagent gets ALL parent tools (except
+  "subagent")
 - If `allowed_tools` is specified: subagent gets ONLY listed tools
 - "subagent" tool is always blocked (prevents infinite recursion)
 - Unknown tool names in whitelist cause an error
@@ -125,7 +131,8 @@ Limit subagent execution with `max_turns` to prevent runaway tasks.
 }
 ```
 
-This subagent can make at most 3 turns (interactions with the AI provider) before stopping.
+This subagent can make at most 3 turns (interactions with the AI provider)
+before stopping.
 
 ### Turn counting
 
@@ -161,7 +168,8 @@ The subagent stops and returns early, marked as "incomplete".
 
 ## Step 4: Custom Summary Prompts
 
-By default, the subagent receives a summary request: "Summarize your findings concisely". You can customize this.
+By default, the subagent receives a summary request: "Summarize your findings
+concisely". You can customize this.
 
 ### Example: Structured summary
 
@@ -213,7 +221,7 @@ agent:
     # Emit structured telemetry logs
     telemetry_enabled: true
 
-    # Save conversations for debugging (Phase 4+)
+    # Save conversations for debugging
     persistence_enabled: false
 ```
 
@@ -229,6 +237,7 @@ xzatoma --config config/config.yaml chat
 ### Recommended settings
 
 **Development (permissive):**
+
 ```yaml
 subagent:
   max_depth: 5
@@ -238,6 +247,7 @@ subagent:
 ```
 
 **Production (conservative):**
+
 ```yaml
 subagent:
   max_depth: 2
@@ -261,7 +271,7 @@ xzatoma chat
 
 When `telemetry_enabled: true`, you'll see logs like:
 
-```
+```text
 subagent.event=spawn subagent.label=research_ai_history subagent.depth=1 subagent.max_turns=10
 Spawning subagent
 
@@ -291,7 +301,7 @@ subagent:
 
 Execute multiple independent analyses using separate subagents:
 
-```
+```text
 Task 1: Create a subagent to analyze financial documents
 Task 2: Create another subagent to check legal compliance
 Task 3: Combine results in main conversation
@@ -303,7 +313,7 @@ Each subagent runs independently with its own conversation history.
 
 Use subagents in a loop to refine results:
 
-```
+```text
 Iteration 1: Subagent drafts code
 Iteration 2: Subagent reviews for issues
 Iteration 3: Subagent optimizes for performance
@@ -335,7 +345,7 @@ Only file operations allowed, limited execution time.
 
 ```yaml
 subagent:
-  max_depth: 5  # Allow deeper nesting if needed
+  max_depth: 5 # Allow deeper nesting if needed
 ```
 
 ### "Subagent output truncated"
@@ -346,7 +356,7 @@ subagent:
 
 ```yaml
 subagent:
-  output_max_size: 8192  # Increase from 4096
+  output_max_size: 8192 # Increase from 4096
 ```
 
 ### Subagent not completing
@@ -359,7 +369,7 @@ subagent:
 {
   "label": "research",
   "task_prompt": "...",
-  "max_turns": 20  // Increase from default 10
+  "max_turns": 20 // Increase from default 10
 }
 ```
 
@@ -373,16 +383,16 @@ subagent:
 {
   "label": "research",
   "task_prompt": "...",
-  "allowed_tools": ["fetch", "grep", "file_ops"]  // Add missing tool
+  "allowed_tools": ["fetch", "grep", "file_ops"] // Add missing tool
 }
 ```
 
 ## Next Steps
 
-- Learn about parallel execution (Phase 5)
-- Set up conversation persistence for debugging (Phase 4)
-- Implement resource quotas for production (Phase 5)
-- Monitor metrics and performance (Phase 5)
+- Learn about parallel execution
+- Set up conversation persistence for debugging
+- Implement resource quotas for production
+- Monitor metrics and performance
 
 ## See Also
 

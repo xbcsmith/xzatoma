@@ -15,12 +15,12 @@ delegating to `file_utils::PathValidator`.
 */
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_utils, ToolExecutor, ToolResult};
+use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::Path;
+
 use tokio::fs;
 
 /// Mode of operation for the edit_file tool
@@ -144,7 +144,7 @@ impl ToolExecutor for EditFileTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: EditFileParams = serde_json::from_value(args)?;
+        let params: EditFileParams = parse_tool_args(args)?;
 
         // Quick guard: content size limit
         if params.content.len() as u64 > self.max_file_size {
@@ -464,8 +464,6 @@ impl ToolExecutor for EditFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "prometheus")]
-    use metrics_exporter_prometheus::PrometheusBuilder;
     use serde_json::json;
     use serial_test::serial;
     use std::fs;

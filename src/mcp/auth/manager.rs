@@ -467,7 +467,7 @@ impl AuthManager {
     fn require_config(&self, server_id: &str) -> Result<&OAuthFlowConfig> {
         self.flow_configs
             .get(server_id)
-            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()).into())
+            .ok_or_else(|| XzatomaError::McpServerNotFound(server_id.to_string()))
     }
 }
 

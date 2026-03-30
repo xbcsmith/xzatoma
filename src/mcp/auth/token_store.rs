@@ -240,7 +240,7 @@ impl TokenStore {
                 Ok(Some(token))
             }
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(XzatomaError::Keyring(e).into()),
+            Err(e) => Err(XzatomaError::Keyring(e)),
         }
     }
 
@@ -274,7 +274,7 @@ impl TokenStore {
         match entry.delete_password() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(XzatomaError::Keyring(e).into()),
+            Err(e) => Err(XzatomaError::Keyring(e)),
         }
     }
 }

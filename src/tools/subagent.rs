@@ -9,6 +9,7 @@ use crate::agent::{quota::QuotaTracker, Agent, ConversationStore, SubagentMetric
 use crate::config::{AgentConfig, SubagentConfig};
 use crate::error::{Result, XzatomaError};
 use crate::providers::Provider;
+use crate::tools::parse_tool_args;
 use crate::tools::{ToolExecutor, ToolRegistry, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -552,8 +553,7 @@ fn create_filtered_registry(
                 if tool_name == "subagent" {
                     return Err(XzatomaError::Config(
                         "Subagent cannot have 'subagent' in allowed_tools".to_string(),
-                    )
-                    .into());
+                    ));
                 }
 
                 // Verify tool exists in parent registry
@@ -661,8 +661,7 @@ impl ToolExecutor for SubagentTool {
         }
 
         // STEP 3: Parse and validate input
-        let input: SubagentToolInput = serde_json::from_value(args)
-            .map_err(|e| XzatomaError::Config(format!("Invalid subagent input: {}", e)))?;
+        let input: SubagentToolInput = parse_tool_args(args)?;
 
         // Check telemetry enabled flag
         let telemetry_enabled = self.subagent_config.telemetry_enabled;
@@ -953,7 +952,7 @@ impl ToolExecutor for SubagentTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{CompletionResponse, Message, Provider, TokenUsage};
+    use crate::providers::{CompletionResponse, Message, Provider};
     use std::sync::Mutex;
 
     // Mock provider for testing

@@ -2,8 +2,8 @@
 //!
 //! Provides a tool to list directory contents with optional recursive listing and pattern filtering.
 
-use crate::error::{Result, XzatomaError};
-use crate::tools::{file_metadata, file_utils, ToolExecutor, ToolResult};
+use crate::error::Result;
+use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
@@ -19,6 +19,9 @@ fn glob_match(text: &str, pattern: &str) -> bool {
 }
 
 /// Recursive helper for glob matching
+// False positive: all four parameters (text, text_idx, pattern, pattern_idx) are
+// read directly in the function body for bounds checks and character access, not
+// merely forwarded to the recursive calls unchanged.
 #[allow(clippy::only_used_in_recursion)]
 fn glob_match_recursive(
     text: &[char],
@@ -159,7 +162,7 @@ impl ToolExecutor for ListDirectoryTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: ListDirectoryParams = serde_json::from_value(args)?;
+        let params: ListDirectoryParams = parse_tool_args(args)?;
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;

@@ -326,8 +326,7 @@ pub async fn fetch_protected_resource_metadata(
     Err(XzatomaError::McpAuth(format!(
         "protected resource metadata not found for {}",
         resource_url
-    ))
-    .into())
+    )))
 }
 
 /// Constructs a candidate well-known URL for authorization server metadata
@@ -471,8 +470,7 @@ pub async fn fetch_authorization_server_metadata(
     Err(XzatomaError::McpAuth(format!(
         "authorization server metadata not found for issuer {}",
         issuer
-    ))
-    .into())
+    )))
 }
 
 /// Fetches a Client ID Metadata Document from the given URL.
@@ -525,8 +523,7 @@ pub async fn fetch_client_id_metadata_document(
             "client id metadata endpoint returned {}: {}",
             resp.status(),
             client_id_url
-        ))
-        .into());
+        )));
     }
 
     let doc: ClientIdMetadataDocument = resp.json().await.map_err(|e| {

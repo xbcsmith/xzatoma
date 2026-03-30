@@ -277,16 +277,9 @@ async fn test_call_tool_returns_not_found_for_unknown_tool_name() {
     let result = manager.call_tool("srv", "missing_tool", None).await;
     assert!(result.is_err(), "call_tool with unknown tool must fail");
 
-    // Verify the error chain contains McpToolNotFound.
     let err = result.unwrap_err();
-    let is_tool_not_found = err.chain().any(|e| {
-        matches!(
-            e.downcast_ref::<xzatoma::error::XzatomaError>(),
-            Some(xzatoma::error::XzatomaError::McpToolNotFound { .. })
-        )
-    });
     assert!(
-        is_tool_not_found,
+        matches!(err, xzatoma::error::XzatomaError::McpToolNotFound { .. }),
         "error should be McpToolNotFound, got: {}",
         err
     );

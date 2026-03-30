@@ -985,10 +985,10 @@ impl SqliteStorage {
                     sequence: {
                         let value: i64 = row.get(1)?;
                         u64::try_from(value).map_err(|error| {
-                            to_rusqlite_error(anyhow::Error::from(XzatomaError::Storage(format!(
+                            to_rusqlite_error(XzatomaError::Storage(format!(
                                 "Invalid persisted ACP event sequence for run '{}': {}",
                                 run_id, error
-                            ))))
+                            )))
                         })?
                     },
                     kind: row.get(2)?,
@@ -1260,18 +1260,38 @@ impl SqliteStorage {
         mode: AcpRuntimeExecuteMode,
         conversation_id: Option<String>,
     ) -> Result<()> {
+        let existing_session = self.load_acp_session(run.session.id.as_str())?;
+        let existing_run_count = existing_session
+            .as_ref()
+            .map(|session| session.run_count)
+            .unwrap_or_else(|| {
+                self.count_acp_runs_for_session(run.session.id.as_str())
+                    .unwrap_or(0)
+            });
         let session = StoredAcpSession {
             session_id: run.session.id.as_str().to_string(),
-            conversation_id: conversation_id.clone(),
-            title: None,
-            created_at: parse_rfc3339_to_utc(&run.session.created_at)?,
+            conversation_id: conversation_id.clone().or_else(|| {
+                existing_session
+                    .as_ref()
+                    .and_then(|session| session.conversation_id.clone())
+            }),
+            title: existing_session
+                .as_ref()
+                .and_then(|session| session.title.clone()),
+            created_at: existing_session
+                .as_ref()
+                .map(|session| session.created_at)
+                .unwrap_or(parse_rfc3339_to_utc(&run.session.created_at)?),
             updated_at: parse_rfc3339_to_utc(&run.status.updated_at)?,
-            run_count: self
-                .count_acp_runs_for_session(run.session.id.as_str())
-                .unwrap_or(0)
-                + 1,
+            run_count: existing_run_count.max(if existing_session.is_some() {
+                existing_run_count
+            } else {
+                existing_run_count + 1
+            }),
             last_run_id: Some(run.id.as_str().to_string()),
-            metadata: BTreeMap::new(),
+            metadata: existing_session
+                .map(|session| session.metadata)
+                .unwrap_or_default(),
         };
         self.save_acp_session(&session)?;
 
@@ -1449,33 +1469,33 @@ impl SqliteStorage {
             .context("Failed to count ACP runs for session")
             .map_err(|e| XzatomaError::Storage(e.to_string()))?;
         usize::try_from(count)
-            .map_err(|e| XzatomaError::Storage(format!("Invalid ACP run count: {}", e)).into())
+            .map_err(|e| XzatomaError::Storage(format!("Invalid ACP run count: {}", e)))
     }
 
     fn open_connection(&self) -> Result<Connection> {
         Connection::open(&self.db_path)
             .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()).into())
+            .map_err(|e| XzatomaError::Storage(e.to_string()))
     }
 }
 
 fn serialize_metadata(metadata: &BTreeMap<String, String>) -> Result<String> {
     serde_json::to_string(metadata)
         .context("Failed to serialize metadata")
-        .map_err(|e| XzatomaError::Storage(e.to_string()).into())
+        .map_err(|e| XzatomaError::Storage(e.to_string()))
 }
 
 fn deserialize_metadata(json_str: &str) -> Result<BTreeMap<String, String>> {
     serde_json::from_str(json_str)
         .context("Failed to deserialize metadata")
-        .map_err(|e| XzatomaError::Storage(e.to_string()).into())
+        .map_err(|e| XzatomaError::Storage(e.to_string()))
 }
 
 fn parse_rfc3339_to_utc(value: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
         .context("Failed to parse RFC 3339 timestamp")
-        .map_err(|e| XzatomaError::Storage(e.to_string()).into())
+        .map_err(|e| XzatomaError::Storage(e.to_string()))
 }
 
 fn bool_to_sqlite(value: bool) -> i64 {
@@ -1490,7 +1510,7 @@ fn sqlite_to_bool(value: i64) -> bool {
     value != 0
 }
 
-fn to_rusqlite_error(error: anyhow::Error) -> rusqlite::Error {
+fn to_rusqlite_error(error: crate::error::XzatomaError) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         0,
         rusqlite::types::Type::Text,
@@ -1510,9 +1530,10 @@ fn parse_run_state(value: &str) -> Result<AcpRunState> {
         "completed" => Ok(AcpRunState::Completed),
         "failed" => Ok(AcpRunState::Failed),
         "cancelled" => Ok(AcpRunState::Cancelled),
-        other => {
-            Err(XzatomaError::Storage(format!("Unknown stored ACP run state: {}", other)).into())
-        }
+        other => Err(XzatomaError::Storage(format!(
+            "Unknown stored ACP run state: {}",
+            other
+        ))),
     }
 }
 
@@ -1526,9 +1547,10 @@ fn parse_event_kind(value: &str) -> Result<AcpEventKind> {
         "run_cancelled" => Ok(AcpEventKind::RunCancelled),
         "run_awaiting_input" => Ok(AcpEventKind::RunAwaitingInput),
         "session_created" => Ok(AcpEventKind::SessionCreated),
-        other => {
-            Err(XzatomaError::Storage(format!("Unknown stored ACP event kind: {}", other)).into())
-        }
+        other => Err(XzatomaError::Storage(format!(
+            "Unknown stored ACP event kind: {}",
+            other
+        ))),
     }
 }
 

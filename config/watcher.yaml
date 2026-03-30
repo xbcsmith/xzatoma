@@ -28,17 +28,36 @@ agent:
   timeout_seconds: 300
 
 watcher:
-  # watcher_type: xzepr
+  # Watcher backend type: "xzepr" (default) or "generic"
+  watcher_type: xzepr
+
   kafka:
     # Comma-separated Kafka broker list
     brokers: "localhost:9092"
     # Topic to consume CloudEvents from
     topic: "xzepr.events"
+    # Output topic for publishing results (generic watcher only; defaults to input topic)
+    output_topic: "xzepr.results"
     # Consumer group id (defaults to xzatoma-watcher if omitted)
     group_id: "xzatoma-watcher"
+    # Create missing topics automatically at startup (requires broker admin permissions)
+    auto_create_topics: true
+    # Number of partitions for auto-created topics
+    num_partitions: 1
+    # Replication factor for auto-created topics (set to 3 for production)
+    replication_factor: 1
     # Plaintext is fine for local development
     security:
       protocol: "PLAINTEXT"
+
+  # Generic matcher configuration (only used when watcher_type is "generic")
+  generic_match:
+    # Regex pattern for event action field (case-insensitive)
+    action: "deploy.*"
+    # Regex pattern for event name field (case-insensitive)
+    name: "service-(api|web)"
+    # Regex pattern for event version field (case-insensitive)
+    version: "^v[0-9]+\\.[0-9]+"
 
   filters:
     # Event types to process (empty list => process all)
@@ -72,23 +91,43 @@ watcher:
 # ---------------------------------------------------------------------------
 # Production configuration (example)
 # ---------------------------------------------------------------------------
-# For production you can use SASL/SSL. Passwords should come from environment
-# variables (e.g., XZEPR_KAFKA_SASL_PASSWORD) and not be stored in this file.
+# For production you should use SASL/SSL. Passwords should come from
+# environment variables (e.g., XZEPR_KAFKA_SASL_PASSWORD) and never be
+# stored in this file. Increase replication_factor and partition counts
+# to match your cluster topology.
 ---
 provider:
   type: copilot
 
+agent:
+  max_turns: 25
+  timeout_seconds: 600
+
 watcher:
-  # watcher_type: xzepr
+  # Watcher backend type: "xzepr" (default) or "generic"
+  watcher_type: xzepr
+
   kafka:
     brokers: "kafka-1.prod:9093,kafka-2.prod:9093,kafka-3.prod:9093"
     topic: "xzepr.production.events"
+    output_topic: "xzepr.production.results"
     group_id: "xzatoma-watcher-prod"
+    # Disable auto-creation in production; topics should be managed externally
+    auto_create_topics: false
+    num_partitions: 6
+    # Match your cluster replication factor
+    replication_factor: 3
     security:
       protocol: "SASL_SSL"
       sasl_mechanism: "SCRAM-SHA-256"
       sasl_username: "xzatoma-consumer"
-      # sasl_password: (provide via env var XZEPR_KAFKA_SASL_PASSWORD)
+      # Provide via env var XZEPR_KAFKA_SASL_PASSWORD -- never hardcode secrets
+      sasl_password: "${XZEPR_KAFKA_SASL_PASSWORD}"
+
+  generic_match:
+    action: "deploy\\.production.*"
+    name: "service-.*"
+    version: "^v[0-9]+\\.[0-9]+\\.[0-9]+"
 
   filters:
     event_types:
@@ -100,6 +139,7 @@ watcher:
     level: "warn"
     json_format: true
     file_path: "/var/log/xzatoma/watcher.json"
+    include_payload: false
 
   execution:
     allow_dangerous: false

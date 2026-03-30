@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::PathValidator;
-use crate::tools::{ToolExecutor, ToolResult, TOOL_FIND_PATH};
+use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_FIND_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -110,8 +110,7 @@ impl ToolExecutor for FindPathTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: FindPathParams = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("Invalid parameters: {}", e))?;
+        let params: FindPathParams = parse_tool_args(args)?;
 
         // Validate limit to prevent excessive memory usage
         let limit = if params.limit > 1000 {

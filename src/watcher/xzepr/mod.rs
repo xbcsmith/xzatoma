@@ -27,5 +27,8 @@
 pub mod consumer;
 pub mod filter;
 pub mod plan_extractor;
+// The module is intentionally named `watcher` inside the `xzepr` package;
+// the name mirrors the public type (`Watcher`) it exposes and matches the
+// file layout convention used throughout this crate.
 #[allow(clippy::module_inception)]
 pub mod watcher;

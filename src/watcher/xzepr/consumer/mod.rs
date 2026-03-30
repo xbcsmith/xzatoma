@@ -36,29 +36,28 @@
 //!         message: CloudEventMessage,
 //!     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!         // Post work started
-//!         self.client.post_work_started(
-//!             &self.receiver_id,
-//!             &message.id,
-//!             "my-work",
-//!             "1.0.0",
-//!             "kubernetes",
-//!             "my-service",
-//!             serde_json::json!({}),
-//!         ).await?;
+//!         let event = xzatoma::xzepr::consumer::client::WorkEvent {
+//!             receiver_id: &self.receiver_id,
+//!             work_id: &message.id,
+//!             work_name: "my-work",
+//!             version: "1.0.0",
+//!             platform_id: "kubernetes",
+//!             package: "my-service",
+//!         };
+//!         self.client.post_work_started(event, serde_json::json!({})).await?;
 //!
 //!         // Do work...
 //!
 //!         // Post work completed
-//!         self.client.post_work_completed(
-//!             &self.receiver_id,
-//!             &message.id,
-//!             "my-work",
-//!             "1.0.0",
-//!             "kubernetes",
-//!             "my-service",
-//!             true,
-//!             serde_json::json!({"result": "success"}),
-//!         ).await?;
+//!         let event = xzatoma::xzepr::consumer::client::WorkEvent {
+//!             receiver_id: &self.receiver_id,
+//!             work_id: &message.id,
+//!             work_name: "my-work",
+//!             version: "1.0.0",
+//!             platform_id: "kubernetes",
+//!             package: "my-service",
+//!         };
+//!         self.client.post_work_completed(event, true, serde_json::json!({"result": "success"})).await?;
 //!
 //!         Ok(())
 //!     }
@@ -117,18 +116,14 @@ pub mod config;
 pub mod kafka;
 pub mod message;
 
-#[allow(unused_imports)]
 pub use client::{
     ClientError, CreateEventReceiverRequest, CreateEventRequest, EventReceiverResponse,
-    PaginatedResponse, PaginationMeta, XzeprClient, XzeprClientConfig,
+    PaginatedResponse, PaginationMeta, WorkEvent, XzeprClient, XzeprClientConfig,
 };
-#[allow(unused_imports)]
 pub use config::{
     ConfigError, KafkaConsumerConfig, SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
-#[allow(unused_imports)]
 pub use kafka::{ConsumerError, MessageHandler, XzeprConsumer};
-#[allow(unused_imports)]
 pub use message::{
     CloudEventData, CloudEventMessage, EventEntity, EventReceiverEntity, EventReceiverGroupEntity,
 };

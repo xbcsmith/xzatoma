@@ -8,7 +8,7 @@
 //!
 //! - [`message`]: Generic watcher wire-format message types
 //! - [`matcher`]: Regex-based event matching for generic plan events
-//! - [`producer`]: Stub-first Kafka result producer for generic watcher results
+//! - [`producer`]: Kafka result producer for generic watcher results
 //! - [`watcher`]: Core generic watcher service and dry-run processing flow
 //!
 //! # Loop prevention

@@ -773,7 +773,7 @@ pub async fn run_server(config: Config) -> Result<()> {
         })?;
 
     axum::serve(listener, router).await.map_err(|error| {
-        XzatomaError::Internal(format!("ACP server terminated with error: {}", error)).into()
+        XzatomaError::Internal(format!("ACP server terminated with error: {}", error))
     })
 }
 
@@ -997,10 +997,9 @@ pub async fn handle_get_run(
             .restore_run(&run_id)
             .and_then(|restored| match restored {
                 Some(run) => Ok(run),
-                None => Err(anyhow::Error::from(XzatomaError::AcpLifecycle(format!(
-                    "ACP run '{}' was not found",
-                    run_id
-                )))),
+                None => Err(XzatomaError::Acp(crate::acp::error::AcpError::lifecycle(
+                    format!("ACP run '{}' was not found", run_id),
+                ))),
             })
     }) {
         Ok(run) => run,
@@ -1207,7 +1206,7 @@ pub async fn handle_get_session(
     }))
 }
 
-fn acp_runtime_error_to_http_error(error: anyhow::Error) -> AcpHttpError {
+fn acp_runtime_error_to_http_error(error: XzatomaError) -> AcpHttpError {
     let message = error.to_string();
 
     if message.contains("was not found") {

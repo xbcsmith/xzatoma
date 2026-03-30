@@ -309,8 +309,7 @@ impl McpServerConfig {
             return Err(XzatomaError::Config(format!(
                 "MCP server id '{}' is invalid: must match ^[a-z0-9_-]{{1,64}}$",
                 self.id
-            ))
-            .into());
+            )));
         }
 
         // Rule 2 / 3: transport-specific checks.
@@ -320,8 +319,7 @@ impl McpServerConfig {
                     return Err(XzatomaError::Config(format!(
                         "MCP server '{}': stdio transport requires a non-empty executable",
                         self.id
-                    ))
-                    .into());
+                    )));
                 }
             }
             McpServerTransportConfig::Http { endpoint, .. } => {
@@ -331,8 +329,7 @@ impl McpServerConfig {
                         "MCP server '{}': http transport endpoint scheme must be 'http' or \
                          'https', got '{}'",
                         self.id, scheme
-                    ))
-                    .into());
+                    )));
                 }
             }
         }

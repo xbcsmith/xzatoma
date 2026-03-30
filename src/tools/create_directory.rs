@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::PathValidator;
-use crate::tools::{ToolExecutor, ToolResult, TOOL_CREATE_DIRECTORY};
+use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_CREATE_DIRECTORY};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -88,8 +88,7 @@ impl ToolExecutor for CreateDirectoryTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: CreateDirectoryParams = serde_json::from_value(args)
-            .map_err(|e| anyhow::anyhow!("Invalid parameters: {}", e))?;
+        let params: CreateDirectoryParams = parse_tool_args(args)?;
 
         let dir_path = match self.path_validator.validate(&params.path) {
             Ok(path) => path,

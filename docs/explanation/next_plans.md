@@ -1,12 +1,26 @@
 # Next Plans
 
+Analyze the @src codebase for refactoring opportunities use subagents to do the following:
+
+1. Find duplicate code patterns, look for places we can consolidate code and create reusable functions or components.
+2. Identify unused exports, specific "#[ignore]", and dead code "#[dead_code]", #[allow(unused_mut)], #[allow(clippy::too_many_arguments)] to see if there are any exports that can be removed or refactored to reduce clutter and improve maintainability.
+3. Review error handling consistency
+4. Look for unfinished TODOs, FIXMEs, and place holders in the codebase as well as references to Phases in the codebase that should be removed.
+5. References to Phases in the codebase that should be removed.
+
+We do not care about backwards compatability. Compile the findings into a prioritized action plan with a phased approach.
+
+Write a plan with a phased approach to cleaning up the codebase. THINK HARD and follow the rules in @PLAN.md
+
+[Codebase Cleanup Plan](./codebase_cleanup_plan.md)
+
 ## ACP Support
 
 We are going to add Agent Communication Protocol support to xzatoma. The Spec is here https://agentcommunicationprotocol.dev/introduction/welcome
 
 Write a plan with a phased approach to add ACP support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-PLAN WRITTEN - [ACP Support](./acp_implementation_plan.md)
+✅ COMPLETED - [ACP Support](./acp_implementation_plan.md)
 
 ## Skills Support
 
@@ -14,7 +28,7 @@ We are giong to add Agent Skills support to xzatoma. The spec is here https://ag
 
 Write a plan with a phased approach to add Agent Skills support to XZAtoma. THINK HARD and follow the rules in @PLAN.md
 
-COMPLETE - [Agent Skills Support](./agent_skills_implementation_plan.md)
+✅ COMPLETE - [Agent Skills Support](./agent_skills_implementation_plan.md)
 
 ## Demos
 
@@ -24,7 +38,7 @@ Write a plan with a phased approach to create the Demos for XZatoma. THINK HARD 
 
 ADD ACP to the demos
 
-PLAN WRITTEN - [Demo Plan](./demo_implementation_plan.md)
+✅ PLAN WRITTEN - [Demo Plan](./demo_implementation_plan.md)
 
 ## Generic Watcher
 
@@ -32,4 +46,4 @@ We are going to make a new watcher that works with Redpanda and consumes a plan 
 
 Write a plan with a phased approach to add the new generic watcher and move the xzepr watcher work. THINK HARD and follow the rules in @PLAN.md
 
-COMPLETED - [Generic Watcher Implementation Plan](./generic_watcher_implementation_plan.md)
+✅ COMPLETED - [Generic Watcher Implementation Plan](./generic_watcher_implementation_plan.md)

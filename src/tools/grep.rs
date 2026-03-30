@@ -159,8 +159,9 @@ impl GrepTool {
             format!("(?i){}", regex)
         };
 
-        let pattern =
-            Regex::new(&regex_str).map_err(|e| anyhow::anyhow!("Invalid regex pattern: {}", e))?;
+        let pattern = Regex::new(&regex_str).map_err(|e| {
+            crate::error::XzatomaError::Search(format!("Invalid regex pattern: {}", e))
+        })?;
 
         let mut all_matches = Vec::new();
 
@@ -382,57 +383,55 @@ impl GrepTool {
     fn glob_match_inner(&self, text: &str, pattern: &str) -> bool {
         let text_chars: Vec<char> = text.chars().collect();
         let pattern_chars: Vec<char> = pattern.chars().collect();
-        self.glob_match_recursive(&text_chars, 0, &pattern_chars, 0)
+        glob_match_recursive(&text_chars, 0, &pattern_chars, 0)
+    }
+}
+
+/// Recursive glob matching helper (free function; no struct state required).
+fn glob_match_recursive(
+    text: &[char],
+    text_idx: usize,
+    pattern: &[char],
+    pattern_idx: usize,
+) -> bool {
+    // Both exhausted - match
+    if text_idx == text.len() && pattern_idx == pattern.len() {
+        return true;
     }
 
-    /// Recursive glob matching
-    #[allow(clippy::only_used_in_recursion)]
-    fn glob_match_recursive(
-        &self,
-        text: &[char],
-        text_idx: usize,
-        pattern: &[char],
-        pattern_idx: usize,
-    ) -> bool {
-        // Both exhausted - match
-        if text_idx == text.len() && pattern_idx == pattern.len() {
-            return true;
+    // Pattern exhausted but text remains - no match (unless only * remaining)
+    if pattern_idx == pattern.len() {
+        return text_idx == text.len();
+    }
+
+    let current_pattern = pattern[pattern_idx];
+
+    match current_pattern {
+        '*' => {
+            // * can match zero characters
+            if glob_match_recursive(text, text_idx, pattern, pattern_idx + 1) {
+                return true;
+            }
+            // Or match one character and recurse
+            if text_idx < text.len() {
+                return glob_match_recursive(text, text_idx + 1, pattern, pattern_idx);
+            }
+            false
         }
-
-        // Pattern exhausted but text remains - no match (unless only * remaining)
-        if pattern_idx == pattern.len() {
-            return text_idx == text.len();
-        }
-
-        let current_pattern = pattern[pattern_idx];
-
-        match current_pattern {
-            '*' => {
-                // * can match zero characters
-                if self.glob_match_recursive(text, text_idx, pattern, pattern_idx + 1) {
-                    return true;
-                }
-                // Or match one character and recurse
-                if text_idx < text.len() {
-                    return self.glob_match_recursive(text, text_idx + 1, pattern, pattern_idx);
-                }
+        '?' => {
+            // ? matches exactly one character
+            if text_idx < text.len() {
+                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
+            } else {
                 false
             }
-            '?' => {
-                // ? matches exactly one character
-                if text_idx < text.len() {
-                    self.glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-                } else {
-                    false
-                }
-            }
-            c => {
-                // Exact character match
-                if text_idx < text.len() && text[text_idx] == c {
-                    self.glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-                } else {
-                    false
-                }
+        }
+        c => {
+            // Exact character match
+            if text_idx < text.len() && text[text_idx] == c {
+                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
+            } else {
+                false
             }
         }
     }
@@ -470,10 +469,9 @@ impl ToolExecutor for GrepTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let regex = args
-            .get("regex")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing required parameter: regex"))?;
+        let regex = args.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
+            crate::error::XzatomaError::Search("Missing required parameter: regex".to_string())
+        })?;
 
         let include_pattern = args.get("include_pattern").and_then(|v| v.as_str());
         let case_sensitive = args

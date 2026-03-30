@@ -2,17 +2,21 @@
 
 ## Overview
 
-The subagent tool enables task delegation to autonomous agent instances with isolated conversation contexts. This reference documents the complete API for invoking subagents, understanding outputs, and configuring behavior.
+The subagent tool enables task delegation to autonomous agent instances with
+isolated conversation contexts. This reference documents the complete API for
+invoking subagents, understanding outputs, and configuring behavior.
 
 ## Tool Definition
 
 ### Name
-```
+
+```text
 subagent
 ```
 
 ### Description
-```
+
+```text
 Delegate a focused task to a recursive agent instance with isolated conversation
 context. Use this when you need to explore a sub-problem independently without
 polluting the main conversation.
@@ -21,7 +25,8 @@ polluting the main conversation.
 ## Input Schema
 
 ### Parameters Type
-```
+
+```text
 object
 ```
 
@@ -38,7 +43,8 @@ Unique identifier for tracking this subagent instance.
 
 #### `task_prompt` (string, required)
 
-The specific task for the subagent to complete. Should be self-contained and explicit.
+The specific task for the subagent to complete. Should be self-contained and
+explicit.
 
 - **Type:** `string`
 - **Min length:** 1
@@ -53,12 +59,14 @@ How to summarize the subagent's findings. If omitted, default is used.
 
 - **Type:** `string`
 - **Default:** `"Summarize your findings concisely"`
-- **Example:** `"Provide a structured summary with: Key Findings, Implementation Details, Recommendations"`
+- **Example:**
+  `"Provide a structured summary with: Key Findings, Implementation Details, Recommendations"`
 - **Purpose:** Shape final output format before returning to parent
 
 #### `allowed_tools` (array of strings, optional)
 
-Whitelist of tool names the subagent can access. If omitted, all parent tools are available (except "subagent").
+Whitelist of tool names the subagent can access. If omitted, all parent tools
+are available (except "subagent").
 
 - **Type:** `array[string]`
 - **Items:** Tool names (e.g., "fetch", "grep", "file_ops", "terminal")
@@ -73,7 +81,8 @@ Maximum conversation turns (user messages) allowed for this subagent execution.
 - **Type:** `integer`
 - **Minimum:** 1
 - **Maximum:** 50
-- **Default:** (uses `agent.subagent.default_max_turns` from config, typically 10)
+- **Default:** (uses `agent.subagent.default_max_turns` from config,
+  typically 10)
 - **Example:** `5` (quick task), `20` (complex task)
 - **Purpose:** Prevent runaway execution and control costs
 
@@ -119,7 +128,8 @@ The final result from the subagent's execution.
 
 - **Type:** `string`
 - **Max size:** `agent.subagent.output_max_size` (default 4096 bytes)
-- **Truncation:** Output is automatically truncated if exceeded, with "[Output truncated]" notice appended
+- **Truncation:** Output is automatically truncated if exceeded, with "[Output
+  truncated]" notice appended
 - **Content:** Summary of subagent's findings or work product
 
 #### `error` (string or null)
@@ -135,7 +145,7 @@ Error message if execution failed.
 
 Echo of the input `label` for correlation.
 
-```
+```text
 "subagent_label": "research_quantum_computing"
 ```
 
@@ -143,7 +153,7 @@ Echo of the input `label` for correlation.
 
 Nesting depth of this subagent (0=root, 1=first subagent, 2=nested subagent).
 
-```
+```text
 "recursion_depth": "1"
 ```
 
@@ -154,7 +164,7 @@ Whether execution completed normally or was interrupted.
 - `"complete"`: Subagent finished task normally
 - `"incomplete"`: Hit max_turns limit or error occurred
 
-```
+```text
 "completion_status": "complete"
 ```
 
@@ -162,7 +172,7 @@ Whether execution completed normally or was interrupted.
 
 Number of conversation turns (user messages) consumed.
 
-```
+```text
 "turns_used": "3"
 ```
 
@@ -173,7 +183,7 @@ Whether the subagent hit its max_turns limit.
 - `"true"`: Stopped due to turn limit (see `completion_status: incomplete`)
 - `"false"`: Completed normally within turn limit
 
-```
+```text
 "max_turns_reached": "false"
 ```
 
@@ -181,7 +191,7 @@ Whether the subagent hit its max_turns limit.
 
 Total tokens used by the subagent's AI provider calls.
 
-```
+```text
 "tokens_consumed": "1250"
 ```
 
@@ -223,15 +233,18 @@ If the subagent fails, the response contains an error message:
 
 ### "Maximum subagent depth N reached"
 
-**Cause:** Attempted to spawn a subagent at or beyond the configured `max_depth` limit.
+**Cause:** Attempted to spawn a subagent at or beyond the configured `max_depth`
+limit.
 
 **Example:**
-```
+
+```text
 Maximum subagent recursion depth (3) exceeded. Current depth: 3.
 Cannot spawn nested subagent.
 ```
 
-**Solution:** Reduce nesting level or increase `agent.subagent.max_depth` in config (max 10).
+**Solution:** Reduce nesting level or increase `agent.subagent.max_depth` in
+config (max 10).
 
 ### "Invalid input: missing field `label`"
 
@@ -250,7 +263,8 @@ Cannot spawn nested subagent.
 **Cause:** Tool name in `allowed_tools` doesn't exist in parent registry.
 
 **Example:**
-```
+
+```text
 Unknown tool in allowed_tools: nonexistent_tool
 ```
 
@@ -274,10 +288,8 @@ All settings are in the `agent.subagent` section of the configuration file.
 
 ### `agent.subagent.max_depth`
 
-**Type:** `integer`
-**Valid Range:** 1-10
-**Default:** 3
-**Description:** Maximum recursion depth for nested subagents
+**Type:** `integer` **Valid Range:** 1-10 **Default:** 3 **Description:**
+Maximum recursion depth for nested subagents
 
 ```yaml
 agent:
@@ -287,10 +299,8 @@ agent:
 
 ### `agent.subagent.default_max_turns`
 
-**Type:** `integer`
-**Valid Range:** 1-100
-**Default:** 10
-**Description:** Default max_turns if not specified in subagent invocation
+**Type:** `integer` **Valid Range:** 1-100 **Default:** 10 **Description:**
+Default max_turns if not specified in subagent invocation
 
 ```yaml
 agent:
@@ -300,10 +310,8 @@ agent:
 
 ### `agent.subagent.output_max_size`
 
-**Type:** `integer`
-**Valid Range:** >= 1024
-**Default:** 4096
-**Description:** Maximum output size before truncation (bytes)
+**Type:** `integer` **Valid Range:** >= 1024 **Default:** 4096 **Description:**
+Maximum output size before truncation (bytes)
 
 ```yaml
 agent:
@@ -313,9 +321,8 @@ agent:
 
 ### `agent.subagent.telemetry_enabled`
 
-**Type:** `boolean`
-**Default:** true
-**Description:** Emit structured telemetry logs for subagent lifecycle
+**Type:** `boolean` **Default:** true **Description:** Emit structured telemetry
+logs for subagent lifecycle
 
 ```yaml
 agent:
@@ -325,9 +332,8 @@ agent:
 
 ### `agent.subagent.persistence_enabled`
 
-**Type:** `boolean`
-**Default:** false
-**Description:** Save conversations to persistent storage for debugging (Phase 4+)
+**Type:** `boolean` **Default:** false **Description:** Save conversations to
+persistent storage for debugging
 
 ```yaml
 agent:
@@ -337,13 +343,15 @@ agent:
 
 ## Telemetry Events
 
-When `telemetry_enabled: true`, the following events are logged with structured fields:
+When `telemetry_enabled: true`, the following events are logged with structured
+fields:
 
 ### Event: `spawn`
 
 Emitted when a subagent is created and ready to execute.
 
 **Fields:**
+
 - `subagent.event`: "spawn"
 - `subagent.label`: Subagent identifier
 - `subagent.depth`: Recursion depth
@@ -351,7 +359,8 @@ Emitted when a subagent is created and ready to execute.
 - `subagent.allowed_tools`: List of available tools
 
 **Example:**
-```
+
+```text
 subagent.event=spawn subagent.label=research_quantum subagent.depth=1
 subagent.max_turns=8 subagent.allowed_tools=["fetch","grep"]
 Spawning subagent
@@ -362,6 +371,7 @@ Spawning subagent
 Emitted when a subagent finishes successfully.
 
 **Fields:**
+
 - `subagent.event`: "complete"
 - `subagent.label`: Subagent identifier
 - `subagent.depth`: Recursion depth
@@ -370,7 +380,8 @@ Emitted when a subagent finishes successfully.
 - `subagent.status`: "complete" or "incomplete"
 
 **Example:**
-```
+
+```text
 subagent.event=complete subagent.label=research_quantum subagent.depth=1
 subagent.turns_used=4 subagent.tokens_consumed=3200 subagent.status=complete
 Subagent completed
@@ -381,13 +392,15 @@ Subagent completed
 Emitted when a subagent fails.
 
 **Fields:**
+
 - `subagent.event`: "error"
 - `subagent.label`: Subagent identifier
 - `subagent.depth`: Recursion depth
 - `subagent.error`: Error message
 
 **Example:**
-```
+
+```text
 subagent.event=error subagent.label=research_quantum subagent.depth=1
 subagent.error="Tool execution failed: fetch timeout"
 Subagent execution failed
@@ -398,13 +411,15 @@ Subagent execution failed
 Emitted when a subagent hits its max_turns limit.
 
 **Fields:**
+
 - `subagent.event`: "max_turns_exceeded"
 - `subagent.label`: Subagent identifier
 - `subagent.depth`: Recursion depth
 - `subagent.max_turns`: Limit that was reached
 
 **Example:**
-```
+
+```text
 subagent.event=max_turns_exceeded subagent.label=research_quantum
 subagent.depth=1 subagent.max_turns=8
 Subagent exceeded max turns
@@ -415,13 +430,15 @@ Subagent exceeded max turns
 Emitted when output is truncated due to size limit.
 
 **Fields:**
+
 - `subagent.event`: "truncation"
 - `subagent.label`: Subagent identifier
 - `subagent.original_size`: Original output size in bytes
 - `subagent.truncated_size`: Size after truncation
 
 **Example:**
-```
+
+```text
 subagent.event=truncation subagent.label=research_quantum
 subagent.original_size=8192 subagent.truncated_size=4096
 Subagent output truncated
@@ -432,13 +449,15 @@ Subagent output truncated
 Emitted when a subagent cannot be spawned due to depth limit.
 
 **Fields:**
+
 - `subagent.event`: "depth_limit"
 - `subagent.label`: Subagent identifier (if available)
 - `subagent.current_depth`: Current recursion depth
 - `subagent.max_depth`: Maximum allowed depth
 
 **Example:**
-```
+
+```text
 subagent.event=depth_limit subagent.label=research_quantum
 subagent.current_depth=3 subagent.max_depth=3
 Subagent recursion depth limit enforced
@@ -511,7 +530,7 @@ Restrict tools for untrusted input:
 
 Use subagents in sequence:
 
-```
+```text
 Main Agent: "Create a Python function to sort a list"
 └─> Subagent 1: Generate implementation
 └─> Subagent 2: Review for bugs
@@ -523,7 +542,8 @@ Each step uses separate subagent invocations.
 
 ## Rate Limits and Quotas
 
-Subagents consume tokens from your AI provider. No built-in rate limits yet, but Phase 5 adds:
+Subagents consume tokens from your AI provider. Rate limiting can be configured
+with:
 
 - `max_executions`: Maximum subagent instances per session
 - `max_total_tokens`: Total token budget for all subagents

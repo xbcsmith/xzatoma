@@ -133,7 +133,7 @@ impl AcpRuntimeExecuteMode {
             "sync" => Ok(Self::Sync),
             "async" => Ok(Self::Async),
             "stream" => Ok(Self::Stream),
-            other => Err(XzatomaError::AcpValidation(format!(
+            other => Err(crate::acp::error::AcpError::validation(format!(
                 "unsupported ACP execution mode '{}'; expected one of: sync, async, stream",
                 other
             ))
@@ -332,14 +332,14 @@ impl AcpRuntimeCreateRequest {
     pub fn validate(&self) -> Result<()> {
         if self.input.is_empty() {
             return Err(
-                XzatomaError::AcpValidation("ACP run input cannot be empty".to_string()).into(),
+                crate::acp::error::AcpError::validation("ACP run input cannot be empty").into(),
             );
         }
 
         if let Some(agent_name) = &self.agent_name {
             if agent_name.trim().is_empty() {
-                return Err(XzatomaError::AcpValidation(
-                    "ACP agent name cannot be empty when set".to_string(),
+                return Err(crate::acp::error::AcpError::validation(
+                    "ACP agent name cannot be empty when set",
                 )
                 .into());
             }
@@ -559,7 +559,12 @@ impl AcpRuntime {
             storage: Arc::new(Mutex::new(storage)),
         };
 
-        let _ = runtime.restore_from_storage();
+        if let Err(error) = runtime.restore_from_storage() {
+            tracing::warn!(
+                "Failed to restore ACP runtime state from storage: {}",
+                error
+            );
+        }
         runtime
     }
 
@@ -685,7 +690,9 @@ impl AcpRuntime {
         );
 
         record.events.push(created_event.clone());
-        let _ = record.sender.send(created_event);
+        if let Err(error) = record.sender.send(created_event) {
+            tracing::warn!("Failed to broadcast ACP run.created event: {}", error);
+        }
 
         let mut state = lock_runtime_state(&self.state)?;
         state.runs.insert(run.id.as_str().to_string(), record);
@@ -711,7 +718,7 @@ impl AcpRuntime {
     pub fn get_run(&self, run_id: &str) -> Result<AcpRun> {
         let state = lock_runtime_state(&self.state)?;
         let record = state.runs.get(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
         Ok(record.run.clone())
     }
@@ -732,7 +739,7 @@ impl AcpRuntime {
     pub fn get_events(&self, run_id: &str) -> Result<Vec<AcpRuntimeEvent>> {
         let state = lock_runtime_state(&self.state)?;
         let record = state.runs.get(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
         Ok(record.events.clone())
     }
@@ -753,7 +760,7 @@ impl AcpRuntime {
     pub fn subscribe(&self, run_id: &str) -> Result<AcpRuntimeSubscription> {
         let state = lock_runtime_state(&self.state)?;
         let record = state.runs.get(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
 
         Ok(AcpRuntimeSubscription {
@@ -780,7 +787,7 @@ impl AcpRuntime {
     pub fn prompt_for_run(&self, run_id: &str) -> Result<String> {
         let state = lock_runtime_state(&self.state)?;
         let record = state.runs.get(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
         Ok(record.prompt_text.clone())
     }
@@ -849,11 +856,11 @@ impl AcpRuntime {
 
         let mut state = lock_runtime_state(&self.state)?;
         let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
 
         if record.completed {
-            return Err(XzatomaError::AcpLifecycle(format!(
+            return Err(crate::acp::error::AcpError::lifecycle(format!(
                 "cannot append output for completed ACP run '{}'",
                 run_id
             ))
@@ -945,7 +952,7 @@ impl AcpRuntime {
     pub fn complete_run(&self, run_id: &str) -> Result<AcpRun> {
         let mut state = lock_runtime_state(&self.state)?;
         let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
 
         prevent_duplicate_completion(record, run_id)?;
@@ -989,7 +996,7 @@ impl AcpRuntime {
     pub fn fail_run(&self, run_id: &str, reason: String) -> Result<AcpRun> {
         let mut state = lock_runtime_state(&self.state)?;
         let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
 
         prevent_duplicate_completion(record, run_id)?;
@@ -1032,7 +1039,7 @@ impl AcpRuntime {
     pub fn record_error_event(&self, run_id: &str, message: String) -> Result<AcpRun> {
         let mut state = lock_runtime_state(&self.state)?;
         let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
 
         let event = build_runtime_event(
@@ -1075,11 +1082,14 @@ impl AcpRuntime {
         let updated_run = {
             let mut state = lock_runtime_state(&self.state)?;
             let record = state.runs.get_mut(run_id).ok_or_else(|| {
-                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
             })?;
 
             if record.completed {
-                return Err(XzatomaError::AcpLifecycle(format!(
+                return Err(crate::acp::error::AcpError::lifecycle(format!(
                     "cannot transition completed ACP run '{}'",
                     run_id
                 ))
@@ -1136,6 +1146,14 @@ impl AcpRuntime {
     /// ```
     pub fn get_session(&self, session_id: &str) -> Result<Option<AcpRunSession>> {
         if let Some(storage) = self.storage_handle()? {
+            let stored_runs = storage.list_acp_runs_for_session(session_id)?;
+            if let Some(first_run) = stored_runs.first() {
+                return Ok(Some(AcpRunSession {
+                    id: AcpSessionId::new(first_run.session_id.clone())?,
+                    created_at: first_run.created_at.to_rfc3339(),
+                }));
+            }
+
             if let Some(stored) = storage.load_acp_session(session_id)? {
                 return Ok(Some(AcpRunSession {
                     id: AcpSessionId::new(stored.session_id)?,
@@ -1173,7 +1191,7 @@ impl AcpRuntime {
         if let Some(storage) = self.storage_handle()? {
             for stored_run in storage.list_acp_runs_for_session(session_id)? {
                 if seen.insert(stored_run.run_id.clone()) {
-                    if let Some(restored) = storage.restore_acp_run(&stored_run.run_id)? {
+                    if let Some(restored) = self.restore_run(&stored_run.run_id)? {
                         runs.push(restored);
                     }
                 }
@@ -1212,11 +1230,14 @@ impl AcpRuntime {
         let updated_run = {
             let mut state = lock_runtime_state(&self.state)?;
             let record = state.runs.get_mut(run_id).ok_or_else(|| {
-                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
             })?;
 
             if record.completed {
-                return Err(XzatomaError::AcpLifecycle(format!(
+                return Err(crate::acp::error::AcpError::lifecycle(format!(
                     "cannot await completed ACP run '{}'",
                     run_id
                 ))
@@ -1272,7 +1293,7 @@ impl AcpRuntime {
     ) -> Result<AcpRun> {
         if resume_payload.is_null() {
             return Err(
-                XzatomaError::AcpValidation("resume payload cannot be null".to_string()).into(),
+                crate::acp::error::AcpError::validation("resume payload cannot be null").into(),
             );
         }
 
@@ -1280,11 +1301,14 @@ impl AcpRuntime {
         let updated_run = {
             let mut state = lock_runtime_state(&self.state)?;
             let record = state.runs.get_mut(&run_id).ok_or_else(|| {
-                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
             })?;
 
             if record.run.status.state != AcpRunState::Awaiting {
-                return Err(XzatomaError::AcpLifecycle(format!(
+                return Err(crate::acp::error::AcpError::lifecycle(format!(
                     "ACP run '{}' is not awaiting resume input",
                     run_id
                 ))
@@ -1338,11 +1362,14 @@ impl AcpRuntime {
         let updated_run = {
             let mut state = lock_runtime_state(&self.state)?;
             let record = state.runs.get_mut(run_id).ok_or_else(|| {
-                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
             })?;
 
             if record.run.status.state.is_terminal() {
-                return Err(XzatomaError::AcpLifecycle(format!(
+                return Err(crate::acp::error::AcpError::lifecycle(format!(
                     "cannot cancel terminal ACP run '{}'",
                     run_id
                 ))
@@ -1463,7 +1490,10 @@ impl AcpRuntime {
         ) = {
             let state = lock_runtime_state(&self.state)?;
             let record = state.runs.get(run_id).ok_or_else(|| {
-                XzatomaError::AcpLifecycle(format!("ACP run '{}' was not found", run_id))
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
             })?;
 
             (
@@ -1481,7 +1511,7 @@ impl AcpRuntime {
 
         let stored_events: Vec<PublicStoredAcpRunEvent> = events
             .iter()
-            .map(|event| {
+            .map(|event| -> Result<PublicStoredAcpRunEvent> {
                 Ok(PublicStoredAcpRunEvent {
                     run_id: run.id.as_str().to_string(),
                     sequence: event.sequence,
@@ -1535,9 +1565,7 @@ impl AcpRuntime {
 
     fn storage_handle(&self) -> Result<Option<SqliteStorage>> {
         let guard = self.storage.lock().map_err(|_| {
-            anyhow::Error::from(XzatomaError::Internal(
-                "ACP runtime storage lock was poisoned".to_string(),
-            ))
+            XzatomaError::Internal("ACP runtime storage lock was poisoned".to_string())
         })?;
 
         if let Some(storage) = guard.as_ref() {
@@ -1569,7 +1597,7 @@ impl AcpRuntime {
         }
 
         for run_id in run_ids {
-            let _ = self.restore_run(&run_id)?;
+            self.restore_run(&run_id)?;
         }
 
         Ok(())
@@ -1584,7 +1612,6 @@ fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>>
                 "Failed to parse persisted ACP runtime timestamp '{}': {}",
                 value, error
             ))
-            .into()
         })
 }
 
@@ -1625,7 +1652,7 @@ fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>>
 pub fn flatten_input_to_prompt(messages: &[AcpMessage]) -> Result<String> {
     if messages.is_empty() {
         return Err(
-            XzatomaError::AcpValidation("ACP run input cannot be empty".to_string()).into(),
+            crate::acp::error::AcpError::validation("ACP run input cannot be empty").into(),
         );
     }
 
@@ -1643,8 +1670,8 @@ pub fn flatten_input_to_prompt(messages: &[AcpMessage]) -> Result<String> {
                     }
                 }
                 AcpMessagePart::Artifact(_) => {
-                    return Err(XzatomaError::AcpValidation(
-                        "artifact input parts are not yet supported for ACP runs".to_string(),
+                    return Err(crate::acp::error::AcpError::validation(
+                        "artifact input parts are not yet supported for ACP runs",
                     )
                     .into());
                 }
@@ -1653,8 +1680,8 @@ pub fn flatten_input_to_prompt(messages: &[AcpMessage]) -> Result<String> {
 
         let section_text = text_parts.join("\n");
         if section_text.trim().is_empty() {
-            return Err(XzatomaError::AcpValidation(
-                "ACP input messages must contain non-empty text parts".to_string(),
+            return Err(crate::acp::error::AcpError::validation(
+                "ACP input messages must contain non-empty text parts",
             )
             .into());
         }
@@ -1724,16 +1751,19 @@ fn extract_text_content(message: &AcpMessage) -> Result<String> {
         .iter()
         .map(|part| match part {
             AcpMessagePart::Text(text) => Ok(text.text.clone()),
-            AcpMessagePart::Artifact(_) => Err(anyhow::Error::from(XzatomaError::AcpValidation(
-                "artifact message parts are not yet supported for ACP run execution".to_string(),
-            ))),
+            AcpMessagePart::Artifact(_) => {
+                Err(XzatomaError::Acp(crate::acp::error::AcpError::validation(
+                    "artifact message parts are not yet supported for ACP run execution"
+                        .to_string(),
+                )))
+            }
         })
         .collect::<Result<Vec<_>>>()?;
 
     let content = parts.join("\n");
     if content.trim().is_empty() {
-        return Err(XzatomaError::AcpValidation(
-            "ACP message content cannot be empty after flattening".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "ACP message content cannot be empty after flattening",
         )
         .into());
     }
@@ -1743,8 +1773,8 @@ fn extract_text_content(message: &AcpMessage) -> Result<String> {
 
 fn validate_supported_message_parts(message: &AcpMessage) -> Result<()> {
     if message.parts.is_empty() {
-        return Err(XzatomaError::AcpValidation(
-            "ACP message must include at least one part".to_string(),
+        return Err(crate::acp::error::AcpError::validation(
+            "ACP message must include at least one part",
         )
         .into());
     }
@@ -1753,8 +1783,8 @@ fn validate_supported_message_parts(message: &AcpMessage) -> Result<()> {
         match part {
             AcpMessagePart::Text(text) => text.validate()?,
             AcpMessagePart::Artifact(_) => {
-                return Err(XzatomaError::AcpValidation(
-                    "artifact and multimodal ACP inputs are not yet supported".to_string(),
+                return Err(crate::acp::error::AcpError::validation(
+                    "artifact and multimodal ACP inputs are not yet supported",
                 )
                 .into());
             }
@@ -1781,20 +1811,15 @@ fn build_runtime_event(sequence: u64, event: AcpEvent, terminal: bool) -> AcpRun
 fn lock_runtime_state(
     state: &Arc<Mutex<AcpRuntimeState>>,
 ) -> Result<std::sync::MutexGuard<'_, AcpRuntimeState>> {
-    state.lock().map_err(|_| {
-        anyhow::Error::from(XzatomaError::Internal(
-            "ACP runtime state lock was poisoned".to_string(),
-        ))
-    })
+    state
+        .lock()
+        .map_err(|_| XzatomaError::Internal("ACP runtime state lock was poisoned".to_string()))
 }
 
 fn next_sequence(record: &AcpRuntimeRunRecord) -> Result<u64> {
     let next = record.events.len() + 1;
-    u64::try_from(next).map_err(|_| {
-        anyhow::Error::from(XzatomaError::Internal(
-            "ACP runtime event sequence overflowed".to_string(),
-        ))
-    })
+    u64::try_from(next)
+        .map_err(|_| XzatomaError::Internal("ACP runtime event sequence overflowed".to_string()))
 }
 
 fn push_event(record: &mut AcpRuntimeRunRecord, event: AcpRuntimeEvent) {
@@ -1804,7 +1829,7 @@ fn push_event(record: &mut AcpRuntimeRunRecord, event: AcpRuntimeEvent) {
 
 fn prevent_duplicate_completion(record: &AcpRuntimeRunRecord, run_id: &str) -> Result<()> {
     if record.completed {
-        return Err(XzatomaError::AcpLifecycle(format!(
+        return Err(crate::acp::error::AcpError::lifecycle(format!(
             "ACP run '{}' has already reached terminal completion",
             run_id
         ))

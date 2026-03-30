@@ -13,16 +13,15 @@ These handlers are intentionally small and use the library components:
 providers, tools, and the agent.
 */
 
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    parse_special_command, print_help, print_mention_help, print_models_help, SpecialCommand,
+    parse_special_command, print_help, print_models_help, SpecialCommand,
 };
-use crate::config::{Config, ExecutionMode};
+use crate::config::Config;
 use crate::error::{Result, XzatomaError};
+use crate::mcp::manager::build_mcp_manager_from_config;
+use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
 use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
 use crate::skills::{
@@ -32,8 +31,7 @@ use crate::skills::{
 use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::plan::PlanParser;
 use crate::tools::registry_builder::ToolRegistryBuilder;
-use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::{SubagentTool, ToolExecutor, ToolRegistry};
+use crate::tools::{SubagentTool, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -60,6 +58,10 @@ pub mod acp;
 
 // Skills management commands
 pub mod skills;
+
+// Agent environment builder (shared tool/skill/MCP initialization)
+pub mod environment;
+pub use environment::{build_agent_environment, AgentEnvironment};
 
 /// Detect if a user prompt requests subagent functionality
 ///
@@ -254,20 +256,11 @@ pub fn build_startup_skill_disclosure(
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn build_visible_skill_catalog(config: &Config, working_dir: &Path) -> Result<SkillCatalog> {
-    if !config.skills.enabled {
-        return Ok(SkillCatalog::new());
-    }
-
-    let discovery = discover_skills(&config.skills, working_dir)?;
+    // Thin wrapper: load trusted paths then delegate to the canonical
+    // 3-parameter version in `commands::skills` so the filtering logic
+    // lives in exactly one place.
     let trusted_paths = crate::skills::trust::load_trusted_paths(&config.skills, working_dir)?;
-    let visible_records = crate::skills::trust::filter_visible_skill_records(
-        &discovery.catalog,
-        &config.skills,
-        working_dir,
-        &trusted_paths,
-    );
-
-    SkillCatalog::from_records(visible_records)
+    crate::commands::skills::build_visible_skill_catalog(config, working_dir, &trusted_paths)
 }
 
 /// Registers the `activate_skill` tool when visible skills exist and the
@@ -434,9 +427,7 @@ pub mod chat {
             .unwrap_or(ChatMode::Planning);
 
         // Default to safe mode (AlwaysConfirm)
-        let initial_safety = SafetyMode::AlwaysConfirm;
-
-        let mut mode_state = ChatModeState::new(initial_mode, initial_safety);
+        let mut mode_state = ChatModeState::new(initial_mode, SafetyMode::AlwaysConfirm);
 
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
@@ -447,38 +438,14 @@ pub mod chat {
             Arc::clone(&active_skill_registry),
         )?;
 
-        // Build MCP client manager if auto_connect is enabled and servers are configured.
-        // The manager Arc must stay alive for the entire duration of run_chat so that
-        // McpToolExecutor instances can call back to it during agent turns.
-        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
-            use crate::mcp::auth::token_store::TokenStore;
-            use crate::mcp::manager::McpClientManager;
-            use tokio::sync::RwLock;
-
-            let http_client = Arc::new(reqwest::Client::new());
-            let token_store = Arc::new(TokenStore);
-            let mut manager = McpClientManager::new(http_client, token_store);
-
-            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
-                if let Err(e) = manager.connect(server_config.clone()).await {
-                    tracing::warn!(
-                        server_id = %server_config.id,
-                        error = %e,
-                        "Failed to connect to MCP server during chat startup"
-                    );
-                }
-            }
-
-            Some(Arc::new(RwLock::new(manager)))
-        } else {
-            None
-        };
+        // Build MCP client manager using the shared factory.
+        // Chat is interactive (headless=false); the Arc must stay alive for the
+        // entire duration of run_chat so that McpToolExecutor instances can call
+        // back to it during agent turns.
+        let mcp_manager = build_mcp_manager_from_config(&config).await?;
 
         // Register MCP tools into the registry.
-        // Chat is interactive so headless=false.
         if let Some(ref manager) = mcp_manager {
-            use crate::mcp::tool_bridge::register_mcp_tools;
-
             let execution_mode = config.agent.terminal.default_mode;
             match register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, false).await {
                 Ok(count) if count > 0 => {
@@ -689,8 +656,13 @@ pub mod chat {
             for msg in agent.conversation().messages() {
                 if msg.role == "user" {
                     if let Some(content) = &msg.content {
-                        // Add each user message to readline history so up/down arrows work
-                        let _ = rl.add_history_entry(content);
+                        // Intentionally discard duplicate/history-capacity failures: they do not
+                        // prevent chat resume, and readline history is best-effort.
+                        if rl.add_history_entry(content).is_err() {
+                            tracing::debug!(
+                                "Skipped adding a resumed user message to readline history"
+                            );
+                        }
                         history_count += 1;
                     }
                 }
@@ -1168,8 +1140,6 @@ pub mod chat {
     /// assert!(safety.description().len() > 0);
     /// ```
     fn print_welcome_banner(mode: &ChatMode, safety: &SafetyMode) {
-        use colored::Colorize;
-
         println!("\n╔══════════════════════════════════════════════════════════════╗");
         println!("║         XZatoma Interactive Chat Mode - Welcome!             ║");
         println!("╚══════════════════════════════════════════════════════════════╝\n");
@@ -1470,7 +1440,9 @@ pub mod chat {
         let messages = agent.conversation().messages().to_vec();
 
         if messages.is_empty() {
-            return Err(anyhow::anyhow!("No messages to summarize"));
+            return Err(XzatomaError::Internal(
+                "No messages to summarize".to_string(),
+            ));
         }
 
         // Create summarization prompt
@@ -1507,8 +1479,6 @@ pub mod chat {
     ///
     /// Returns a prompt string for summarization
     fn create_summary_prompt(messages: &[crate::providers::Message]) -> String {
-        use crate::providers::Message;
-
         // Format messages for the summary prompt
         let conversation_text = messages
             .iter()
@@ -1957,103 +1927,30 @@ pub mod r#run {
         if plan_path.is_none() && prompt.is_none() {
             return Err(XzatomaError::Config(
                 "Either --plan or --prompt must be provided".to_string(),
-            )
-            .into());
+            ));
         }
 
         // Build tools & agent
         let working_dir = std::env::current_dir()?;
-        let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
-        let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
-        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         if allow_dangerous {
             tracing::warn!("Dangerous commands are allowed for this run: allow_dangerous=true");
         }
 
-        // Build tools using registry builder for consistent tool selection based on mode
-        use crate::chat_mode::{ChatMode, SafetyMode};
-        use crate::tools::registry_builder::ToolRegistryBuilder;
+        // Build tools, skills, and MCP stack via the shared environment builder.
+        // The run command is always headless (non-interactive).
+        let env = build_agent_environment(&config, &working_dir, true).await?;
+        let tools = env.tool_registry;
+        let active_skill_registry = env.active_skill_registry;
+        let skill_disclosure = env.skill_disclosure;
+        // Keep the MCP manager Arc alive for the entire function so that
+        // McpToolExecutor instances (registered in tools) can call back to it.
+        let _mcp_manager = env.mcp_manager;
 
-        // Parse chat mode from config
-        let chat_mode =
-            ChatMode::parse_str(&config.agent.chat.default_mode).unwrap_or(ChatMode::Planning);
-
-        // Parse safety mode from config
-        let safety_mode = match config.agent.chat.default_safety.to_lowercase().as_str() {
-            "yolo" => SafetyMode::NeverConfirm,
-            _ => SafetyMode::AlwaysConfirm,
-        };
-
-        let mut tools = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.clone())
-            .with_tools_config(config.agent.tools.clone())
-            .with_terminal_config(config.agent.terminal.clone())
-            .build()?;
-        let _activate_skill_registered = register_activate_skill_tool(
-            &mut tools,
-            &config,
-            visible_skill_catalog,
-            Arc::clone(&active_skill_registry),
-        )?;
-
-        // Build MCP client manager if auto_connect is enabled and servers are configured.
-        // The manager Arc must stay alive for the entire duration of run_plan_with_options
-        // so that McpToolExecutor instances can call back to it during agent execution.
-        let mcp_manager = if config.mcp.auto_connect && !config.mcp.servers.is_empty() {
-            use crate::mcp::auth::token_store::TokenStore;
-            use crate::mcp::manager::McpClientManager;
-            use tokio::sync::RwLock;
-
-            let http_client = Arc::new(reqwest::Client::new());
-            let token_store = Arc::new(TokenStore);
-            let mut manager = McpClientManager::new(http_client, token_store);
-
-            for server_config in config.mcp.servers.iter().filter(|s| s.enabled) {
-                if let Err(e) = manager.connect(server_config.clone()).await {
-                    tracing::warn!(
-                        server_id = %server_config.id,
-                        error = %e,
-                        "Failed to connect to MCP server during run command startup"
-                    );
-                }
-            }
-
-            Some(Arc::new(RwLock::new(manager)))
-        } else {
-            None
-        };
-
-        // Register MCP tools into the registry after it is built.
-        if let Some(ref manager) = mcp_manager {
-            use crate::mcp::tool_bridge::register_mcp_tools;
-
-            // run command is always headless.
-            let execution_mode = config.agent.terminal.default_mode;
-            let count = register_mcp_tools(&mut tools, Arc::clone(manager), execution_mode, true)
-                .await
-                .map_err(|e| {
-                    XzatomaError::Config(format!("Failed to register MCP tools: {}", e))
-                })?;
-
-            if count > 0 {
-                tracing::info!(count = %count, "Registered MCP tools for run command");
-            }
-        }
-
-        // Create agent using concrete providers
-        let mut agent = match config.provider.provider_type.as_str() {
-            "ollama" => {
-                let p = OllamaProvider::new(config.provider.ollama.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            "copilot" => {
-                let p = CopilotProvider::new(config.provider.copilot.clone())?;
-                Agent::new(p, tools, config.agent.clone())?
-            }
-            other => {
-                return Err(XzatomaError::Config(format!("Unknown provider: {}", other)).into());
-            }
-        };
+        // Create agent using the shared provider factory.
+        let provider_box = create_provider(&config.provider.provider_type, &config.provider)?;
+        let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
+        let mut agent = Agent::new_from_shared_provider(provider, tools, config.agent.clone())?;
 
         if let Some(disclosure) = &skill_disclosure {
             agent
@@ -2142,8 +2039,7 @@ pub mod r#run {
             _ => Err(XzatomaError::Provider(format!(
                 "Unsupported provider type: {}",
                 config.provider.provider_type
-            ))
-            .into()),
+            ))),
         }
     }
 
@@ -2266,7 +2162,10 @@ pub mod auth {
                 println!("Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set.");
                 Ok(())
             }
-            other => Err(XzatomaError::Provider(format!("Unsupported provider: {}", other)).into()),
+            other => Err(XzatomaError::Provider(format!(
+                "Unsupported provider: {}",
+                other
+            ))),
         }
     }
 
@@ -2317,6 +2216,10 @@ pub mod watch {
         pub name: Option<String>,
         /// Whether dry-run mode is enabled.
         pub dry_run: bool,
+        /// Optional Kafka broker addresses override (comma-separated).
+        pub brokers: Option<String>,
+        /// Optional generic matcher version regex override.
+        pub match_version: Option<String>,
     }
     use std::path::PathBuf;
 
@@ -2361,8 +2264,8 @@ pub mod watch {
         );
 
         let kafka_config = config.watcher.kafka.clone().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            XzatomaError::Config(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars".to_string()
             )
         })?;
 
@@ -2382,7 +2285,8 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)
+                    .map_err(|error| XzatomaError::Watcher(error.to_string()))?;
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2392,7 +2296,11 @@ pub mod watch {
                     match tokio::signal::ctrl_c().await {
                         Ok(()) => {
                             tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
-                            let _ = shutdown_tx.send(()).await;
+                            if shutdown_tx.send(()).await.is_err() {
+                                tracing::debug!(
+                                    "Shutdown signal receiver already dropped for xzepr watcher"
+                                );
+                            }
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "Failed to set up signal handler");
@@ -2402,7 +2310,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result
+                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");
@@ -2422,7 +2330,11 @@ pub mod watch {
                     match tokio::signal::ctrl_c().await {
                         Ok(()) => {
                             tracing::info!("Received CTRL+C signal, initiating graceful shutdown");
-                            let _ = shutdown_tx.send(()).await;
+                            if shutdown_tx.send(()).await.is_err() {
+                                tracing::debug!(
+                                    "Shutdown signal receiver already dropped for generic watcher"
+                                );
+                            }
                         }
                         Err(err) => {
                             tracing::error!(error = %err, "Failed to set up signal handler");
@@ -2432,7 +2344,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result
+                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");
@@ -2459,8 +2371,8 @@ pub mod watch {
     fn apply_cli_overrides(config: &mut Config, overrides: &WatchCliOverrides) -> Result<()> {
         // Ensure Kafka configuration exists
         if config.watcher.kafka.is_none() {
-            return Err(anyhow::anyhow!(
-                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars"
+            return Err(XzatomaError::Config(
+                "Kafka configuration is required. Please configure it in config file or set XZEPR_KAFKA_* env vars".to_string()
             ));
         }
 
@@ -2468,10 +2380,10 @@ pub mod watch {
         if let Some(cli_watcher_type) = &overrides.watcher_type {
             let parsed_watcher_type = crate::config::WatcherType::from_str_name(cli_watcher_type)
                 .ok_or_else(|| {
-                anyhow::anyhow!(
+                XzatomaError::Config(format!(
                     "Invalid watcher type: {}. Must be one of: xzepr, generic",
                     cli_watcher_type
-                )
+                ))
             })?;
 
             config.watcher.watcher_type = parsed_watcher_type;
@@ -2529,6 +2441,33 @@ pub mod watch {
                 name = %name_pattern,
                 "CLI override: Generic matcher name"
             );
+        }
+
+        // Override brokers if provided
+        if let Some(brokers) = &overrides.brokers {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.brokers = brokers.clone();
+                tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
+            }
+        }
+
+        // Override generic matcher version if provided
+        if let Some(version_pattern) = &overrides.match_version {
+            config.watcher.generic_match.version = Some(version_pattern.clone());
+            tracing::debug!(version = %version_pattern, "CLI override: Generic matcher version");
+        }
+
+        // Override filter config if provided
+        if let Some(filter_path) = &overrides.filter_config {
+            let contents = std::fs::read_to_string(filter_path).map_err(|e| {
+                XzatomaError::Config(format!("Failed to read filter config file: {}", e))
+            })?;
+            let filter_config: crate::config::EventFilterConfig = serde_yaml::from_str(&contents)
+                .map_err(|e| {
+                XzatomaError::Config(format!("Failed to parse filter config: {}", e))
+            })?;
+            config.watcher.filters = filter_config;
+            tracing::debug!(path = %filter_path.display(), "CLI override: Event filter config");
         }
 
         // Override event types filter if provided
@@ -2596,6 +2535,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2623,6 +2564,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2657,6 +2600,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
             config.watcher.logging.json_format = false;
 
@@ -2682,6 +2627,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2710,6 +2657,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2736,6 +2685,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2763,6 +2714,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2796,6 +2749,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2823,6 +2778,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2847,6 +2804,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2874,6 +2833,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2889,6 +2850,133 @@ pub mod watch {
                 config.watcher.generic_match.name.as_deref(),
                 Some("service-a")
             );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_brokers() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    brokers: Some("broker1:9092,broker2:9092".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.kafka.as_ref().unwrap().brokers,
+                "broker1:9092,broker2:9092"
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_match_version() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    match_version: Some("v1\\..*".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.generic_match.version.as_deref(),
+                Some("v1\\..*")
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_filter_config_from_file() {
+            let dir = tempfile::tempdir().expect("failed to create temp dir");
+            let filter_path = dir.path().join("filters.yaml");
+            std::fs::write(
+                &filter_path,
+                "event_types:\n  - deployment.success\nsuccess_only: true\n",
+            )
+            .expect("failed to write temp filter file");
+
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    filter_config: Some(filter_path),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(config.watcher.filters.event_types.len(), 1);
+            assert!(config
+                .watcher
+                .filters
+                .event_types
+                .contains(&"deployment.success".to_string()));
+            assert!(config.watcher.filters.success_only);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_filter_config_missing_file() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    filter_config: Some(PathBuf::from("/nonexistent/filters.yaml")),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to read filter config file"));
         }
 
         #[tokio::test]

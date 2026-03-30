@@ -298,6 +298,10 @@ xzatoma watch --config config/watcher.yaml --topic custom.topic --dry-run
 Useful shared options:
 
 - `--topic` override the configured Kafka topic
+- `--brokers <ADDRS>` -- override Kafka broker addresses (comma-separated).
+  Takes precedence over config file.
+- `--create-topics` -- automatically create missing Kafka topics at watcher
+  startup. Useful for local development with Redpanda or Kafka.
 - `--log-file` write logs to a file
 - `--json-logs` enable JSON logging
 - `--dry-run` parse and classify plans without executing them

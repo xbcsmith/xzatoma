@@ -99,6 +99,8 @@ async fn main() -> Result<()> {
             action,
             name,
             dry_run,
+            brokers,
+            match_version,
         } => {
             tracing::info!("Starting watcher mode");
             commands::watch::run_watch(
@@ -116,6 +118,8 @@ async fn main() -> Result<()> {
                     action,
                     name,
                     dry_run,
+                    brokers,
+                    match_version,
                 },
             )
             .await?;
