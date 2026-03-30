@@ -14,7 +14,6 @@ use super::consumer::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, Xz
 use super::filter::EventFilter;
 use super::plan_extractor::PlanExtractor;
 use crate::config::{Config, WatcherConfig};
-use crate::watcher::topic_admin::WatcherTopicAdmin;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -138,9 +137,6 @@ impl Watcher {
             consumer_config
         };
 
-        let _topic_admin = WatcherTopicAdmin::new(kafka_config)
-            .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-
         // Create Kafka consumer
         let consumer = XzeprConsumer::new(consumer_config)
             .map_err(|e| WatcherError::Consumer(e.to_string()))?;
@@ -166,18 +162,6 @@ impl Watcher {
             "Execution semaphore created"
         );
 
-        if kafka_config.auto_create_topics {
-            debug!(
-                topic = %kafka_config.topic,
-                "XZepr watcher topic auto-creation is enabled"
-            );
-        } else {
-            debug!(
-                topic = %kafka_config.topic,
-                "XZepr watcher topic auto-creation is disabled"
-            );
-        }
-
         Ok(Self {
             config: Arc::new(config),
             watcher_config,
@@ -193,6 +177,10 @@ impl Watcher {
     ///
     /// This is the main loop that consumes messages from Kafka. It will run
     /// indefinitely until an error occurs or the process is signaled to stop.
+    ///
+    /// Topic auto-creation is handled by `run_watch` in `commands/mod.rs`
+    /// before the watcher is constructed. Callers using `XzeprWatcher`
+    /// directly should ensure topics exist before calling `start()`.
     ///
     /// # Returns
     ///
@@ -221,17 +209,6 @@ impl Watcher {
             dry_run = self.dry_run,
             "Starting XZepr watcher service"
         );
-
-        if let Some(kafka_config) = self.watcher_config.kafka.as_ref() {
-            if kafka_config.auto_create_topics {
-                let topic_admin = WatcherTopicAdmin::new(kafka_config)
-                    .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-                topic_admin
-                    .ensure_xzepr_watcher_topics()
-                    .await
-                    .map_err(|e| WatcherError::Consumer(e.to_string()))?;
-            }
-        }
 
         // Create message handler with shared state
         let handler = WatcherMessageHandler {
@@ -531,6 +508,8 @@ mod tests {
             group_id: "test-group".to_string(),
             auto_create_topics: true,
             security: None,
+            num_partitions: 1,
+            replication_factor: 1,
         });
 
         let result = Watcher::new(config, false);
@@ -553,6 +532,8 @@ mod tests {
             group_id: "test-group".to_string(),
             auto_create_topics: true,
             security: None,
+            num_partitions: 1,
+            replication_factor: 1,
         });
 
         let result = Watcher::new(config, true);

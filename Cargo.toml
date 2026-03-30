@@ -63,7 +63,9 @@ colored = "2.1"
 # Regex for validation
 regex = "1.10"
 
-# Streaming utilities for Kafka consumer
+# Kafka client for watcher consumer, producer, and topic admin
+rdkafka = { version = "0.36", features = ["cmake-build", "ssl"] }
+
 
 
 # Image and metadata utilities

@@ -1175,6 +1175,8 @@ impl Config {
                     output_topic: Some(output_topic.clone()),
                     group_id: default_watcher_group_id(),
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security: None,
                 });
             }
@@ -1195,6 +1197,8 @@ impl Config {
                     output_topic: None,
                     group_id: group_id.clone(),
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security: None,
                 });
             }
@@ -1414,6 +1418,8 @@ impl Config {
                     output_topic: None,
                     group_id,
                     auto_create_topics: default_auto_create_topics(),
+                    num_partitions: 1,
+                    replication_factor: 1,
                     security,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
@@ -2608,6 +2614,8 @@ kafka:
             output_topic: Some("plans.out".to_string()),
             group_id: "watchers".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         };
 
@@ -2629,6 +2637,8 @@ kafka:
             output_topic: None,
             group_id: "watchers".to_string(),
             auto_create_topics: false,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         };
 
@@ -3091,6 +3101,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3121,6 +3133,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "original-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3177,6 +3191,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3193,6 +3209,8 @@ chat_enabled: true
             output_topic: Some("plans.output".to_string()),
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
         cfg.watcher.generic_match = GenericMatchConfig {
@@ -3214,6 +3232,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "test-group".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
@@ -3231,6 +3251,8 @@ chat_enabled: true
             output_topic: None,
             group_id: "   ".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         });
 
@@ -3960,14 +3982,37 @@ pub struct KafkaWatcherConfig {
 
     /// Automatically create input/output topics when watcher mode starts.
     ///
-    /// This is a stub-first configuration flag used by watcher startup logic to
-    /// decide whether missing topics should be provisioned automatically.
+    /// When enabled, the watcher uses the Kafka AdminClient to create missing
+    /// topics before entering the consume loop.
     #[serde(default = "default_auto_create_topics")]
     pub auto_create_topics: bool,
+
+    /// Number of partitions for auto-created topics.
+    ///
+    /// Only used when `auto_create_topics` is `true`. Defaults to `1`.
+    #[serde(default = "default_num_partitions")]
+    pub num_partitions: i32,
+
+    /// Replication factor for auto-created topics.
+    ///
+    /// Only used when `auto_create_topics` is `true`. Defaults to `1`.
+    /// For production deployments with multiple brokers, set this to `3`.
+    #[serde(default = "default_replication_factor")]
+    pub replication_factor: i32,
 
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
+}
+
+/// Default number of partitions for auto-created Kafka topics.
+fn default_num_partitions() -> i32 {
+    1
+}
+
+/// Default replication factor for auto-created Kafka topics.
+fn default_replication_factor() -> i32 {
+    1
 }
 
 /// Kafka security configuration

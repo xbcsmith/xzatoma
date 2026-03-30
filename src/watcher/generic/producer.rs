@@ -1,31 +1,36 @@
 //! Generic watcher result producer.
 //!
-//! This module defines the generic watcher result publisher abstraction used by
-//! the generic Kafka watcher backend. The implementation intentionally follows
-//! the same stub-first approach used by the XZepr consumer:
+//! This module defines the generic watcher result publisher used by the generic
+//! Kafka watcher backend.
 //!
-//! - expose the full producer interface now,
-//! - assemble Kafka configuration in a testable way,
-//! - avoid requiring `rdkafka` at compile time,
-//! - log serialized output so dry-run mode and tests have observable behavior.
+//! - Exposes the full producer interface backed by a real `rdkafka`
+//!   `FutureProducer`.
+//! - Assembles Kafka configuration in a testable way via `get_kafka_config()`.
+//! - Publishes serialized [`GenericPlanResult`] messages to the configured
+//!   output topic.
+//! - Logs each published result at `info` level so behavior remains observable.
 //!
 //! The producer publishes [`GenericPlanResult`] messages to either an explicit
 //! `output_topic` or, when that is not configured, falls back to the same topic
 //! used for input.
 
-use crate::config::{KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::config::KafkaWatcherConfig;
 use crate::error::{Result, XzatomaError};
 use crate::watcher::generic::message::GenericPlanResult;
 use crate::watcher::xzepr::consumer::config::{
     SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
+use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::ClientConfig;
+use std::fmt;
 use std::time::Duration;
 use tracing::info;
 
-/// Stub Kafka result producer for the generic watcher.
+/// Kafka result producer for the generic watcher.
 ///
-/// This type assembles Kafka producer configuration and exposes a publish API
-/// without requiring a concrete Kafka client dependency at compile time.
+/// This type assembles Kafka producer configuration and publishes
+/// [`GenericPlanResult`] messages to the configured output topic using an
+/// `rdkafka` `FutureProducer`.
 ///
 /// # Topic resolution
 ///
@@ -46,26 +51,57 @@ use tracing::info;
 ///     output_topic: Some("plans.out".to_string()),
 ///     group_id: "xzatoma-watcher".to_string(),
 ///     auto_create_topics: true,
+///     num_partitions: 1,
+///     replication_factor: 1,
 ///     security: None,
 /// };
 ///
 /// let producer = GenericResultProducer::new(&config).unwrap();
 /// assert_eq!(producer.output_topic(), "plans.out");
 /// ```
-#[derive(Debug, Clone)]
 pub struct GenericResultProducer {
+    /// Kafka bootstrap servers.
     brokers: String,
+    /// Topic the watcher consumes from.
     input_topic: String,
+    /// Topic results are published to.
     output_topic: String,
+    /// Client identifier sent to the Kafka broker.
     client_id: String,
+    /// Kafka security protocol.
     security_protocol: SecurityProtocol,
+    /// Optional SASL authentication configuration.
     sasl_config: Option<SaslConfig>,
+    /// Optional SSL/TLS configuration.
     ssl_config: Option<SslConfig>,
+    /// Timeout for Kafka produce requests.
     request_timeout: Duration,
+    /// The underlying rdkafka future producer.
+    producer: FutureProducer,
+}
+
+impl fmt::Debug for GenericResultProducer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GenericResultProducer")
+            .field("brokers", &self.brokers)
+            .field("input_topic", &self.input_topic)
+            .field("output_topic", &self.output_topic)
+            .field("client_id", &self.client_id)
+            .field("security_protocol", &self.security_protocol)
+            .field("sasl_config", &self.sasl_config)
+            .field("ssl_config", &self.ssl_config)
+            .field("request_timeout", &self.request_timeout)
+            .field("producer", &"<FutureProducer>")
+            .finish()
+    }
 }
 
 impl GenericResultProducer {
     /// Construct a new generic result producer from watcher Kafka settings.
+    ///
+    /// Builds the internal `FutureProducer` from the assembled Kafka
+    /// configuration key-value pairs. The producer is ready to publish
+    /// immediately after construction.
     ///
     /// # Arguments
     ///
@@ -77,7 +113,8 @@ impl GenericResultProducer {
     ///
     /// # Errors
     ///
-    /// Returns an error if required Kafka security settings are invalid.
+    /// Returns an error if required Kafka security settings are invalid or if
+    /// the underlying `FutureProducer` cannot be created.
     ///
     /// # Examples
     ///
@@ -91,6 +128,8 @@ impl GenericResultProducer {
     ///     output_topic: None,
     ///     group_id: "watcher-group".to_string(),
     ///     auto_create_topics: true,
+    ///     num_partitions: 1,
+    ///     replication_factor: 1,
     ///     security: None,
     /// };
     ///
@@ -103,22 +142,97 @@ impl GenericResultProducer {
             .clone()
             .unwrap_or_else(|| config.topic.clone());
 
-        let mut producer = Self {
+        let client_id = "xzatoma-generic-result-producer".to_string();
+        let request_timeout = Duration::from_secs(30);
+        let mut security_protocol = SecurityProtocol::Plaintext;
+        let mut sasl_config = None;
+        let mut ssl_config = None;
+
+        if let Some(security) = &config.security {
+            security_protocol = parse_security_protocol(&security.protocol)?;
+
+            if matches!(
+                security_protocol,
+                SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
+            ) {
+                ssl_config = Some(SslConfig {
+                    ca_location: None,
+                    certificate_location: None,
+                    key_location: None,
+                });
+            }
+
+            if let Some(mechanism) = &security.sasl_mechanism {
+                let username = security.sasl_username.clone().ok_or_else(|| {
+                    XzatomaError::Watcher(
+                        "SASL username is required when mechanism is set".to_string(),
+                    )
+                })?;
+
+                let password = security
+                    .sasl_password
+                    .clone()
+                    .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
+                    .ok_or_else(|| {
+                        XzatomaError::Watcher(
+                            "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
+                                .to_string(),
+                        )
+                    })?;
+
+                sasl_config = Some(SaslConfig {
+                    mechanism: parse_sasl_mechanism(mechanism)?,
+                    username,
+                    password,
+                });
+            }
+        }
+
+        // Build the FutureProducer from the assembled configuration.
+        let producer: FutureProducer = {
+            let mut client_config = ClientConfig::new();
+            client_config.set("bootstrap.servers", &config.brokers);
+            client_config.set("client.id", &client_id);
+            client_config.set("security.protocol", security_protocol.as_str());
+            client_config.set(
+                "message.timeout.ms",
+                request_timeout.as_millis().to_string(),
+            );
+
+            if let Some(sasl) = &sasl_config {
+                client_config.set("sasl.mechanism", sasl.mechanism.as_str());
+                client_config.set("sasl.username", &sasl.username);
+                client_config.set("sasl.password", &sasl.password);
+            }
+
+            if let Some(ssl) = &ssl_config {
+                if let Some(ca) = &ssl.ca_location {
+                    client_config.set("ssl.ca.location", ca);
+                }
+                if let Some(cert) = &ssl.certificate_location {
+                    client_config.set("ssl.certificate.location", cert);
+                }
+                if let Some(key) = &ssl.key_location {
+                    client_config.set("ssl.key.location", key);
+                }
+            }
+
+            client_config.create().map_err(|e| {
+                XzatomaError::Watcher(format!("Failed to create Kafka producer: {e}"))
+            })?
+        };
+
+        Ok(Self {
             brokers: config.brokers.clone(),
             input_topic: config.topic.clone(),
             output_topic,
-            client_id: "xzatoma-generic-result-producer".to_string(),
-            security_protocol: SecurityProtocol::Plaintext,
-            sasl_config: None,
-            ssl_config: None,
-            request_timeout: Duration::from_secs(30),
-        };
-
-        if let Some(security) = &config.security {
-            producer.apply_security_config(security)?;
-        }
-
-        Ok(producer)
+            client_id,
+            security_protocol,
+            sasl_config,
+            ssl_config,
+            request_timeout,
+            producer,
+        })
     }
 
     /// Return the effective output topic.
@@ -141,13 +255,13 @@ impl GenericResultProducer {
 
     /// Return the Kafka configuration as key-value settings.
     ///
-    /// This mirrors the stub-first style used by the XZepr consumer so the
-    /// interface is testable before a concrete Kafka producer is wired in.
+    /// This method assembles the full set of Kafka client configuration
+    /// key-value pairs from the producer's fields, suitable for passing to
+    /// `rdkafka::ClientConfig`.
     ///
     /// # Returns
     ///
-    /// A vector of Kafka configuration key-value pairs suitable for a future
-    /// client implementation.
+    /// A vector of Kafka configuration key-value pairs.
     ///
     /// # Examples
     ///
@@ -162,6 +276,8 @@ impl GenericResultProducer {
     ///     output_topic: None,
     ///     group_id: "watcher-group".to_string(),
     ///     auto_create_topics: true,
+    ///     num_partitions: 1,
+    ///     replication_factor: 1,
     ///     security: None,
     /// };
     ///
@@ -212,11 +328,14 @@ impl GenericResultProducer {
         settings
     }
 
-    /// Publish a generic watcher result.
+    /// Publish a generic watcher result to the configured output topic.
     ///
-    /// This is currently a stub implementation. It serializes the result to JSON
-    /// and logs it at `info` level so behavior is visible and testable without a
-    /// concrete Kafka producer dependency.
+    /// Serializes the result to JSON and sends it to the Kafka output topic
+    /// using the underlying `FutureProducer`. The `trigger_event_id` is used
+    /// as the Kafka message key for deterministic partitioning.
+    ///
+    /// Each successful publish is logged at `info` level so published results
+    /// remain observable.
     ///
     /// # Arguments
     ///
@@ -224,34 +343,8 @@ impl GenericResultProducer {
     ///
     /// # Errors
     ///
-    /// Returns an error if serialization fails.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use xzatoma::config::KafkaWatcherConfig;
-    /// use xzatoma::watcher::generic::{GenericPlanResult, GenericResultProducer};
-    ///
-    /// # tokio_test::block_on(async {
-    /// let config = KafkaWatcherConfig {
-    ///     brokers: "localhost:9092".to_string(),
-    ///     topic: "plans".to_string(),
-    ///     output_topic: Some("results".to_string()),
-    ///     group_id: "watcher-group".to_string(),
-    ///     auto_create_topics: true,
-    ///     security: None,
-    /// };
-    ///
-    /// let producer = GenericResultProducer::new(&config).unwrap();
-    /// let result = GenericPlanResult::new(
-    ///     "trigger-1".to_string(),
-    ///     true,
-    ///     "dry-run completed".to_string(),
-    /// );
-    ///
-    /// producer.publish(&result).await.unwrap();
-    /// # });
-    /// ```
+    /// Returns `XzatomaError::Watcher` if JSON serialization fails or if the
+    /// Kafka produce request fails.
     pub async fn publish(&self, result: &GenericPlanResult) -> Result<()> {
         let payload = serde_json::to_string(result).map_err(|error| {
             XzatomaError::Watcher(format!(
@@ -260,59 +353,34 @@ impl GenericResultProducer {
             ))
         })?;
 
+        let record = FutureRecord::to(&self.output_topic)
+            .payload(&payload)
+            .key(&result.trigger_event_id);
+
+        self.producer
+            .send(record, self.request_timeout)
+            .await
+            .map_err(|(kafka_error, _owned_message)| {
+                XzatomaError::Watcher(format!(
+                    "Failed to publish result to topic '{}': {}",
+                    self.output_topic, kafka_error
+                ))
+            })?;
+
         info!(
             topic = %self.output_topic,
             trigger_event_id = %result.trigger_event_id,
             event_type = %result.event_type,
             success = result.success,
             payload = %payload,
-            "Publishing generic watcher result (stub mode)"
+            "Published generic watcher result"
         );
-
-        Ok(())
-    }
-
-    fn apply_security_config(&mut self, security: &KafkaSecurityConfig) -> Result<()> {
-        self.security_protocol = parse_security_protocol(&security.protocol)?;
-
-        if matches!(
-            self.security_protocol,
-            SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
-        ) {
-            self.ssl_config = Some(SslConfig {
-                ca_location: None,
-                certificate_location: None,
-                key_location: None,
-            });
-        }
-
-        if let Some(mechanism) = &security.sasl_mechanism {
-            let username = security.sasl_username.clone().ok_or_else(|| {
-                XzatomaError::Watcher("SASL username is required when mechanism is set".to_string())
-            })?;
-
-            let password = security
-                .sasl_password
-                .clone()
-                .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
-                .ok_or_else(|| {
-                    XzatomaError::Watcher(
-                        "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
-                            .to_string(),
-                    )
-                })?;
-
-            self.sasl_config = Some(SaslConfig {
-                mechanism: parse_sasl_mechanism(mechanism)?,
-                username,
-                password,
-            });
-        }
 
         Ok(())
     }
 }
 
+/// Parse a security protocol string into the corresponding enum variant.
 fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
     match protocol.to_uppercase().as_str() {
         "PLAINTEXT" => Ok(SecurityProtocol::Plaintext),
@@ -326,6 +394,7 @@ fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
     }
 }
 
+/// Parse a SASL mechanism string into the corresponding enum variant.
 fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
     match mechanism.to_uppercase().as_str() {
         "PLAIN" => Ok(SaslMechanism::Plain),
@@ -341,6 +410,7 @@ fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::KafkaSecurityConfig;
     use std::collections::HashMap;
 
     fn base_kafka_config() -> KafkaWatcherConfig {
@@ -350,6 +420,8 @@ mod tests {
             output_topic: None,
             group_id: "xzatoma-watcher".to_string(),
             auto_create_topics: true,
+            num_partitions: 1,
+            replication_factor: 1,
             security: None,
         }
     }
@@ -451,8 +523,21 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_generic_result_producer_debug_impl() {
+        let config = base_kafka_config();
+        let producer = GenericResultProducer::new(&config).unwrap();
+
+        let debug_output = format!("{:?}", producer);
+        assert!(debug_output.contains("GenericResultProducer"));
+        assert!(debug_output.contains("localhost:9092"));
+        assert!(debug_output.contains("plans.input"));
+        assert!(debug_output.contains("<FutureProducer>"));
+    }
+
+    #[ignore] // Requires a running Kafka broker
     #[tokio::test]
-    async fn test_generic_result_producer_publish_stub_succeeds() {
+    async fn test_generic_result_producer_publish_succeeds() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();
         let result = GenericPlanResult::new(

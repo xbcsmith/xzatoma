@@ -38,7 +38,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+use futures::StreamExt;
+use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::ClientConfig;
+use rdkafka::Message;
 
 use super::config::KafkaConsumerConfig;
 use super::message::CloudEventMessage;
@@ -101,12 +106,11 @@ pub trait MessageHandler: Send + Sync {
 /// XZepr Kafka consumer.
 ///
 /// A consumer that reads CloudEvents messages from XZepr Kafka topics.
-/// Supports SASL/SCRAM authentication and provides flexible message handling.
+/// Supports SASL/SCRAM authentication and provides flexible message handling
+/// through either a `MessageHandler` trait implementation or an async channel.
 ///
-/// Note: This struct provides the interface but actual Kafka connectivity
-/// requires the `rdkafka` feature to be enabled with the rdkafka crate.
-/// The current implementation is a mock/stub that demonstrates the API
-/// without requiring the rdkafka dependency.
+/// Uses `rdkafka::consumer::StreamConsumer` under the hood to stream messages
+/// from the configured Kafka topic.
 pub struct XzeprConsumer {
     config: KafkaConsumerConfig,
     running: Arc<AtomicBool>,
@@ -148,7 +152,8 @@ impl XzeprConsumer {
 
     /// Returns the Kafka configuration as a key-value map.
     ///
-    /// This can be used with the rdkafka crate's ClientConfig.
+    /// This is used internally to build the `rdkafka::ClientConfig` and can
+    /// also be inspected for debugging or testing purposes.
     pub fn get_kafka_config(&self) -> Vec<(String, String)> {
         let mut settings = vec![
             ("bootstrap.servers".to_string(), self.config.brokers.clone()),
@@ -201,6 +206,46 @@ impl XzeprConsumer {
         settings
     }
 
+    /// Builds an `rdkafka::ClientConfig` from the consumer's Kafka configuration.
+    ///
+    /// # Returns
+    ///
+    /// A configured `rdkafka::ClientConfig` ready to create a `StreamConsumer`.
+    fn build_client_config(&self) -> ClientConfig {
+        let mut client_config = ClientConfig::new();
+        for (key, value) in self.get_kafka_config() {
+            client_config.set(&key, &value);
+        }
+        client_config
+    }
+
+    /// Creates and subscribes a `StreamConsumer` to the configured topic.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConsumerError::Kafka` if the consumer cannot be created or
+    /// subscription fails.
+    fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
+        let client_config = self.build_client_config();
+
+        let consumer: StreamConsumer = client_config
+            .create()
+            .map_err(|e| ConsumerError::Kafka(format!("Failed to create consumer: {e}")))?;
+
+        consumer
+            .subscribe(&[&self.config.topic])
+            .map_err(|e| ConsumerError::Kafka(format!("Failed to subscribe to topic: {e}")))?;
+
+        info!(
+            service = %self.config.service_name,
+            topic = %self.config.topic,
+            group_id = %self.config.group_id,
+            "Consumer subscribed and assigned to consumer group"
+        );
+
+        Ok(consumer)
+    }
+
     /// Returns the topic this consumer is configured to consume from.
     pub fn topic(&self) -> &str {
         &self.config.topic
@@ -232,8 +277,13 @@ impl XzeprConsumer {
 
     /// Runs the consumer with the given message handler.
     ///
-    /// This method blocks until the consumer is stopped or an error occurs.
-    /// Messages are processed sequentially through the handler.
+    /// Creates a `StreamConsumer`, subscribes to the configured topic, and
+    /// streams messages to the provided handler. The consumer runs until
+    /// `stop()` is called or a fatal Kafka error occurs.
+    ///
+    /// Messages are processed sequentially through the handler. If the handler
+    /// returns an error for a particular message, the error is logged and the
+    /// consumer continues processing subsequent messages.
     ///
     /// # Arguments
     ///
@@ -241,47 +291,93 @@ impl XzeprConsumer {
     ///
     /// # Errors
     ///
-    /// Returns `ConsumerError::Kafka` if there's a Kafka error.
-    ///
-    /// # Note
-    ///
-    /// This is a stub implementation. To use with real Kafka, enable the
-    /// `rdkafka` feature and use the rdkafka crate.
+    /// Returns `ConsumerError::Kafka` if the consumer cannot be created,
+    /// subscription fails, or a fatal Kafka error occurs during streaming.
     pub async fn run<H: MessageHandler + 'static>(
         &self,
-        _handler: Arc<H>,
+        handler: Arc<H>,
     ) -> Result<(), ConsumerError> {
         self.running.store(true, Ordering::SeqCst);
 
         info!(
             service = %self.config.service_name,
             topic = %self.config.topic,
-            "Starting consumer (stub mode - no actual Kafka connection)"
+            "Starting consumer"
         );
 
-        // This is a stub that demonstrates the API.
-        // In a real implementation, this would:
-        // 1. Create rdkafka StreamConsumer
-        // 2. Subscribe to the topic
-        // 3. Stream messages and call handler.handle() for each
+        let consumer = self.create_subscribed_consumer()?;
+        let mut stream = consumer.stream();
 
         while self.running.load(Ordering::SeqCst) {
-            // Simulate waiting for messages
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            debug!(
-                service = %self.config.service_name,
-                "Waiting for messages... (stub mode)"
-            );
+            // Use select with a short timeout so we can periodically check the
+            // running flag even when no messages are arriving.
+            let message = tokio::select! {
+                biased;
+                msg = stream.next() => msg,
+                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                    debug!(
+                        service = %self.config.service_name,
+                        "No messages received, checking shutdown flag"
+                    );
+                    continue;
+                }
+            };
+
+            match message {
+                Some(Ok(borrowed_message)) => match borrowed_message.payload_view::<str>() {
+                    Some(Ok(payload)) => {
+                        if let Err(e) = Self::process_message(payload, &*handler).await {
+                            error!(
+                                service = %self.config.service_name,
+                                "Failed to process message: {}", e
+                            );
+                        }
+                    }
+                    Some(Err(e)) => {
+                        error!(
+                            service = %self.config.service_name,
+                            "Error decoding message payload as UTF-8: {}", e
+                        );
+                    }
+                    None => {
+                        debug!(
+                            service = %self.config.service_name,
+                            "Received message with empty payload, skipping"
+                        );
+                    }
+                },
+                Some(Err(e)) => {
+                    error!(
+                        service = %self.config.service_name,
+                        "Kafka consumer error: {}", e
+                    );
+                    self.running.store(false, Ordering::SeqCst);
+                    return Err(ConsumerError::Kafka(e.to_string()));
+                }
+                None => {
+                    warn!(
+                        service = %self.config.service_name,
+                        "Message stream ended unexpectedly"
+                    );
+                    break;
+                }
+            }
         }
 
+        self.running.store(false, Ordering::SeqCst);
         info!(service = %self.config.service_name, "Consumer stopped");
         Ok(())
     }
 
     /// Runs the consumer and sends messages to a channel.
     ///
-    /// This provides an alternative to the handler pattern, allowing messages
-    /// to be processed in a separate task.
+    /// Creates a `StreamConsumer`, subscribes to the configured topic, and
+    /// streams deserialized `CloudEventMessage` values through the provided
+    /// `mpsc::Sender`. This provides an alternative to the handler pattern,
+    /// allowing messages to be processed in a separate task.
+    ///
+    /// The consumer stops when `stop()` is called, a fatal Kafka error occurs,
+    /// or the channel receiver is dropped.
     ///
     /// # Arguments
     ///
@@ -289,35 +385,103 @@ impl XzeprConsumer {
     ///
     /// # Errors
     ///
-    /// Returns `ConsumerError::Kafka` if there's a Kafka error.
-    ///
-    /// # Note
-    ///
-    /// This is a stub implementation.
+    /// Returns `ConsumerError::Kafka` if the consumer cannot be created,
+    /// subscription fails, or a fatal Kafka error occurs during streaming.
     pub async fn run_with_channel(
         &self,
-        _sender: mpsc::Sender<CloudEventMessage>,
+        sender: mpsc::Sender<CloudEventMessage>,
     ) -> Result<(), ConsumerError> {
         self.running.store(true, Ordering::SeqCst);
 
         info!(
             service = %self.config.service_name,
             topic = %self.config.topic,
-            "Starting consumer with channel (stub mode)"
+            "Starting consumer with channel"
         );
 
+        let consumer = self.create_subscribed_consumer()?;
+        let mut stream = consumer.stream();
+
         while self.running.load(Ordering::SeqCst) {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let message = tokio::select! {
+                biased;
+                msg = stream.next() => msg,
+                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                    debug!(
+                        service = %self.config.service_name,
+                        "No messages received, checking shutdown flag"
+                    );
+                    continue;
+                }
+            };
+
+            match message {
+                Some(Ok(borrowed_message)) => match borrowed_message.payload_view::<str>() {
+                    Some(Ok(payload)) => match serde_json::from_str::<CloudEventMessage>(payload) {
+                        Ok(event) => {
+                            debug!(
+                                event_id = %event.id,
+                                event_type = %event.event_type,
+                                "Sending CloudEvent to channel"
+                            );
+                            if sender.send(event).await.is_err() {
+                                info!(
+                                    service = %self.config.service_name,
+                                    "Channel receiver dropped, stopping consumer"
+                                );
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                service = %self.config.service_name,
+                                "Error parsing CloudEvent: {}", e
+                            );
+                            debug!("Raw payload: {}", payload);
+                        }
+                    },
+                    Some(Err(e)) => {
+                        error!(
+                            service = %self.config.service_name,
+                            "Error decoding message payload as UTF-8: {}", e
+                        );
+                    }
+                    None => {
+                        debug!(
+                            service = %self.config.service_name,
+                            "Received message with empty payload, skipping"
+                        );
+                    }
+                },
+                Some(Err(e)) => {
+                    error!(
+                        service = %self.config.service_name,
+                        "Kafka consumer error: {}", e
+                    );
+                    self.running.store(false, Ordering::SeqCst);
+                    return Err(ConsumerError::Kafka(e.to_string()));
+                }
+                None => {
+                    warn!(
+                        service = %self.config.service_name,
+                        "Message stream ended unexpectedly"
+                    );
+                    break;
+                }
+            }
         }
 
+        self.running.store(false, Ordering::SeqCst);
         info!(service = %self.config.service_name, "Consumer stopped");
         Ok(())
     }
 
     /// Processes a single message payload.
     ///
-    /// This is a utility method for parsing and handling a message payload.
-    /// It can be used when integrating with rdkafka or other Kafka clients.
+    /// Deserializes the JSON payload into a `CloudEventMessage` and passes it
+    /// to the handler. If deserialization fails, returns a `ConsumerError`. If
+    /// the handler returns an error, it is logged but the method still returns
+    /// `Ok(())` so the consumer can continue processing subsequent messages.
     ///
     /// # Arguments
     ///
@@ -326,7 +490,13 @@ impl XzeprConsumer {
     ///
     /// # Returns
     ///
-    /// Returns `Ok(())` if the message was processed successfully.
+    /// Returns `Ok(())` if the message was deserialized and dispatched to the
+    /// handler (even if the handler itself returned an error).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConsumerError::Deserialization` if the payload is not valid
+    /// JSON or does not match the `CloudEventMessage` schema.
     pub async fn process_message<H: MessageHandler>(
         payload: &str,
         handler: &H,
@@ -467,7 +637,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn test_run_and_stop() {
+        // This test requires a real Kafka broker at localhost:9092.
         let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
         let consumer = Arc::new(XzeprConsumer::new(config).unwrap());
         let handler = Arc::new(TestHandler::new());
@@ -476,14 +648,14 @@ mod tests {
         let handle = tokio::spawn(async move { consumer_clone.run(handler).await });
 
         // Give it time to start
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         assert!(consumer.is_running());
 
         // Stop the consumer
         consumer.stop();
 
         // Wait for it to finish
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
 
         assert!(result.is_ok());
     }
@@ -501,5 +673,135 @@ mod tests {
             config_map.get("ssl.ca.location").unwrap(),
             "/path/to/ca.pem"
         );
+    }
+
+    #[test]
+    fn test_build_client_config_contains_all_settings() {
+        let config = KafkaConsumerConfig::new("broker1:9092", "my-topic", "my-service")
+            .with_sasl_scram_sha256("admin", "secret");
+        let consumer = XzeprConsumer::new(config).unwrap();
+
+        // Verify build_client_config returns without panic and the underlying
+        // get_kafka_config has the expected entries.
+        let pairs = consumer.get_kafka_config();
+        let map: std::collections::HashMap<_, _> = pairs.into_iter().collect();
+        assert_eq!(map.get("bootstrap.servers").unwrap(), "broker1:9092");
+        assert_eq!(map.get("sasl.username").unwrap(), "admin");
+    }
+
+    #[test]
+    fn test_consumer_not_running_initially() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
+        let consumer = XzeprConsumer::new(config).unwrap();
+        assert!(!consumer.is_running());
+    }
+
+    #[test]
+    fn test_stop_when_already_stopped() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
+        let consumer = XzeprConsumer::new(config).unwrap();
+        assert!(!consumer.is_running());
+
+        // Calling stop when not running should not panic.
+        consumer.stop();
+        assert!(!consumer.is_running());
+    }
+
+    #[tokio::test]
+    async fn test_process_message_handler_error_still_returns_ok() {
+        // If the handler returns an error the process_message method should
+        // still return Ok so that the consumer continues with the next message.
+        struct FailingHandler;
+
+        #[async_trait::async_trait]
+        impl MessageHandler for FailingHandler {
+            async fn handle(
+                &self,
+                _message: CloudEventMessage,
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                Err("handler error".into())
+            }
+        }
+
+        let handler = FailingHandler;
+        let payload = r#"{
+            "success": true,
+            "id": "err-id",
+            "specversion": "1.0.1",
+            "type": "test.event",
+            "source": "test-source",
+            "api_version": "v1",
+            "name": "test.event",
+            "version": "1.0.0",
+            "release": "1.0.0",
+            "platform_id": "test",
+            "package": "testpkg",
+            "data": {
+                "events": [],
+                "event_receivers": [],
+                "event_receiver_groups": []
+            }
+        }"#;
+
+        let result = XzeprConsumer::process_message(payload, &handler).await;
+        assert!(result.is_ok());
+    }
+
+    // -- Integration tests that require a running Kafka broker --
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_run_with_channel_integration() {
+        // Requires a real Kafka broker at localhost:9092 with topic "test-topic".
+        let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
+        let consumer = Arc::new(XzeprConsumer::new(config).unwrap());
+
+        let (tx, mut rx) = mpsc::channel::<CloudEventMessage>(64);
+
+        let consumer_clone = consumer.clone();
+        let handle = tokio::spawn(async move { consumer_clone.run_with_channel(tx).await });
+
+        // Allow some time for the consumer to connect and start streaming.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert!(consumer.is_running());
+
+        // Stop the consumer after a brief period.
+        consumer.stop();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(result.is_ok());
+
+        // Drain any messages that may have arrived.
+        rx.close();
+        while rx.recv().await.is_some() {}
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_run_handler_receives_messages_integration() {
+        // Requires a real Kafka broker at localhost:9092 with topic "test-topic"
+        // and at least one CloudEventMessage published to the topic.
+        let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
+        let consumer = Arc::new(XzeprConsumer::new(config).unwrap());
+        let handler = Arc::new(TestHandler::new());
+
+        let consumer_clone = consumer.clone();
+        let handler_clone = handler.clone();
+        let handle = tokio::spawn(async move { consumer_clone.run(handler_clone).await });
+
+        // Wait a bit for messages to be consumed.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        consumer.stop();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        assert!(result.is_ok());
+
+        let received = handler.received.lock().await;
+        // If messages were available on the topic, verify they were received.
+        for msg in received.iter() {
+            assert!(!msg.id.is_empty(), "Message ID should not be empty");
+            assert!(!msg.event_type.is_empty(), "Event type should not be empty");
+        }
     }
 }

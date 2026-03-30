@@ -2216,6 +2216,10 @@ pub mod watch {
         pub name: Option<String>,
         /// Whether dry-run mode is enabled.
         pub dry_run: bool,
+        /// Optional Kafka broker addresses override (comma-separated).
+        pub brokers: Option<String>,
+        /// Optional generic matcher version regex override.
+        pub match_version: Option<String>,
     }
     use std::path::PathBuf;
 
@@ -2439,6 +2443,33 @@ pub mod watch {
             );
         }
 
+        // Override brokers if provided
+        if let Some(brokers) = &overrides.brokers {
+            if let Some(ref mut kafka) = config.watcher.kafka {
+                kafka.brokers = brokers.clone();
+                tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
+            }
+        }
+
+        // Override generic matcher version if provided
+        if let Some(version_pattern) = &overrides.match_version {
+            config.watcher.generic_match.version = Some(version_pattern.clone());
+            tracing::debug!(version = %version_pattern, "CLI override: Generic matcher version");
+        }
+
+        // Override filter config if provided
+        if let Some(filter_path) = &overrides.filter_config {
+            let contents = std::fs::read_to_string(filter_path).map_err(|e| {
+                XzatomaError::Config(format!("Failed to read filter config file: {}", e))
+            })?;
+            let filter_config: crate::config::EventFilterConfig = serde_yaml::from_str(&contents)
+                .map_err(|e| {
+                XzatomaError::Config(format!("Failed to parse filter config: {}", e))
+            })?;
+            config.watcher.filters = filter_config;
+            tracing::debug!(path = %filter_path.display(), "CLI override: Event filter config");
+        }
+
         // Override event types filter if provided
         if let Some(types) = &overrides.event_types {
             let event_types_vec: Vec<String> = types
@@ -2504,6 +2535,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2531,6 +2564,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2565,6 +2600,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
             config.watcher.logging.json_format = false;
 
@@ -2590,6 +2627,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2618,6 +2657,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2644,6 +2685,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2671,6 +2714,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2704,6 +2749,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2731,6 +2778,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2755,6 +2804,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2782,6 +2833,8 @@ pub mod watch {
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
                 security: None,
+                num_partitions: 1,
+                replication_factor: 1,
             });
 
             let result = apply_cli_overrides(
@@ -2797,6 +2850,133 @@ pub mod watch {
                 config.watcher.generic_match.name.as_deref(),
                 Some("service-a")
             );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_brokers() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    brokers: Some("broker1:9092,broker2:9092".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.kafka.as_ref().unwrap().brokers,
+                "broker1:9092,broker2:9092"
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_match_version() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    match_version: Some("v1\\..*".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.watcher.generic_match.version.as_deref(),
+                Some("v1\\..*")
+            );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_filter_config_from_file() {
+            let dir = tempfile::tempdir().expect("failed to create temp dir");
+            let filter_path = dir.path().join("filters.yaml");
+            std::fs::write(
+                &filter_path,
+                "event_types:\n  - deployment.success\nsuccess_only: true\n",
+            )
+            .expect("failed to write temp filter file");
+
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    filter_config: Some(filter_path),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(config.watcher.filters.event_types.len(), 1);
+            assert!(config
+                .watcher
+                .filters
+                .event_types
+                .contains(&"deployment.success".to_string()));
+            assert!(config.watcher.filters.success_only);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_filter_config_missing_file() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    filter_config: Some(PathBuf::from("/nonexistent/filters.yaml")),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_err());
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to read filter config file"));
         }
 
         #[tokio::test]
