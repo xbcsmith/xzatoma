@@ -694,9 +694,26 @@ pub(crate) fn convert_response_input_to_messages(
                     tool_call_id: Some(call_id.clone()),
                 });
             }
-            ResponseInputItem::Reasoning { .. } => {
-                // Reasoning content is not stored in Message, skip for now
-                // Could be extended in future to add reasoning metadata
+            ResponseInputItem::Reasoning { content } => {
+                let full_text: String = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ResponseInputContent::OutputText { text } => Some(text.as_str()),
+                        ResponseInputContent::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<&str>>()
+                    .join("");
+                let preview = if full_text.len() > 200 {
+                    format!("{}...", &full_text[..200])
+                } else {
+                    full_text.clone()
+                };
+                tracing::debug!(
+                    reasoning_chars = full_text.len(),
+                    preview = %preview,
+                    "Reasoning content received but not stored in Message format"
+                );
             }
         }
     }
@@ -2477,7 +2494,10 @@ impl Provider for CopilotProvider {
                 .await
             }
             ModelEndpoint::Messages => {
-                // Messages endpoint not yet implemented, fall back to completions
+                tracing::warn!(
+                    model = %model,
+                    "Messages endpoint not yet implemented; falling back to completions endpoint"
+                );
                 self.complete_with_completions_endpoint(
                     &model,
                     messages,
@@ -2880,30 +2900,41 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_set_model_with_valid_model() {
-        // This test requires API authentication and would make real API calls
-        // In a real test environment with proper mocking, we would:
-        // 1. Mock the Copilot models API to return test data
-        // 2. Call set_model with a known-good model from that data
-        // 3. Verify the model was updated
-        // For now, we just verify the structure compiles
+        // set_model requires a live or mocked Copilot models endpoint.
+        // Use wiremock or mockito to return test model data,
+        // then call set_model with a known-good model name.
+        let config = CopilotConfig::default();
+        let mut provider = CopilotProvider::new(config).unwrap();
+        let result = provider.set_model("gpt-4o".to_string()).await;
+        // Without a mock server this will fail with an auth error
+        assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_set_model_with_invalid_model() {
-        // This test requires API authentication and would make real API calls
-        // In a real test environment with proper mocking, we would:
-        // 1. Mock the Copilot models API to return test data
-        // 2. Call set_model with an invalid model name
-        // 3. Verify it returns an error with helpful message
-        // For now, we just verify the structure compiles
+        // set_model requires a live or mocked Copilot models endpoint.
+        // Use wiremock or mockito to validate that an invalid model name
+        // produces a descriptive error.
+        let config = CopilotConfig::default();
+        let mut provider = CopilotProvider::new(config).unwrap();
+        let result = provider
+            .set_model("nonexistent-model-xyz".to_string())
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[ignore = "requires mock HTTP server for Copilot API"]
     async fn test_list_models_returns_all_supported_models() {
-        // This test requires API authentication and would make real API calls
-        // The actual model count varies based on what GitHub enables
-        // See test_parse_models_from_testdata for parsing validation
+        // list_models requires a live or mocked Copilot models endpoint.
+        // See test_parse_models_from_testdata for offline parsing validation.
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+        let result = provider.list_models().await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

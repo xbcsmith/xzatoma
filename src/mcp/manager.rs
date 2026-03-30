@@ -391,16 +391,12 @@ impl McpClientManager {
 
         // Register sampling handler stub if enabled.
         if config.sampling_enabled {
-            tracing::debug!(id = %id, "Registering sampling handler (stub)");
-            // Phase 5B will replace this with a real XzatomaSamplingHandler.
-            // For now we register a no-op so that `capabilities.sampling` is
-            // honoured at the protocol level.
+            tracing::warn!(id = %id, "Sampling handler not yet implemented; MCP servers requiring sampling will fail");
         }
 
         // Register elicitation handler stub if enabled.
         if config.elicitation_enabled {
-            tracing::debug!(id = %id, "Registering elicitation handler (stub)");
-            // Phase 5B will replace this with a real XzatomaElicitationHandler.
+            tracing::warn!(id = %id, "Elicitation handler not yet implemented; MCP servers requiring elicitation will fail");
         }
 
         // Fetch and cache the tool list.
@@ -683,19 +679,19 @@ impl McpClientManager {
             .call_tool(tool_name, arguments, Some(task_params))
             .await?;
 
-        // If the response meta indicates a task was created, wait for it.
-        // Phase 6 will implement full task polling via TaskManager; for now
-        // we return the initial response directly.
+        // If the response meta indicates a task was created, log a warning.
+        // Full task polling is not yet implemented; we return the initial
+        // response directly.
         if response
             .meta
             .as_ref()
             .and_then(|m| m.get("taskId"))
             .is_some()
         {
-            tracing::debug!(
+            tracing::warn!(
                 server_id = %server_id,
                 tool = %tool_name,
-                "Task created; returning initial response (Phase 6 will add polling)"
+                "Long-running MCP task detected but polling is not yet implemented; returning partial result"
             );
         }
 

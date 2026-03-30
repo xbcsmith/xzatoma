@@ -712,9 +712,6 @@ pub async fn load_file_content(
 /// # Returns
 ///
 /// Formatted string with search results suitable for prompt inclusion
-// Retained for @search and @grep mention handling; will be called when
-// search/grep mention execution is wired into augment_prompt_with_mentions.
-#[allow(dead_code)]
 pub fn format_search_results(matches: &[crate::tools::SearchMatch], pattern: &str) -> String {
     if matches.is_empty() {
         return format!("Search results for '{}': No matches found", pattern);
@@ -1318,27 +1315,78 @@ pub async fn augment_prompt_with_mentions(
         }
     }
 
-    // Process search mentions (note: actual grep execution requires GrepTool)
+    // Process search and grep mentions using GrepTool
     for mention in mentions {
         match mention {
             Mention::Search(search_mention) => {
-                // Search mentions are logged but not executed without grep tool
-                // The grep tool will be integrated in a later phase
-                debug!(
-                    "Search mention parsed (execution pending grep tool): {:?}",
-                    search_mention.pattern
+                let grep_tool = crate::tools::GrepTool::new(
+                    working_dir.to_path_buf(),
+                    20, // max results per page
+                    2,  // context lines
+                    max_size_bytes,
+                    Vec::new(),
                 );
+                match grep_tool
+                    .search(&search_mention.pattern, None, false, 0)
+                    .await
+                {
+                    Ok((matches, total)) => {
+                        let formatted = format_search_results(&matches, &search_mention.pattern);
+                        file_contents.push(formatted);
+                        successes.push(format!(
+                            "Search @search:\"{}\" found {} match(es)",
+                            search_mention.pattern, total
+                        ));
+                    }
+                    Err(e) => {
+                        let load_err = LoadError::new(
+                            LoadErrorKind::ParseError,
+                            format!("@search:\"{}\"", search_mention.pattern),
+                            format!("Search failed: {}", e),
+                            Some("Check the search pattern syntax".to_string()),
+                        );
+                        errors.push(load_err.clone());
+                        file_contents.push(format!(
+                            "Failed to execute search for '{}':\n\n```text\n{}\n```",
+                            search_mention.pattern, load_err.message
+                        ));
+                    }
+                }
             }
             Mention::Grep(grep_mention) => {
-                // Grep mentions are logged but not executed without grep tool
-                // The grep tool will be integrated in a later phase
-                debug!(
-                    "Grep mention parsed (execution pending grep tool): {:?}",
-                    grep_mention.pattern
+                let grep_tool = crate::tools::GrepTool::new(
+                    working_dir.to_path_buf(),
+                    20, // max results per page
+                    2,  // context lines
+                    max_size_bytes,
+                    Vec::new(),
                 );
+                match grep_tool.search(&grep_mention.pattern, None, true, 0).await {
+                    Ok((matches, total)) => {
+                        let formatted = format_search_results(&matches, &grep_mention.pattern);
+                        file_contents.push(formatted);
+                        successes.push(format!(
+                            "Grep @grep:\"{}\" found {} match(es)",
+                            grep_mention.pattern, total
+                        ));
+                    }
+                    Err(e) => {
+                        let load_err = LoadError::new(
+                            LoadErrorKind::ParseError,
+                            format!("@grep:\"{}\"", grep_mention.pattern),
+                            format!("Grep failed: {}", e),
+                            Some("Check the regex pattern syntax".to_string()),
+                        );
+                        errors.push(load_err.clone());
+                        file_contents.push(format!(
+                            "Failed to execute grep for '{}':\n\n```text\n{}\n```",
+                            grep_mention.pattern, load_err.message
+                        ));
+                    }
+                }
             }
             _ => {
-                // File and URL mentions are handled elsewhere
+                // File and URL mentions handled above
             }
         }
     }
@@ -2209,15 +2257,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_augment_prompt_non_file_mentions_ignored() {
+    async fn test_augment_prompt_search_mention_executes() {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mentions = vec![
-            Mention::Search(SearchMention {
-                pattern: "test".to_string(),
-            }),
-            // URL mentions are now processed, so test search mentions only
-        ];
+        let mentions = vec![Mention::Search(SearchMention {
+            pattern: "test".to_string(),
+        })];
 
         let mut cache = MentionCache::new();
         let (augmented, errors, successes) = augment_prompt_with_mentions(
@@ -2229,12 +2274,107 @@ mod tests {
         )
         .await;
 
-        // No content should have been loaded for pure search mentions
+        // Search executes via GrepTool; empty dir yields 0 matches but still produces output
         assert!(errors.is_empty());
-        assert!(successes.is_empty());
+        assert_eq!(successes.len(), 1);
+        assert!(successes[0].contains("@search:\"test\""));
+        assert!(successes[0].contains("0 match(es)"));
+        // The augmented prompt should contain the "No matches found" result
+        assert!(augmented.contains("No matches found"));
+        assert!(augmented.contains("Search for patterns"));
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_grep_mention_injects_results() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a file with searchable content
+        let test_file = temp_dir.path().join("hello.txt");
+        std::fs::write(&test_file, "Hello world\nfoo bar baz\nHello again\n")
+            .expect("write test file");
+
+        let mentions = vec![Mention::Grep(SearchMention {
+            pattern: "Hello".to_string(),
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
+            &mentions,
+            "Find greetings",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
 
         assert!(errors.is_empty());
-        assert_eq!(augmented, "Search for patterns");
-        assert!(cache.is_empty());
+        assert_eq!(successes.len(), 1);
+        assert!(successes[0].contains("@grep:\"Hello\""));
+        // Grep is case-sensitive, so it should match the two "Hello" lines
+        assert!(successes[0].contains("match(es)"));
+        // The augmented prompt should contain the search results header
+        assert!(augmented.contains("Search results for 'Hello'"));
+        assert!(augmented.contains("Find greetings"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_search_mention_injects_results() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a file with searchable content
+        let test_file = temp_dir.path().join("data.txt");
+        std::fs::write(&test_file, "Apple\nbanana\nAPPLE pie\n").expect("write test file");
+
+        let mentions = vec![Mention::Search(SearchMention {
+            pattern: "apple".to_string(),
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
+            &mentions,
+            "Find fruit",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert_eq!(successes.len(), 1);
+        assert!(successes[0].contains("@search:\"apple\""));
+        // Search is case-insensitive, so should match "Apple" and "APPLE pie"
+        assert!(successes[0].contains("match(es)"));
+        assert!(augmented.contains("Search results for 'apple'"));
+        assert!(augmented.contains("Find fruit"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_grep_no_matches() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a file that will NOT match the pattern
+        let test_file = temp_dir.path().join("nope.txt");
+        std::fs::write(&test_file, "nothing relevant here\n").expect("write test file");
+
+        let mentions = vec![Mention::Grep(SearchMention {
+            pattern: "zzz_nonexistent_zzz".to_string(),
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
+            &mentions,
+            "Search for nothing",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty());
+        assert_eq!(successes.len(), 1);
+        assert!(successes[0].contains("0 match(es)"));
+        assert!(augmented.contains("No matches found"));
+        assert!(augmented.contains("Search for nothing"));
     }
 }

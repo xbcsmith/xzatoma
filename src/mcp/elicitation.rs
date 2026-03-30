@@ -335,7 +335,10 @@ impl XzatomaElicitationHandler {
         }
 
         // Return Cancel: the synchronous handler cannot await the OAuth
-        // callback. Phase 6 will wire up the notification-based flow.
+        // callback.  A notification-based flow is needed to support this.
+        tracing::warn!(
+            "MCP URL elicitation returning Cancel; async callback flow not yet implemented"
+        );
         Ok(ElicitationResult {
             action: ElicitationAction::Cancel,
             content: None,
