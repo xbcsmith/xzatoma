@@ -1,0 +1,4 @@
+provider:
+  type: copilot
+agent:
+  timeout_seconds: 0

@@ -1,0 +1,220 @@
+# Eval scenarios for configuration validation.
+#
+# Each scenario has:
+#   id            - unique identifier (used in test output)
+#   description   - human-readable description of what is being tested
+#   config_file   - path to a config fixture, relative to configs/
+#   expect        - outcome ("valid" or "invalid") and optional error_contains
+#
+# All scenarios exercise Config::validate() deterministically with no I/O
+# beyond reading the fixture file from disk.
+
+scenarios:
+  # -- Valid configurations --------------------------------------------------
+
+  - id: valid_copilot
+    description: "minimal valid config with copilot provider"
+    config_file: "valid_copilot.yaml"
+    expect:
+      outcome: valid
+
+  - id: valid_ollama
+    description: "minimal valid config with ollama provider"
+    config_file: "valid_ollama.yaml"
+    expect:
+      outcome: valid
+
+  - id: valid_full
+    description: "complete config with all sections populated"
+    config_file: "valid_full.yaml"
+    expect:
+      outcome: valid
+
+  - id: valid_generic_watcher
+    description: "valid generic watcher with kafka and regex match rules"
+    config_file: "valid_generic_watcher.yaml"
+    expect:
+      outcome: valid
+
+  - id: valid_skills_disabled
+    description: "skills.enabled: false still passes validation"
+    config_file: "valid_skills_disabled.yaml"
+    expect:
+      outcome: valid
+
+  # -- Provider validation ---------------------------------------------------
+
+  - id: invalid_empty_provider
+    description: "empty provider type triggers validation error"
+    config_file: "invalid_empty_provider.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "Provider type cannot be empty"
+
+  - id: invalid_unknown_provider
+    description: "unsupported provider type triggers validation error"
+    config_file: "invalid_unknown_provider.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "Invalid provider type"
+
+  # -- Agent validation ------------------------------------------------------
+
+  - id: invalid_max_turns_zero
+    description: "max_turns: 0 triggers range error"
+    config_file: "invalid_max_turns_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "max_turns must be greater than 0"
+
+  - id: invalid_max_turns_over
+    description: "max_turns: 5000 triggers upper bound error"
+    config_file: "invalid_max_turns_over.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "max_turns must be less than or equal to 1000"
+
+  - id: invalid_timeout_zero
+    description: "timeout_seconds: 0 triggers positive check"
+    config_file: "invalid_timeout_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "timeout_seconds must be greater than 0"
+
+  # -- Conversation validation -----------------------------------------------
+
+  - id: invalid_max_tokens_zero
+    description: "conversation.max_tokens: 0 triggers positive check"
+    config_file: "invalid_max_tokens_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "conversation.max_tokens must be greater than 0"
+
+  - id: invalid_prune_threshold
+    description: "prune_threshold: 1.5 triggers range error"
+    config_file: "invalid_prune_threshold.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "conversation.prune_threshold must be between 0.0 and 1.0"
+
+  - id: invalid_warning_threshold
+    description: "warning_threshold: 0.0 triggers range error"
+    config_file: "invalid_warning_threshold.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "conversation.warning_threshold must be between 0.0 and 1.0"
+
+  - id: invalid_summary_below_warning
+    description: "auto_summary_threshold < warning_threshold triggers ordering error"
+    config_file: "invalid_summary_below_warning.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "conversation.auto_summary_threshold must be >= warning_threshold"
+
+  # -- Subagent validation ---------------------------------------------------
+
+  - id: invalid_subagent_depth_zero
+    description: "subagent.max_depth: 0 triggers positive check"
+    config_file: "invalid_subagent_depth_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "agent.subagent.max_depth must be greater than 0"
+
+  - id: invalid_subagent_depth_over
+    description: "subagent.max_depth: 20 triggers upper bound error"
+    config_file: "invalid_subagent_depth_over.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "agent.subagent.max_depth cannot exceed 10"
+
+  - id: invalid_subagent_turns_zero
+    description: "subagent.default_max_turns: 0 triggers positive check"
+    config_file: "invalid_subagent_turns_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "agent.subagent.default_max_turns must be greater than 0"
+
+  - id: invalid_subagent_turns_over
+    description: "subagent.default_max_turns: 200 triggers upper bound error"
+    config_file: "invalid_subagent_turns_over.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "agent.subagent.default_max_turns cannot exceed 100"
+
+  - id: invalid_subagent_output_small
+    description: "subagent.output_max_size: 512 triggers minimum size error"
+    config_file: "invalid_subagent_output_small.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "agent.subagent.output_max_size must be at least 1024 bytes"
+
+  - id: invalid_subagent_provider
+    description: "subagent.provider: openai triggers invalid provider error"
+    config_file: "invalid_subagent_provider.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "Invalid subagent provider override"
+
+  # -- Watcher / Kafka validation --------------------------------------------
+
+  - id: invalid_kafka_empty_brokers
+    description: "kafka.brokers: empty string triggers validation error"
+    config_file: "invalid_kafka_empty_brokers.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "watcher.kafka.brokers cannot be empty"
+
+  - id: invalid_kafka_empty_topic
+    description: "kafka.topic: empty string triggers validation error"
+    config_file: "invalid_kafka_empty_topic.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "watcher.kafka.topic cannot be empty"
+
+  - id: invalid_generic_no_kafka
+    description: "watcher_type: generic without kafka section triggers error"
+    config_file: "invalid_generic_no_kafka.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "watcher.kafka is required when watcher.watcher_type is generic"
+
+  - id: invalid_generic_bad_regex
+    description: "invalid regex in generic_match.action triggers error"
+    config_file: "invalid_generic_bad_regex.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "Invalid generic match regex"
+
+  # -- ACP validation --------------------------------------------------------
+
+  - id: invalid_acp_empty_host
+    description: "acp.host: empty string triggers validation error"
+    config_file: "invalid_acp_empty_host.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "acp.host cannot be empty"
+
+  - id: invalid_acp_port_zero
+    description: "acp.port: 0 triggers validation error"
+    config_file: "invalid_acp_port_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "acp.port must be greater than 0"
+
+  # -- MCP validation --------------------------------------------------------
+
+  - id: invalid_mcp_duplicate_id
+    description: "two MCP servers with the same id triggers duplicate error"
+    config_file: "invalid_mcp_duplicate_id.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "duplicate MCP server id"
+
+  # -- Skills validation -----------------------------------------------------
+
+  - id: invalid_skills_max_zero
+    description: "skills.max_discovered_skills: 0 triggers positive check"
+    config_file: "invalid_skills_max_zero.yaml"
+    expect:
+      outcome: invalid
+      error_contains: "skills.max_discovered_skills must be greater than 0"

@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent:
+  subagent:
+    max_depth: 0

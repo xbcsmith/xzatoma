@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent: {}
+watcher:
+  watcher_type: generic

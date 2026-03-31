@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent:
+  conversation:
+    auto_summary_threshold: 0.5

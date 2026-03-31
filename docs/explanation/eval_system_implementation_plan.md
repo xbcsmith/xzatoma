@@ -178,7 +178,7 @@ offline/deterministic design rationale, and the scenario YAML schema.
 
 ---
 
-### Phase 4: Configuration Validation Evals
+### Phase 4: Configuration Validation Evals (COMPLETED)
 
 Configuration validation is the highest-leverage target for data-driven evals.
 `Config::validate()` enforces 36+ rules across 8 configuration sections, all of
@@ -187,7 +187,7 @@ validation branch deterministically.
 
 #### Task 4.1 Create `evals/config_validation/configs/` directory with fixture files
 
-Create YAML configuration fixtures under `evals/config_validation/configs/`:
+Created YAML configuration fixtures under `evals/config_validation/configs/`:
 
 | File                                 | Purpose                                                   |
 | ------------------------------------ | --------------------------------------------------------- |
@@ -222,7 +222,7 @@ Create YAML configuration fixtures under `evals/config_validation/configs/`:
 
 #### Task 4.2 Create `evals/config_validation/scenarios.yaml`
 
-Define scenarios covering every validation branch. Each scenario entry has:
+Defined 28 scenarios covering every validation branch. Each scenario entry has:
 
 - `id` -- unique identifier
 - `description` -- human-readable purpose
@@ -235,7 +235,7 @@ conversation, tools, subagent, watcher/kafka, ACP, MCP, skills).
 
 #### Task 4.3 Create `tests/eval_config_validation.rs`
 
-Integration test that:
+Created integration test that:
 
 1. Defines `ConfigScenario` and related deserialization structs.
 2. Loads `evals/config_validation/scenarios.yaml`.
@@ -246,27 +246,30 @@ Integration test that:
 
 #### Task 4.4 Create `evals/config_validation/README.md`
 
-Document how to add config validation scenarios, the fixture naming convention,
-and how to run the eval tests.
+Documented how to add config validation scenarios, the fixture naming
+convention, the scenario YAML schema, and how to run the eval tests.
 
-#### Task 4.5 Testing Requirements
+#### Task 4.5 Testing Requirements (MET)
 
 - Run `cargo test --test eval_config_validation -- --nocapture`.
-- All scenarios pass.
+- All 28 scenarios pass.
 - No network calls.
 
-#### Task 4.6 Deliverables
+#### Task 4.6 Deliverables (COMPLETED)
 
-- `evals/config_validation/configs/` (28+ fixture files)
+- `evals/config_validation/configs/` (28 fixture files: 5 valid, 23 invalid)
 - `evals/config_validation/scenarios.yaml`
 - `evals/config_validation/README.md`
 - `tests/eval_config_validation.rs`
 
-#### Task 4.7 Success Criteria
+#### Task 4.7 Success Criteria (MET)
 
-- `cargo test --test eval_config_validation` exits 0.
-- Every `Config::validate()` error branch is covered by at least one scenario.
-- No existing tests break.
+- `cargo test --test eval_config_validation` exits 0 with all 28 scenarios
+  passing.
+- Every `Config::validate()` error branch is covered by at least one scenario
+  across 8 categories: provider, agent, conversation, subagent, watcher/kafka,
+  ACP, MCP, and skills.
+- No existing tests break (1627 library tests pass).
 
 ---
 

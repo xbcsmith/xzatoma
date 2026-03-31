@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent: {}
+skills:
+  max_discovered_skills: 0

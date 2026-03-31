@@ -1,0 +1,8 @@
+provider:
+  type: copilot
+agent: {}
+watcher:
+  kafka:
+    brokers: "localhost:9092"
+    topic: ""
+    group_id: xzatoma-group

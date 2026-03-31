@@ -1,0 +1,12 @@
+provider:
+  type: copilot
+agent: {}
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: "localhost:9092"
+    topic: generic-events
+    group_id: xzatoma-generic
+  generic_match:
+    action: "^deploy.*"
+    name: "^my-app-.*"
