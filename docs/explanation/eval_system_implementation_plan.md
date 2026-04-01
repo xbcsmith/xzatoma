@@ -331,7 +331,7 @@ Add 10+ scenarios for the new fixtures, all using `test_mode: parse_only`:
 
 ---
 
-### Phase 6: Skills Command Evals
+### Phase 6: Skills Command Evals (COMPLETED)
 
 The skills subsystem is fully testable offline using temporary directories and
 skill file fixtures. This phase creates a data-driven eval suite for skills
@@ -404,18 +404,21 @@ Document the skills eval structure, fixture format, and how to add scenarios.
 - No network calls.
 - Temporary directories are cleaned up after each scenario.
 
-#### Task 6.6 Deliverables
+#### Task 6.6 Deliverables (COMPLETED)
 
 - `evals/skills_command/skills/` (8 fixture files)
-- `evals/skills_command/scenarios.yaml`
+- `evals/skills_command/scenarios.yaml` (16 scenarios)
 - `evals/skills_command/README.md`
 - `tests/eval_skills_command.rs`
+- `docs/explanation/phase6_skills_command_evals_implementation.md`
 
-#### Task 6.7 Success Criteria
+#### Task 6.7 Success Criteria (MET)
 
-- `cargo test --test eval_skills_command` exits 0 with 13+ scenarios passing.
+- `cargo test --test eval_skills_command` exits 0 with 16 scenarios passing.
 - Discovery, validation, trust, and visibility branches are all exercised.
 - No existing tests break.
+- All quality gates passed: `cargo fmt`, `cargo check`, `cargo clippy`,
+  `cargo test`, `markdownlint`, and `prettier`.
 
 ---
 
