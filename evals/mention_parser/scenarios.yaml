@@ -1,0 +1,222 @@
+# Eval scenarios for the mention parser.
+#
+# Each scenario has:
+#   id                   - unique identifier (used in test output)
+#   description          - human-readable description of what is being tested
+#   test_mode            - "parse_only" or "augment"
+#   input                - scenario inputs
+#     prompt             - the text to parse or augment
+#     working_dir_files  - optional map of dest_filename -> source_fixture
+#                          source_fixture is read from evals/mention_parser/files/
+#                          use "__binary__" to write programmatic binary content
+#   expect               - assertions on the scenario outcome
+#     mention_count      - expected number of parsed mentions (parse_only)
+#     mention_types      - ordered list of mention type names (parse_only)
+#     output_contains    - list of substrings that must appear in the output (augment)
+#     output_not_contains - list of substrings that must NOT appear in the output (augment)
+#     errors_nonempty    - if true, the errors list must be non-empty (augment)
+#
+# All scenarios are deterministic and offline. URL mention scenarios that
+# would require a live network connection are not included.
+
+scenarios:
+  # -- Parse-only: single mention types --------------------------------------
+
+  - id: parse_simple_file_mention
+    description: "a simple relative file path is parsed as a File mention"
+    test_mode: parse_only
+    input:
+      prompt: "@sample.rs"
+    expect:
+      mention_count: 1
+      mention_types:
+        - file
+
+  - id: parse_file_with_line_range
+    description: "a file path with a line range suffix is parsed as a File mention"
+    test_mode: parse_only
+    input:
+      prompt: "@sample.rs#L5-10"
+    expect:
+      mention_count: 1
+      mention_types:
+        - file
+
+  - id: parse_search_mention
+    description: "a search mention with a quoted pattern is parsed as a Search mention"
+    test_mode: parse_only
+    input:
+      prompt: '@search:"fn main"'
+    expect:
+      mention_count: 1
+      mention_types:
+        - search
+
+  - id: parse_grep_mention
+    description: "a grep mention with a regex pattern is parsed as a Grep mention"
+    test_mode: parse_only
+    input:
+      prompt: '@grep:"^pub fn"'
+    expect:
+      mention_count: 1
+      mention_types:
+        - grep
+
+  - id: parse_url_mention
+    description: "a url mention with an https URL is parsed as a Url mention"
+    test_mode: parse_only
+    input:
+      prompt: "@url:https://example.com"
+    expect:
+      mention_count: 1
+      mention_types:
+        - url
+
+  # -- Parse-only: multiple mentions in one prompt ---------------------------
+
+  - id: parse_multiple_mentions
+    description: "multiple mention types in a single prompt are all parsed correctly"
+    test_mode: parse_only
+    input:
+      prompt: 'Check @sample.rs and @search:"fn new" in the code'
+    expect:
+      mention_count: 2
+      mention_types:
+        - file
+        - search
+
+  # -- Parse-only: zero-mention cases ----------------------------------------
+
+  - id: parse_escaped_at_symbol
+    description: "a backslash-escaped at sign is not parsed as a mention"
+    test_mode: parse_only
+    input:
+      prompt: "Contact test\\@example.com for help"
+    expect:
+      mention_count: 0
+
+  - id: parse_no_mentions_in_plain_text
+    description: "plain text without any at signs produces an empty mention list"
+    test_mode: parse_only
+    input:
+      prompt: "This is a plain text prompt with no mention markers"
+    expect:
+      mention_count: 0
+
+  - id: parse_absolute_path_not_parsed
+    description: "an absolute path starting with slash is rejected and produces no mention"
+    test_mode: parse_only
+    input:
+      prompt: "@/etc/passwd"
+    expect:
+      mention_count: 0
+
+  - id: parse_path_traversal_not_parsed
+    description: "a path containing directory traversal sequences is rejected and produces no mention"
+    test_mode: parse_only
+    input:
+      prompt: "@../../etc/passwd"
+    expect:
+      mention_count: 0
+
+  # -- Augment: file content loading -----------------------------------------
+
+  - id: augment_file_content_loaded
+    description: "a file mention causes the file content to be injected into the augmented prompt"
+    test_mode: augment
+    input:
+      prompt: "Please review @sample.rs"
+      working_dir_files:
+        sample.rs: sample.rs
+    expect:
+      output_contains:
+        - "pub struct Sample"
+        - "Please review @sample.rs"
+
+  - id: augment_file_with_line_range
+    description: "a file mention with a line range injects only the specified lines"
+    test_mode: augment
+    input:
+      prompt: "@sample.rs#L5-10 what does this do?"
+      working_dir_files:
+        sample.rs: sample.rs
+    expect:
+      output_contains:
+        - "pub struct Sample"
+      output_not_contains:
+        - "// sample.rs - fixture"
+
+  - id: augment_readme_file_loaded
+    description: "a mention of README.md injects the markdown file content into the prompt"
+    test_mode: augment
+    input:
+      prompt: "Summarise @README.md"
+      working_dir_files:
+        README.md: README.md
+    expect:
+      output_contains:
+        - "XZatoma Eval Fixture"
+        - "Mention parsing"
+
+  - id: augment_config_file_loaded
+    description: "a mention of a yaml config file injects the config content into the prompt"
+    test_mode: augment
+    input:
+      prompt: "What does @config.yaml configure?"
+      working_dir_files:
+        config.yaml: config.yaml
+    expect:
+      output_contains:
+        - "provider: ollama"
+        - "max_turns"
+
+  # -- Augment: error paths --------------------------------------------------
+
+  - id: augment_missing_file_error
+    description: "a mention of a non-existent file produces an error placeholder in the prompt"
+    test_mode: augment
+    input:
+      prompt: "Please review @missing_file.rs"
+      working_dir_files: {}
+    expect:
+      output_contains:
+        - "Failed to include file"
+        - "missing_file.rs"
+      errors_nonempty: true
+
+  - id: augment_binary_file_error
+    description: "a mention of a binary file produces an error placeholder in the augmented prompt"
+    test_mode: augment
+    input:
+      prompt: "Please review @large_binary.bin"
+      working_dir_files:
+        large_binary.bin: __binary__
+    expect:
+      output_contains:
+        - "Failed to include file"
+        - "large_binary.bin"
+      errors_nonempty: true
+
+  # -- Augment: search and grep mentions -------------------------------------
+
+  - id: augment_search_mention_injects_results
+    description: "a search mention executes a text search and injects matching results"
+    test_mode: augment
+    input:
+      prompt: 'Find usages: @search:"fn new"'
+      working_dir_files:
+        sample.rs: sample.rs
+    expect:
+      output_contains:
+        - "Search results for 'fn new'"
+
+  - id: augment_grep_mention_injects_results
+    description: "a grep mention executes a regex search and injects matching results"
+    test_mode: augment
+    input:
+      prompt: 'List public functions: @grep:"pub fn"'
+      working_dir_files:
+        sample.rs: sample.rs
+    expect:
+      output_contains:
+        - "Search results for 'pub fn'"

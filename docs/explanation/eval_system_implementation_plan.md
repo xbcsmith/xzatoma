@@ -422,7 +422,7 @@ Document the skills eval structure, fixture format, and how to add scenarios.
 
 ---
 
-### Phase 7: Mention Parser Evals
+### Phase 7: Mention Parser Evals (COMPLETED)
 
 The mention parser has 57 unit tests but no data-driven eval suite with fixture
 files. This phase adds YAML-driven scenarios that test mention parsing, path
@@ -496,18 +496,22 @@ Document the mention parser eval structure and how to add scenarios.
 - No network calls (URL mentions that would require fetching should use
   `expect.outcome: error` or be omitted).
 
-#### Task 7.6 Deliverables
+#### Task 7.6 Deliverables (COMPLETED)
 
-- `evals/mention_parser/files/` (4 fixture files)
-- `evals/mention_parser/scenarios.yaml`
+- `evals/mention_parser/files/` (4 fixture files: `sample.rs`, `config.yaml`,
+  `large_binary.bin`, `README.md`)
+- `evals/mention_parser/scenarios.yaml` (18 scenarios)
 - `evals/mention_parser/README.md`
 - `tests/eval_mention_parser.rs`
+- `docs/explanation/phase7_mention_parser_evals_implementation.md`
 
-#### Task 7.7 Success Criteria
+#### Task 7.7 Success Criteria (MET)
 
-- `cargo test --test eval_mention_parser` exits 0 with 17+ scenarios passing.
+- `cargo test --test eval_mention_parser` exits 0 with 18 scenarios passing.
 - Parse and augmentation paths are both covered.
 - No existing tests break.
+- All quality gates passed: `cargo fmt`, `cargo check`, `cargo clippy`,
+  `cargo test`, `markdownlint`, and `prettier`.
 
 ---
 

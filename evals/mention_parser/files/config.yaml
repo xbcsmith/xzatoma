@@ -1,0 +1,15 @@
+# config.yaml - fixture for mention parser eval testing.
+# Used by eval tests in evals/mention_parser/.
+
+provider: ollama
+
+agent:
+  max_turns: 10
+  timeout_seconds: 30
+
+logging:
+  level: info
+  format: text
+
+skills:
+  enabled: false
