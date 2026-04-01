@@ -1,0 +1,6 @@
+name: Valid Content Wrong Extension
+description: This file has valid YAML content but a .txt extension
+steps:
+  - name: Echo Hello
+    action: Print a greeting message
+    context: echo hello

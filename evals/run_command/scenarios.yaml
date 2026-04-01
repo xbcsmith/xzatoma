@@ -87,3 +87,93 @@ scenarios:
     expect:
       outcome: error
       error_contains: "Unknown provider"
+
+  # -----------------------------------------------------------------
+  # Phase 5: Plan Parsing Format Evals (JSON, Markdown, edge cases)
+  # -----------------------------------------------------------------
+
+  - id: json_simple_plan
+    description: "valid single-step JSON plan parses successfully"
+    test_mode: parse_only
+    input:
+      plan_file: "simple_plan.json"
+    expect:
+      outcome: ok
+
+  - id: json_multi_step_plan
+    description: "valid multi-step JSON plan parses successfully"
+    test_mode: parse_only
+    input:
+      plan_file: "multi_step_plan.json"
+    expect:
+      outcome: ok
+
+  - id: json_invalid_no_steps
+    description: "JSON plan with empty steps array fails validation"
+    test_mode: parse_only
+    input:
+      plan_file: "invalid_no_steps.json"
+    expect:
+      outcome: error
+      error_contains: "Plan must have at least one step"
+
+  - id: md_simple_plan
+    description: "valid single-step Markdown plan parses successfully"
+    test_mode: parse_only
+    input:
+      plan_file: "simple_plan.md"
+    expect:
+      outcome: ok
+
+  - id: md_multi_step_plan
+    description: "valid multi-step Markdown plan parses successfully"
+    test_mode: parse_only
+    input:
+      plan_file: "multi_step_plan.md"
+    expect:
+      outcome: ok
+
+  - id: md_invalid_no_steps
+    description: "Markdown plan with no step headings fails validation"
+    test_mode: parse_only
+    input:
+      plan_file: "invalid_no_steps.md"
+    expect:
+      outcome: error
+      error_contains: "Plan must have at least one step"
+
+  - id: empty_yaml_file
+    description: "completely empty YAML file triggers a parse error"
+    test_mode: parse_only
+    input:
+      plan_file: "empty_file.yaml"
+    expect:
+      outcome: error
+      error_contains: "missing field `name`"
+
+  - id: malformed_yaml
+    description: "YAML file with invalid syntax triggers a deserialize error"
+    test_mode: parse_only
+    input:
+      plan_file: "malformed_yaml.yaml"
+    expect:
+      outcome: error
+      error_contains: "invalid type: sequence"
+
+  - id: malformed_json
+    description: "JSON file with invalid syntax triggers a parse error"
+    test_mode: parse_only
+    input:
+      plan_file: "malformed_json.json"
+    expect:
+      outcome: error
+      error_contains: "key must be a string"
+
+  - id: unsupported_extension
+    description: "file with .txt extension triggers unsupported format error"
+    test_mode: parse_only
+    input:
+      plan_file: "unknown_extension.txt"
+    expect:
+      outcome: error
+      error_contains: "Unsupported plan format"

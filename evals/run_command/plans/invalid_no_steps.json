@@ -1,0 +1,5 @@
+{
+  "name": "Empty Steps JSON Plan",
+  "description": "A JSON plan with no steps -- should fail validation",
+  "steps": []
+}

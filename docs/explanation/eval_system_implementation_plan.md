@@ -273,7 +273,7 @@ convention, the scenario YAML schema, and how to run the eval tests.
 
 ---
 
-### Phase 5: Plan Parsing Format Evals
+### Phase 5: Plan Parsing Format Evals (COMPLETED)
 
 The existing eval covers YAML plan fixtures only. `PlanParser` also supports
 JSON and Markdown formats. This phase extends plan parsing coverage to all three
@@ -309,21 +309,25 @@ Add 10+ scenarios for the new fixtures, all using `test_mode: parse_only`:
 - Malformed JSON fails parsing
 - Unsupported file extension fails with format error
 
-#### Task 5.3 Testing Requirements
+#### Task 5.3 Testing Requirements (MET)
 
 - Run `cargo test --test eval_run_command -- --nocapture`.
 - All original + new scenarios pass (target: 19+ total).
+- Result: 19 passed, 0 failed out of 19 scenarios.
 
-#### Task 5.4 Deliverables
+#### Task 5.4 Deliverables (COMPLETED)
 
 - 10 new fixture files in `evals/run_command/plans/`
 - Updated `evals/run_command/scenarios.yaml` with 10+ new scenarios
 - Updated `evals/run_command/README.md` noting multi-format support
+- Created `docs/explanation/phase5_plan_parsing_format_evals_implementation.md`
 
-#### Task 5.5 Success Criteria
+#### Task 5.5 Success Criteria (MET)
 
-- `cargo test --test eval_run_command` exits 0 with 19+ scenarios passing.
+- `cargo test --test eval_run_command` exits 0 with 19 scenarios passing.
 - JSON, Markdown, and error-path fixtures are all exercised.
+- All quality gates passed: `cargo fmt`, `cargo check`, `cargo clippy`,
+  `cargo test`, `markdownlint`, and `prettier`.
 
 ---
 
