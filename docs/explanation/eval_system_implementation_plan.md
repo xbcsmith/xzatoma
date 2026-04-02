@@ -515,7 +515,7 @@ Document the mention parser eval structure and how to add scenarios.
 
 ---
 
-### Phase 8: CLI Command Evals
+### Phase 8: CLI Command Evals (COMPLETED)
 
 This phase creates a data-driven eval suite that exercises CLI argument parsing
 and basic command dispatch for all 10 subcommands using `assert_cmd` against the
@@ -601,7 +601,7 @@ Target scenarios (25+):
 - `replay --help` -- shows help
 - `replay` with no flags -- error
 
-#### Task 8.2 Create `tests/eval_cli_commands.rs`
+#### Task 8.2 Create `tests/eval_cli_commands.rs` (COMPLETED)
 
 Integration test that:
 
@@ -619,26 +619,26 @@ harness writes a minimal `config.yaml` to a temp directory and passes
 output (`--help`) do not need a config file since clap handles them before
 config loading.
 
-#### Task 8.3 Create `evals/cli_commands/README.md`
+#### Task 8.3 Create `evals/cli_commands/README.md` (COMPLETED)
 
 Document the CLI eval structure, how to add scenarios, and the distinction
 between help scenarios (no config needed) and execution scenarios (config
 provided).
 
-#### Task 8.4 Testing Requirements
+#### Task 8.4 Testing Requirements (MET)
 
 - Run `cargo test --test eval_cli_commands -- --nocapture`.
 - All scenarios pass.
 - Binary must be built before running (`cargo test` handles this automatically).
 - No network calls.
 
-#### Task 8.5 Deliverables
+#### Task 8.5 Deliverables (COMPLETED)
 
 - `evals/cli_commands/scenarios.yaml`
 - `evals/cli_commands/README.md`
 - `tests/eval_cli_commands.rs`
 
-#### Task 8.6 Success Criteria
+#### Task 8.6 Success Criteria (MET)
 
 - `cargo test --test eval_cli_commands` exits 0 with 25+ scenarios passing.
 - Every subcommand has at least one `--help` scenario and one execution

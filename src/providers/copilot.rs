@@ -2650,6 +2650,13 @@ fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> 
 mod tests {
     use super::*;
 
+    /// Returns true when the `XZATOMA_RUN_KEYCHAIN_TESTS` environment variable
+    /// is set, indicating that tests which read from or write to the OS keyring
+    /// are permitted to run in this environment.
+    fn should_run_keychain_tests() -> bool {
+        std::env::var("XZATOMA_RUN_KEYCHAIN_TESTS").is_ok()
+    }
+
     #[test]
     fn test_copilot_provider_creation() {
         let config = CopilotConfig::default();
@@ -2813,7 +2820,15 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires system keyring; enable with XZATOMA_RUN_KEYCHAIN_TESTS=1"]
     fn test_keyring_service_names() {
+        if !should_run_keychain_tests() {
+            println!(
+                "Skipping keyring test. Enable with: \
+                 XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored"
+            );
+            return;
+        }
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.keyring_service, "xzatoma");
