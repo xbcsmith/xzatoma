@@ -1,0 +1,15 @@
+provider:
+  type: copilot
+agent: {}
+mcp:
+  servers:
+    - id: filesystem
+      transport:
+        type: stdio
+        executable: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    - id: filesystem
+      transport:
+        type: stdio
+        executable: npx
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/home"]

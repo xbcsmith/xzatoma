@@ -1,0 +1,11 @@
+{
+  "name": "Simple JSON Plan",
+  "description": "A basic single-step plan in JSON format for eval testing",
+  "steps": [
+    {
+      "name": "Echo Hello",
+      "action": "Print a greeting message",
+      "context": "echo hello"
+    }
+  ]
+}

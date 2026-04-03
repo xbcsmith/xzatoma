@@ -1,0 +1,8 @@
+provider:
+  type: copilot
+agent: {}
+watcher:
+  kafka:
+    brokers: ""
+    topic: xzatoma-events
+    group_id: xzatoma-group

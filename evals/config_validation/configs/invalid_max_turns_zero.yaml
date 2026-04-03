@@ -1,0 +1,4 @@
+provider:
+  type: copilot
+agent:
+  max_turns: 0

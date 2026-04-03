@@ -1,0 +1,41 @@
+provider:
+  type: copilot
+  copilot:
+    model: gpt-4o
+    enable_streaming: true
+  ollama:
+    host: "http://localhost:11434"
+    model: llama3
+agent:
+  max_turns: 50
+  timeout_seconds: 300
+  conversation:
+    max_tokens: 200000
+    min_retain_turns: 4
+    prune_threshold: 0.85
+    warning_threshold: 0.75
+    auto_summary_threshold: 0.80
+  tools:
+    max_output_size: 50000
+    max_file_read_size: 100000
+  terminal:
+    timeout_seconds: 120
+  subagent:
+    max_depth: 3
+    default_max_turns: 25
+    output_max_size: 65536
+acp:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8080
+  base_path: "/acp"
+  persistence:
+    enabled: true
+    max_events_per_run: 500
+    max_completed_runs: 50
+skills:
+  enabled: true
+  max_discovered_skills: 100
+  max_scan_directories: 10
+  max_scan_depth: 5
+  catalog_max_entries: 50

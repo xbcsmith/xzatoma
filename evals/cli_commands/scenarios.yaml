@@ -1,0 +1,288 @@
+# Eval scenarios for CLI command argument parsing and basic command dispatch.
+#
+# Each scenario:
+#   id                  - unique identifier (used in test output)
+#   description         - human-readable purpose
+#   args                - list of CLI arguments passed to the xzatoma binary
+#   env                 - optional map of environment variable overrides
+#   needs_config        - if true, test harness provides --config pointing at a minimal
+#                         temporary config file; also sets XZATOMA_HISTORY_DB and
+#                         XZATOMA_SKILLS_TRUST_STORE_PATH to isolated temp paths
+#   expect
+#     success           - true if exit code must be 0, false if non-zero
+#     stdout_contains   - optional substring that must appear in stdout
+#     stderr_contains   - optional substring that must appear in stderr
+#
+# Special token __TEMP_DIR__ in args is replaced by the test harness with the
+# absolute path to the per-scenario temporary directory.
+#
+# Scenarios with needs_config: false are handled entirely by clap (--help,
+# --version, missing required subcommand) and never reach config loading.
+# Scenarios with needs_config: true need a valid config file to get past
+# Config::load and Config::validate before command dispatch.
+
+scenarios:
+  # -- Global options --------------------------------------------------------
+
+  - id: global_help
+    description: "--help prints usage text and exits 0"
+    args: ["--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "xzatoma"
+
+  - id: global_version
+    description: "--version prints the package version string and exits 0"
+    args: ["--version"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "xzatoma"
+
+  - id: global_no_subcommand
+    description: "invoking with no subcommand prints usage text and exits non-zero"
+    args: []
+    needs_config: false
+    expect:
+      success: false
+
+  # -- run command -----------------------------------------------------------
+
+  - id: run_help
+    description: "run --help shows run-specific help text and exits 0"
+    args: ["run", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--plan"
+
+  - id: run_no_plan_or_prompt
+    description: "run with neither --plan nor --prompt exits non-zero with descriptive error"
+    args: ["run"]
+    needs_config: true
+    expect:
+      success: false
+      stderr_contains: "--plan or --prompt"
+
+  - id: run_missing_plan_file
+    description: "run --plan with a nonexistent file path exits non-zero"
+    args: ["run", "--plan", "nonexistent_plan_file_99887766.yaml"]
+    needs_config: true
+    expect:
+      success: false
+
+  # -- chat command ----------------------------------------------------------
+
+  - id: chat_help
+    description: "chat --help shows chat-specific help text and exits 0"
+    args: ["chat", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--mode"
+
+  - id: chat_mode_flag_accepted
+    description: "chat --mode write is accepted by clap and the REPL exits 0 on EOF stdin"
+    args: ["chat", "--mode", "write"]
+    needs_config: true
+    expect:
+      success: true
+
+  # -- watch command ---------------------------------------------------------
+
+  - id: watch_help
+    description: "watch --help shows watch-specific help text and exits 0"
+    args: ["watch", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--topic"
+
+  - id: watch_generic_offline
+    description: "watch with generic watcher type fails at Kafka bootstrap (offline)"
+    args: ["watch", "--watcher-type", "generic", "--topic", "test-topic"]
+    needs_config: true
+    expect:
+      success: false
+
+  # -- auth command ----------------------------------------------------------
+
+  - id: auth_help
+    description: "auth --help shows auth-specific help text and exits 0"
+    args: ["auth", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--provider"
+
+  - id: auth_unknown_provider
+    description: "auth --provider with an unknown name fails immediately with unsupported provider error"
+    args: ["auth", "--provider", "noexist_provider_for_eval"]
+    needs_config: true
+    expect:
+      success: false
+      stderr_contains: "Unsupported provider"
+
+  # -- models command --------------------------------------------------------
+
+  - id: models_no_subcommand
+    description: "models with no subcommand prints usage text and exits non-zero"
+    args: ["models"]
+    needs_config: false
+    expect:
+      success: false
+
+  - id: models_list_help
+    description: "models list --help shows list-specific help and exits 0"
+    args: ["models", "list", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--provider"
+
+  - id: models_info_help
+    description: "models info --help shows info-specific help and exits 0"
+    args: ["models", "info", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--model"
+
+  - id: models_current_help
+    description: "models current --help shows current-specific help and exits 0"
+    args: ["models", "current", "--help"]
+    needs_config: false
+    expect:
+      success: true
+
+  # -- history command -------------------------------------------------------
+
+  - id: history_list_help
+    description: "history list --help shows help and exits 0"
+    args: ["history", "list", "--help"]
+    needs_config: false
+    expect:
+      success: true
+
+  - id: history_show_help
+    description: "history show --help shows help and exits 0"
+    args: ["history", "show", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--id"
+
+  - id: history_delete_help
+    description: "history delete --help shows help and exits 0"
+    args: ["history", "delete", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--id"
+
+  - id: history_list_empty
+    description: "history list with an isolated empty storage exits 0"
+    args: ["history", "list"]
+    needs_config: true
+    expect:
+      success: true
+
+  # -- mcp command -----------------------------------------------------------
+
+  - id: mcp_list_help
+    description: "mcp list --help shows help and exits 0"
+    args: ["mcp", "list", "--help"]
+    needs_config: false
+    expect:
+      success: true
+
+  - id: mcp_list_no_servers
+    description: "mcp list with default config (no servers configured) exits 0"
+    args: ["mcp", "list"]
+    needs_config: true
+    expect:
+      success: true
+      stdout_contains: "No MCP servers configured"
+
+  # -- acp command -----------------------------------------------------------
+
+  - id: acp_config
+    description: "acp config prints effective JSON configuration and exits 0"
+    args: ["acp", "config"]
+    needs_config: true
+    expect:
+      success: true
+      stdout_contains: "host"
+
+  - id: acp_validate_help
+    description: "acp validate --help shows help and exits 0"
+    args: ["acp", "validate", "--help"]
+    needs_config: false
+    expect:
+      success: true
+
+  - id: acp_serve_help
+    description: "acp serve --help shows serve-specific help and exits 0"
+    args: ["acp", "serve", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--host"
+
+  # -- skills command --------------------------------------------------------
+
+  - id: skills_list_empty
+    description: "skills list with discovery disabled exits 0"
+    args: ["skills", "list"]
+    needs_config: true
+    expect:
+      success: true
+
+  - id: skills_paths
+    description: "skills paths prints effective path information and exits 0"
+    args: ["skills", "paths"]
+    needs_config: true
+    expect:
+      success: true
+      stdout_contains: "working_dir"
+
+  - id: skills_trust_show
+    description: "skills trust show exits 0 with isolated trust store"
+    args: ["skills", "trust", "show"]
+    needs_config: true
+    expect:
+      success: true
+
+  - id: skills_validate
+    description: "skills validate exits 0 with no skills present"
+    args: ["skills", "validate"]
+    needs_config: true
+    expect:
+      success: true
+
+  # -- replay command --------------------------------------------------------
+
+  - id: replay_help
+    description: "replay --help shows replay-specific help and exits 0"
+    args: ["replay", "--help"]
+    needs_config: false
+    expect:
+      success: true
+      stdout_contains: "--list"
+
+  - id: replay_list_empty
+    description: "replay --list with an empty temp database exits 0"
+    args: ["replay", "--list", "--db-path", "__TEMP_DIR__/replay.db"]
+    needs_config: true
+    expect:
+      success: true
+      stdout_contains: "Conversations"
+
+  - id: replay_no_flags
+    description: "replay with no --list or --id exits non-zero with descriptive error"
+    args: ["replay", "--db-path", "__TEMP_DIR__/replay.db"]
+    needs_config: true
+    expect:
+      success: false
+      stderr_contains: "Must specify --list or --id"

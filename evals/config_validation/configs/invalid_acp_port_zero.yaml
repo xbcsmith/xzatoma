@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent: {}
+acp:
+  port: 0

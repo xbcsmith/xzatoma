@@ -1,0 +1,6 @@
+name: [Malformed Plan
+steps:
+  - name: {{{broken
+    action: [unclosed bracket
+  - name
+    action missing colon

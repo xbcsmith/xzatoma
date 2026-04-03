@@ -1,0 +1,212 @@
+# Eval scenarios for the skills command.
+#
+# Each scenario has:
+#   id                             - unique identifier (used in test output)
+#   description                    - human-readable description of what is being tested
+#   command                        - command to execute:
+#                                    build_catalog, list, validate, show, paths,
+#                                    trust_show, trust_add, trust_remove, trust_round_trip
+#   setup                          - optional configuration overrides and fixture installation
+#     skills_enabled               - global skills feature flag (default: true)
+#     allow_custom_paths_without_trust - skip trust checks for additional_paths (default: true)
+#     fixtures                     - list of {fixture, dir}
+#                                    fixture file is read from evals/skills_command/skills/
+#                                    and installed as <skills_root>/<dir>/SKILL.md
+#     extra_files                  - list of {file, dest}
+#                                    file is read from evals/skills_command/skills/
+#                                    and written to <skills_root>/<dest> verbatim
+#   input                          - optional command inputs
+#     skill_name                   - skill name for the show command
+#     trust_path                   - path relative to temp dir for trust_add/trust_remove/trust_round_trip
+#   expect                         - assertions on the scenario outcome
+#     outcome                      - "ok" or "error"
+#     error_contains               - optional substring that must appear in the error message
+#     catalog_size                 - optional expected catalog entry count (build_catalog command only)
+#
+# All scenarios are deterministic and offline. Temporary directories are created
+# and cleaned up for each scenario by the test harness.
+
+scenarios:
+  # -- Discovery: empty catalog -----------------------------------------------
+
+  - id: discovery_empty_directory
+    description: "build_catalog returns an empty catalog when no skills are installed"
+    command: build_catalog
+    setup:
+      fixtures: []
+    expect:
+      outcome: ok
+      catalog_size: 0
+
+  # -- Discovery: populated catalog -------------------------------------------
+
+  - id: discovery_valid_simple_skill
+    description: "build_catalog loads a single valid skill into the catalog"
+    command: build_catalog
+    setup:
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+    expect:
+      outcome: ok
+      catalog_size: 1
+
+  - id: discovery_multiple_valid_skills
+    description: "build_catalog loads multiple valid skills into the catalog"
+    command: build_catalog
+    setup:
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+        - fixture: valid_with_tools.md
+          dir: valid_with_tools
+    expect:
+      outcome: ok
+      catalog_size: 2
+
+  # -- Discovery: skills disabled ---------------------------------------------
+
+  - id: discovery_skills_disabled
+    description: "build_catalog returns an empty catalog immediately when skills.enabled is false"
+    command: build_catalog
+    setup:
+      skills_enabled: false
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+    expect:
+      outcome: ok
+      catalog_size: 0
+
+  # -- List command -----------------------------------------------------------
+
+  - id: list_valid_skills_succeeds
+    description: "list command returns ok when valid skills are present"
+    command: list
+    setup:
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+    expect:
+      outcome: ok
+
+  # -- Validate command: valid skills -----------------------------------------
+
+  - id: validate_valid_skill_succeeds
+    description: "validate command succeeds when all discovered skills are valid"
+    command: validate
+    setup:
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+    expect:
+      outcome: ok
+
+  # -- Validate command: invalid skills produce diagnostics -------------------
+
+  - id: validate_skill_missing_name
+    description: "validate command succeeds and prints a diagnostic for a missing name field"
+    command: validate
+    setup:
+      fixtures:
+        - fixture: invalid_no_name.md
+          dir: no_name_skill
+    expect:
+      outcome: ok
+
+  - id: validate_skill_missing_description
+    description: "validate command succeeds and prints a diagnostic for a missing description field"
+    command: validate
+    setup:
+      fixtures:
+        - fixture: invalid_no_description.md
+          dir: invalid_no_description
+    expect:
+      outcome: ok
+
+  - id: validate_malformed_frontmatter
+    description: "validate command succeeds and prints a diagnostic for malformed YAML frontmatter"
+    command: validate
+    setup:
+      fixtures:
+        - fixture: invalid_bad_yaml.md
+          dir: bad_yaml_skill
+    expect:
+      outcome: ok
+
+  # -- Validate command: empty body is not a validation error -----------------
+
+  - id: validate_empty_body_counted_as_valid
+    description: "skill with an empty instruction body passes validation because body content is not validated"
+    command: build_catalog
+    setup:
+      fixtures:
+        - fixture: invalid_empty_body.md
+          dir: invalid_empty_body
+    expect:
+      outcome: ok
+      catalog_size: 1
+
+  # -- Show command -----------------------------------------------------------
+
+  - id: show_existing_skill_succeeds
+    description: "show command returns metadata for a known visible skill"
+    command: show
+    setup:
+      fixtures:
+        - fixture: valid_simple.md
+          dir: valid_simple
+    input:
+      skill_name: valid_simple
+    expect:
+      outcome: ok
+
+  - id: show_nonexistent_skill_returns_error
+    description: "show command returns an error when the named skill does not exist in the catalog"
+    command: show
+    setup:
+      fixtures: []
+    input:
+      skill_name: nonexistent_skill
+    expect:
+      outcome: error
+      error_contains: "missing, invalid, or not visible"
+
+  # -- Trust command: show on empty store ------------------------------------
+
+  - id: trust_show_empty_store_succeeds
+    description: "trust show command succeeds and reports no trusted paths on a freshly created store"
+    command: trust_show
+    expect:
+      outcome: ok
+
+  # -- Trust command: add and remove round-trip ------------------------------
+
+  - id: trust_add_remove_round_trip_succeeds
+    description: "trust add followed by trust remove correctly updates the persistent trust store"
+    command: trust_round_trip
+    input:
+      trust_path: trusted_project
+    expect:
+      outcome: ok
+
+  # -- Paths command ---------------------------------------------------------
+
+  - id: paths_listing_succeeds
+    description: "paths command succeeds and reports configured discovery roots"
+    command: paths
+    expect:
+      outcome: ok
+
+  # -- Discovery: non-SKILL.md files are ignored ----------------------------
+
+  - id: non_skill_txt_file_is_ignored
+    description: "files with names other than SKILL.md are ignored by the skill scanner"
+    command: build_catalog
+    setup:
+      extra_files:
+        - file: not_a_skill.txt
+          dest: not_a_skill.txt
+    expect:
+      outcome: ok
+      catalog_size: 0

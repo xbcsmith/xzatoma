@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent:
+  conversation:
+    warning_threshold: 0.0

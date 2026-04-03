@@ -1,0 +1,21 @@
+{
+  "name": "Multi-Step JSON Plan",
+  "description": "A plan with multiple steps for eval testing in JSON format",
+  "steps": [
+    {
+      "name": "List Files",
+      "action": "List files in the current directory",
+      "context": "ls -la"
+    },
+    {
+      "name": "Check Disk Usage",
+      "action": "Display disk usage statistics",
+      "context": "df -h"
+    },
+    {
+      "name": "Show Uptime",
+      "action": "Show system uptime information",
+      "context": "uptime"
+    }
+  ]
+}

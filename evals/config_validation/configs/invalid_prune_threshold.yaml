@@ -1,0 +1,5 @@
+provider:
+  type: copilot
+agent:
+  conversation:
+    prune_threshold: 1.5

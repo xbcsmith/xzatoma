@@ -1,0 +1,11 @@
+provider:
+  type: copilot
+agent: {}
+watcher:
+  watcher_type: generic
+  kafka:
+    brokers: "localhost:9092"
+    topic: events
+    group_id: xzatoma-group
+  generic_match:
+    action: "["

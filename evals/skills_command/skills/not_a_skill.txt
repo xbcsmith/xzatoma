@@ -1,0 +1,5 @@
+This file has a .txt extension and should be ignored by skill discovery.
+The skill scanner only recognizes files named SKILL.md.
+
+name: not_a_skill
+description: This should never be discovered by the skill scanner
