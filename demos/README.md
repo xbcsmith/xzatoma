@@ -179,4 +179,4 @@ directory is copied to a new filesystem location.
 | MCP       | Scaffolded |
 | Subagents | Scaffolded |
 | Vision    | Scaffolded |
-| Watcher   | Planned    |
+| Watcher   | Scaffolded |
