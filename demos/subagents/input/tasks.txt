@@ -1,0 +1,82 @@
+Subagents Demo - Task Reference
+============================================================
+
+The subagents demo uses a single coordinator plan that delegates three
+independent tasks to parallel subagents. Each subagent runs in an isolated
+conversation context and writes its result to a separate file under tmp/output/.
+
+============================================================
+Delegated Tasks
+============================================================
+
+Task A: haiku-writer
+  Output : tmp/output/haiku.txt
+  Content: A haiku (5-7-5 syllables) about autonomous agents
+
+Task B: mcp-describer
+  Output : tmp/output/mcp_description.txt
+  Content: Three sentences describing the Model Context Protocol
+
+Task C: rust-advocate
+  Output : tmp/output/rust_benefits.txt
+  Content: Five benefits of writing CLI tools in Rust
+
+Coordinator summary
+  Output : tmp/output/summary.txt
+  Content: One paragraph summarizing the output of all three subagents
+
+============================================================
+Running the Demo
+============================================================
+
+Full demo (setup + run):
+
+  cd demos/subagents
+  ./setup.sh
+  ./run.sh
+
+Run the plan directly:
+
+  xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+    run --plan ./plans/subagents_demo.yaml
+
+============================================================
+Subagent Tool Reference
+============================================================
+
+Single subagent:
+
+  Tool name : subagent
+  Required  : label, task_prompt
+  Optional  : summary_prompt, allowed_tools, max_turns
+
+Parallel subagents:
+
+  Tool name : parallel_subagent
+  Required  : tasks (array of label + task_prompt pairs)
+  Optional  : max_concurrent, fail_fast
+
+The subagents_demo.yaml plan uses parallel_subagent to run all three tasks
+concurrently. max_concurrent defaults to 5, so all three tasks run at the same
+time.
+
+============================================================
+Configuration Summary
+============================================================
+
+  provider              : ollama
+  model                 : granite4:3b
+  subagent.max_depth    : 2
+  subagent.max_executions : 5
+  subagent.persistence  : ./tmp/subagent_conversations.db
+  subagent.telemetry    : enabled
+
+============================================================
+Reset
+============================================================
+
+  cd demos/subagents
+  ./reset.sh
+
+This removes tmp/xzatoma.db, tmp/subagent_conversations.db, and all files
+under tmp/output/ except .gitkeep. Plan files and config.yaml are untouched.

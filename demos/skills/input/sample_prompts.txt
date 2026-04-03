@@ -1,0 +1,65 @@
+Skills Demo - Sample Prompts
+============================================================
+
+These prompts demonstrate direct skill usage via xzatoma chat or run.
+Run setup.sh and then run.sh before using these prompts interactively.
+
+
+Direct Skill Commands
+---------------------
+
+List all discovered skills:
+  xzatoma --config ./config.yaml skills list
+
+Validate all discovered skills:
+  xzatoma --config ./config.yaml skills validate
+
+Show details for a specific skill:
+  xzatoma --config ./config.yaml skills show greet
+  xzatoma --config ./config.yaml skills show summarize
+  xzatoma --config ./config.yaml skills show write_file
+
+Show all configured skill discovery paths:
+  xzatoma --config ./config.yaml skills paths
+
+
+Interactive Chat Prompts
+------------------------
+
+After running: xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db chat
+
+1. Greet skill
+   "Activate the greet skill and use it to greet me. My name is Alex."
+
+2. Summarize skill
+   "Activate the summarize skill and use it to condense the following
+    paragraph: XZatoma is an autonomous AI agent CLI written in Rust. It
+    supports multiple AI providers including Ollama and GitHub Copilot.
+    The agent executes tasks through conversation with AI models using
+    file system and terminal tools. Skills extend agent behavior by
+    providing reusable instruction sets."
+
+3. Write file skill
+   "Activate the write_file skill and use it to write the text
+    'Hello from the skills demo' to tmp/output/hello.txt"
+
+
+Plan Execution
+--------------
+
+Run the full skills demo plan:
+  xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+    run --plan ./plans/skills_demo.yaml
+
+
+Skill Discovery Isolation Check
+--------------------------------
+
+The config.yaml for this demo sets:
+  skills.project_enabled: false
+  skills.user_enabled: false
+  skills.additional_paths: [./skills]
+
+This means only the three skills in ./skills/ are discoverable.
+No skills from ~/.xzatoma/skills/, ~/.agents/skills/, or any other
+path outside this demo directory will appear in the list.

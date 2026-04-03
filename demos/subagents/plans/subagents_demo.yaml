@@ -1,0 +1,62 @@
+# XZatoma Subagents Demo Plan
+#
+# Demonstrates nested agent delegation using the parallel_subagent tool.
+# The coordinator agent spawns three subagents concurrently. Each subagent
+# completes one focused writing task and writes its output to tmp/output/.
+# After all subagents complete the coordinator writes a summary.
+#
+# Usage:
+#   xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     run --plan ./plans/subagents_demo.yaml
+
+name: Subagents Demo
+description: >
+  Demonstrates subagent delegation and parallel task coordination.
+  The coordinator uses the parallel_subagent tool to spawn three independent
+  subagents concurrently. Each subagent writes its result to a separate file
+  under tmp/output/. The coordinator then writes a summary of all results.
+
+steps:
+  - name: Delegate three tasks to parallel subagents
+    action: >
+      Use the parallel_subagent tool to execute the following three tasks
+      concurrently. Each subagent must write its output to the specified file
+      using the write_file tool. Do not proceed to the next step until all
+      three subagents have completed.
+
+      Task 1 label: haiku-writer
+      Task 1 prompt: Write a haiku (three lines: 5 syllables, 7 syllables,
+      5 syllables) about autonomous AI agents. Write the haiku to the file
+      tmp/output/haiku.txt using the write_file tool. The file must contain
+      only the three lines of the haiku with no additional commentary.
+
+      Task 2 label: mcp-describer
+      Task 2 prompt: Write a three-sentence description of the Model Context
+      Protocol (MCP). MCP is an open protocol that standardizes how AI
+      applications connect to external data sources and tools. Write the
+      description to tmp/output/mcp_description.txt using the write_file
+      tool. The file must contain exactly three sentences.
+
+      Task 3 label: rust-advocate
+      Task 3 prompt: Write a numbered list of five concrete benefits of
+      writing command-line interface tools in the Rust programming language.
+      Each benefit must be one sentence. Write the list to
+      tmp/output/rust_benefits.txt using the write_file tool.
+    context: >
+      All output files must be written to tmp/output/ relative to the current
+      working directory. Use the parallel_subagent tool with all three tasks
+      in a single call to maximize concurrency.
+
+  - name: Write coordinator summary
+    action: >
+      Read the three files produced by the subagents:
+        tmp/output/haiku.txt
+        tmp/output/mcp_description.txt
+        tmp/output/rust_benefits.txt
+      Then write a single cohesive paragraph to tmp/output/summary.txt that
+      summarizes what each subagent produced. The summary must mention the
+      haiku topic, the MCP description, and the Rust benefits list. Use the
+      write_file tool to write the summary.
+    context: >
+      Use the read_file tool to read each subagent output file before writing
+      the summary. Write the summary to tmp/output/summary.txt.

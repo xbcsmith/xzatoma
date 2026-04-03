@@ -1,0 +1,56 @@
+# XZatoma Skills Demo Plan
+#
+# Demonstrates skill discovery, loading, and activation within the demo sandbox.
+# The agent activates each skill loaded from ./skills/ and uses it to complete
+# each step. All output files are written to tmp/output/.
+#
+# Usage:
+#   xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     run --plan ./plans/skills_demo.yaml
+
+name: Skills Demo
+description: >
+  Demonstrates skill discovery, loading, and activation within the demo sandbox.
+  Each step activates a different skill from the demo-local skills directory and
+  uses it to complete a concrete writing task.
+
+steps:
+  - name: Greet the demo user
+    action: >
+      Activate the greet skill using the activate_skill tool. Then follow the
+      skill instructions to produce a short, friendly greeting for a user named
+      "Demo User". Print the greeting to the terminal. The greeting must include
+      the name "Demo User" and one encouraging sentence.
+    context: >
+      The greet skill is available in the demo-local skills directory.
+      Use activate_skill with skill_name "greet" to load it.
+
+  - name: Summarize and save text
+    action: >
+      Activate the summarize skill using the activate_skill tool. Then follow the
+      skill instructions to condense the following paragraph into three sentences.
+      Write the resulting summary to tmp/output/summary.txt using the write_file
+      tool. Confirm the file path after writing.
+    context: >
+      Source text to summarize:
+      XZatoma is an autonomous AI agent CLI written in Rust. It supports multiple
+      AI providers including Ollama and GitHub Copilot. The agent executes tasks
+      through conversation with AI models using file system and terminal tools.
+      Skills extend agent behavior by providing reusable instruction sets that the
+      agent discovers and activates at runtime. Each skill is a directory
+      containing a SKILL.md file with YAML frontmatter describing the skill name,
+      description, license, compatibility, and allowed tools, followed by a
+      markdown body that gives the agent its behavioral instructions. Skills can
+      be scoped to a project, a user, or a custom configured path. The demo
+      sandbox restricts discovery to the local skills/ directory only.
+
+  - name: Write a completion notice
+    action: >
+      Activate the write_file skill using the activate_skill tool. Then follow
+      the skill instructions to write a short completion message to the file
+      tmp/output/greeting.txt. The message must include the text "Skills demo
+      complete" and the path of the current working directory. Confirm the file
+      path after writing.
+    context: >
+      Write to tmp/output/greeting.txt relative to the current working directory.
+      Use the write_file tool to create the file.

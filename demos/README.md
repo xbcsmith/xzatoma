@@ -175,8 +175,8 @@ directory is copied to a new filesystem location.
 | --------- | ---------- |
 | Chat      | Scaffolded |
 | Run       | Scaffolded |
-| Skills    | Planned    |
-| MCP       | Planned    |
-| Subagents | Planned    |
+| Skills    | Scaffolded |
+| MCP       | Scaffolded |
+| Subagents | Scaffolded |
 | Vision    | Scaffolded |
 | Watcher   | Planned    |
