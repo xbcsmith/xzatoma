@@ -1,0 +1,6 @@
+# Ignore all generated demo content
+*
+!.gitignore
+!output/
+output/*
+!output/.gitkeep

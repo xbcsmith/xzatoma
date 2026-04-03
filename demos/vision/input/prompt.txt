@@ -1,0 +1,34 @@
+Vision Demo Sample Prompts
+
+Use these prompts when running the vision demo in interactive chat mode.
+Type one of the prompts below at the xzatoma chat prompt.
+
+--- Text-based visual reasoning prompts ---
+
+Describe the visual properties of a solid blue 64x64 pixel square image.
+What colors and shapes would you expect to see in a photograph of a clear sky at noon?
+A user has an image of a hand-drawn flowchart. What steps would you follow to extract the logic from it?
+What distinguishes a high-contrast image from a low-contrast one?
+
+--- Vision model capability prompts ---
+
+What types of images are you capable of analyzing?
+Explain how a vision language model processes image input.
+What is the difference between object detection and image captioning?
+
+--- Image description tasks (for use when image attachment is supported) ---
+
+Describe everything you can see in the attached image.
+What is the dominant color in this image?
+Identify any geometric shapes present in the image.
+Estimate the approximate dimensions of the main subject in the image.
+
+--- Notes ---
+
+The sample image created by setup.sh is a 64x64 solid blue (RGB 70,130,180) PNG.
+It is stored at tmp/sample.png after running setup.sh.
+
+When full image attachment support is available in XZatoma, you will be able
+to include the image directly in a chat prompt using the at-sign mention syntax.
+Until that feature is wired through the provider layer, use the text-based
+prompts above to interact with the granite3.2-vision:2b model.

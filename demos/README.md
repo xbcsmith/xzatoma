@@ -171,12 +171,12 @@ directory is copied to a new filesystem location.
 
 ## Demo Status
 
-| Demo      | Status  |
-| --------- | ------- |
-| Chat      | Planned |
-| Run       | Planned |
-| Skills    | Planned |
-| MCP       | Planned |
-| Subagents | Planned |
-| Vision    | Planned |
-| Watcher   | Planned |
+| Demo      | Status     |
+| --------- | ---------- |
+| Chat      | Scaffolded |
+| Run       | Scaffolded |
+| Skills    | Planned    |
+| MCP       | Planned    |
+| Subagents | Planned    |
+| Vision    | Scaffolded |
+| Watcher   | Planned    |

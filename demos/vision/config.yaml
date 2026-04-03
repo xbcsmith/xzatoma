@@ -1,0 +1,40 @@
+# XZatoma Demo: Vision
+#
+# Provider: Ollama
+# Model:    granite3.2-vision:2b
+#
+# This configuration is local to the vision demo directory.
+# It must not reference any file outside this demo directory at runtime.
+# All generated state is written under tmp/ by the demo scripts.
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite3.2-vision:2b
+
+agent:
+  max_turns: 10
+  timeout_seconds: 180
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 2097152
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+  chat:
+    default_mode: planning
+    default_safety: confirm
+    allow_mode_switching: true
