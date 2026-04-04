@@ -36,9 +36,15 @@ pub struct Config {
 /// Provider configuration
 ///
 /// Specifies which AI provider to use and its settings.
+///
+/// # Valid Provider Types
+///
+/// * `"copilot"` - GitHub Copilot (OAuth device flow authentication)
+/// * `"ollama"` - Ollama local or remote inference server (no auth required)
+/// * `"openai"` - OpenAI API or any OpenAI-compatible inference server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    /// Type of provider to use
+    /// Type of provider to use. Valid values: `"copilot"`, `"ollama"`, `"openai"`.
     #[serde(rename = "type")]
     pub provider_type: String,
 
@@ -49,6 +55,10 @@ pub struct ProviderConfig {
     /// Ollama configuration
     #[serde(default)]
     pub ollama: OllamaConfig,
+
+    /// OpenAI (and OpenAI-compatible) provider configuration
+    #[serde(default)]
+    pub openai: OpenAIConfig,
 }
 
 /// GitHub Copilot provider configuration
@@ -150,6 +160,102 @@ impl Default for OllamaConfig {
         Self {
             host: default_ollama_host(),
             model: default_ollama_model(),
+        }
+    }
+}
+
+/// OpenAI provider configuration.
+///
+/// Configures the OpenAI-compatible provider for XZatoma. The `base_url` field
+/// allows targeting any server that implements the OpenAI Chat Completions API,
+/// including llama.cpp, vLLM, Candle-vLLM, and Mistral.rs.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::OpenAIConfig;
+///
+/// let config = OpenAIConfig {
+///     api_key: "sk-example".to_string(),
+///     base_url: "https://api.openai.com/v1".to_string(),
+///     model: "gpt-4o-mini".to_string(),
+///     organization_id: None,
+///     enable_streaming: true,
+/// };
+/// assert_eq!(config.model, "gpt-4o-mini");
+/// assert_eq!(config.base_url, "https://api.openai.com/v1");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIConfig {
+    /// Bearer token used in the `Authorization: Bearer <api_key>` request header.
+    ///
+    /// May be left as an empty string for local inference servers that require
+    /// no authentication (e.g., llama.cpp, vLLM, Mistral.rs).
+    /// Set via the `XZATOMA_OPENAI_API_KEY` environment variable.
+    #[serde(default = "default_openai_api_key")]
+    pub api_key: String,
+
+    /// Base URL for all API requests.
+    ///
+    /// Defaults to `"https://api.openai.com/v1"` for the hosted OpenAI API.
+    /// Override to target any OpenAI-compatible inference server, for example:
+    ///
+    /// * llama.cpp: `http://localhost:8080/v1`
+    /// * vLLM: `http://localhost:8000/v1`
+    /// * Mistral.rs: `http://localhost:1234/v1`
+    ///
+    /// Set via the `XZATOMA_OPENAI_BASE_URL` environment variable.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+
+    /// Model identifier sent in the `model` field of every request body.
+    ///
+    /// Defaults to `"gpt-4o-mini"`. For local servers, use the name of the
+    /// model that was loaded on the server (e.g., `"llama-3.2-3b"`).
+    /// Set via the `XZATOMA_OPENAI_MODEL` environment variable.
+    #[serde(default = "default_openai_model")]
+    pub model: String,
+
+    /// Optional organization identifier sent as the `OpenAI-Organization`
+    /// HTTP header. Has no effect when `None` or empty.
+    ///
+    /// Set via the `XZATOMA_OPENAI_ORG_ID` environment variable.
+    #[serde(default)]
+    pub organization_id: Option<String>,
+
+    /// When `true`, use SSE streaming for responses that do not include tool
+    /// calls. Requests that include tool schemas always use the non-streaming
+    /// path to avoid partial tool-call accumulation issues.
+    ///
+    /// Set via the `XZATOMA_OPENAI_STREAMING` environment variable.
+    #[serde(default = "default_openai_streaming")]
+    pub enable_streaming: bool,
+}
+
+fn default_openai_api_key() -> String {
+    String::new()
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_openai_model() -> String {
+    "gpt-4o-mini".to_string()
+}
+
+fn default_openai_streaming() -> bool {
+    true
+}
+
+impl Default for OpenAIConfig {
+    fn default() -> Self {
+        Self {
+            api_key: default_openai_api_key(),
+            base_url: default_openai_base_url(),
+            model: default_openai_model(),
+            organization_id: None,
+            enable_streaming: default_openai_streaming(),
         }
     }
 }
@@ -947,6 +1053,7 @@ impl Config {
                 provider_type: "copilot".to_string(),
                 copilot: CopilotConfig::default(),
                 ollama: OllamaConfig::default(),
+                openai: OpenAIConfig::default(),
             },
             agent: AgentConfig::default(),
             watcher: WatcherConfig::default(),
@@ -979,6 +1086,29 @@ impl Config {
 
         if let Ok(ollama_model) = std::env::var("XZATOMA_OLLAMA_MODEL") {
             self.provider.ollama.model = ollama_model;
+        }
+
+        if let Ok(openai_api_key) = std::env::var("XZATOMA_OPENAI_API_KEY") {
+            self.provider.openai.api_key = openai_api_key;
+        }
+
+        if let Ok(openai_base_url) = std::env::var("XZATOMA_OPENAI_BASE_URL") {
+            self.provider.openai.base_url = openai_base_url;
+        }
+
+        if let Ok(openai_model) = std::env::var("XZATOMA_OPENAI_MODEL") {
+            self.provider.openai.model = openai_model;
+        }
+
+        if let Ok(openai_org_id) = std::env::var("XZATOMA_OPENAI_ORG_ID") {
+            self.provider.openai.organization_id = Some(openai_org_id);
+        }
+
+        if let Ok(openai_streaming) = std::env::var("XZATOMA_OPENAI_STREAMING") {
+            match parse_env_bool(&openai_streaming) {
+                Some(value) => self.provider.openai.enable_streaming = value,
+                None => tracing::warn!("Invalid XZATOMA_OPENAI_STREAMING: {}", openai_streaming),
+            }
         }
 
         // Agent overrides
@@ -1601,7 +1731,7 @@ impl Config {
             ));
         }
 
-        let valid_providers = ["copilot", "ollama"];
+        let valid_providers = ["copilot", "ollama", "openai"];
         if !valid_providers.contains(&self.provider.provider_type.as_str()) {
             return Err(XzatomaError::Config(format!(
                 "Invalid provider type: {}. Must be one of: {}",
@@ -1711,7 +1841,7 @@ impl Config {
 
         // Validate subagent provider override if specified
         if let Some(ref provider) = self.agent.subagent.provider {
-            let valid_providers = ["copilot", "ollama"];
+            let valid_providers = ["copilot", "ollama", "openai"];
             if !valid_providers.contains(&provider.as_str()) {
                 return Err(XzatomaError::Config(format!(
                     "Invalid subagent provider override: {}. Must be one of: {}",
@@ -2903,6 +3033,81 @@ output_max_size: 4096
     fn test_subagent_config_validation_ollama_provider() {
         let mut config = Config::default();
         config.agent.subagent.provider = Some("ollama".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_openai_config_defaults() {
+        let config = OpenAIConfig::default();
+        assert_eq!(config.api_key, "");
+        assert_eq!(config.base_url, "https://api.openai.com/v1");
+        assert_eq!(config.model, "gpt-4o-mini");
+        assert!(config.organization_id.is_none());
+        assert!(config.enable_streaming);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_all_fields() {
+        let yaml = r#"
+api_key: "sk-test-key"
+base_url: "http://localhost:8080/v1"
+model: "gpt-4o"
+organization_id: "org-abc123"
+enable_streaming: false
+"#;
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.api_key, "sk-test-key");
+        assert_eq!(config.base_url, "http://localhost:8080/v1");
+        assert_eq!(config.model, "gpt-4o");
+        assert_eq!(config.organization_id, Some("org-abc123".to_string()));
+        assert!(!config.enable_streaming);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_omitted_fields_use_defaults() {
+        let yaml = r#"
+model: gpt-4o
+"#;
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.model, "gpt-4o");
+        assert_eq!(config.api_key, "");
+        assert_eq!(config.base_url, "https://api.openai.com/v1");
+        assert!(config.organization_id.is_none());
+        assert!(config.enable_streaming);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_fields() {
+        let _api_key = EnvVarGuard::set("XZATOMA_OPENAI_API_KEY", "sk-my-key");
+        let _base_url = EnvVarGuard::set("XZATOMA_OPENAI_BASE_URL", "http://localhost:8080/v1");
+        let _model = EnvVarGuard::set("XZATOMA_OPENAI_MODEL", "gpt-4o");
+        let _org_id = EnvVarGuard::set("XZATOMA_OPENAI_ORG_ID", "org-abc123");
+        let _streaming = EnvVarGuard::set("XZATOMA_OPENAI_STREAMING", "false");
+
+        let mut config = Config::default();
+        config.apply_env_vars();
+
+        assert_eq!(config.provider.openai.api_key, "sk-my-key");
+        assert_eq!(config.provider.openai.base_url, "http://localhost:8080/v1");
+        assert_eq!(config.provider.openai.model, "gpt-4o");
+        assert_eq!(
+            config.provider.openai.organization_id,
+            Some("org-abc123".to_string())
+        );
+        assert!(!config.provider.openai.enable_streaming);
+    }
+
+    #[test]
+    fn test_config_validation_accepts_openai_provider() {
+        let mut config = Config::default();
+        config.provider.provider_type = "openai".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_validation_accepts_openai_subagent_override() {
+        let mut config = Config::default();
+        config.agent.subagent.provider = Some("openai".to_string());
         assert!(config.validate().is_ok());
     }
 

@@ -4,7 +4,7 @@
 # All settings can be overridden via environment variables or CLI arguments.
 
 provider:
-  # Provider type: "copilot" or "ollama"
+  # Provider type: "copilot", "ollama", or "openai"
   type: ollama
 
   # GitHub Copilot configuration
@@ -18,6 +18,15 @@ provider:
     host: http://localhost:11434
     # Model to use (e.g., llama3.2:3b, granite3.2:2b, granite4:3b)
     model: llama3.2:3b
+
+  # OpenAI (and OpenAI-compatible) provider configuration
+  # Uncomment the openai block and set type: openai to activate
+  # openai:
+  #   api_key: ""              # Set via XZATOMA_OPENAI_API_KEY env var
+  #   base_url: "https://api.openai.com/v1"  # Override for local servers
+  #   model: gpt-4o-mini
+  #   organization_id:         # Optional; set via XZATOMA_OPENAI_ORG_ID
+  #   enable_streaming: true
 
 agent:
   # Maximum number of agent turns before stopping

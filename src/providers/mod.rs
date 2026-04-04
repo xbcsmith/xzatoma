@@ -144,7 +144,7 @@ pub fn create_provider_with_override(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CopilotConfig, OllamaConfig};
+    use crate::config::{CopilotConfig, OllamaConfig, OpenAIConfig};
 
     #[test]
     fn test_create_provider_invalid_type() {
@@ -152,6 +152,7 @@ mod tests {
             provider_type: "invalid".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         let result = create_provider("invalid", &config);
@@ -171,6 +172,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // No overrides - should use config defaults
@@ -184,6 +186,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override provider to ollama
@@ -197,6 +200,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override both provider and model
@@ -217,6 +221,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override model only (uses config provider type)
@@ -230,6 +235,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Invalid provider override
@@ -250,6 +256,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override to copilot with custom model
@@ -266,6 +273,7 @@ mod tests {
                 host: "http://localhost:11434".to_string(),
                 model: "llama3.2:latest".to_string(),
             },
+            openai: OpenAIConfig::default(),
         };
 
         // Override to ollama with custom model

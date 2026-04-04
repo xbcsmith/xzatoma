@@ -6,7 +6,9 @@
 //! - Nested subagent provider inheritance
 
 use std::sync::Arc;
-use xzatoma::config::{AgentConfig, CopilotConfig, OllamaConfig, ProviderConfig, SubagentConfig};
+use xzatoma::config::{
+    AgentConfig, CopilotConfig, OllamaConfig, OpenAIConfig, ProviderConfig, SubagentConfig,
+};
 use xzatoma::providers::create_provider_with_override;
 use xzatoma::tools::subagent::SubagentTool;
 use xzatoma::tools::ToolRegistry;
@@ -27,6 +29,7 @@ fn create_test_provider_config() -> ProviderConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:3b".to_string(),
         },
+        openai: OpenAIConfig::default(),
     }
 }
 
