@@ -1,0 +1,38 @@
+# MCP Demo - Server Reference Configuration
+#
+# This file is a reference copy of the MCP server configuration section from
+# config.yaml. It is provided for documentation purposes and is not loaded by
+# XZatoma directly.
+#
+# Server: @modelcontextprotocol/server-filesystem
+# Transport: stdio (subprocess launched via npx)
+# Scope: ./tmp/output/ (the server can only read and write within this path)
+#
+# Prerequisites:
+#   Node.js >= 18.x
+#   npx available on PATH (included with Node.js)
+#
+# To verify the server works independently:
+#   npx -y @modelcontextprotocol/server-filesystem ./tmp/output
+#
+# The server accepts JSON-RPC requests on stdin and writes responses to stdout.
+# XZatoma launches it as a child process and bridges its tools into the agent
+# tool registry automatically when mcp.auto_connect is true.
+
+id: demo-filesystem
+
+transport:
+  type: stdio
+  executable: npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-filesystem"
+    - "./tmp/output"
+
+enabled: true
+timeout_seconds: 30
+tools_enabled: true
+resources_enabled: true
+prompts_enabled: false
+sampling_enabled: false
+elicitation_enabled: false

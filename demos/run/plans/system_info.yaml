@@ -1,0 +1,18 @@
+name: System Information
+description: Gather basic system information using standard shell commands.
+steps:
+  - name: Show hostname
+    action: Display the current hostname of this machine
+    context: hostname
+  - name: Show operating system
+    action: Display the operating system name and version
+    context: uname -a
+  - name: Show current directory
+    action: Display the current working directory
+    context: pwd
+  - name: Show disk usage
+    action: Display disk usage for the current filesystem
+    context: df -h .
+  - name: Show uptime
+    action: Display how long the system has been running
+    context: uptime

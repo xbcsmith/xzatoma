@@ -1,0 +1,24 @@
+Run demo sample input files.
+
+This directory contains static input data for the run demo.
+
+The run demo exercises the XZatoma "run" command, which executes a plan
+file or a direct prompt against a local Ollama model without requiring
+interactive input from the user.
+
+Sample plan files are in the plans/ directory:
+
+  plans/hello_world.yaml  - Single-step greeting plan
+  plans/system_info.yaml  - Multi-step system information plan
+
+To execute a plan:
+
+  xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db run \
+    --plan ./plans/hello_world.yaml
+
+To execute a direct prompt:
+
+  xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db run \
+    --prompt "List the files in the current directory."
+
+All output is written to tmp/output/ by the run.sh script.

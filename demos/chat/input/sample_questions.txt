@@ -1,0 +1,19 @@
+What is the capital of France?
+
+Explain the difference between a stack and a queue data structure.
+
+Write a one-paragraph summary of how Rust's ownership model prevents memory errors.
+
+What are the first ten prime numbers?
+
+Give me a one-line shell command to count the number of lines in a file.
+
+What is the difference between TCP and UDP?
+
+Explain what a Makefile is and when you would use one.
+
+What does the term idempotent mean in the context of HTTP methods?
+
+Write a brief description of what a hash map is and how it works.
+
+What is the purpose of a .gitignore file?

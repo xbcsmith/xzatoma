@@ -1,0 +1,40 @@
+XZatoma Watcher Demo - Topic Event Reference
+
+This demo uses the generic Kafka watcher backend. The watcher listens on the
+Kafka topic "demo.plan.events" and processes any event where:
+
+  event_type = "plan"
+  action     matches the regex "demo.*" (case-insensitive)
+
+Events that do not match are silently discarded. Result events (event_type =
+"result") published to the same topic are also discarded to prevent loops.
+
+Example event (see watcher/demo_plan_event.json for the full structure):
+
+  {
+    "id":         "<unique-event-id>",
+    "event_type": "plan",
+    "name":       "<task-name>",
+    "version":    "v1.0",
+    "action":     "demo-<anything>",
+    "plan":       { "name": "...", "description": "...", "steps": [...] },
+    "timestamp":  "<ISO-8601 timestamp>"
+  }
+
+To inject a test event into a running Kafka broker:
+
+  Using kcat (recommended):
+    kcat -P -b localhost:9092 -t demo.plan.events < watcher/demo_plan_event.json
+
+  Using kafkacat (older name for kcat):
+    kafkacat -P -b localhost:9092 -t demo.plan.events < watcher/demo_plan_event.json
+
+  Using Redpanda Console or another Kafka UI:
+    Paste the contents of watcher/demo_plan_event.json into the produce dialog
+    for topic "demo.plan.events" on broker localhost:9092.
+
+Result events are published to "demo.plan.results". To watch for results:
+
+  kcat -C -b localhost:9092 -t demo.plan.results -o end
+
+Output files produced by the executed plan are written to tmp/output/.

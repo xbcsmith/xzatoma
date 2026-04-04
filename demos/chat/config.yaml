@@ -1,0 +1,50 @@
+# XZatoma Demo: Chat
+#
+# Demo-local configuration for the chat demo.
+# This file is used exclusively by this demo and must not be shared with other
+# demos or replaced by the repository-level config/config.yaml at runtime.
+#
+# Provider: Ollama (local)
+# Model:    granite4:3b
+# Usage:    xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db chat
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 180
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+  chat:
+    default_mode: planning
+    default_safety: confirm
+    allow_mode_switching: true
+
+  subagent:
+    max_depth: 1
+    default_max_turns: 5
+    output_max_size: 4096
+    chat_enabled: false
+
+skills:
+  enabled: false

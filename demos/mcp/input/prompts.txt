@@ -1,0 +1,75 @@
+MCP Demo - Reference Prompts
+============================================================
+
+These prompts demonstrate direct MCP tool usage via xzatoma chat.
+Run setup.sh and then run.sh before using these prompts interactively.
+
+RUNNING THE DEMO
+------------------------------------------------------------
+
+Non-interactive (recommended):
+  ./run.sh
+
+Interactive chat session with MCP tools available:
+  xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db chat
+
+REFERENCE PROMPTS
+------------------------------------------------------------
+
+1. List MCP tools
+   Prompt: "List all tools provided by connected MCP servers."
+
+2. Write a file via MCP
+   Prompt: "Use the MCP filesystem server to write the text 'hello from MCP'
+            to a file named hello.txt in the output directory."
+
+3. Read a file via MCP
+   Prompt: "Use the MCP filesystem server to read the file hello.txt from
+            the output directory and show its contents."
+
+4. List files via MCP
+   Prompt: "Use the MCP filesystem server to list all files in the output
+            directory."
+
+5. List MCP resources
+   Prompt: "Use the mcp_resources tool to list all resources available from
+            the connected MCP servers."
+
+6. Create a subdirectory via MCP
+   Prompt: "Use the MCP filesystem server to create a directory named notes
+            inside the output directory."
+
+7. Write multiple files
+   Prompt: "Use the MCP filesystem server to write three files: one.txt,
+            two.txt, and three.txt in the output directory. Each file should
+            contain its own name as content."
+
+8. Search for files
+   Prompt: "Use the MCP filesystem server to search for all .txt files in
+            the output directory."
+
+MCP SERVER DETAILS
+------------------------------------------------------------
+
+Server ID   : demo-filesystem
+Transport   : stdio (subprocess via npx)
+Executable  : npx -y @modelcontextprotocol/server-filesystem
+Root path   : ./tmp/output
+Scope       : Read and write access limited to ./tmp/output/
+
+The server is started automatically by XZatoma when the demo runs.
+It is stopped automatically when XZatoma exits.
+
+PREREQUISITES
+------------------------------------------------------------
+
+- Node.js >= 18 with npx available on PATH
+- Ollama running with granite4:3b pulled
+- XZatoma built (cargo build --release)
+
+To check Node.js version:
+  node --version
+
+To install Node.js:
+  https://nodejs.org (official installer)
+  nvm install 18     (via nvm)

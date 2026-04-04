@@ -1,0 +1,38 @@
+# XZatoma Demo: Run
+#
+# Provider: Ollama
+# Model: granite4:3b
+#
+# This configuration is scoped to the run demo directory. It must not be
+# replaced by any repository-level config at runtime. All storage and history
+# paths are relative to the demo directory and are written under tmp/.
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 300
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+skills:
+  enabled: false

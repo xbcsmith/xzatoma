@@ -1,0 +1,68 @@
+# XZatoma Demo: MCP
+#
+# Demo-local configuration for the MCP demo.
+# This file is used exclusively by this demo and must not be shared with other
+# demos or replaced by the repository-level config/config.yaml at runtime.
+#
+# Provider: Ollama (local)
+# Model:    granite4:3b
+# MCP:      @modelcontextprotocol/server-filesystem scoped to ./tmp/output/
+# Usage:    xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#             run --plan ./plans/mcp_demo.yaml
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 300
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+  subagent:
+    max_depth: 1
+    default_max_turns: 5
+    chat_enabled: false
+
+skills:
+  enabled: false
+
+mcp:
+  servers:
+    - id: demo-filesystem
+      transport:
+        type: stdio
+        executable: npx
+        args:
+          - "-y"
+          - "@modelcontextprotocol/server-filesystem"
+          - "./tmp/output"
+      enabled: true
+      timeout_seconds: 30
+      tools_enabled: true
+      resources_enabled: true
+      prompts_enabled: false
+      sampling_enabled: false
+      elicitation_enabled: false
+  request_timeout_seconds: 30
+  auto_connect: true
+  expose_resources_tool: true
+  expose_prompts_tool: false

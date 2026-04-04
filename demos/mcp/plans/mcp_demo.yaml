@@ -1,0 +1,52 @@
+# XZatoma MCP Demo Plan
+#
+# Demonstrates Model Context Protocol server integration using the demo-filesystem
+# MCP server. The server is scoped to ./tmp/output/ so all file operations
+# performed through it remain inside the demo output directory.
+#
+# The demo-filesystem server is configured in config.yaml under mcp.servers.
+# XZatoma starts it automatically on launch when mcp.auto_connect is true.
+#
+# Usage:
+#   xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     run --plan ./plans/mcp_demo.yaml
+
+name: MCP Demo
+description: >
+  Demonstrates Model Context Protocol server integration. The agent uses the
+  demo-filesystem MCP server to list tools, write a file, read it back, and
+  list available resources. All operations are scoped to tmp/output/.
+
+steps:
+  - name: List MCP server tools
+    action: >
+      List all tools provided by connected MCP servers. For each tool report
+      its name and a one-sentence description of what it does. Write the
+      complete list to tmp/output/mcp_tools.txt using the write_file tool.
+    context: >
+      The demo-filesystem MCP server is connected and provides filesystem
+      tools scoped to the tmp/output/ directory.
+
+  - name: Write a file via MCP
+    action: >
+      Use the MCP filesystem server to create a file named mcp_hello.txt in
+      the output directory. The file must contain exactly these two lines:
+        MCP filesystem server integration is working.
+        Written by xzatoma via the demo-filesystem MCP server.
+      After writing, confirm the file path that was created.
+    context: Write to tmp/output/mcp_hello.txt via the MCP write_file tool.
+
+  - name: Read the file back via MCP
+    action: >
+      Use the MCP filesystem server to read the file mcp_hello.txt from the
+      output directory. Display the full file contents verbatim and confirm
+      they match what was written in the previous step.
+    context: Read from tmp/output/mcp_hello.txt via the MCP read_file tool.
+
+  - name: List resources via MCP
+    action: >
+      Use the MCP resources tool or the list_directory MCP tool to enumerate
+      all files currently present in the output directory. Report each file
+      name and its size in bytes. Write the directory listing to
+      tmp/output/mcp_listing.txt using the write_file tool.
+    context: List contents of tmp/output/ through the MCP filesystem server.

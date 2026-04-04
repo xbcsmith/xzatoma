@@ -1,0 +1,21 @@
+# XZatoma Run Demo: Hello World Plan
+#
+# A minimal single-step plan that verifies XZatoma can connect to Ollama,
+# parse a plan file, and execute a task through the agent.
+#
+# Usage:
+#   xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     run --plan ./plans/hello_world.yaml
+
+name: Hello World
+description: >
+  A minimal plan that verifies XZatoma is working correctly with a local
+  Ollama model. The agent prints a greeting and confirms the setup is
+  functional.
+steps:
+  - name: Print greeting
+    action: >
+      Print a short greeting message to the terminal. The message must include
+      the text "Hello from XZatoma" and confirm that the Ollama model is
+      responding correctly.
+    context: echo "Hello from XZatoma"

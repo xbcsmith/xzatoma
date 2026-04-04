@@ -122,9 +122,9 @@ features and architecture.
 
 - **[agent_skills_phase1_implementation.md](agent_skills_phase1_implementation.md)** -
   Phase 1: Skill Discovery and Parsing Foundation - added `skills` module
-  foundation, `SkillsConfig`, deterministic skill discovery roots and
-  precedence rules, `SKILL.md` parsing and validation, diagnostics for invalid
-  and shadowed skills, catalog foundation, tests, and configuration examples
+  foundation, `SkillsConfig`, deterministic skill discovery roots and precedence
+  rules, `SKILL.md` parsing and validation, diagnostics for invalid and shadowed
+  skills, catalog foundation, tests, and configuration examples
 
 - **[agent_skills_phase2_implementation.md](agent_skills_phase2_implementation.md)** -
   Phase 2: Skill Catalog Disclosure and Prompt Integration - added disclosure
@@ -145,17 +145,17 @@ features and architecture.
   session-local active skill lifecycle behavior, and trust/resource/lifecycle
   test coverage
 
-- **[agent_skills_implementation.md](agent_skills_implementation.md)** -
-  Phase 5: Configuration, CLI, Documentation, and Hardening - completed the
-  `skills` CLI command surface, hardening for skills configuration and trust
-  operations, configuration examples, Diataxis documentation set, and
-  integration coverage for config and CLI behavior
+- **[agent_skills_implementation.md](agent_skills_implementation.md)** - Phase
+  5: Configuration, CLI, Documentation, and Hardening - completed the `skills`
+  CLI command surface, hardening for skills configuration and trust operations,
+  configuration examples, Diataxis documentation set, and integration coverage
+  for config and CLI behavior
 
-- **[acp_phase1_implementation.md](acp_phase1_implementation.md)** -
-  Phase 1: ACP Domain Model and Core Abstractions - added the ACP module
-  foundation, protocol-facing manifest/message/run/session/event types,
-  ACP-specific validation and lifecycle abstractions, crate-level ACP error
-  integration, message-to-ACP adapters, and core contract test coverage
+- **[acp_phase1_implementation.md](acp_phase1_implementation.md)** - Phase 1:
+  ACP Domain Model and Core Abstractions - added the ACP module foundation,
+  protocol-facing manifest/message/run/session/event types, ACP-specific
+  validation and lifecycle abstractions, crate-level ACP error integration,
+  message-to-ACP adapters, and core contract test coverage
 
 - **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
   Documentation completion for model management features (API reference, how-to
@@ -307,6 +307,23 @@ and resolved four gaps:
 
 - **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
   Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
+
+### Demo Scaffolding Initiative -- Complete
+
+Seven self-contained demo directories delivered across five phases. Every demo
+is independently portable, uses Ollama as the provider, writes all generated
+state under `tmp/`, and passes the 13-point isolation audit.
+
+- **Phase 1** - Demo framework: directory contract, sandboxing rules, model
+  contract, top-level `demos/README.md`
+- **Phase 2** - Core demos: `chat`, `run`, `vision`
+- **Phase 3** - Advanced feature demos: `skills`, `mcp`, `subagents`
+- **Phase 4** - Watcher demo + cross-demo isolation audit (all 7 demos, 13
+  checks)
+- **Phase 5** - Validation matrix, implementation summary, index update
+
+Documentation: **[demo_implementation.md](demo_implementation.md)** - canonical
+implementation summary with validation matrix (7 demos x 13 checks, all true)
 
 ---
 
@@ -1455,8 +1472,75 @@ All implementations must meet these requirements (per AGENTS.md):
 - Filenames use lowercase_with_underscores (except README.md)
 - No emojis in code or documentation (except AGENTS.md)
 
+## Demo Scaffolding Initiative
+
+### Overview
+
+The demo scaffolding initiative delivered seven self-contained, independently
+portable demo directories under `demos/`. All demos use Ollama as the only
+provider and enforce strict isolation: every generated file is written under the
+demo-local `tmp/` directory.
+
+### Validation Matrix
+
+| Demo      | Dir | README | Config | Ollama | Model | Setup | Run | Reset | Gitignore | Output | Self-Contained | Sandbox |
+| --------- | --- | ------ | ------ | ------ | ----- | ----- | --- | ----- | --------- | ------ | -------------- | ------- |
+| chat      | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| run       | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| skills    | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| mcp       | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| subagents | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| vision    | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+| watcher   | ok  | ok     | ok     | ok     | ok    | ok    | ok  | ok    | ok        | ok     | ok             | ok      |
+
+Column key: Dir = directory exists, README = all 10 required sections present,
+Config = demo-local config.yaml, Ollama = provider is ollama, Model = correct
+model for demo type, Setup/Run/Reset = scripts exist and use DEMO_DIR pattern,
+Gitignore = tmp/.gitignore present, Output = tmp/output/ present, Self-Contained
+= DEMO_DIR pattern + --config flag, Sandbox = Sandbox Boundaries section in
+README.
+
+### Components Delivered
+
+- **demos/chat/** - Interactive conversation demo; granite4:3b; planning mode
+- **demos/run/** - Autonomous plan execution demo; granite4:3b; plan file +
+  prompt modes
+- **demos/vision/** - Image understanding demo; granite3.2-vision:2b;
+  Python-generated sample PNG
+- **demos/skills/** - Skill discovery and activation demo; granite4:3b; three
+  demo-local skills
+- **demos/mcp/** - Model Context Protocol demo; granite4:3b; stdio MCP server
+  via npx
+- **demos/subagents/** - Nested agent delegation demo; granite4:3b; three
+  parallel subagents
+- **demos/watcher/** - Event-driven plan execution demo; granite4:3b; generic
+  Kafka backend
+
+### Validation Results
+
+- 7 demos created
+- 13 isolation checks per demo
+- 91 / 91 checks passed (all true)
+- All per-demo READMEs complete (10 sections each, 70 / 70 section checks
+  passed)
+- All Markdown files pass markdownlint and prettier
+- `cargo fmt`, `cargo check`, `cargo clippy -D warnings` all clean
+
+### References
+
+- **[demo_implementation_plan.md](demo_implementation_plan.md)** - phased
+  implementation plan (five phases)
+- **[demo_implementation.md](demo_implementation.md)** - canonical
+  implementation summary with full validation matrix
+- **[demos/README.md](../../demos/README.md)** - top-level demos index and
+  quickstart guide
+
+---
+
 ## Version History
 
+- **2025-07-XX** - Demo Scaffolding Initiative completed (7 demos, 5 phases, all
+  validation checks passing)
 - **2025-07-XX** - MCP Phase 4: Client Lifecycle and Server Manager completed
 - **2025-01-XX** - Phase 5: Documentation and Examples completed
 - **2025-01-XX** - Phase 4: Provider Integration completed
