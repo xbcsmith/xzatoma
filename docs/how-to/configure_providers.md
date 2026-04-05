@@ -176,10 +176,81 @@ provider:
 When using a config file, sensitive values (API keys) are still recommended to
 be set via environment variables or a secure keyring.
 
+## OpenAI-Compatible Local Servers
+
+XZatoma's OpenAI provider works with any server that implements the OpenAI chat
+completions API. Set `XZATOMA_OPENAI_BASE_URL` to the local server address and
+leave `XZATOMA_OPENAI_API_KEY` empty (local servers typically do not require
+authentication).
+
+### llama.cpp
+
+Start the server before configuring XZatoma:
+
+```bash
+llama-server --model /path/to/model.gguf --port 8080
+```
+
+Configure via environment variables:
+
+```bash
+export XZATOMA_OPENAI_API_KEY=""
+export XZATOMA_OPENAI_BASE_URL="http://localhost:8080/v1"
+export XZATOMA_OPENAI_MODEL="local-model"
+xzatoma chat --provider openai
+```
+
+The model name `local-model` is the default reported by `llama-server`. Run
+`curl http://localhost:8080/v1/models` to confirm what name your build reports.
+
+### vLLM
+
+Start the server before configuring XZatoma:
+
+```bash
+python -m vllm.entrypoints.openai.api_server \
+  --model meta-llama/Llama-3.2-3B-Instruct \
+  --port 8000
+```
+
+Configure via environment variables:
+
+```bash
+export XZATOMA_OPENAI_API_KEY=""
+export XZATOMA_OPENAI_BASE_URL="http://localhost:8000/v1"
+export XZATOMA_OPENAI_MODEL="meta-llama/Llama-3.2-3B-Instruct"
+xzatoma chat --provider openai
+```
+
+The model name must exactly match the `--model` argument passed to vLLM.
+
+### Mistral.rs
+
+Start the server before configuring XZatoma:
+
+```bash
+mistralrs-server --port 1234 plain -m /path/to/mistral-7b-instruct
+```
+
+Configure via environment variables:
+
+```bash
+export XZATOMA_OPENAI_API_KEY=""
+export XZATOMA_OPENAI_BASE_URL="http://localhost:1234/v1"
+export XZATOMA_OPENAI_MODEL="mistral-7b-instruct"
+xzatoma chat --provider openai
+```
+
+Run `curl http://localhost:1234/v1/models` to confirm the model name your
+Mistral.rs build reports.
+
+For step-by-step config file examples for each of these servers see
+[docs/how-to/use_openai_compatible_providers.md](use_openai_compatible_providers.md).
+
 ## Troubleshooting
 
 - 401 / Unauthorized
-- Verify the API key is set (`echo $OPENAI_API_KEY`) and is correct.
+- Verify the API key is set (`echo $XZATOMA_OPENAI_API_KEY`) and is correct.
 - Ensure there are no stray characters or quotes.
 - For Copilot, confirm OAuth completed successfully: re-run
   `xzatoma auth --provider copilot`.
