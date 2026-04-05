@@ -1,11 +1,12 @@
 //! Provider module for XZatoma
 //!
 //! This module contains the AI provider abstraction and implementations
-//! for GitHub Copilot and Ollama.
+//! for GitHub Copilot, Ollama, and OpenAI.
 
 pub mod base;
 pub mod copilot;
 pub mod ollama;
+pub mod openai;
 
 pub use base::{
     convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
@@ -15,6 +16,7 @@ pub use base::{
 };
 pub use copilot::CopilotProvider;
 pub use ollama::OllamaProvider;
+pub use openai::OpenAIProvider;
 
 use crate::config::ProviderConfig;
 use crate::error::Result;
@@ -23,7 +25,7 @@ use crate::error::Result;
 ///
 /// # Arguments
 ///
-/// * `provider_type` - Type of provider ("copilot" or "ollama")
+/// * `provider_type` - Type of provider ("copilot", "ollama", or "openai")
 /// * `config` - Provider configuration
 ///
 /// # Returns
@@ -61,7 +63,7 @@ pub fn create_provider(
 /// # Arguments
 ///
 /// * `config` - Full provider configuration containing all provider settings
-/// * `provider_override` - Optional provider type override ("copilot" or "ollama")
+/// * `provider_override` - Optional provider type override ("copilot", "ollama", or "openai")
 /// * `model_override` - Optional model name override
 ///
 /// # Returns

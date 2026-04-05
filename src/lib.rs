@@ -8,7 +8,7 @@
 //! The library is organized into the following modules:
 //!
 //! - `agent`: Core agent logic, conversation management, and execution loop
-//! - `providers`: AI provider abstraction and implementations (Copilot, Ollama)
+//! - `providers`: AI provider abstraction and implementations (Copilot, Ollama, OpenAI)
 //! - `tools`: File operations, terminal execution, and tool registry
 //! - `config`: Configuration management and validation
 //! - `error`: Error types and result aliases
