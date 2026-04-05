@@ -71,13 +71,19 @@ The `provider` section controls which AI backend XZatoma uses.
   - Accepted values:
     - `copilot`
     - `ollama`
+    - `openai`
 
 - `copilot`
 
   - Copilot-specific configuration
 
 - `ollama`
+
   - Ollama-specific configuration
+
+- `openai`
+
+  - OpenAI and OpenAI-compatible server configuration
 
 ### Example
 
@@ -144,8 +150,34 @@ provider:
   - Default: `http://localhost:11434`
 
 - `model`
+
   - Type: string
   - Default: `llama3.2:latest`
+
+### OpenAI Configuration
+
+#### Fields
+
+| Field              | Type           | Default                       | Env Var                    | Description                                                                                                               |
+| ------------------ | -------------- | ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `api_key`          | string         | `""`                          | `XZATOMA_OPENAI_API_KEY`   | Bearer token for OpenAI API authentication. Leave empty for local servers that do not require authentication.             |
+| `base_url`         | string         | `"https://api.openai.com/v1"` | `XZATOMA_OPENAI_BASE_URL`  | API base URL. Override to point at a local inference server such as llama.cpp, vLLM, or Mistral.rs.                       |
+| `model`            | string         | `"gpt-4o-mini"`               | `XZATOMA_OPENAI_MODEL`     | Model name to request from the API. For local servers this must match the model loaded on the server.                     |
+| `organization_id`  | string or null | (none)                        | `XZATOMA_OPENAI_ORG_ID`    | Optional organization ID. Required for users on organizational OpenAI accounts. Sent as the `OpenAI-Organization` header. |
+| `enable_streaming` | boolean        | `true`                        | `XZATOMA_OPENAI_STREAMING` | Enable SSE streaming for text responses. Requests that include tools always use the non-streaming path.                   |
+
+#### Example
+
+```yaml
+provider:
+  type: openai
+  openai:
+    api_key: ""
+    base_url: "https://api.openai.com/v1"
+    model: gpt-4o-mini
+    organization_id: org-replace-with-your-org-id
+    enable_streaming: true
+```
 
 ## Agent Configuration
 

@@ -3191,6 +3191,31 @@ chat_enabled: true
     }
 
     #[test]
+    fn test_openai_config_example_parses() {
+        // Ensure the OpenAI example configuration file is valid YAML and maps
+        // to `Config` without errors. This verifies the file is self-consistent
+        // and that all fields deserialize correctly with their documented defaults.
+        let contents = std::fs::read_to_string("config/openai_config.yaml")
+            .expect("Failed to read config/openai_config.yaml");
+        let cfg: Config =
+            serde_yaml::from_str(&contents).expect("Failed to parse config/openai_config.yaml");
+
+        // Provider section
+        assert_eq!(cfg.provider.provider_type, "openai");
+        assert_eq!(cfg.provider.openai.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.provider.openai.model, "gpt-4o-mini");
+        assert_eq!(cfg.provider.openai.api_key, "");
+        assert!(cfg.provider.openai.organization_id.is_none());
+        assert!(cfg.provider.openai.enable_streaming);
+
+        // Agent section
+        assert_eq!(cfg.agent.max_turns, 50);
+        assert_eq!(cfg.agent.timeout_seconds, 300);
+        assert_eq!(cfg.agent.conversation.max_tokens, 100000);
+        assert_eq!(cfg.agent.conversation.prune_threshold, 0.8);
+    }
+
+    #[test]
     #[ignore = "modifies global environment variables"]
     fn test_apply_env_vars_populates_kafka_from_xzepr_vars() {
         // NOTE: This test mutates global environment variables. Run with:

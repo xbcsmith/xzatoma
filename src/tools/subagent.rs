@@ -370,7 +370,7 @@ impl SubagentTool {
     ///
     /// ```no_run
     /// use xzatoma::tools::subagent::SubagentTool;
-    /// use xzatoma::config::{AgentConfig, ProviderConfig, CopilotConfig, OllamaConfig};
+    /// use xzatoma::config::{AgentConfig, ProviderConfig, CopilotConfig, OllamaConfig, OpenAIConfig};
     /// use xzatoma::tools::ToolRegistry;
     /// use std::sync::Arc;
     ///
@@ -381,6 +381,7 @@ impl SubagentTool {
     ///     provider_type: "copilot".to_string(),
     ///     copilot: CopilotConfig::default(),
     ///     ollama: OllamaConfig::default(),
+    ///     openai: OpenAIConfig::default(),
     /// };
     /// let tool = SubagentTool::new_with_config(
     ///     Arc::new(provider),
