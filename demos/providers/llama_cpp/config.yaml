@@ -1,0 +1,76 @@
+# XZatoma llama.cpp Provider Demo Configuration
+#
+# Uses the OpenAI-compatible provider pointed at a local llama.cpp server.
+# llama.cpp's built-in HTTP server speaks the OpenAI chat completions API,
+# so no API key is required and no network access leaves the machine.
+#
+# Prerequisites:
+#   1. Install llama.cpp (see README.md)
+#   2. Download a GGUF model (see README.md)
+#   3. Start the server:
+#        llama-server \
+#          --model ./models/granite-3.3-2b-instruct-Q4_K_M.gguf \
+#          --port 8080 \
+#          --ctx-size 4096 \
+#          --alias granite-3.3-2b-instruct
+#
+# Run from the demos/providers/llama_cpp/ directory:
+#
+#   cd demos/providers/llama_cpp
+#   xzatoma --config config.yaml run --plan ./plans/hello_world.yaml
+
+provider:
+  type: openai
+
+  openai:
+    # llama.cpp does not require authentication.
+    # Leave api_key empty for all local inference servers.
+    api_key: ""
+
+    # Point at the llama.cpp HTTP server.
+    # Default port is 8080 when started with --port 8080.
+    # Override at runtime: XZATOMA_OPENAI_BASE_URL=http://localhost:8080/v1
+    base_url: "http://localhost:8080/v1"
+
+    # Model name sent in each request.
+    # llama.cpp matches this against the --alias value passed to llama-server.
+    # When only one model is loaded and no --alias is set, any name is accepted.
+    # Override at runtime: XZATOMA_OPENAI_MODEL=my-model-alias
+    model: "granite-3.3-2b-instruct"
+
+    # Stream tokens as they are generated.
+    # llama.cpp supports SSE streaming for chat completions.
+    # Automatically disabled for requests that include tool schemas.
+    enable_streaming: true
+
+agent:
+  # Maximum number of agent turns before stopping.
+  max_turns: 20
+
+  # Timeout for the entire agent execution in seconds.
+  # Local inference can be slower than hosted APIs; increase if needed.
+  timeout_seconds: 300
+
+  conversation:
+    # Keep context budget conservative for small GGUF models.
+    # Raise this if you loaded a model with a larger --ctx-size.
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.80
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    # restricted_autonomous: agent may run shell commands without interactive
+    # confirmation, but is limited to non-destructive operations.
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+skills:
+  enabled: false

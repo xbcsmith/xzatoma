@@ -1,0 +1,265 @@
+XZatoma llama.cpp Provider Demo - Notes
+========================================
+
+This demo uses XZatoma's OpenAI-compatible provider pointed at a local
+llama.cpp inference server.  llama.cpp speaks the OpenAI chat completions
+API, so no API key is required and all inference stays on the machine.
+
+------------------------------------------------------------------------
+INSTALLING LLAMA.CPP
+------------------------------------------------------------------------
+
+macOS (Homebrew - recommended):
+
+  brew install llama.cpp
+
+  The Homebrew formula includes the llama-server binary and is updated
+  regularly.  After installation, llama-server is on your PATH.
+
+macOS / Linux (pre-built binaries):
+
+  Download the latest release from:
+    https://github.com/ggerganov/llama.cpp/releases
+
+  Extract and move llama-server to a directory on your PATH:
+    tar -xzf llama-b<version>-bin-*.tar.gz
+    sudo mv llama-server /usr/local/bin/
+
+macOS / Linux (build from source):
+
+  git clone https://github.com/ggerganov/llama.cpp
+  cd llama.cpp
+  cmake -B build -DLLAMA_METAL=ON   # macOS Apple Silicon
+  cmake --build build --config Release -j$(nproc)
+  sudo cmake --install build
+
+  Use -DLLAMA_CUDA=ON instead of -DLLAMA_METAL=ON for NVIDIA GPUs.
+  Omit both flags for a CPU-only build.
+
+------------------------------------------------------------------------
+RECOMMENDED MODELS
+------------------------------------------------------------------------
+
+This demo was designed around Granite 3.3 2B Instruct, keeping the same
+model family used by the other XZatoma demos.  Any instruction-tuned GGUF
+model will work.
+
+Model                                  Quantization  Size    Notes
+-------------------------------------  ------------  ------  -------------------------
+granite-3.3-2b-instruct                Q4_K_M        ~1.8 GB Primary recommendation
+granite-3.1-2b-instruct                Q4_K_M        ~1.8 GB Stable alternative
+Llama-3.2-3B-Instruct                  Q4_K_M        ~2.0 GB Widely available
+Qwen2.5-3B-Instruct                    Q4_K_M        ~2.0 GB Strong small model
+Phi-3.5-mini-instruct                  Q4_K_M        ~2.2 GB Microsoft small model
+
+Q4_K_M is the recommended default quantization: good quality with small
+file size and fast inference.  Use Q8_0 for higher quality at the cost of
+roughly double the memory.
+
+------------------------------------------------------------------------
+DOWNLOADING A MODEL WITH huggingface-cli
+------------------------------------------------------------------------
+
+Install the Hugging Face CLI:
+
+  pip install huggingface_hub
+
+Create the models directory inside this demo:
+
+  mkdir -p models
+
+Download Granite 3.3 2B Instruct (Q4_K_M):
+
+  huggingface-cli download \
+    bartowski/granite-3.3-2b-instruct-GGUF \
+    granite-3.3-2b-instruct-Q4_K_M.gguf \
+    --local-dir ./models
+
+Download Llama 3.2 3B Instruct (Q4_K_M) - Meta gated model, login required:
+
+  huggingface-cli login
+  huggingface-cli download \
+    bartowski/Llama-3.2-3B-Instruct-GGUF \
+    Llama-3.2-3B-Instruct-Q4_K_M.gguf \
+    --local-dir ./models
+
+------------------------------------------------------------------------
+DOWNLOADING A MODEL WITH wget OR curl
+------------------------------------------------------------------------
+
+Models are also available directly from Hugging Face as plain HTTPS
+downloads.  Replace <ORG>, <REPO>, and <FILE> with the values for your
+chosen model:
+
+  wget "https://huggingface.co/<ORG>/<REPO>/resolve/main/<FILE>" \
+    -O ./models/<FILE>
+
+Example (Granite 3.3 2B Q4_K_M):
+
+  mkdir -p models
+  wget "https://huggingface.co/bartowski/granite-3.3-2b-instruct-GGUF/resolve/main/granite-3.3-2b-instruct-Q4_K_M.gguf" \
+    -O ./models/granite-3.3-2b-instruct-Q4_K_M.gguf
+
+------------------------------------------------------------------------
+STARTING THE LLAMA.CPP SERVER
+------------------------------------------------------------------------
+
+Basic startup (Granite 3.3 2B, port 8080):
+
+  llama-server \
+    --model ./models/granite-3.3-2b-instruct-Q4_K_M.gguf \
+    --port 8080 \
+    --ctx-size 4096 \
+    --alias granite-3.3-2b-instruct
+
+Additional flags:
+
+  --n-gpu-layers 99     Offload all layers to GPU (Metal/CUDA)
+  --threads 8           Number of CPU threads for generation
+  --parallel 1          Number of parallel request slots (default: 1)
+  --batch-size 512      Batch size for prompt processing
+  --ctx-size 8192       Larger context window (requires more VRAM/RAM)
+  --no-mmap             Disable memory-mapped model loading
+
+macOS Apple Silicon (GPU acceleration):
+
+  llama-server \
+    --model ./models/granite-3.3-2b-instruct-Q4_K_M.gguf \
+    --port 8080 \
+    --ctx-size 4096 \
+    --n-gpu-layers 99 \
+    --alias granite-3.3-2b-instruct
+
+NVIDIA GPU (CUDA):
+
+  llama-server \
+    --model ./models/granite-3.3-2b-instruct-Q4_K_M.gguf \
+    --port 8080 \
+    --ctx-size 4096 \
+    --n-gpu-layers 99 \
+    --alias granite-3.3-2b-instruct
+
+CPU-only (slower, no GPU required):
+
+  llama-server \
+    --model ./models/granite-3.3-2b-instruct-Q4_K_M.gguf \
+    --port 8080 \
+    --ctx-size 2048 \
+    --threads 4 \
+    --alias granite-3.3-2b-instruct
+
+------------------------------------------------------------------------
+VERIFYING THE SERVER
+------------------------------------------------------------------------
+
+Check that the server is running and the model is loaded:
+
+  curl http://localhost:8080/v1/models | jq .
+
+Expected response:
+
+  {
+    "object": "list",
+    "data": [
+      {
+        "id": "granite-3.3-2b-instruct",
+        "object": "model",
+        ...
+      }
+    ]
+  }
+
+Send a manual test completion:
+
+  curl http://localhost:8080/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "granite-3.3-2b-instruct",
+      "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+      "max_tokens": 64
+    }' | jq .choices[0].message.content
+
+------------------------------------------------------------------------
+XZATOMA INVOCATION EXAMPLES
+------------------------------------------------------------------------
+
+Run the hello_world plan (default):
+
+  xzatoma \
+    --config ./config.yaml \
+    --storage-path ./tmp/xzatoma.db \
+    run \
+    --plan ./plans/hello_world.yaml
+
+Run the system_info plan:
+
+  xzatoma \
+    --config ./config.yaml \
+    --storage-path ./tmp/xzatoma.db \
+    run \
+    --plan ./plans/system_info.yaml
+
+Run a direct prompt (no plan file):
+
+  xzatoma \
+    --config ./config.yaml \
+    --storage-path ./tmp/xzatoma.db \
+    run \
+    --prompt "List the files in the current directory and summarize what you find."
+
+Override the model at runtime (no config file change needed):
+
+  XZATOMA_OPENAI_MODEL=Llama-3.2-3B-Instruct \
+  xzatoma \
+    --config ./config.yaml \
+    --storage-path ./tmp/xzatoma.db \
+    run \
+    --plan ./plans/hello_world.yaml
+
+Override the server URL at runtime:
+
+  XZATOMA_OPENAI_BASE_URL=http://localhost:9090/v1 \
+  xzatoma \
+    --config ./config.yaml \
+    --storage-path ./tmp/xzatoma.db \
+    run \
+    --plan ./plans/hello_world.yaml
+
+------------------------------------------------------------------------
+ENVIRONMENT VARIABLE OVERRIDES
+------------------------------------------------------------------------
+
+All OpenAI provider settings can be overridden at runtime without editing
+config.yaml:
+
+  Variable                   Default (config.yaml)
+  -------------------------  ----------------------------------------
+  XZATOMA_OPENAI_BASE_URL    http://localhost:8080/v1
+  XZATOMA_OPENAI_MODEL       granite-3.3-2b-instruct
+  XZATOMA_OPENAI_API_KEY     (empty - not required for llama.cpp)
+  XZATOMA_OPENAI_STREAMING   true
+
+------------------------------------------------------------------------
+USING A DIFFERENT MODEL
+------------------------------------------------------------------------
+
+1. Download the GGUF file into ./models/ (see DOWNLOADING A MODEL above).
+
+2. Start llama-server with the new file and a matching --alias:
+
+     llama-server \
+       --model ./models/<your-model>.gguf \
+       --port 8080 \
+       --ctx-size 4096 \
+       --alias <your-model-alias>
+
+3. Either update config.yaml:
+
+     openai:
+       model: "<your-model-alias>"
+
+   Or override at runtime:
+
+     XZATOMA_OPENAI_MODEL=<your-model-alias> ./run.sh
+
+------------------------------------------------------------------------

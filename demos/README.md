@@ -1,41 +1,49 @@
 # XZatoma Demos
 
-XZatoma provides seven self-contained demos. Each demo lives in its own
-directory under `demos/` and can be copied to any filesystem location and run
-without modification.
+XZatoma provides self-contained demos. Each demo lives in its own directory
+under `demos/` and can be copied to any filesystem location and run without
+modification.
 
 ## Overview
 
-| Demo      | Directory          | Purpose                                                  |
-| --------- | ------------------ | -------------------------------------------------------- |
-| Chat      | `demos/chat/`      | Interactive conversation with a local Ollama model       |
-| Run       | `demos/run/`       | Autonomous plan execution from a plan file or prompt     |
-| Skills    | `demos/skills/`    | Skill discovery, loading, and activation                 |
-| MCP       | `demos/mcp/`       | Model Context Protocol server integration                |
-| Subagents | `demos/subagents/` | Nested agent delegation and parallel execution           |
-| Vision    | `demos/vision/`    | Image understanding with a multimodal Ollama model       |
-| Watcher   | `demos/watcher/`   | Event-driven plan execution via a Kafka-compatible topic |
+| Demo      | Directory                    | Purpose                                                       |
+| --------- | ---------------------------- | ------------------------------------------------------------- |
+| Chat      | `demos/chat/`                | Interactive conversation with a local Ollama model            |
+| Run       | `demos/run/`                 | Autonomous plan execution from a plan file or prompt          |
+| Skills    | `demos/skills/`              | Skill discovery, loading, and activation                      |
+| MCP       | `demos/mcp/`                 | Model Context Protocol server integration                     |
+| Subagents | `demos/subagents/`           | Nested agent delegation and parallel execution                |
+| Vision    | `demos/vision/`              | Image understanding with a multimodal Ollama model            |
+| Watcher   | `demos/watcher/`             | Event-driven plan execution via a Kafka-compatible topic      |
+| llama.cpp | `demos/providers/llama_cpp/` | OpenAI-compatible provider backed by a local llama.cpp server |
 
 ## Model Requirements
 
-All demos use Ollama as the provider. No demo uses or references GitHub Copilot.
+Most demos use Ollama as the provider. The `providers/llama_cpp` demo uses
+XZatoma's OpenAI-compatible provider pointed at a local `llama-server` instance.
+No demo uses or references GitHub Copilot.
 
-| Demo      | Provider | Model                  |
-| --------- | -------- | ---------------------- |
-| Chat      | ollama   | `granite4:3b`          |
-| Run       | ollama   | `granite4:3b`          |
-| Skills    | ollama   | `granite4:3b`          |
-| MCP       | ollama   | `granite4:3b`          |
-| Subagents | ollama   | `granite4:3b`          |
-| Vision    | ollama   | `granite3.2-vision:2b` |
-| Watcher   | ollama   | `granite4:3b`          |
+| Demo      | Provider           | Model                            |
+| --------- | ------------------ | -------------------------------- |
+| Chat      | ollama             | `granite4:3b`                    |
+| Run       | ollama             | `granite4:3b`                    |
+| Skills    | ollama             | `granite4:3b`                    |
+| MCP       | ollama             | `granite4:3b`                    |
+| Subagents | ollama             | `granite4:3b`                    |
+| Vision    | ollama             | `granite3.2-vision:2b`           |
+| Watcher   | ollama             | `granite4:3b`                    |
+| llama.cpp | openai (llama.cpp) | `granite-3.3-2b-instruct` (GGUF) |
 
-Pull both models before running any demo:
+Pull the Ollama models before running the Ollama-based demos:
 
 ```sh
 ollama pull granite4:3b
 ollama pull granite3.2-vision:2b
 ```
+
+The llama.cpp demo requires a GGUF model file and a running `llama-server`
+instance. See `demos/providers/llama_cpp/README.md` for download and startup
+instructions.
 
 ## Demo Directory Layout
 
@@ -53,6 +61,10 @@ demos/<demo>/
     .gitignore        # Excludes generated files from version control
     output/           # All result artifacts are written here
 ```
+
+Provider demos live under `demos/providers/<provider>/` and follow the same
+contract. The `models/` directory is additional and optional — used by the
+llama.cpp demo to store GGUF files locally (not tracked by git).
 
 Conditional directories are included per demo when required:
 
@@ -92,7 +104,10 @@ cd demos/<demo>
 ```
 
 Replace `<demo>` with one of: `chat`, `run`, `skills`, `mcp`, `subagents`,
-`vision`, or `watcher`.
+`vision`, `watcher`, or `providers/llama_cpp`.
+
+The llama.cpp demo requires `llama-server` to be running before `./setup.sh`
+is invoked. See `demos/providers/llama_cpp/README.md` for the startup command.
 
 ### Resetting a Demo
 
@@ -179,4 +194,5 @@ directory is copied to a new filesystem location.
 | MCP       | Scaffolded |
 | Subagents | Scaffolded |
 | Vision    | Scaffolded |
-| Watcher   | Scaffolded |
+| Watcher   | Complete   |
+| llama.cpp | Complete   |
