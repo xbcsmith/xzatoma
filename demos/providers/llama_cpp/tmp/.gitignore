@@ -1,0 +1,5 @@
+# Generated files — excluded from version control
+*
+!.gitignore
+!output/
+!output/.gitkeep

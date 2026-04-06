@@ -1,0 +1,82 @@
+# XZatoma llama.cpp Provider Demo: System Information Plan
+#
+# A multi-step plan that gathers basic system information using standard
+# shell commands. Demonstrates that the OpenAI provider (pointed at a local
+# llama.cpp server) can drive multi-step autonomous execution just like the
+# Ollama provider.
+#
+# Usage:
+#   xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     run --plan ./plans/system_info.yaml
+
+name: System Information
+description: >
+  Gather basic system information using standard shell commands and write a
+  summary report to tmp/output/system_info_report.txt. Demonstrates multi-step
+  autonomous execution via the OpenAI provider backed by a local llama.cpp
+  inference server.
+steps:
+  - name: Show hostname
+    action: >
+      Display the current hostname of this machine by running the hostname
+      command and reporting the output.
+    context: hostname
+
+  - name: Show operating system
+    action: >
+      Display the operating system name and kernel version by running
+      uname -a and reporting the full output.
+    context: uname -a
+
+  - name: Show current directory
+    action: >
+      Display the absolute path of the current working directory by running
+      pwd and reporting the output.
+    context: pwd
+
+  - name: Show disk usage
+    action: >
+      Display disk usage for the current filesystem by running df -h . and
+      reporting the output.
+    context: df -h .
+
+  - name: Show uptime
+    action: >
+      Display how long the system has been running by running uptime and
+      reporting the output.
+    context: uptime
+
+  - name: Write report
+    action: >
+      Write a plain-text system information report to
+      tmp/output/system_info_report.txt.
+
+      First ensure the output directory exists:
+        mkdir -p tmp/output
+
+      The report must contain the following sections separated by blank lines:
+
+      Section 1 - Header:
+        XZatoma llama.cpp Provider Demo - System Information Report
+
+      Section 2 - Hostname:
+        The output from the hostname step above.
+
+      Section 3 - Operating System:
+        The output from the uname -a step above.
+
+      Section 4 - Working Directory:
+        The output from the pwd step above.
+
+      Section 5 - Disk Usage:
+        The output from the df -h step above.
+
+      Section 6 - Uptime:
+        The output from the uptime step above.
+
+      Section 7 - Footer:
+        --- end of report ---
+
+      After writing, confirm the file was created by running:
+        head -5 tmp/output/system_info_report.txt
+    context: mkdir -p tmp/output

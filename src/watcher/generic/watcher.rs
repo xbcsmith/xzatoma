@@ -656,6 +656,7 @@ mod tests {
                 provider_type: "copilot".to_string(),
                 copilot: CopilotConfig::default(),
                 ollama: OllamaConfig::default(),
+                openai: crate::config::OpenAIConfig::default(),
             },
             agent: AgentConfig::default(),
             watcher: WatcherConfig {

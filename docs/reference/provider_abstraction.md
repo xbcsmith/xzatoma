@@ -9,17 +9,17 @@ and the user-facing configuration and behavioral differences between providers.
 
 - GitHub Copilot
 - Ollama (local / remote)
+- OpenAI (hosted and OpenAI-compatible local servers)
 
 **API reference only** (documented for comparison purposes; not implemented as
 separate providers in XZatoma):
 
-- OpenAI
 - Anthropic
 
-OpenAI and Anthropic are included in this document because their API conventions
-inform the provider trait design and are useful when evaluating compatibility or
-extending XZatoma in the future. They are **not** shipped as built-in provider
-implementations.
+Anthropic is included in this document because its API conventions inform the
+provider trait design and are useful when evaluating compatibility or extending
+XZatoma in the future. It is **not** shipped as a built-in provider
+implementation.
 
 Use this document when working with the implemented providers or when comparing
 API conventions across providers. For implementation plans and historical notes,
@@ -36,7 +36,7 @@ and
 | --------- | ------------------ | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
 | Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | gpt-5.3-codex     | 128K            | SSE        | OpenAI-compatible |
 | Ollama    | Implemented        | None (local)   | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
-| OpenAI    | API Reference Only | Bearer Token   | api.openai.com        | gpt-4o            | 128K            | SSE        | Native            |
+| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | gpt-4o-mini       | Model-dependent | SSE        | OpenAI-compatible |
 | Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Content blocks    |
 
 ---
@@ -82,12 +82,14 @@ export OLLAMA_HOST="http://localhost:11434"
 export OLLAMA_MODEL="llama3.2:latest"
 ```
 
-OpenAI (not implemented -- shown for API comparison only)
+OpenAI (and OpenAI-compatible servers)
 
 ```bash
-export OPENAI_API_KEY="sk-..."     # Required
-export OPENAI_HOST="https://api.openai.com" # Optional
-export OPENAI_TIMEOUT="600"       # Optional (seconds)
+export XZATOMA_OPENAI_API_KEY="sk-..."                       # Required for hosted API
+export XZATOMA_OPENAI_BASE_URL="https://api.openai.com/v1"   # Default
+export XZATOMA_OPENAI_MODEL="gpt-4o-mini"                    # Default model
+export XZATOMA_OPENAI_ORG_ID="org-..."                       # Optional
+export XZATOMA_OPENAI_STREAMING="true"                       # Default
 ```
 
 Anthropic (not implemented -- shown for API comparison only)
@@ -248,6 +250,7 @@ providers/
 ├── base.rs         # Provider trait and base types
 ├── copilot.rs       # GitHub Copilot (OAuth) implementation
 ├── ollama.rs        # Ollama local/remote provider
+├── openai.rs        # OpenAI and OpenAI-compatible provider
 └── mod.rs          # Module root and re-exports
 ```
 

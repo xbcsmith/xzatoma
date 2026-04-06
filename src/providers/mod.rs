@@ -1,11 +1,12 @@
 //! Provider module for XZatoma
 //!
 //! This module contains the AI provider abstraction and implementations
-//! for GitHub Copilot and Ollama.
+//! for GitHub Copilot, Ollama, and OpenAI.
 
 pub mod base;
 pub mod copilot;
 pub mod ollama;
+pub mod openai;
 
 pub use base::{
     convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
@@ -15,6 +16,7 @@ pub use base::{
 };
 pub use copilot::CopilotProvider;
 pub use ollama::OllamaProvider;
+pub use openai::OpenAIProvider;
 
 use crate::config::ProviderConfig;
 use crate::error::Result;
@@ -23,7 +25,7 @@ use crate::error::Result;
 ///
 /// # Arguments
 ///
-/// * `provider_type` - Type of provider ("copilot" or "ollama")
+/// * `provider_type` - Type of provider ("copilot", "ollama", or "openai")
 /// * `config` - Provider configuration
 ///
 /// # Returns
@@ -44,6 +46,9 @@ pub fn create_provider(
         "ollama" => Ok(Box::new(ollama::OllamaProvider::new(
             config.ollama.clone(),
         )?)),
+        "openai" => Ok(Box::new(openai::OpenAIProvider::new(
+            config.openai.clone(),
+        )?)),
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
@@ -61,7 +66,7 @@ pub fn create_provider(
 /// # Arguments
 ///
 /// * `config` - Full provider configuration containing all provider settings
-/// * `provider_override` - Optional provider type override ("copilot" or "ollama")
+/// * `provider_override` - Optional provider type override ("copilot", "ollama", or "openai")
 /// * `model_override` - Optional model name override
 ///
 /// # Returns
@@ -79,13 +84,14 @@ pub fn create_provider(
 ///
 /// ```no_run
 /// use xzatoma::providers::create_provider_with_override;
-/// use xzatoma::config::{ProviderConfig, CopilotConfig, OllamaConfig};
+/// use xzatoma::config::{ProviderConfig, CopilotConfig, OllamaConfig, OpenAIConfig};
 ///
 /// # fn example() -> xzatoma::error::Result<()> {
 /// let config = ProviderConfig {
 ///     provider_type: "copilot".to_string(),
 ///     copilot: CopilotConfig::default(),
 ///     ollama: OllamaConfig::default(),
+///     openai: OpenAIConfig::default(),
 /// };
 ///
 /// // Use default provider from config
@@ -134,6 +140,15 @@ pub fn create_provider_with_override(
 
             Ok(Box::new(OllamaProvider::new(ollama_config)?))
         }
+        "openai" => {
+            // Create OpenAI config with optional model override
+            let mut openai_config = config.openai.clone();
+            if let Some(model) = model_override {
+                openai_config.model = model.to_string();
+            }
+
+            Ok(Box::new(OpenAIProvider::new(openai_config)?))
+        }
         _ => Err(crate::error::XzatomaError::Provider(format!(
             "Unknown provider type: {}",
             provider_type
@@ -144,7 +159,7 @@ pub fn create_provider_with_override(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CopilotConfig, OllamaConfig};
+    use crate::config::{CopilotConfig, OllamaConfig, OpenAIConfig};
 
     #[test]
     fn test_create_provider_invalid_type() {
@@ -152,6 +167,7 @@ mod tests {
             provider_type: "invalid".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         let result = create_provider("invalid", &config);
@@ -171,6 +187,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // No overrides - should use config defaults
@@ -184,6 +201,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override provider to ollama
@@ -197,6 +215,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override both provider and model
@@ -217,6 +236,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override model only (uses config provider type)
@@ -230,6 +250,7 @@ mod tests {
             provider_type: "copilot".to_string(),
             copilot: CopilotConfig::default(),
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Invalid provider override
@@ -250,6 +271,7 @@ mod tests {
                 include_reasoning: false,
             },
             ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
         };
 
         // Override to copilot with custom model
@@ -266,10 +288,52 @@ mod tests {
                 host: "http://localhost:11434".to_string(),
                 model: "llama3.2:latest".to_string(),
             },
+            openai: OpenAIConfig::default(),
         };
 
         // Override to ollama with custom model
         let result = create_provider_with_override(&config, Some("ollama"), Some("gemma2:2b"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_provider_openai() {
+        let config = ProviderConfig {
+            provider_type: "openai".to_string(),
+            copilot: CopilotConfig::default(),
+            ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
+        };
+
+        let result = create_provider("openai", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_provider_with_override_to_openai() {
+        let config = ProviderConfig {
+            provider_type: "copilot".to_string(),
+            copilot: CopilotConfig::default(),
+            ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
+        };
+
+        // Override from copilot config to openai
+        let result = create_provider_with_override(&config, Some("openai"), None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_create_provider_with_override_openai_model() {
+        let config = ProviderConfig {
+            provider_type: "copilot".to_string(),
+            copilot: CopilotConfig::default(),
+            ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
+        };
+
+        // Override to openai with custom model
+        let result = create_provider_with_override(&config, Some("openai"), Some("gpt-4o"));
         assert!(result.is_ok());
     }
 }

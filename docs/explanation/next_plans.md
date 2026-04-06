@@ -12,7 +12,7 @@ We do not care about backwards compatability. Compile the findings into a priori
 
 Write a plan with a phased approach to cleaning up the codebase. THINK HARD and follow the rules in @PLAN.md
 
-[Codebase Cleanup Plan](./codebase_cleanup_plan.md)
+✅ COMPLETED - [Codebase Cleanup Plan](./codebase_cleanup_plan.md)
 
 ## ACP Support
 
@@ -38,7 +38,7 @@ Write a plan with a phased approach to create the Demos for XZatoma. THINK HARD 
 
 ADD ACP to the demos
 
-✅ PLAN WRITTEN - [Demo Plan](./demo_implementation_plan.md)
+✅ COMPLETED - [Demo Plan](./demo_implementation_plan.md)
 
 ## Generic Watcher
 
@@ -47,3 +47,11 @@ We are going to make a new watcher that works with Redpanda and consumes a plan 
 Write a plan with a phased approach to add the new generic watcher and move the xzepr watcher work. THINK HARD and follow the rules in @PLAN.md
 
 ✅ COMPLETED - [Generic Watcher Implementation Plan](./generic_watcher_implementation_plan.md)
+
+## OpenAI Provider Support
+
+We are going to add OpenAI provider support to XZatoma. This will allow users to use OpenAI models in addition to Ollama models. We will need to add configuration options for OpenAI API keys and model selection. We will also need to implement the necessary code to interface with the OpenAI API and handle responses. The implementation should be modular so that we can easily add support for other providers in the future. We want the provider to be compatable with other inference servers that have an OpenAI compatable API, like llama.cpp, vLLM, Candle-vLLM, and Mistral.rs.  [OpenAI OpenAPI Spec](./openapi.with-code-samples.yml)
+
+Write a plan with a phased approach to add OpenAI support to XZatoma. THINK HARD and follow the rules in @PLAN.md
+
+[OpenAI Support Implementation Plan](./openai_support_implementation_plan.md)

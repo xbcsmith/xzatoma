@@ -1,0 +1,147 @@
+# XZatoma OpenAI Provider Configuration
+#
+# This file demonstrates all available settings for the OpenAI provider and
+# OpenAI-compatible local inference servers.
+#
+# To activate this configuration, copy it to config/config.yaml or merge the
+# relevant sections into your existing configuration file.
+
+provider:
+  # Provider type must be "openai" to activate the OpenAI provider.
+  # Valid values: "copilot", "ollama", "openai"
+  type: openai
+
+  # OpenAI (and OpenAI-compatible) provider configuration.
+  # All fields have defaults; only set the fields you need to override.
+  openai:
+    # API key for authenticating with the OpenAI API.
+    # Leave empty ("") to connect to local servers that do not require auth.
+    # Override at runtime with: XZATOMA_OPENAI_API_KEY=sk-...
+    api_key: ""
+
+    # Base URL for the API endpoint.
+    # Use the default for the hosted OpenAI API.
+    # Override for any OpenAI-compatible local inference server.
+    # Override at runtime with: XZATOMA_OPENAI_BASE_URL=http://...
+    base_url: "https://api.openai.com/v1"
+
+    # Model name to request from the API.
+    # For hosted OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, o1, o3-mini, etc.
+    # Override at runtime with: XZATOMA_OPENAI_MODEL=gpt-4o
+    model: gpt-4o-mini
+
+    # Optional organization ID for organizations using OpenAI shared access.
+    # Leave this field absent or empty when not using an organization account.
+    # Override at runtime with: XZATOMA_OPENAI_ORG_ID=org-...
+    # organization_id: org-replace-with-your-org-id
+
+    # Enable streaming (server-sent events) for text responses.
+    # When true, tokens are emitted incrementally as they are generated.
+    # When tool calls are present in a request, streaming is disabled
+    # automatically regardless of this setting.
+    # Override at runtime with: XZATOMA_OPENAI_STREAMING=true
+    enable_streaming: true
+
+  # GitHub Copilot and Ollama sections remain present so the config file is
+  # self-contained and can be switched between providers by changing the
+  # top-level "type" field.
+  copilot:
+    model: gpt-5.3-codex
+    enable_streaming: true
+    enable_endpoint_fallback: true
+    include_reasoning: false
+
+  ollama:
+    host: http://localhost:11434
+    model: llama3.2:3b
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible local server examples
+#
+# Each block below is commented out. To use one of these servers, uncomment
+# the relevant block and set "type: openai" in the provider section above.
+# ---------------------------------------------------------------------------
+
+# llama.cpp server (https://github.com/ggerganov/llama.cpp)
+#
+# Start the server with:
+#   llama-server --model /path/to/model.gguf --port 8080
+#
+# provider:
+#   type: openai
+#   openai:
+#     api_key: ""
+#     base_url: "http://localhost:8080/v1"
+#     model: "local-model"
+#     enable_streaming: true
+
+# ---------------------------------------------------------------------------
+
+# vLLM (https://github.com/vllm-project/vllm)
+#
+# Start the server with:
+#   python -m vllm.entrypoints.openai.api_server \
+#     --model meta-llama/Llama-3.2-3B-Instruct \
+#     --port 8000
+#
+# provider:
+#   type: openai
+#   openai:
+#     api_key: ""
+#     base_url: "http://localhost:8000/v1"
+#     model: "meta-llama/Llama-3.2-3B-Instruct"
+#     enable_streaming: true
+
+# ---------------------------------------------------------------------------
+
+# Mistral.rs (https://github.com/EricLBuehler/mistral.rs)
+#
+# Start the server with:
+#   mistralrs-server --port 1234 plain -m /path/to/mistral-7b-instruct
+#
+# provider:
+#   type: openai
+#   openai:
+#     api_key: ""
+#     base_url: "http://localhost:1234/v1"
+#     model: "mistral-7b-instruct"
+#     enable_streaming: true
+
+# ---------------------------------------------------------------------------
+# Agent configuration
+# ---------------------------------------------------------------------------
+
+agent:
+  # Maximum number of agent turns before stopping.
+  max_turns: 50
+
+  # Timeout for the entire agent execution in seconds.
+  timeout_seconds: 300
+
+  conversation:
+    # Maximum tokens allowed in conversation context.
+    max_tokens: 100000
+    # Minimum number of turns to retain when pruning old messages.
+    min_retain_turns: 5
+    # Token fill ratio that triggers context pruning (0.0-1.0).
+    prune_threshold: 0.8
+    # Warn when context reaches this fill ratio.
+    warning_threshold: 0.85
+    # Automatically summarize context when it reaches this fill ratio.
+    auto_summary_threshold: 0.90
+
+  tools:
+    # Maximum size of any single tool output in bytes.
+    max_output_size: 1048576
+    # Maximum size of a file that the read tool will load in bytes.
+    max_file_read_size: 10485760
+
+  terminal:
+    # Execution mode: interactive, restricted_autonomous, full_autonomous.
+    default_mode: restricted_autonomous
+    # Timeout for individual terminal commands in seconds.
+    timeout_seconds: 30
+    # Maximum captured stdout size in bytes.
+    max_stdout_bytes: 1048576
+    # Maximum captured stderr size in bytes.
+    max_stderr_bytes: 262144

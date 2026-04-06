@@ -568,6 +568,47 @@ impl AcpRuntime {
         runtime
     }
 
+    /// Creates a new ACP runtime backed by an explicit SQLite database path.
+    ///
+    /// Unlike [`AcpRuntime::new`], this constructor does not read the
+    /// `XZATOMA_HISTORY_DB` environment variable. The database at `db_path` is
+    /// opened (or created) directly, and any runs already persisted there are
+    /// restored into the in-memory state before the runtime is returned.
+    ///
+    /// This is the preferred constructor for tests that need full persistence
+    /// coverage without relying on process-global environment state.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Application configuration
+    /// * `db_path` - Path to the SQLite database file to open or create
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new_with_storage_path(Config::default(), "/tmp/test.db");
+    /// assert_eq!(runtime.run_count(), 0);
+    /// ```
+    pub fn new_with_storage_path<P: AsRef<std::path::Path>>(config: Config, db_path: P) -> Self {
+        let storage = SqliteStorage::new_with_path(db_path.as_ref()).ok();
+        let runtime = Self {
+            config,
+            state: Arc::new(Mutex::new(AcpRuntimeState::default())),
+            storage: Arc::new(Mutex::new(storage)),
+        };
+
+        if let Err(error) = runtime.restore_from_storage() {
+            tracing::warn!(
+                "Failed to restore ACP runtime state from storage: {}",
+                error
+            );
+        }
+        runtime
+    }
+
     /// Returns the configured default execution mode.
     ///
     /// # Returns
@@ -950,33 +991,41 @@ impl AcpRuntime {
     /// Returns an error if the run does not exist, is already terminal, or the
     /// lifecycle transition is invalid.
     pub fn complete_run(&self, run_id: &str) -> Result<AcpRun> {
-        let mut state = lock_runtime_state(&self.state)?;
-        let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
-        })?;
+        let run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(run_id).ok_or_else(|| {
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
+            })?;
 
-        prevent_duplicate_completion(record, run_id)?;
-        record.run.transition_to(AcpRunState::Completed)?;
+            prevent_duplicate_completion(record, run_id)?;
+            record.run.transition_to(AcpRunState::Completed)?;
 
-        let event = build_runtime_event(
-            next_sequence(record)?,
-            AcpEvent::new(
-                AcpEventKind::RunCompleted,
-                Some(run_id.to_string()),
-                json!({
-                    "event": "run.completed",
-                    "runId": run_id,
-                    "state": record.run.status.state.to_string(),
-                    "completedAt": record.run.status.completed_at,
-                    "outputMessageCount": record.run.output.messages.len(),
-                }),
-            )?,
-            true,
-        );
-        record.completed = true;
-        push_event(record, event);
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunCompleted,
+                    Some(run_id.to_string()),
+                    json!({
+                        "event": "run.completed",
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "completedAt": record.run.status.completed_at,
+                        "outputMessageCount": record.run.output.messages.len(),
+                    }),
+                )?,
+                true,
+            );
+            record.completed = true;
+            push_event(record, event);
 
-        Ok(record.run.clone())
+            record.run.clone()
+        };
+
+        self.persist_run_state(run_id)?;
+        Ok(run)
     }
 
     /// Records a run failure.
@@ -994,32 +1043,40 @@ impl AcpRuntime {
     ///
     /// Returns an error if the run does not exist or is already terminal.
     pub fn fail_run(&self, run_id: &str, reason: String) -> Result<AcpRun> {
-        let mut state = lock_runtime_state(&self.state)?;
-        let record = state.runs.get_mut(run_id).ok_or_else(|| {
-            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
-        })?;
+        let run = {
+            let mut state = lock_runtime_state(&self.state)?;
+            let record = state.runs.get_mut(run_id).ok_or_else(|| {
+                crate::acp::error::AcpError::lifecycle(format!(
+                    "ACP run '{}' was not found",
+                    run_id
+                ))
+            })?;
 
-        prevent_duplicate_completion(record, run_id)?;
-        record.run.record_failure(reason.clone())?;
+            prevent_duplicate_completion(record, run_id)?;
+            record.run.record_failure(reason.clone())?;
 
-        let event = build_runtime_event(
-            next_sequence(record)?,
-            AcpEvent::new(
-                AcpEventKind::RunFailed,
-                Some(run_id.to_string()),
-                json!({
-                    "event": "run.failed",
-                    "runId": run_id,
-                    "state": record.run.status.state.to_string(),
-                    "error": reason,
-                }),
-            )?,
-            true,
-        );
-        record.completed = true;
-        push_event(record, event);
+            let event = build_runtime_event(
+                next_sequence(record)?,
+                AcpEvent::new(
+                    AcpEventKind::RunFailed,
+                    Some(run_id.to_string()),
+                    json!({
+                        "event": "run.failed",
+                        "runId": run_id,
+                        "state": record.run.status.state.to_string(),
+                        "error": reason,
+                    }),
+                )?,
+                true,
+            );
+            record.completed = true;
+            push_event(record, event);
 
-        Ok(record.run.clone())
+            record.run.clone()
+        };
+
+        self.persist_run_state(run_id)?;
+        Ok(run)
     }
 
     /// Records an error event without forcing terminal completion.

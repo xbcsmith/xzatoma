@@ -1,0 +1,92 @@
+# XZatoma XZepr Watcher Demo Configuration
+#
+# Consumes XZepr CloudEvents from Redpanda and executes the plans embedded
+# in each event payload via the AI agent.
+#
+# Prerequisites:
+#   docker compose -f docker-compose.redpanda.yaml up -d
+#
+# Run from the demos/watcher/xzepr/ directory:
+#
+#   cd demos/watcher/xzepr
+#   xzatoma --config config.yaml watch
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 600
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 2
+    prune_threshold: 0.80
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+watcher:
+  watcher_type: xzepr
+
+  kafka:
+    # Redpanda external listener (mapped to localhost:19092 by docker-compose)
+    brokers: "localhost:19092"
+
+    # Input topic - XZepr CloudEvents are consumed from here
+    topic: "xzepr.events"
+
+    # Output topic - result events are published here after each execution
+    output_topic: "xzepr.results"
+
+    # Consumer group ID
+    group_id: "xzatoma-xzepr-demo"
+
+    # Create topics automatically at startup
+    auto_create_topics: true
+    num_partitions: 1
+    replication_factor: 1
+
+    # Redpanda in dev-container mode does not require TLS or SASL
+    security:
+      protocol: "PLAINTEXT"
+
+  # ---------------------------------------------------------------------------
+  # Event filters (XZepr watcher uses filters, not generic_match)
+  # ---------------------------------------------------------------------------
+  # When event_types is non-empty, only events whose "type" field matches one
+  # of the listed values are processed.  An empty list accepts all event types.
+  #
+  # Other filter options:
+  #   source_pattern  - regex matched against the "source" field
+  #   platform_id     - exact match on the "platform_id" field
+  #   package         - exact match on the "package" field
+  #   api_version     - exact match on the "api_version" field
+  #   success_only    - when true, only events with "success": true are processed
+  filters:
+    event_types:
+      - "deployment.success"
+      - "build.success"
+    success_only: true
+
+  logging:
+    level: "info"
+    json_format: false
+    include_payload: true
+
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 1
+    execution_timeout_secs: 300
