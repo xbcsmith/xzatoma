@@ -1,0 +1,34 @@
+{
+  "success": true,
+  "id": "01JXZEPR0BUILD0DEMO000001",
+  "specversion": "1.0.1",
+  "type": "build.success",
+  "source": "xzepr.event.receiver.demo-receiver-001",
+  "api_version": "v1",
+  "name": "build.success",
+  "version": "1.0.0",
+  "release": "1.0.0",
+  "platform_id": "local",
+  "package": "xzatoma-demo",
+  "data": {
+    "events": [
+      {
+        "id": "01JXZEPR0BUILD0EVENT00001",
+        "name": "build-verify",
+        "version": "1.0.0",
+        "release": "1.0.0",
+        "platform_id": "local",
+        "package": "xzatoma-demo",
+        "description": "Verify build artifacts after a successful build",
+        "payload": {
+          "plan": "{\"id\":\"01JXZEPR0BUILD0PLAN000001\",\"name\":\"build-verify\",\"description\":\"Verify XZatoma build artifacts after a successful build.success event from XZepr.\",\"action\":\"verify\",\"version\":\"1.0.0\",\"goals\":[\"Confirm the XZepr watcher received and executed this build event\",\"Write a build verification report to tmp/\"],\"tasks\":[{\"id\":\"01JXZEPR0BUILD0TASK000001\",\"description\":\"Run the following commands and report each one with its output: (1) echo XZatoma XZepr watcher received build.success event (2) date -u (3) uname -s. Format each result as COMMAND: <command> OUTPUT: <output>. If any command fails report the error and continue.\",\"priority\":\"high\",\"dependencies\":[]},{\"id\":\"01JXZEPR0BUILD0TASK000002\",\"description\":\"Write a brief build verification report to tmp/build-verify-report.txt. First run mkdir -p tmp to ensure the directory exists. The report must contain: a header line XZatoma Build Verification Report, the timestamp from the previous task, the platform name from the previous task, and a footer line end of report. After writing confirm the file with cat tmp/build-verify-report.txt.\",\"priority\":\"medium\",\"dependencies\":[\"01JXZEPR0BUILD0TASK000001\"]}],\"max_iterations\":5,\"allow_dangerous\":false,\"result_mentions\":[\"tmp/build-verify-report.txt\"]}"
+        },
+        "success": true,
+        "event_receiver_id": "receiver-demo-001",
+        "created_at": "2025-07-15T14:00:00Z"
+      }
+    ],
+    "event_receivers": [],
+    "event_receiver_groups": []
+  }
+}

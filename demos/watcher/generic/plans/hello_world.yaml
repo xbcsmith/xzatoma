@@ -1,0 +1,46 @@
+name: "hello-world"
+description: "Simple greeting plan to verify the XZatoma generic watcher is running."
+action: "greet"
+version: "1.0.0"
+result_mentions:
+  - tmp/hello-world-report.txt
+goals:
+  - "Confirm the XZatoma generic watcher received and executed this plan"
+
+tasks:
+  - id: "gather_greeting_details"
+    description: >
+      Print a greeting confirming the XZatoma generic watcher is working.
+      Run the following commands and report each one with its output:
+      (1) echo "XZatoma generic watcher is alive"
+      (2) date -u
+      (3) uname -s
+
+      Format each result as:
+        COMMAND: <command>
+        OUTPUT:  <output>
+
+      If any command fails, report the error and continue.
+    priority: low
+    dependencies: []
+
+  - id: "write_hello_report"
+    description: >
+      Write a three-line report to tmp/hello-world-report.txt.
+
+      First ensure the output directory exists by running:
+        mkdir -p tmp
+
+      Then write the report so that:
+      - line 1 contains the greeting text from the earlier task
+      - line 2 contains the timestamp from command 2
+      - line 3 contains the platform name from command 3
+
+      After writing, confirm the file contents with:
+        cat tmp/hello-world-report.txt
+    priority: medium
+    dependencies:
+      - "gather_greeting_details"
+
+max_iterations: 5
+allow_dangerous: false

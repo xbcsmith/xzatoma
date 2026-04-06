@@ -1,301 +1,96 @@
-# Watcher Demo
+# Watcher Demos
 
-## Goal
+This directory contains two fully self-contained watcher demos for XZatoma.
+Each demo lives in its own subdirectory with its own configuration, scripts,
+Redpanda stack, and README.
 
-Demonstrate event-driven plan execution in XZatoma using the generic Kafka
-watcher backend. The demo proves that:
+---
 
-- The watcher connects to a Kafka topic and consumes `GenericPlanEvent` messages
-- Incoming events are matched against a configured action pattern before any
-  plan is executed
-- A matched event's embedded plan is extracted and executed by the Ollama agent
-- Plan results are published back to a Kafka output topic as `GenericPlanResult`
-  messages
-- All generated files and logs are written exclusively under `tmp/`
+## Demos
+
+### [`generic/`](generic/) — Generic Watcher Demo
+
+XZatoma consumes **Plan JSON events** directly from a Redpanda topic, executes
+each plan autonomously through the configured AI provider, and publishes a
+`PlanResultEvent` back to an output topic.
+
+- No XZepr or Janus Gatekeeper infrastructure required
+- Three built-in plan presets: `hello` (greet), `health` (report), `audit`
+  (subagent doc-comment audit)
+- Event matching via `generic_match` (filter on `action`, `name`, `version`)
+
+**Quick start:**
+
+```sh
+cd generic
+docker compose -f docker-compose.redpanda.yaml up -d
+xzatoma --config config.yaml watch
+# In a second terminal:
+./seed_plan.sh hello
+```
+
+---
+
+### [`xzepr/`](xzepr/) — XZepr Watcher Demo
+
+XZatoma consumes **XZepr CloudEvents** (CloudEvents 1.0.1) from a Redpanda
+topic, extracts the plan embedded in each event payload, executes it, and
+publishes a result event to an output topic.
+
+- Designed for XZepr software supply chain event pipelines
+- Two built-in event presets: `build` (`build.success`) and `deploy`
+  (`deployment.success`)
+- Event filtering via `filters` (by `event_types`, `source_pattern`,
+  `platform_id`, `package`, `api_version`, `success_only`)
+
+**Quick start:**
+
+```sh
+cd xzepr
+docker compose -f docker-compose.redpanda.yaml up -d
+xzatoma --config config.yaml watch
+# In a second terminal:
+./seed_event.sh build
+```
+
+---
+
+## Shared Infrastructure
+
+Both demos use the same Redpanda single-broker stack defined in their local
+`docker-compose.redpanda.yaml`. The Redpanda container is named `redpanda` and
+exposes:
+
+| Port  | Service                          |
+| ----- | -------------------------------- |
+| 19092 | Kafka API (external / host)      |
+| 9092  | Kafka API (internal / container) |
+| 8081  | Redpanda Console (web UI)        |
+| 18081 | Schema Registry                  |
+| 18082 | HTTP Proxy                       |
+
+Scripts in each demo use `docker exec redpanda rpk ...` (the internal port
+`9092`) for topic administration and event injection.
+
+XZatoma itself connects from the host via the external port `localhost:19092`.
+
+---
 
 ## Prerequisites
 
-1. [Ollama](https://ollama.com) installed and running:
-
-   ```sh
-   ollama serve
-   ```
-
-2. The `granite4:3b` model pulled:
-
-   ```sh
-   ollama pull granite4:3b
-   ```
-
-3. A local Kafka or Redpanda broker running at `localhost:9092`. The simplest
-   option for local development is Redpanda in Docker:
-
-   ```sh
-   docker run -d --name redpanda \
-     -p 9092:9092 \
-     docker.redpanda.com/redpandadata/redpanda:latest \
-     redpanda start --overprovisioned --smp 1 --memory 256M \
-     --reserve-memory 0M --node-id 0 --check=false
-   ```
-
-   Or use the official Apache Kafka quickstart with Docker Compose if you
-   prefer.
-
-4. XZatoma built from the repository root:
-
-   ```sh
-   cargo build --release
-   ```
-
-   Add the binary to `PATH` or ensure it is reachable at
-   `../../target/release/xzatoma` relative to this directory.
-
-5. `kcat` (formerly kafkacat) to inject test events (optional but recommended
-   for the two-terminal demo flow):
-
-   ```sh
-   # macOS
-   brew install kcat
-
-   # Ubuntu / Debian
-   sudo apt install kafkacat
-   ```
-
-## Directory Layout
-
-```text
-demos/watcher/
-  README.md                       # This file
-  config.yaml                     # Demo-local configuration
-  setup.sh                        # Prepares tmp/ and verifies prerequisites
-  run.sh                          # Starts the watcher (blocking, Ctrl+C to stop)
-  reset.sh                        # Removes all generated state
-  watcher/
-    demo_plan_event.json          # Sample GenericPlanEvent fixture
-    filter_config.yaml            # Documents the match configuration for this demo
-  input/
-    topic_events.txt              # Reference: topic names, matching rules, kcat commands
-  scripts/
-    produce_event.sh              # Helper to publish the demo event to Kafka
-  tmp/
-    .gitignore                    # Excludes all generated files from version control
-    output/                       # All watcher result artifacts are written here
-```
-
-## Setup
-
-```sh
-cd demos/watcher
-./setup.sh
-```
-
-`setup.sh` performs the following steps:
-
-1. Creates `tmp/output/` if it does not exist.
-2. Verifies that required fixture files are present.
-3. Checks that `xzatoma` is available on `PATH` or in the build output.
-4. Checks that Ollama is running and `granite4:3b` is available.
-5. Checks that the Kafka broker is reachable at `localhost:9092`.
-
-## Run
-
-The watcher demo uses a two-terminal workflow because the watcher is a
-long-running service that blocks until interrupted.
-
-**Terminal 1** - start the watcher:
-
-```sh
-./run.sh
-```
-
-The watcher connects to `localhost:9092`, subscribes to `demo.plan.events`, and
-waits for incoming plan events. It logs startup details and remains running
-until you press `Ctrl+C`.
-
-**Terminal 2** - inject a test event:
-
-```sh
-./scripts/produce_event.sh
-```
-
-`produce_event.sh` publishes `watcher/demo_plan_event.json` to the
-`demo.plan.events` topic. The watcher in Terminal 1 receives the event, matches
-it against the `demo.*` action pattern, and executes the embedded plan using the
-Ollama agent.
-
-**Terminal 2** - watch for result events (optional):
-
-```sh
-kcat -C -b localhost:9092 -t demo.plan.results -o end
-```
-
-To invoke the watcher directly without `run.sh`:
-
-```sh
-xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
-  watch \
-  --watcher-type generic \
-  --topic demo.plan.events \
-  --brokers localhost:9092 \
-  --group-id xzatoma-demo-watcher \
-  --action "demo.*" \
-  --create-topics \
-  --log-file ./tmp/watcher.log
-```
-
-## Expected Output
-
-After `./scripts/produce_event.sh` delivers the test event and the watcher
-processes it, the following files appear in `tmp/output/`:
-
-| File                 | Contents                                                |
-| -------------------- | ------------------------------------------------------- |
-| `watcher_run.txt`    | Full watcher execution transcript including startup log |
-| `watcher_result.txt` | Output written by the embedded plan step                |
-
-`tmp/watcher.log` contains the structured JSON log from the watcher service.
-This file is generated by the watcher process and is not tracked by git.
-
-A `GenericPlanResult` message is also published to the `demo.plan.results` Kafka
-topic. It contains:
-
-- `event_type`: `"result"`
-- `trigger_event_id`: the ID of the matched event (`demo-event-001`)
-- `success`: `true` if the plan executed without error
-- `summary`: a short human-readable summary of the execution
-- `plan_output`: the agent output from the plan execution
-
-## Reset
-
-```sh
-./reset.sh
-```
-
-`reset.sh` removes:
-
-- `tmp/xzatoma.db` (coordinator conversation history database)
-- `tmp/watcher.log` (structured watcher service log)
-- All files under `tmp/output/` except `.gitkeep`
-- Any other generated files under `tmp/`
-
-Fixture files in `watcher/`, input files in `input/`, and `config.yaml` are
-never modified by `reset.sh`.
-
-## Sandbox Boundaries
-
-XZatoma is constrained to this demo directory by the following configuration:
-
-- `--config ./config.yaml` is passed on every invocation. The repository-level
-  `config/config.yaml` is never loaded.
-- `--storage-path ./tmp/xzatoma.db` directs all conversation history into
-  `tmp/`.
-- `watcher.logging.file_path: ./tmp/watcher.log` directs the structured watcher
-  log into `tmp/`.
-- `watcher.watcher_type: generic` selects the generic Kafka backend instead of
-  the XZepr backend. No XZepr-specific configuration is required.
-- `watcher.kafka.group_id: xzatoma-demo-watcher` scopes the Kafka consumer group
-  to this demo. Running multiple demos concurrently does not cause group
-  conflicts.
-- `watcher.execution.allow_dangerous: false` prevents plans from executing
-  operations outside the restricted autonomous mode.
-- `skills.enabled: false` prevents skill discovery from running during plan
-  execution.
-- The embedded plan in `watcher/demo_plan_event.json` writes output only to
-  `tmp/output/`. No generated file may appear outside the `tmp/` directory.
-
-## Troubleshooting
-
-### xzatoma binary not found
-
-Build from the repository root and add the binary to `PATH`:
-
-```sh
-cargo build --release
-export PATH="$PWD/target/release:$PATH"
-```
-
-### Ollama not running
-
-```sh
-ollama serve
-```
-
-### granite4:3b model not available
-
-```sh
-ollama pull granite4:3b
-```
-
-### Kafka broker not reachable at localhost:9092
-
-Start Redpanda in Docker:
-
-```sh
-docker run -d --name redpanda \
-  -p 9092:9092 \
-  docker.redpanda.com/redpandadata/redpanda:latest \
-  redpanda start --overprovisioned --smp 1 --memory 256M \
-  --reserve-memory 0M --node-id 0 --check=false
-```
-
-Verify the broker is reachable:
-
-```sh
-kcat -L -b localhost:9092
-```
-
-### kcat not found
-
-Install it:
-
-```sh
-# macOS
-brew install kcat
-
-# Ubuntu / Debian
-sudo apt install kafkacat
-```
-
-Alternatively, use Redpanda Console (the web UI bundled with Redpanda) to
-produce the event manually. Paste the contents of `watcher/demo_plan_event.json`
-into the produce dialog for topic `demo.plan.events`.
-
-### Watcher exits immediately with a connection error
-
-The watcher requires the Kafka broker to be running before it is started. Start
-the broker first, verify with `kcat -L -b localhost:9092`, then run `./run.sh`.
-
-### Plan output not written to tmp/output/
-
-Inspect `tmp/output/watcher_run.txt` for agent errors. The most common cause is
-the agent writing to a path outside `tmp/output/`. Ensure the working directory
-is the demo root when the watcher is running. The `run.sh` script always sets
-`cd "$DEMO_DIR"` before invoking `xzatoma`.
-
-### Topic auto-creation fails
-
-The `--create-topics` flag requires broker admin permissions. For Redpanda
-running in the Docker quickstart configuration, auto-creation is enabled by
-default. If you are connecting to a managed Kafka cluster, create the topics
-manually before starting the watcher:
-
-```sh
-kcat -L -b localhost:9092
-# Confirm the broker is reachable, then create topics:
-# Use your cluster's admin tool (kafka-topics.sh, rpk, etc.)
-```
-
-### Consumer group offset conflicts
-
-If the demo is run multiple times and the consumer group offset falls behind,
-the watcher may re-process old events. Run `./reset.sh` to clear local state. To
-also reset the consumer group offset on the broker:
-
-```sh
-# Using rpk (Redpanda CLI):
-rpk group delete xzatoma-demo-watcher
-
-# Using kafka-consumer-groups.sh:
-kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
-  --group xzatoma-demo-watcher --delete
-```
+| Requirement                                | Notes                                                 |
+| ------------------------------------------ | ----------------------------------------------------- |
+| Docker with Compose                        | Used to run Redpanda                                  |
+| Ollama running at `http://localhost:11434` | `ollama pull granite4:3b`                             |
+| `xzatoma` binary on PATH                   | `cargo build --release && cargo install --path .`     |
+| `jq` (optional)                            | Pretty-prints result events                           |
+| `ulid` (optional, generic demo only)       | `go install github.com/oklog/ulid/v2/cmd/ulid@latest` |
+
+---
+
+## Further Reading
+
+- [`generic/README.md`](generic/README.md) — full generic watcher walkthrough
+- [`xzepr/README.md`](xzepr/README.md) — full XZepr watcher walkthrough
+- `docs/how-to/watcher_demo.md` — combined how-to guide for both watcher modes
+- `docs/reference/architecture.md` — overall XZatoma architecture

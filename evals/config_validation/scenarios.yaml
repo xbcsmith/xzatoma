@@ -24,6 +24,12 @@ scenarios:
     expect:
       outcome: valid
 
+  - id: valid_openai
+    description: "minimal valid config with openai provider"
+    config_file: "valid_openai.yaml"
+    expect:
+      outcome: valid
+
   - id: valid_full
     description: "complete config with all sections populated"
     config_file: "valid_full.yaml"
@@ -149,7 +155,7 @@ scenarios:
       error_contains: "agent.subagent.output_max_size must be at least 1024 bytes"
 
   - id: invalid_subagent_provider
-    description: "subagent.provider: openai triggers invalid provider error"
+    description: "subagent.provider: anthropic triggers invalid provider error"
     config_file: "invalid_subagent_provider.yaml"
     expect:
       outcome: invalid

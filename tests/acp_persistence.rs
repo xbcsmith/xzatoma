@@ -8,7 +8,7 @@ use xzatoma::acp::runtime::{AcpRuntime, AcpRuntimeExecuteMode};
 use xzatoma::acp::server::{build_router, AcpServerState};
 use xzatoma::config::Config;
 
-/// Builds a deterministic ACP Phase 4 test configuration.
+/// Builds a deterministic ACP test configuration.
 ///
 /// The provider is forced to `ollama` so tests do not depend on interactive
 /// Copilot authentication flows.
@@ -21,6 +21,11 @@ fn test_config() -> Config {
 /// Builds ACP server state using a dedicated temporary SQLite database and a
 /// mock-success ACP executor so lifecycle tests are deterministic.
 ///
+/// Each call creates its own isolated temp directory and passes the database
+/// path directly to `AcpRuntime::new_with_storage_path`, avoiding any
+/// process-global environment variable mutations that would race with other
+/// parallel tests.
+///
 /// Returns the server state together with the temp directory that owns the
 /// database file. The caller must keep the directory alive for the duration of
 /// the test.
@@ -28,21 +33,14 @@ fn test_state(config: &Config) -> (AcpServerState, tempfile::TempDir) {
     let dir = tempdir().expect("failed to create tempdir");
     let db_path = dir.path().join("history.db");
 
-    // SAFETY: This test intentionally isolates storage to a temp database path.
-    std::env::set_var("XZATOMA_HISTORY_DB", &db_path);
-
-    let runtime = AcpRuntime::new(config.clone());
+    let runtime = AcpRuntime::new_with_storage_path(config.clone(), &db_path);
     let executor = AcpExecutor::new_mock_success(
         config.clone(),
         runtime.clone(),
-        "mock ACP phase 4 response".to_string(),
+        "mock ACP response".to_string(),
     );
 
     let state = AcpServerState::from_parts(config, runtime, executor).expect("state should build");
-
-    // SAFETY: Clear the process-global override immediately after state creation
-    // so later tests do not share the same database path accidentally.
-    std::env::remove_var("XZATOMA_HISTORY_DB");
 
     (state, dir)
 }
@@ -450,17 +448,31 @@ async fn test_cancellation_behavior_for_in_progress_run() {
     );
 }
 
+/// Verifies that a completed run and its full event history can be recovered
+/// after a simulated process restart.
+///
+/// The "restart" is simulated by creating two independent `AcpRuntime`
+/// instances that share the same SQLite database path. The first runtime
+/// creates and completes a run (persisting it to the database). The second
+/// runtime is constructed from scratch with the same database path so that
+/// `restore_from_storage` loads the completed run into its in-memory state,
+/// mirroring what happens when the real binary restarts and re-opens its
+/// persistent storage.
+///
+/// Both runtimes are created with `new_with_storage_path` so that no
+/// process-global environment variable (`XZATOMA_HISTORY_DB`) is mutated.
+/// This keeps the test hermetic and eliminates the race conditions that cause
+/// flakiness when tests run in parallel.
 #[tokio::test]
 async fn test_event_history_replay_after_restart() {
     let dir = tempdir().expect("failed to create tempdir");
     let db_path = dir.path().join("history.db");
 
-    // SAFETY: This test intentionally isolates storage to a temp database path.
-    std::env::set_var("XZATOMA_HISTORY_DB", &db_path);
-
     let config = test_config();
 
-    let first_runtime = AcpRuntime::new(config.clone());
+    // --- First "process": create and complete a run ---
+
+    let first_runtime = AcpRuntime::new_with_storage_path(config.clone(), &db_path);
     let created_run = first_runtime
         .create_run(
             xzatoma::acp::runtime::AcpRuntimeCreateRequest::new(vec![
@@ -493,18 +505,23 @@ async fn test_event_history_replay_after_restart() {
         .complete_run(created_run.id.as_str())
         .expect("completion should succeed");
 
-    // SAFETY: Reapply the same isolated database path for the simulated restart.
-    std::env::set_var("XZATOMA_HISTORY_DB", &db_path);
+    // --- Simulated restart: second runtime opens the same database ---
+    //
+    // new_with_storage_path calls restore_from_storage() during construction,
+    // so the completed run is already in the second runtime's in-memory state
+    // by the time we query it below.
 
-    let second_runtime = AcpRuntime::new(config);
-    let restored = second_runtime
-        .restore_run(created_run.id.as_str())
-        .expect("restore should succeed");
+    let second_runtime = AcpRuntime::new_with_storage_path(config, &db_path);
 
+    // Open the same storage handle for the fallback assertions.
     let storage = xzatoma::storage::SqliteStorage::new_with_path(&db_path)
         .expect("storage should initialize");
 
-    let restored = restored
+    // restore_run will find the run in second_runtime's in-memory state
+    // (populated by restore_from_storage during construction).
+    let restored = second_runtime
+        .restore_run(created_run.id.as_str())
+        .expect("restore should succeed")
         .or_else(|| {
             storage
                 .restore_acp_run(created_run.id.as_str())
@@ -512,15 +529,12 @@ async fn test_event_history_replay_after_restart() {
         })
         .expect("run should exist after restart");
 
-    // SAFETY: Clear the override after the simulated restart has been created.
-    std::env::remove_var("XZATOMA_HISTORY_DB");
-
     assert_eq!(restored.id.as_str(), created_run.id.as_str());
-    assert!(matches!(
-        restored.status.state,
-        xzatoma::acp::AcpRunState::Running | xzatoma::acp::AcpRunState::Completed
-    ));
+    assert_eq!(restored.status.state, xzatoma::acp::AcpRunState::Completed);
 
+    // Events are loaded into second_runtime during restore_from_storage, so
+    // get_events should succeed from in-memory state. The storage fallback is
+    // kept for belt-and-suspenders assurance.
     let restored_events = second_runtime
         .get_events(created_run.id.as_str())
         .unwrap_or_else(|_| {
@@ -531,6 +545,7 @@ async fn test_event_history_replay_after_restart() {
 
     assert!(!restored_events.is_empty());
     assert_eq!(restored_events[0].event.payload["event"], "run.created");
+
     let restored_event_names: Vec<&str> = restored_events
         .iter()
         .filter_map(|event| event.event.payload["event"].as_str())

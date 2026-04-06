@@ -1,0 +1,177 @@
+name: "doc-comment-audit"
+description: >
+  Demonstrates multi-task subagent delegation delivered via the generic Kafka
+  watcher. A coordinator plan prepares a tmp directory, delegates a doc-comment
+  audit of the src/ directory to one worker subagent, delegates report writing
+  to a second worker subagent, and then verifies the generated report.
+action: "audit"
+version: "1.0.0"
+max_iterations: 20
+allow_dangerous: false
+result_mentions:
+  - tmp/xzatoma-audit-report.md
+
+tasks:
+  - id: "ensure_tmp_dir"
+    description: |
+      Use the terminal tool to prepare the demo-local tmp directory and confirm
+      that it exists.
+
+      Run these commands in order and report their outputs:
+
+      1. mkdir -p tmp
+      2. test -d tmp && echo "exists" || echo "missing"
+
+      Report the results in this exact format:
+
+      COMMAND: <command>
+      OUTPUT:  <output or empty string on success>
+
+      If the directory check reports "missing", stop and explain the failure.
+    priority: medium
+    dependencies: []
+
+  - id: "audit"
+    description: |
+      Use the subagent tool to delegate a code audit task to a worker agent.
+
+      The worker's job is to find public Rust functions in the src/ directory
+      that are missing doc comments.
+
+      Invoke the subagent tool with these exact parameters:
+
+        label: "doc-audit-worker"
+        task_prompt: |
+          You are a code audit worker. Your job is to find public Rust
+          functions in the src/ directory that are missing doc comments.
+
+          A public function is missing a doc comment when a line matching
+          the pattern `pub fn` is NOT immediately preceded by a line
+          starting with `///`.
+
+          Steps:
+          1. Use the list_directory tool to list the files under src/.
+          2. For each .rs file found, use the grep tool to find all lines
+             containing `pub fn`.
+          3. For each matching line, use read_file to inspect the line
+             immediately before the `pub fn` line. Record the function name
+             and file path for every `pub fn` that is NOT preceded by a
+             `///` doc comment line.
+          4. Produce a plain-text list in this format, one entry per line:
+               MISSING: <file>:<line_number>  <function_signature>
+          5. At the end of the list print a summary line:
+               TOTAL MISSING: <count>
+
+          Audit scope: src/ directory only. Do not recurse into target/ or
+          any hidden directories.
+        summary_prompt: >
+          Summarise the audit findings as a structured list of file paths and
+          function signatures that are missing doc comments, followed by the
+          total count.
+        allowed_tools:
+          - grep
+          - read_file
+          - list_directory
+        max_turns: 10
+
+      Wait for the subagent to complete and then report the worker output in
+      full. Do not summarise, trim, or rewrite it. Preserve every MISSING:
+      line and the final TOTAL MISSING: line exactly so later steps can rely
+      on the complete text.
+    priority: high
+    dependencies:
+      - "ensure_tmp_dir"
+
+  - id: "summarise"
+    description: |
+      Use the subagent tool to delegate writing a Markdown summary report to a
+      second worker agent.
+
+      The full audit output from the previous task is available in the
+      conversation context. Pass that output to the worker exactly as returned.
+
+      Invoke the subagent tool with these exact parameters:
+
+        label: "report-writer-worker"
+        task_prompt: |
+          You are a report-writing worker. Your job is to write a Markdown
+          summary report of a doc-comment audit.
+
+          The raw audit output you must summarise is provided below between
+          the BEGIN AUDIT OUTPUT and END AUDIT OUTPUT markers.
+
+          BEGIN AUDIT OUTPUT
+          <paste the full audit output from the previous task here>
+          END AUDIT OUTPUT
+
+          Steps:
+          1. Parse the audit output. Each line beginning with MISSING:
+             records one public function that lacks a doc comment. The final
+             line beginning with TOTAL MISSING: gives the count.
+          2. Write a Markdown report to the file tmp/xzatoma-audit-report.md.
+
+             The report must contain these sections in order:
+
+             # XZatoma Doc-Comment Audit Report
+
+             A brief one-paragraph introduction explaining what was audited
+             and why doc comments matter.
+
+             ## Summary
+
+             A table with two columns: File and Count. Each row lists one
+             source file and the number of undocumented public functions found
+             in that file. Include a totals row at the bottom.
+
+             ## Missing Doc Comments
+
+             A bullet list of every missing entry in the format:
+               - `<file>:<line_number>` - `<function_signature>`
+
+             ## Recommendations
+
+             Three or four concrete recommendations for improving doc comment
+             coverage.
+
+             ## Footer
+
+             The line: "Report generated by XZatoma subagent demo."
+
+          3. Use the write_file tool to write the report to
+             tmp/xzatoma-audit-report.md.
+          4. After writing, use read_file to read the file back and confirm
+             it was written successfully by reporting the first five lines.
+        allowed_tools:
+          - write_file
+          - read_file
+        max_turns: 5
+
+      Wait for the subagent to complete and then report whether the file was
+      written successfully. Include the first five lines the worker read back
+      from tmp/xzatoma-audit-report.md.
+    priority: high
+    dependencies:
+      - "audit"
+
+  - id: "verify"
+    description: |
+      Verify that the report writer subagent created the expected Markdown file
+      at tmp/xzatoma-audit-report.md.
+
+      Perform these checks using the read_file tool:
+
+      1. Read tmp/xzatoma-audit-report.md.
+      2. Confirm that the file begins with this heading:
+           # XZatoma Doc-Comment Audit Report
+      3. Confirm that the file contains these section headings:
+           ## Summary
+           ## Missing Doc Comments
+           ## Recommendations
+      4. Print the first 20 lines of the file verbatim.
+      5. State clearly whether all required sections were found.
+
+      If the file does not exist or is empty, report the failure clearly and
+      stop.
+    priority: medium
+    dependencies:
+      - "summarise"

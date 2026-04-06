@@ -1,0 +1,112 @@
+# XZatoma Generic Watcher Demo Configuration
+#
+# Standalone Kafka/Redpanda watcher that consumes plan JSON events from an
+# input topic, executes them via the agent, and publishes result events to an
+# output topic.  No XZepr infrastructure required.
+#
+# Prerequisites:
+#   docker compose -f docker-compose.redpanda.yaml up -d
+#
+# Run from the demos/watcher/generic/ directory:
+#
+#   cd demos/watcher/generic
+#   xzatoma --config config_ollama_granite.yaml watch
+
+provider:
+  type: ollama
+  ollama:
+    host: http://localhost:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 600
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 2
+    prune_threshold: 0.80
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+watcher:
+  watcher_type: generic
+
+  kafka:
+    # Redpanda external listener (mapped to localhost:19092 by docker-compose)
+    brokers: "localhost:19092"
+
+    # Input topic - plan events are consumed from here
+    topic: "atoma.plans"
+
+    # Output topic - PlanResultEvent messages are published here after each execution
+    output_topic: "atoma.results"
+
+    # Consumer group ID - change this to reset offsets and replay all events
+    group_id: "xzatoma-generic-demo"
+
+    # Create topics automatically at startup
+    auto_create_topics: true
+    num_partitions: 1
+    replication_factor: 1
+
+    # Redpanda in dev-container mode does not require TLS or SASL
+    security:
+      protocol: "PLAINTEXT"
+
+  # ---------------------------------------------------------------------------
+  # Generic event matcher (optional - uncomment one of the examples below)
+  # ---------------------------------------------------------------------------
+  # When set, only events satisfying ALL configured predicates are executed.
+  # Events that do not match are committed and skipped without running.
+  # Without this section every plan event on the input topic is executed.
+  #
+  # Supported matching combinations:
+  #   action alone             - match any plan with this action value (regex)
+  #   name + version           - match a specific plan name at a semver range
+  #   name + action            - match a specific plan name with a given action
+  #   name + version + action  - match all three simultaneously
+  #
+  # Example 1: execute only plans with action "report"
+  # generic_match:
+  #   action: "report"
+  #
+  # Example 2: execute only plans named "system-health"
+  # generic_match:
+  #   name: "system-health"
+  #
+  # Example 3: execute plans matching name and semver constraint
+  # generic_match:
+  #   name: "system-health"
+  #   version: ">=1.0.0"
+  #
+  # Example 4: execute plans matching name and action
+  # generic_match:
+  #   name: "system-health"
+  #   action: "report"
+  #
+  # Example 5: execute plans matching all three predicates
+  # generic_match:
+  #   name: "system-health"
+  #   version: ">=1.0.0"
+  #   action: "report"
+
+  logging:
+    level: "info"
+    json_format: false
+    include_payload: true
+
+  execution:
+    allow_dangerous: false
+    max_concurrent_executions: 1
+    execution_timeout_secs: 300

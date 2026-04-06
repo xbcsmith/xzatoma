@@ -2,4 +2,4 @@ provider:
   type: copilot
 agent:
   subagent:
-    provider: openai
+    provider: anthropic

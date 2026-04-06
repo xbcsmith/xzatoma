@@ -1,0 +1,65 @@
+name: "system-health"
+description: "Basic system health check. Runs diagnostics and writes a summary report."
+action: "report"
+version: "1.0.0"
+result_mentions:
+  - tmp/system-health-report.txt
+
+goals:
+  - "Collect current system health metrics"
+  - "Write a plain-text summary report to tmp/"
+
+tasks:
+  - id: "collect_system_info"
+    description: >
+      Gather system information by running each of the following commands and
+      reporting the command and its output clearly:
+
+      1. uname -a
+      2. date -u
+      3. df -h .
+
+      Format each result as:
+        COMMAND: <command>
+        OUTPUT:  <output>
+
+      If a command fails report the error and continue to the next one.
+    priority: high
+    dependencies: []
+
+  - id: "write_system_report"
+    description: >
+      Write a plain-text system health report to tmp/system-health-report.txt.
+
+      First ensure the output directory exists by running: mkdir -p tmp
+
+      The report must contain the following sections separated by blank lines:
+
+      Section 1 - Header:
+        XZatoma System Health Report
+
+      Section 2 - Timestamp:
+        The date output from the collect_system_info task.
+
+      Section 3 - Platform:
+        The uname -a output from the collect_system_info task.
+
+      Section 4 - Disk Usage:
+        The df -h output from the collect_system_info task.
+
+      Section 5 - Footer:
+        --- end of report ---
+
+      Use the write_file tool to create the file. After writing, confirm the
+      file was created by reading the first five lines back with:
+        head -5 tmp/system-health-report.txt
+    priority: medium
+    dependencies:
+      - "collect_system_info"
+
+constraints:
+  - "Write output only inside the tmp/ directory"
+  - "Do not modify any files outside the working directory"
+
+max_iterations: 8
+allow_dangerous: false

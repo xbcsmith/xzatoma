@@ -56,6 +56,10 @@ Stop immediately and fix if any command fails.
 - Include runnable examples in doc comments (they are compiled by `cargo test`)
 - Never skip documentation because "code is self-documenting"
 
+### Rule 6: Use the Agent Harness Tools
+
+Do not write custom scripts for tasks that can be accomplished with the agent tools.
+
 ---
 
 ## Project Overview
@@ -263,7 +267,6 @@ Implementation summaries created by AI agents belong in `docs/explanation/`.
 ## Git Conventions
 
 Do not run git commands. The user handles all git interactions.
-
 
 ---
 
