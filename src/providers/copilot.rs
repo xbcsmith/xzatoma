@@ -989,8 +989,8 @@ impl CopilotProvider {
         Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
-            keyring_service: "xzatoma".to_string(),
-            keyring_user: "github_copilot".to_string(),
+            keyring_service: super::factory::KEYRING_SERVICE.to_string(),
+            keyring_user: super::factory::KEYRING_COPILOT_USER.to_string(),
             models_cache: Arc::new(RwLock::new(None)),
             models_cache_ttl_secs: 300, // default 5 minutes
         })
