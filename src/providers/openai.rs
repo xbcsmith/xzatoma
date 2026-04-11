@@ -11,19 +11,28 @@
 //!
 //! When `enable_streaming` is `true` and no tool schemas are passed to
 //! [`Provider::complete`], the SSE streaming path is used and the response is
-//! accumulated into a single [`CompletionResponse`]. When tools are present,
-//! the non-streaming path is always used to avoid partial tool-call
-//! accumulation.
+//! accumulated into a single [`CompletionResponse`] by [`StreamAccumulator`].
+//! When tools are present, the non-streaming path is always used to avoid
+//! partial tool-call accumulation. Both paths populate `finish_reason` and
+//! token usage when available.
+//!
+//! # Model listing
+//!
+//! The [`list_models`] implementation filters out non-chat models (embedding,
+//! TTS, Whisper, DALL-E, and moderation) and infers per-model capabilities
+//! from the model identifier using [`build_capabilities_from_id`].
 
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
-    ModelCapability, ModelInfo, Provider, ProviderCapabilities, ProviderTool, TokenUsage, ToolCall,
+    convert_tools_from_json, validate_message_sequence, CompletionResponse, FinishReason,
+    FunctionCall, Message, ModelCapability, ModelInfo, Provider, ProviderCapabilities,
+    ProviderTool, TokenUsage, ToolCall,
 };
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -94,6 +103,9 @@ struct OpenAIChoice {
 }
 
 /// Token usage counters returned by the non-streaming completion path.
+///
+/// Also used for optional usage reporting in the SSE streaming path when
+/// the server includes a `usage` field in the final chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpenAIUsage {
     prompt_tokens: u32,
@@ -119,9 +131,14 @@ struct OpenAIModelEntry {
 // ---------------------------------------------------------------------------
 
 /// A single chunk delivered over the SSE stream.
+///
+/// The optional `usage` field is populated in the final chunk by some servers
+/// and model versions; it is treated as informational when present.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpenAIStreamChunk {
     choices: Vec<OpenAIStreamChoice>,
+    #[serde(default)]
+    usage: Option<OpenAIUsage>,
 }
 
 /// One choice delta inside a streaming chunk.
@@ -132,11 +149,14 @@ struct OpenAIStreamChoice {
     index: u32,
 }
 
-/// Content or tool-call delta for a single streaming chunk.
+/// Content, reasoning, or tool-call delta for a single streaming chunk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpenAIStreamDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<String>,
+    /// Reasoning content emitted by extended-thinking models (e.g. the o1 family).
+    #[serde(default)]
+    reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OpenAIStreamToolCallDelta>>,
 }
@@ -158,10 +178,115 @@ struct OpenAIStreamFunctionDelta {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming accumulator helper
+// Private utility functions
 // ---------------------------------------------------------------------------
 
-/// Accumulated tool call state built up across SSE streaming chunks.
+/// Map an OpenAI finish-reason string to a typed [`FinishReason`].
+///
+/// Handles the OpenAI API strings `"stop"`, `"length"`, `"tool_calls"`,
+/// `"function_call"` (the legacy tool-call alias used by older model versions),
+/// and `"content_filter"`. Any unrecognized or empty string maps to
+/// [`FinishReason::Stop`].
+///
+/// # Arguments
+///
+/// * `s` - Raw finish-reason string from the API response
+///
+/// # Returns
+///
+/// The corresponding [`FinishReason`] variant, defaulting to `Stop`.
+fn map_finish_reason(s: &str) -> FinishReason {
+    match s {
+        "stop" => FinishReason::Stop,
+        "length" => FinishReason::Length,
+        "tool_calls" | "function_call" => FinishReason::ToolCalls,
+        "content_filter" => FinishReason::ContentFilter,
+        _ => FinishReason::Stop,
+    }
+}
+
+/// Return `true` when the model ID belongs to a non-chat model category.
+///
+/// Filters out embedding, text-to-speech, speech-to-text, image generation,
+/// and moderation models that must not appear in the chat model listing.
+/// The comparison is case-insensitive.
+///
+/// # Arguments
+///
+/// * `id` - The model identifier to classify
+///
+/// # Returns
+///
+/// `true` when `id` (lowercased) contains any of `"embed"`, `"tts"`,
+/// `"whisper"`, `"dall-e"`, or `"moderation"`; `false` otherwise.
+fn is_non_chat_model(id: &str) -> bool {
+    let lower = id.to_lowercase();
+    lower.contains("embed")
+        || lower.contains("tts")
+        || lower.contains("whisper")
+        || lower.contains("dall-e")
+        || lower.contains("moderation")
+}
+
+/// Infer [`ModelCapability`] values from an OpenAI model identifier.
+///
+/// All OpenAI chat models support streaming. Function calling is assumed unless
+/// the model ID contains patterns associated with older completion-only model
+/// families: `"babbage"`, `"davinci"`, `"curie"`, `"ada"`, or `"text-"`.
+///
+/// This function is intended to replace the previous unconditional assignment
+/// of the deprecated `Completion` variant. It never constructs that variant.
+///
+/// # Arguments
+///
+/// * `id` - The model identifier string
+///
+/// # Returns
+///
+/// A `Vec<ModelCapability>` that always includes [`ModelCapability::Streaming`]
+/// and conditionally includes [`ModelCapability::FunctionCalling`].
+fn build_capabilities_from_id(id: &str) -> Vec<ModelCapability> {
+    let id_lower = id.to_lowercase();
+    let mut caps = vec![ModelCapability::Streaming];
+
+    // Older completion-only families do not expose the function-calling API.
+    let no_fc_patterns = ["babbage", "davinci", "curie", "ada", "text-"];
+    if !no_fc_patterns.iter().any(|p| id_lower.contains(p)) {
+        caps.push(ModelCapability::FunctionCalling);
+    }
+
+    caps
+}
+
+/// Percent-encode characters that are unsafe in a URL path segment.
+///
+/// Encodes `%`, `/`, `?`, and `#` in that order so that a model identifier
+/// containing any of those characters can be embedded safely in a URL path
+/// without being misinterpreted as path or query delimiters.
+///
+/// The `%` character is encoded first to prevent double-encoding any existing
+/// percent sequences in the input string.
+///
+/// # Arguments
+///
+/// * `s` - The raw path segment string
+///
+/// # Returns
+///
+/// A new `String` with the four special characters replaced by their
+/// percent-encoded equivalents.
+fn encode_path_segment(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace('/', "%2F")
+        .replace('?', "%3F")
+        .replace('#', "%23")
+}
+
+// ---------------------------------------------------------------------------
+// Streaming accumulator helper types
+// ---------------------------------------------------------------------------
+
+/// Accumulated tool-call state built up across SSE streaming chunks.
 ///
 /// Each entry in the tool-call map keyed by `index` collects the `id`,
 /// function `name`, and incrementally appended `arguments_buf` from the delta
@@ -170,6 +295,164 @@ struct AccumulatedToolCall {
     id: String,
     name: String,
     arguments_buf: String,
+}
+
+/// Streaming completion accumulator.
+///
+/// Collects incremental `content`, optional `reasoning`, `tool_calls`,
+/// `usage`, and `finish_reason` from successive [`OpenAIStreamChunk`]s parsed
+/// out of the SSE event stream, then produces a single [`CompletionResponse`]
+/// via [`StreamAccumulator::finalize`].
+///
+/// Replace the inline per-field buffers in the streaming loop with a single
+/// `StreamAccumulator::new()`, call [`apply_chunk`] for each parsed chunk,
+/// and call [`finalize`] to produce the response.
+struct StreamAccumulator {
+    /// Accumulated text content from `delta.content` fields.
+    content: String,
+    /// Accumulated reasoning content from `delta.reasoning` fields, if any.
+    reasoning: Option<String>,
+    /// Partial tool-call state keyed by the delta `index` field.
+    tool_calls: HashMap<u32, AccumulatedToolCall>,
+    /// Token usage, populated from the `usage` field of the final chunk when present.
+    usage: Option<TokenUsage>,
+    /// Last-seen finish reason; defaults to [`FinishReason::Stop`].
+    finish_reason: FinishReason,
+}
+
+impl StreamAccumulator {
+    /// Create a new, empty [`StreamAccumulator`].
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: HashMap::new(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+        }
+    }
+
+    /// Process a single parsed SSE chunk and update the accumulator state.
+    ///
+    /// Appends `delta.content` to the content buffer, appends
+    /// `delta.reasoning` to the reasoning buffer (creating it on first use),
+    /// delegates tool-call deltas to [`apply_tool_call_chunk`], captures
+    /// `finish_reason` when present, and records `usage` when the chunk
+    /// carries a usage object.
+    ///
+    /// # Arguments
+    ///
+    /// * `chunk` - A reference to one parsed [`OpenAIStreamChunk`]
+    fn apply_chunk(&mut self, chunk: &OpenAIStreamChunk) {
+        if let Some(choice) = chunk.choices.first() {
+            let delta = &choice.delta;
+
+            if let Some(ref c) = delta.content {
+                self.content.push_str(c);
+            }
+
+            if let Some(ref r) = delta.reasoning {
+                self.reasoning.get_or_insert_with(String::new).push_str(r);
+            }
+
+            if let Some(ref tc_deltas) = delta.tool_calls {
+                self.apply_tool_call_chunk(tc_deltas);
+            }
+
+            if let Some(ref fr_str) = choice.finish_reason {
+                self.finish_reason = map_finish_reason(fr_str);
+            }
+        }
+
+        // The usage object lives at the chunk level, outside the choices array.
+        if let Some(ref u) = chunk.usage {
+            self.usage = Some(TokenUsage::new(
+                u.prompt_tokens as usize,
+                u.completion_tokens as usize,
+            ));
+        }
+    }
+
+    /// Apply incremental tool-call delta entries to the accumulator map.
+    ///
+    /// Each delta is keyed by its `index` field. The first delta for each
+    /// index supplies the `id` and function `name`; subsequent deltas append
+    /// additional `arguments` fragments to the buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `tc_deltas` - Slice of tool-call deltas from `delta.tool_calls`
+    fn apply_tool_call_chunk(&mut self, tc_deltas: &[OpenAIStreamToolCallDelta]) {
+        for tc_delta in tc_deltas {
+            let entry =
+                self.tool_calls
+                    .entry(tc_delta.index)
+                    .or_insert_with(|| AccumulatedToolCall {
+                        id: String::new(),
+                        name: String::new(),
+                        arguments_buf: String::new(),
+                    });
+
+            if let Some(ref id) = tc_delta.id {
+                if entry.id.is_empty() {
+                    entry.id = id.clone();
+                }
+            }
+
+            if let Some(ref func) = tc_delta.function {
+                if let Some(ref name) = func.name {
+                    if entry.name.is_empty() {
+                        entry.name = name.clone();
+                    }
+                }
+                if let Some(ref args) = func.arguments {
+                    entry.arguments_buf.push_str(args);
+                }
+            }
+        }
+    }
+
+    /// Consume the accumulator and produce a [`CompletionResponse`].
+    ///
+    /// When the accumulator contains any tool calls, the response message is
+    /// built via [`Message::assistant_with_tools`] with tool calls ordered
+    /// by their delta `index`. Otherwise the accumulated `content` string is
+    /// used. Token usage and `finish_reason` are always included. When
+    /// reasoning content was captured it is set on the response.
+    fn finalize(self) -> CompletionResponse {
+        let message = if !self.tool_calls.is_empty() {
+            let mut tc_list: Vec<(u32, AccumulatedToolCall)> =
+                self.tool_calls.into_iter().collect();
+            tc_list.sort_by_key(|(idx, _)| *idx);
+            let tool_calls: Vec<ToolCall> = tc_list
+                .into_iter()
+                .map(|(_, acc)| ToolCall {
+                    id: acc.id,
+                    function: FunctionCall {
+                        name: acc.name,
+                        arguments: acc.arguments_buf,
+                    },
+                })
+                .collect();
+            Message::assistant_with_tools(tool_calls)
+        } else {
+            Message::assistant(self.content)
+        };
+
+        let base = if let Some(usage) = self.usage {
+            CompletionResponse::with_usage(message, usage)
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        let base = base.with_finish_reason(self.finish_reason);
+
+        if let Some(reasoning) = self.reasoning {
+            base.set_reasoning(reasoning)
+        } else {
+            base
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +464,10 @@ struct AccumulatedToolCall {
 /// Connects to the OpenAI Chat Completions API (or any compatible server) to
 /// generate completions. Supports tool calling, model listing with a 5-minute
 /// cache, model switching, and both SSE streaming and non-streaming paths.
+///
+/// Both the streaming and non-streaming paths now populate `finish_reason` and
+/// token usage on the returned [`CompletionResponse`] when the server provides
+/// them.
 ///
 /// # Examples
 ///
@@ -422,6 +709,9 @@ impl OpenAIProvider {
     /// Send a non-streaming POST to `/chat/completions` and return the parsed
     /// completion response.
     ///
+    /// The returned [`CompletionResponse`] includes `finish_reason` derived
+    /// from the first choice's finish reason field and token usage when present.
+    ///
     /// # Errors
     ///
     /// Returns `XzatomaError::Provider` if the HTTP request fails, the server
@@ -462,6 +752,9 @@ impl OpenAIProvider {
             .next()
             .ok_or_else(|| XzatomaError::Provider("No choices in response".to_string()))?;
 
+        // Capture finish_reason before consuming choice.message.
+        let finish_reason = map_finish_reason(choice.finish_reason.as_deref().unwrap_or("stop"));
+
         let message = self.convert_response_message(choice.message);
 
         let completion = if let Some(usage) = openai_response.usage {
@@ -474,6 +767,8 @@ impl OpenAIProvider {
             CompletionResponse::new(message)
         };
 
+        let completion = completion.with_finish_reason(finish_reason);
+
         let completion = if let Some(model) = openai_response.model {
             completion.set_model(model)
         } else {
@@ -483,14 +778,15 @@ impl OpenAIProvider {
         Ok(completion)
     }
 
-    /// Send a streaming POST to `/chat/completions` using SSE and accumulate the
-    /// full response into a single [`CompletionResponse`].
+    /// Send a streaming POST to `/chat/completions` using SSE and accumulate
+    /// the full response into a single [`CompletionResponse`].
     ///
     /// Tool-use requests are always routed through the non-streaming path; this
     /// method is only called when the request contains no tool schemas.
     ///
-    /// Token usage is not included in the returned [`CompletionResponse`]
-    /// because the OpenAI SSE event stream does not carry usage counters.
+    /// The response includes `finish_reason` and token usage when provided by
+    /// the server. Reasoning content (from extended-thinking models) is
+    /// captured and set on the response when present.
     ///
     /// # Errors
     ///
@@ -502,7 +798,6 @@ impl OpenAIProvider {
         request: &OpenAIRequest,
     ) -> Result<CompletionResponse> {
         use futures::StreamExt;
-        use std::collections::HashMap;
 
         let mut headers = self.build_request_headers()?;
         headers.insert(
@@ -534,8 +829,7 @@ impl OpenAIProvider {
         }
 
         let mut stream = response.bytes_stream();
-        let mut content_buf = String::new();
-        let mut tool_call_map: HashMap<u32, AccumulatedToolCall> = HashMap::new();
+        let mut acc = StreamAccumulator::new();
         let mut line_buf: Vec<u8> = Vec::new();
 
         'stream: while let Some(chunk_result) = stream.next().await {
@@ -565,42 +859,7 @@ impl OpenAIProvider {
 
                         match serde_json::from_str::<OpenAIStreamChunk>(payload) {
                             Ok(sse_chunk) => {
-                                if let Some(choice) = sse_chunk.choices.first() {
-                                    let delta = &choice.delta;
-
-                                    if let Some(ref content) = delta.content {
-                                        content_buf.push_str(content);
-                                    }
-
-                                    if let Some(ref tc_deltas) = delta.tool_calls {
-                                        for tc_delta in tc_deltas {
-                                            let entry = tool_call_map
-                                                .entry(tc_delta.index)
-                                                .or_insert_with(|| AccumulatedToolCall {
-                                                    id: String::new(),
-                                                    name: String::new(),
-                                                    arguments_buf: String::new(),
-                                                });
-
-                                            if let Some(ref id) = tc_delta.id {
-                                                if entry.id.is_empty() {
-                                                    entry.id = id.clone();
-                                                }
-                                            }
-
-                                            if let Some(ref func) = tc_delta.function {
-                                                if let Some(ref name) = func.name {
-                                                    if entry.name.is_empty() {
-                                                        entry.name = name.clone();
-                                                    }
-                                                }
-                                                if let Some(ref args) = func.arguments {
-                                                    entry.arguments_buf.push_str(args);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                acc.apply_chunk(&sse_chunk);
                             }
                             Err(e) => {
                                 tracing::debug!(
@@ -617,28 +876,28 @@ impl OpenAIProvider {
             }
         }
 
-        let message = if !tool_call_map.is_empty() {
-            let mut indices: Vec<u32> = tool_call_map.keys().copied().collect();
-            indices.sort_unstable();
-            let tool_calls: Vec<ToolCall> = indices
-                .into_iter()
-                .filter_map(|idx| {
-                    tool_call_map.remove(&idx).map(|acc| ToolCall {
-                        id: acc.id,
-                        function: FunctionCall {
-                            name: acc.name,
-                            arguments: acc.arguments_buf,
-                        },
-                    })
-                })
-                .collect();
-            Message::assistant_with_tools(tool_calls)
-        } else {
-            Message::assistant(content_buf)
-        };
+        Ok(acc.finalize())
+    }
 
-        // Streaming does not return token counts in the SSE event stream.
-        Ok(CompletionResponse::new(message))
+    /// Search for a model by name in the cached or freshly fetched model list.
+    ///
+    /// This is the fallback path used by [`get_model_info`] when the direct
+    /// `GET /models/{id}` endpoint returns 404 or cannot be deserialized.
+    ///
+    /// # Arguments
+    ///
+    /// * `model_name` - The model name to search for
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the model is not found in the list
+    /// or if the list request fails.
+    async fn find_in_model_list(&self, model_name: &str) -> Result<ModelInfo> {
+        let models = self.list_models().await?;
+        models
+            .into_iter()
+            .find(|info| info.name == model_name)
+            .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
 }
 
@@ -728,8 +987,9 @@ impl Provider for OpenAIProvider {
     /// List available models from the OpenAI `/v1/models` endpoint.
     ///
     /// Results are cached for 300 seconds (5 minutes). The list is sorted by
-    /// model name before being returned. Each entry is annotated with
-    /// [`ModelCapability::Completion`] and [`ModelCapability::FunctionCalling`].
+    /// model name before being returned. Non-chat models (embedding, TTS,
+    /// Whisper, DALL-E, moderation) are excluded. Each remaining entry is
+    /// annotated with capabilities inferred by [`build_capabilities_from_id`].
     ///
     /// # Errors
     ///
@@ -770,11 +1030,12 @@ impl Provider for OpenAIProvider {
         let mut models: Vec<ModelInfo> = models_response
             .data
             .into_iter()
+            .filter(|entry| !is_non_chat_model(&entry.id))
             .map(|entry| {
                 let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
-                #[allow(deprecated)]
-                info.add_capability(ModelCapability::Completion);
-                info.add_capability(ModelCapability::FunctionCalling);
+                for cap in build_capabilities_from_id(&entry.id) {
+                    info.add_capability(cap);
+                }
                 info
             })
             .collect();
@@ -790,26 +1051,68 @@ impl Provider for OpenAIProvider {
 
     /// Get information about a specific model by name.
     ///
-    /// Calls [`list_models`] and finds the entry whose `name` matches
-    /// `model_name`.
+    /// First attempts a direct `GET /models/{encoded_id}` request, where
+    /// `encoded_id` is the model name with `%`, `/`, `?`, and `#`
+    /// percent-encoded via [`encode_path_segment`]. Falls back to a full
+    /// model-list scan when the direct request returns HTTP 404 or when the
+    /// response body cannot be deserialized as a model entry.
     ///
     /// # Errors
     ///
-    /// Returns `XzatomaError::Provider` if the model is not found or if the
-    /// model listing request fails.
+    /// Returns `XzatomaError::Provider` if neither the direct request nor the
+    /// list scan succeeds, or if the model is not found in the list.
     async fn get_model_info(&self, model_name: &str) -> Result<ModelInfo> {
-        let models = self.list_models().await?;
-        models
-            .into_iter()
-            .find(|info| info.name == model_name)
-            .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
+        let encoded = encode_path_segment(model_name);
+        let url = format!("{}/models/{}", self.base_url(), encoded);
+
+        tracing::debug!("Fetching model info from: {}", url);
+
+        let headers = self.build_request_headers()?;
+        let response = self
+            .client
+            .get(&url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| XzatomaError::Provider(format!("Failed to fetch model info: {}", e)))?;
+
+        let status = response.status();
+
+        if status == reqwest::StatusCode::NOT_FOUND {
+            tracing::debug!(
+                "Model {} not found at direct endpoint, falling back to list scan",
+                model_name
+            );
+            return self.find_in_model_list(model_name).await;
+        }
+
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
+        }
+
+        match response.json::<OpenAIModelEntry>().await {
+            Ok(entry) => {
+                let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                for cap in build_capabilities_from_id(&entry.id) {
+                    info.add_capability(cap);
+                }
+                Ok(info)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "Failed to deserialize model entry for {}: {}, falling back to list scan",
+                    model_name,
+                    e
+                );
+                self.find_in_model_list(model_name).await
+            }
+        }
     }
 
     /// Return the name of the currently configured model.
     ///
     /// Returns `"none"` if the read lock cannot be acquired.
-    ///
-    /// # Default Implementation
     ///
     /// Overrides the trait default to read from the internal
     /// `RwLock<OpenAIConfig>` directly, since `current_model` cannot return a
@@ -918,6 +1221,421 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // map_finish_reason unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_map_finish_reason_stop_returns_stop() {
+        assert_eq!(map_finish_reason("stop"), FinishReason::Stop);
+    }
+
+    #[test]
+    fn test_map_finish_reason_length_returns_length() {
+        assert_eq!(map_finish_reason("length"), FinishReason::Length);
+    }
+
+    #[test]
+    fn test_map_finish_reason_tool_calls_returns_tool_calls() {
+        assert_eq!(map_finish_reason("tool_calls"), FinishReason::ToolCalls);
+    }
+
+    #[test]
+    fn test_map_finish_reason_function_call_maps_to_tool_calls() {
+        assert_eq!(map_finish_reason("function_call"), FinishReason::ToolCalls);
+    }
+
+    #[test]
+    fn test_map_finish_reason_content_filter_returns_content_filter() {
+        assert_eq!(
+            map_finish_reason("content_filter"),
+            FinishReason::ContentFilter
+        );
+    }
+
+    #[test]
+    fn test_map_finish_reason_unknown_string_defaults_to_stop() {
+        assert_eq!(map_finish_reason("unknown_value"), FinishReason::Stop);
+        assert_eq!(map_finish_reason(""), FinishReason::Stop);
+        assert_eq!(map_finish_reason("cancelled"), FinishReason::Stop);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_non_chat_model unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_non_chat_model_true_for_embed() {
+        assert!(is_non_chat_model("text-embedding-ada-002"));
+        assert!(is_non_chat_model("text-embedding-3-small"));
+        assert!(is_non_chat_model("text-embedding-3-large"));
+    }
+
+    #[test]
+    fn test_is_non_chat_model_true_for_tts() {
+        assert!(is_non_chat_model("tts-1"));
+        assert!(is_non_chat_model("tts-1-hd"));
+    }
+
+    #[test]
+    fn test_is_non_chat_model_true_for_whisper() {
+        assert!(is_non_chat_model("whisper-1"));
+    }
+
+    #[test]
+    fn test_is_non_chat_model_true_for_dall_e() {
+        assert!(is_non_chat_model("dall-e-2"));
+        assert!(is_non_chat_model("dall-e-3"));
+    }
+
+    #[test]
+    fn test_is_non_chat_model_true_for_moderation() {
+        assert!(is_non_chat_model("text-moderation-latest"));
+        assert!(is_non_chat_model("text-moderation-stable"));
+        assert!(is_non_chat_model("omni-moderation-latest"));
+    }
+
+    #[test]
+    fn test_is_non_chat_model_false_for_chat_models() {
+        assert!(!is_non_chat_model("gpt-4o"));
+        assert!(!is_non_chat_model("gpt-4o-mini"));
+        assert!(!is_non_chat_model("gpt-3.5-turbo"));
+        assert!(!is_non_chat_model("o1-mini"));
+        assert!(!is_non_chat_model("o3-mini"));
+        assert!(!is_non_chat_model("o4-mini"));
+    }
+
+    // -----------------------------------------------------------------------
+    // encode_path_segment unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_encode_path_segment_encodes_slash() {
+        assert_eq!(encode_path_segment("gpt-4/extended"), "gpt-4%2Fextended");
+    }
+
+    #[test]
+    fn test_encode_path_segment_encodes_question_mark() {
+        assert_eq!(encode_path_segment("model?version=1"), "model%3Fversion=1");
+    }
+
+    #[test]
+    fn test_encode_path_segment_encodes_hash() {
+        assert_eq!(encode_path_segment("model#v1"), "model%23v1");
+    }
+
+    #[test]
+    fn test_encode_path_segment_encodes_percent_first() {
+        // The percent sign must be encoded before others to avoid double-encoding.
+        assert_eq!(encode_path_segment("100%"), "100%25");
+        // A pre-existing encoded sequence must not be double-encoded.
+        assert_eq!(encode_path_segment("a%2Fb"), "a%252Fb");
+    }
+
+    #[test]
+    fn test_encode_path_segment_leaves_alphanumerics_unchanged() {
+        assert_eq!(encode_path_segment("gpt-4o-mini"), "gpt-4o-mini");
+        assert_eq!(encode_path_segment("o3"), "o3");
+        assert_eq!(encode_path_segment("abc123"), "abc123");
+    }
+
+    #[test]
+    fn test_encode_path_segment_encodes_multiple_specials() {
+        assert_eq!(
+            encode_path_segment("org/model#v1?x=1"),
+            "org%2Fmodel%23v1%3Fx=1"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // build_capabilities_from_id unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_capabilities_from_id_modern_model_gets_streaming_and_fc() {
+        let caps = build_capabilities_from_id("gpt-4o");
+        assert!(caps.contains(&ModelCapability::Streaming));
+        assert!(caps.contains(&ModelCapability::FunctionCalling));
+    }
+
+    #[test]
+    fn test_build_capabilities_from_id_gpt4o_mini_gets_streaming_and_fc() {
+        let caps = build_capabilities_from_id("gpt-4o-mini");
+        assert!(caps.contains(&ModelCapability::Streaming));
+        assert!(caps.contains(&ModelCapability::FunctionCalling));
+    }
+
+    #[test]
+    fn test_build_capabilities_from_id_old_model_gets_streaming_only() {
+        for old_name in &[
+            "babbage-002",
+            "davinci-002",
+            "ada",
+            "curie",
+            "text-davinci-003",
+        ] {
+            let caps = build_capabilities_from_id(old_name);
+            assert!(
+                caps.contains(&ModelCapability::Streaming),
+                "Expected Streaming for {}",
+                old_name
+            );
+            assert!(
+                !caps.contains(&ModelCapability::FunctionCalling),
+                "Did not expect FunctionCalling for {}",
+                old_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_capabilities_from_id_never_produces_deprecated_completion() {
+        for id in &["gpt-4o", "gpt-4o-mini", "o1-mini", "babbage-002"] {
+            let caps = build_capabilities_from_id(id);
+            #[allow(deprecated)]
+            let has_deprecated = caps.contains(&ModelCapability::Completion);
+            assert!(
+                !has_deprecated,
+                "build_capabilities_from_id must not produce deprecated Completion for {}",
+                id
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // StreamAccumulator unit tests
+    // -----------------------------------------------------------------------
+
+    fn make_text_chunk(content: &str, finish_reason: Option<&str>) -> OpenAIStreamChunk {
+        OpenAIStreamChunk {
+            choices: vec![OpenAIStreamChoice {
+                delta: OpenAIStreamDelta {
+                    content: Some(content.to_string()),
+                    reasoning: None,
+                    tool_calls: None,
+                },
+                finish_reason: finish_reason.map(|s| s.to_string()),
+                index: 0,
+            }],
+            usage: None,
+        }
+    }
+
+    fn make_reasoning_chunk(reasoning: &str) -> OpenAIStreamChunk {
+        OpenAIStreamChunk {
+            choices: vec![OpenAIStreamChoice {
+                delta: OpenAIStreamDelta {
+                    content: None,
+                    reasoning: Some(reasoning.to_string()),
+                    tool_calls: None,
+                },
+                finish_reason: None,
+                index: 0,
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn test_stream_accumulator_processes_single_text_delta() {
+        let mut acc = StreamAccumulator::new();
+        acc.apply_chunk(&make_text_chunk("Hello", None));
+        let response = acc.finalize();
+
+        assert_eq!(response.message.content.as_deref(), Some("Hello"));
+        assert!(response.message.tool_calls.is_none());
+        assert_eq!(response.finish_reason, FinishReason::Stop);
+        assert!(response.usage.is_none());
+        assert!(response.reasoning.is_none());
+    }
+
+    #[test]
+    fn test_stream_accumulator_concatenates_multiple_text_deltas() {
+        let mut acc = StreamAccumulator::new();
+        acc.apply_chunk(&make_text_chunk("Hello", None));
+        acc.apply_chunk(&make_text_chunk(" ", None));
+        acc.apply_chunk(&make_text_chunk("world", Some("stop")));
+        let response = acc.finalize();
+
+        assert_eq!(response.message.content.as_deref(), Some("Hello world"));
+        assert_eq!(response.finish_reason, FinishReason::Stop);
+    }
+
+    #[test]
+    fn test_stream_accumulator_accumulates_tool_call_deltas() {
+        let mut acc = StreamAccumulator::new();
+
+        // First chunk: id and function name.
+        let chunk1 = OpenAIStreamChunk {
+            choices: vec![OpenAIStreamChoice {
+                delta: OpenAIStreamDelta {
+                    content: None,
+                    reasoning: None,
+                    tool_calls: Some(vec![OpenAIStreamToolCallDelta {
+                        index: 0,
+                        id: Some("call_abc".to_string()),
+                        r#type: Some("function".to_string()),
+                        function: Some(OpenAIStreamFunctionDelta {
+                            name: Some("read_file".to_string()),
+                            arguments: Some("{\"path\"".to_string()),
+                        }),
+                    }]),
+                },
+                finish_reason: None,
+                index: 0,
+            }],
+            usage: None,
+        };
+
+        // Second chunk: additional arguments and finish reason.
+        let chunk2 = OpenAIStreamChunk {
+            choices: vec![OpenAIStreamChoice {
+                delta: OpenAIStreamDelta {
+                    content: None,
+                    reasoning: None,
+                    tool_calls: Some(vec![OpenAIStreamToolCallDelta {
+                        index: 0,
+                        id: None,
+                        r#type: None,
+                        function: Some(OpenAIStreamFunctionDelta {
+                            name: None,
+                            arguments: Some(":\"test.txt\"}".to_string()),
+                        }),
+                    }]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+                index: 0,
+            }],
+            usage: None,
+        };
+
+        acc.apply_chunk(&chunk1);
+        acc.apply_chunk(&chunk2);
+        let response = acc.finalize();
+
+        let calls = response
+            .message
+            .tool_calls
+            .expect("Expected tool calls in response");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_abc");
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].function.arguments, "{\"path\":\"test.txt\"}");
+        assert_eq!(response.finish_reason, FinishReason::ToolCalls);
+    }
+
+    #[test]
+    fn test_stream_accumulator_orders_tool_calls_by_index() {
+        let mut acc = StreamAccumulator::new();
+
+        // Deliver the second tool call before the first to test ordering.
+        let chunk = OpenAIStreamChunk {
+            choices: vec![OpenAIStreamChoice {
+                delta: OpenAIStreamDelta {
+                    content: None,
+                    reasoning: None,
+                    tool_calls: Some(vec![
+                        OpenAIStreamToolCallDelta {
+                            index: 1,
+                            id: Some("call_b".to_string()),
+                            r#type: Some("function".to_string()),
+                            function: Some(OpenAIStreamFunctionDelta {
+                                name: Some("write_file".to_string()),
+                                arguments: Some("{}".to_string()),
+                            }),
+                        },
+                        OpenAIStreamToolCallDelta {
+                            index: 0,
+                            id: Some("call_a".to_string()),
+                            r#type: Some("function".to_string()),
+                            function: Some(OpenAIStreamFunctionDelta {
+                                name: Some("read_file".to_string()),
+                                arguments: Some("{}".to_string()),
+                            }),
+                        },
+                    ]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+                index: 0,
+            }],
+            usage: None,
+        };
+
+        acc.apply_chunk(&chunk);
+        let response = acc.finalize();
+
+        let calls = response
+            .message
+            .tool_calls
+            .expect("Expected tool calls in response");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call_a", "Index 0 must come first");
+        assert_eq!(calls[1].id, "call_b", "Index 1 must come second");
+    }
+
+    #[test]
+    fn test_stream_accumulator_captures_reasoning_content() {
+        let mut acc = StreamAccumulator::new();
+        acc.apply_chunk(&make_reasoning_chunk("Let me think..."));
+        acc.apply_chunk(&make_reasoning_chunk(" Step 2."));
+        acc.apply_chunk(&make_text_chunk("The answer is 42", Some("stop")));
+        let response = acc.finalize();
+
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("The answer is 42")
+        );
+        assert_eq!(
+            response.reasoning.as_deref(),
+            Some("Let me think... Step 2.")
+        );
+        assert_eq!(response.finish_reason, FinishReason::Stop);
+    }
+
+    #[test]
+    fn test_stream_accumulator_no_reasoning_when_absent() {
+        let mut acc = StreamAccumulator::new();
+        acc.apply_chunk(&make_text_chunk("Result", Some("stop")));
+        let response = acc.finalize();
+
+        assert!(response.reasoning.is_none());
+    }
+
+    #[test]
+    fn test_stream_accumulator_captures_usage_from_chunk() {
+        let mut acc = StreamAccumulator::new();
+        acc.apply_chunk(&make_text_chunk("Done", Some("stop")));
+
+        // Simulate a final usage chunk (no content delta).
+        let usage_chunk = OpenAIStreamChunk {
+            choices: vec![],
+            usage: Some(OpenAIUsage {
+                prompt_tokens: 20,
+                completion_tokens: 10,
+                total_tokens: 30,
+            }),
+        };
+        acc.apply_chunk(&usage_chunk);
+        let response = acc.finalize();
+
+        assert!(response.usage.is_some());
+        let usage = response.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 20);
+        assert_eq!(usage.completion_tokens, 10);
+    }
+
+    #[test]
+    fn test_stream_accumulator_empty_produces_empty_assistant_message() {
+        let acc = StreamAccumulator::new();
+        let response = acc.finalize();
+
+        assert_eq!(response.message.role, "assistant");
+        assert_eq!(response.message.content.as_deref(), Some(""));
+        assert_eq!(response.finish_reason, FinishReason::Stop);
+        assert!(response.usage.is_none());
+        assert!(response.reasoning.is_none());
+    }
+
+    // -----------------------------------------------------------------------
     // Message conversion tests (no HTTP)
     // -----------------------------------------------------------------------
 
@@ -968,7 +1686,6 @@ mod tests {
         let config = OpenAIConfig::default();
         let provider = OpenAIProvider::new(config).unwrap();
 
-        // A tool result without a preceding assistant tool call is an orphan.
         let messages = vec![
             Message::user("run something"),
             Message::tool_result("orphan_id", "result"),
@@ -976,7 +1693,6 @@ mod tests {
 
         let result = provider.convert_messages(&messages);
 
-        // Orphan tool message should be dropped; only the user message remains.
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].role, "user");
     }
@@ -1001,7 +1717,6 @@ mod tests {
 
         let result = provider.convert_messages(&messages);
 
-        // All three messages should be present.
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].role, "user");
         assert_eq!(result[1].role, "assistant");
@@ -1070,8 +1785,6 @@ mod tests {
 
     #[test]
     fn test_convert_tools() {
-        // convert_tools_from_json expects the flat tool-registry format:
-        // { "name": "...", "description": "...", "parameters": {...} }
         let tools = vec![
             json!({
                 "name": "read_file",
@@ -1146,13 +1859,46 @@ mod tests {
         let usage = response.usage.unwrap();
         assert_eq!(usage.prompt_tokens, 10);
         assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(
+            response.finish_reason,
+            FinishReason::Stop,
+            "Non-streaming path must populate finish_reason"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_non_streaming_length_finish_reason() {
+        let server = MockServer::start().await;
+
+        let body = json!({
+            "choices": [{
+                "message": { "role": "assistant", "content": "truncated" },
+                "finish_reason": "length"
+            }],
+            "usage": { "prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150 },
+            "model": "gpt-4o-mini"
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let config = make_config(&server.uri());
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.complete(&[Message::user("Hello")], &[]).await;
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+        assert_eq!(result.unwrap().finish_reason, FinishReason::Length);
     }
 
     #[tokio::test]
     async fn test_complete_streaming() {
         let server = MockServer::start().await;
 
-        let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"},\"finish_reason\":null,\"index\":0}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"world\"},\"finish_reason\":null,\"index\":0}]}\n\ndata: [DONE]\n\n";
+        let sse_body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"},\"finish_reason\":null,\"index\":0}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"world\"},\"finish_reason\":\"stop\",\"index\":0}]}\n\ndata: [DONE]\n\n";
 
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
@@ -1183,9 +1929,89 @@ mod tests {
             Some("Hello world"),
             "Accumulated content mismatch"
         );
+        assert_eq!(
+            response.finish_reason,
+            FinishReason::Stop,
+            "Streaming path must populate finish_reason"
+        );
     }
 
-    #[allow(deprecated)]
+    #[tokio::test]
+    async fn test_stream_accumulator_done_sentinel_terminates_stream() {
+        let server = MockServer::start().await;
+
+        // Content after [DONE] must not be included in the response.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Before\"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" IGNORE\"},\"finish_reason\":null,\"index\":0}]}\n\n",
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: server.uri(),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.complete(&[Message::user("Hello")], &[]).await;
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+        let response = result.unwrap();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Before"),
+            "Content after [DONE] must be ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_streaming_captures_finish_reason() {
+        let server = MockServer::start().await;
+
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\",\"index\":0}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: server.uri(),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.complete(&[Message::user("Hello")], &[]).await;
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+        assert_eq!(result.unwrap().finish_reason, FinishReason::Length);
+    }
+
     #[tokio::test]
     async fn test_list_models() {
         let server = MockServer::start().await;
@@ -1204,12 +2030,135 @@ mod tests {
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
         let models = result.unwrap();
         assert_eq!(models.len(), 2);
-        // Results must be sorted by name
+        // Results must be sorted by name.
         assert_eq!(models[0].name, "gpt-4o");
         assert_eq!(models[1].name, "gpt-4o-mini");
-        // Each model must have Completion and FunctionCalling capabilities
-        assert!(models[0].supports_capability(ModelCapability::Completion));
-        assert!(models[0].supports_capability(ModelCapability::FunctionCalling));
+        // Each model must have Streaming and FunctionCalling capabilities.
+        assert!(
+            models[0].supports_capability(ModelCapability::Streaming),
+            "gpt-4o must have Streaming"
+        );
+        assert!(
+            models[0].supports_capability(ModelCapability::FunctionCalling),
+            "gpt-4o must have FunctionCalling"
+        );
+        // Verify the deprecated Completion variant is NOT assigned.
+        #[allow(deprecated)]
+        let has_deprecated = models[0].supports_capability(ModelCapability::Completion);
+        assert!(
+            !has_deprecated,
+            "list_models must not assign the deprecated Completion capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_models_filters_non_chat_models() {
+        let server = MockServer::start().await;
+
+        let body = json!({
+            "data": [
+                { "id": "gpt-4o", "owned_by": "openai" },
+                { "id": "text-embedding-ada-002", "owned_by": "openai" },
+                { "id": "whisper-1", "owned_by": "openai" },
+                { "id": "dall-e-3", "owned_by": "openai" },
+                { "id": "tts-1", "owned_by": "openai" },
+                { "id": "text-moderation-latest", "owned_by": "openai" }
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let config = make_config(&server.uri());
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.list_models().await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+        let models = result.unwrap();
+
+        // Only gpt-4o must survive the filter.
+        assert_eq!(
+            models.len(),
+            1,
+            "Expected 1 chat model, got: {:?}",
+            models.iter().map(|m| &m.name).collect::<Vec<_>>()
+        );
+        assert_eq!(models[0].name, "gpt-4o");
+
+        // Confirm no surviving model matches the non-chat filter.
+        for model in &models {
+            assert!(
+                !is_non_chat_model(&model.name),
+                "Non-chat model slipped through: {}",
+                model.name
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_model_info_direct_hit_returns_model_info() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/models/gpt-4-turbo"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "gpt-4-turbo",
+                "owned_by": "openai"
+            })))
+            .mount(&server)
+            .await;
+
+        let config = make_config(&server.uri());
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.get_model_info("gpt-4-turbo").await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+
+        let info = result.unwrap();
+        assert_eq!(info.name, "gpt-4-turbo");
+        assert!(
+            info.supports_capability(ModelCapability::Streaming),
+            "Expected Streaming capability"
+        );
+        assert!(
+            info.supports_capability(ModelCapability::FunctionCalling),
+            "Expected FunctionCalling capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_model_info_falls_back_to_list_on_404() {
+        let server = MockServer::start().await;
+
+        // Direct GET returns 404 for this model.
+        Mock::given(method("GET"))
+            .and(path("/models/test-model"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        // List endpoint provides the model for the fallback scan.
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "data": [
+                    { "id": "test-model", "owned_by": "openai" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = make_config(&server.uri());
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.get_model_info("test-model").await;
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
+
+        let info = result.unwrap();
+        assert_eq!(info.name, "test-model");
     }
 
     #[test]
@@ -1235,9 +2184,6 @@ mod tests {
     async fn test_complete_with_tools_uses_non_streaming_path() {
         let server = MockServer::start().await;
 
-        // Only respond when stream is false; if the streaming path is taken the
-        // request body would contain "stream":true and this mock would not match,
-        // causing a 404 and an Err result.
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(body_string_contains("\"stream\":false"))
@@ -1254,8 +2200,6 @@ mod tests {
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
-        // Use the flat tool-registry format so convert_tools_from_json produces
-        // a non-empty ProviderTool list, which forces stream: false.
         let tools = vec![json!({
             "name": "read_file",
             "description": "Read a file",
@@ -1301,7 +2245,7 @@ mod tests {
             .await;
 
         let config = OpenAIConfig {
-            api_key: String::new(), // empty -> no Authorization header
+            api_key: String::new(),
             base_url: server.uri(),
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
@@ -1355,7 +2299,6 @@ mod tests {
     async fn test_list_models_cache_hit() {
         let server = MockServer::start().await;
 
-        // The API must be called exactly once; the second call should use the cache.
         Mock::given(method("GET"))
             .and(path("/models"))
             .respond_with(ResponseTemplate::new(200).set_body_json(models_list_body()))
@@ -1371,6 +2314,5 @@ mod tests {
 
         assert_eq!(first.len(), second.len());
         assert_eq!(first[0].name, second[0].name);
-        // MockServer will verify expect(1) when dropped at end of test.
     }
 }

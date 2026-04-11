@@ -28,10 +28,10 @@ pub mod types;
 // ---------------------------------------------------------------------------
 
 pub use types::{
-    convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
-    ModelCapability, ModelInfo, ModelInfoSummary, ProviderCapabilities, ProviderFunction,
-    ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderTool, ProviderToolCall,
-    TokenUsage, ToolCall,
+    convert_tools_from_json, validate_message_sequence, CompletionResponse, FinishReason,
+    FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary, ProviderCapabilities,
+    ProviderFunction, ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderTool,
+    ProviderToolCall, TokenUsage, ToolCall,
 };
 
 // ---------------------------------------------------------------------------
