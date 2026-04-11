@@ -182,17 +182,30 @@ pub enum ModelCapability {
     LongContext,
     /// Model supports function calling/tool use
     FunctionCalling,
-    /// Model supports completion capability (basic completion support)
+    /// Model supports completion capability.
+    ///
+    /// Deprecated: use `FunctionCalling` or `Streaming` as appropriate.
+    #[deprecated(
+        note = "Use `FunctionCalling` or `Streaming` instead. Will be removed in a future release."
+    )]
     Completion,
     /// Model supports vision/image understanding
     Vision,
     /// Model supports streaming responses
     Streaming,
-    /// Model supports JSON output mode
+    /// Model supports JSON output mode.
+    ///
+    /// Deprecated: use `FunctionCalling` or `Streaming` as appropriate.
+    #[deprecated(
+        note = "Use `FunctionCalling` or `Streaming` instead. Will be removed in a future release."
+    )]
     JsonMode,
+    /// Model is optimised for code generation and code-related tasks.
+    CodeGeneration,
 }
 
 impl std::fmt::Display for ModelCapability {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LongContext => write!(f, "LongContext"),
@@ -201,6 +214,7 @@ impl std::fmt::Display for ModelCapability {
             Self::Vision => write!(f, "Vision"),
             Self::Streaming => write!(f, "Streaming"),
             Self::JsonMode => write!(f, "JsonMode"),
+            Self::CodeGeneration => write!(f, "CodeGeneration"),
         }
     }
 }
@@ -266,6 +280,20 @@ pub struct ModelInfo {
     /// Raw provider-specific data (fallback for unknown fields)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_data: Option<serde_json::Value>,
+    /// Whether this model supports tool/function calling.
+    ///
+    /// Derived from `capabilities` and kept in sync by `add_capability` and
+    /// `with_capabilities`. Defaults to `false` for a newly constructed instance
+    /// with no capabilities.
+    #[serde(default)]
+    pub supports_tools: bool,
+    /// Whether this model supports streaming responses.
+    ///
+    /// Derived from `capabilities` and kept in sync by `add_capability` and
+    /// `with_capabilities`. Defaults to `false` for a newly constructed instance
+    /// with no capabilities.
+    #[serde(default)]
+    pub supports_streaming: bool,
 }
 
 impl ModelInfo {
@@ -298,6 +326,8 @@ impl ModelInfo {
             capabilities: Vec::new(),
             provider_specific: HashMap::new(),
             raw_data: None,
+            supports_tools: false,
+            supports_streaming: false,
         }
     }
 
@@ -319,6 +349,12 @@ impl ModelInfo {
     pub fn add_capability(&mut self, capability: ModelCapability) {
         if !self.capabilities.contains(&capability) {
             self.capabilities.push(capability);
+        }
+        if capability == ModelCapability::FunctionCalling {
+            self.supports_tools = true;
+        }
+        if capability == ModelCapability::Streaming {
+            self.supports_streaming = true;
         }
     }
 
@@ -382,6 +418,10 @@ impl ModelInfo {
     /// ```
     pub fn with_capabilities(mut self, capabilities: Vec<ModelCapability>) -> Self {
         self.capabilities = capabilities;
+        self.supports_tools = self
+            .capabilities
+            .contains(&ModelCapability::FunctionCalling);
+        self.supports_streaming = self.capabilities.contains(&ModelCapability::Streaming);
         self
     }
 }
@@ -452,6 +492,36 @@ impl ModelInfoSummary {
         }
     }
 
+    /// Set the token limit fields using the builder pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_prompt_tokens` - Maximum prompt tokens allowed, or `None` if not
+    ///   reported by the provider
+    /// * `max_completion_tokens` - Maximum completion tokens allowed, or `None`
+    ///   if not reported by the provider
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ModelInfo, ModelInfoSummary};
+    ///
+    /// let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+    /// let summary = ModelInfoSummary::from_model_info(info)
+    ///     .with_limits(Some(6144), Some(2048));
+    /// assert_eq!(summary.max_prompt_tokens, Some(6144));
+    /// assert_eq!(summary.max_completion_tokens, Some(2048));
+    /// ```
+    pub fn with_limits(
+        mut self,
+        max_prompt_tokens: Option<usize>,
+        max_completion_tokens: Option<usize>,
+    ) -> Self {
+        self.max_prompt_tokens = max_prompt_tokens;
+        self.max_completion_tokens = max_completion_tokens;
+        self
+    }
+
     /// Create summary with full data
     ///
     /// # Arguments
@@ -504,6 +574,35 @@ impl ModelInfoSummary {
     }
 }
 
+/// Reason why the model stopped generating tokens.
+///
+/// Normalised from the provider-specific finish-reason string so that callers
+/// can branch on a typed value instead of matching raw strings.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::FinishReason;
+///
+/// let reason = FinishReason::Stop;
+/// assert_eq!(reason, FinishReason::default());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    /// Model reached a natural stopping point.
+    #[default]
+    Stop,
+    /// Model reached the configured maximum token limit.
+    Length,
+    /// Model invoked one or more tools.
+    ToolCalls,
+    /// Output was filtered by the provider's content policy.
+    ContentFilter,
+    /// Any other provider-specific reason.
+    Other,
+}
+
 /// Provider-level capabilities and features
 ///
 /// Describes which features and operations a provider supports.
@@ -536,6 +635,8 @@ pub struct CompletionResponse {
     pub model: Option<String>,
     /// Reasoning content from extended-thinking models (e.g. o1 family)
     pub reasoning: Option<String>,
+    /// Reason the model stopped generating tokens.
+    pub finish_reason: FinishReason,
 }
 
 impl CompletionResponse {
@@ -562,6 +663,7 @@ impl CompletionResponse {
             usage: None,
             model: None,
             reasoning: None,
+            finish_reason: FinishReason::Stop,
         }
     }
 
@@ -590,6 +692,7 @@ impl CompletionResponse {
             usage: Some(usage),
             model: None,
             reasoning: None,
+            finish_reason: FinishReason::Stop,
         }
     }
 
@@ -619,6 +722,7 @@ impl CompletionResponse {
             usage: None,
             model: Some(model),
             reasoning: None,
+            finish_reason: FinishReason::Stop,
         }
     }
 
@@ -654,6 +758,26 @@ impl CompletionResponse {
     /// ```
     pub fn set_reasoning(mut self, reasoning: String) -> Self {
         self.reasoning = Some(reasoning);
+        self
+    }
+
+    /// Set the finish reason using the builder pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - The reason the model stopped generating
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{CompletionResponse, FinishReason, Message};
+    ///
+    /// let response = CompletionResponse::new(Message::assistant("Done"))
+    ///     .with_finish_reason(FinishReason::Length);
+    /// assert_eq!(response.finish_reason, FinishReason::Length);
+    /// ```
+    pub fn with_finish_reason(mut self, reason: FinishReason) -> Self {
+        self.finish_reason = reason;
         self
     }
 }
@@ -1132,6 +1256,7 @@ mod tests {
         assert_eq!(deserialized.completion_tokens, 50);
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_model_capability_display() {
         assert_eq!(ModelCapability::LongContext.to_string(), "LongContext");
@@ -1143,6 +1268,10 @@ mod tests {
         assert_eq!(ModelCapability::Vision.to_string(), "Vision");
         assert_eq!(ModelCapability::Streaming.to_string(), "Streaming");
         assert_eq!(ModelCapability::JsonMode.to_string(), "JsonMode");
+        assert_eq!(
+            ModelCapability::CodeGeneration.to_string(),
+            "CodeGeneration"
+        );
     }
 
     #[test]
@@ -1161,18 +1290,23 @@ mod tests {
         assert_eq!(model.context_window, 8192);
         assert!(model.capabilities.is_empty());
         assert!(model.provider_specific.is_empty());
+        assert!(!model.supports_tools);
+        assert!(!model.supports_streaming);
     }
 
     #[test]
     fn test_model_info_add_capability() {
         let mut model = ModelInfo::new("gpt-4", "GPT-4", 8192);
         assert!(model.capabilities.is_empty());
+        assert!(!model.supports_tools);
 
         model.add_capability(ModelCapability::FunctionCalling);
         assert_eq!(model.capabilities.len(), 1);
         assert!(model
             .capabilities
             .contains(&ModelCapability::FunctionCalling));
+        assert!(model.supports_tools);
+        assert!(!model.supports_streaming);
 
         model.add_capability(ModelCapability::FunctionCalling);
         assert_eq!(model.capabilities.len(), 1);
@@ -1241,6 +1375,7 @@ mod tests {
         assert_eq!(response.message.role, "assistant");
         assert_eq!(response.message.content, Some("Hello!".to_string()));
         assert!(response.usage.is_none());
+        assert_eq!(response.finish_reason, FinishReason::Stop);
     }
 
     #[test]
@@ -1253,6 +1388,7 @@ mod tests {
         assert!(response.usage.is_some());
         assert_eq!(response.usage.unwrap().prompt_tokens, 100);
         assert_eq!(response.usage.unwrap().completion_tokens, 50);
+        assert_eq!(response.finish_reason, FinishReason::Stop);
     }
 
     #[test]
@@ -1285,6 +1421,8 @@ mod tests {
         assert_eq!(model.capabilities.len(), 2);
         assert!(model.supports_capability(ModelCapability::FunctionCalling));
         assert!(model.supports_capability(ModelCapability::Vision));
+        assert!(model.supports_tools);
+        assert!(!model.supports_streaming);
     }
 
     #[test]
@@ -1684,5 +1822,112 @@ mod tests {
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.as_object().unwrap().contains_key("tools"));
         assert_eq!(json["tools"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_finish_reason_serialization_all_variants() {
+        let cases = [
+            (FinishReason::Stop, "\"stop\""),
+            (FinishReason::Length, "\"length\""),
+            (FinishReason::ToolCalls, "\"tool_calls\""),
+            (FinishReason::ContentFilter, "\"content_filter\""),
+            (FinishReason::Other, "\"other\""),
+        ];
+        for (reason, expected_json) in cases {
+            let json = serde_json::to_string(&reason)
+                // SAFETY: FinishReason is a simple enum with known-good Serialize impl
+                .unwrap();
+            assert_eq!(json, expected_json, "Wrong JSON for {:?}", reason);
+            let back: FinishReason = serde_json::from_str(&json)
+                // SAFETY: We just serialized this value; round-trip cannot fail
+                .unwrap();
+            assert_eq!(back, reason, "Round-trip failed for {:?}", reason);
+        }
+    }
+
+    #[test]
+    fn test_completion_response_with_finish_reason() {
+        let response = CompletionResponse::new(Message::assistant("ok"))
+            .with_finish_reason(FinishReason::ToolCalls);
+        assert_eq!(response.finish_reason, FinishReason::ToolCalls);
+    }
+
+    #[test]
+    fn test_completion_response_default_finish_reason_is_stop() {
+        let r1 = CompletionResponse::new(Message::assistant("ok"));
+        assert_eq!(r1.finish_reason, FinishReason::Stop);
+
+        let usage = TokenUsage::new(10, 5);
+        let r2 = CompletionResponse::with_usage(Message::assistant("ok"), usage);
+        assert_eq!(r2.finish_reason, FinishReason::Stop);
+
+        let r3 = CompletionResponse::with_model(Message::assistant("ok"), "gpt-4".to_string());
+        assert_eq!(r3.finish_reason, FinishReason::Stop);
+    }
+
+    #[test]
+    fn test_model_info_supports_tools_true_when_function_calling_added() {
+        let mut model = ModelInfo::new("m", "m", 0);
+        assert!(!model.supports_tools);
+        model.add_capability(ModelCapability::FunctionCalling);
+        assert!(model.supports_tools);
+    }
+
+    #[test]
+    fn test_model_info_supports_streaming_true_when_streaming_added() {
+        let mut model = ModelInfo::new("m", "m", 0);
+        assert!(!model.supports_streaming);
+        model.add_capability(ModelCapability::Streaming);
+        assert!(model.supports_streaming);
+    }
+
+    #[test]
+    fn test_model_info_with_capabilities_syncs_supports_tools() {
+        let model = ModelInfo::new("m", "m", 0).with_capabilities(vec![
+            ModelCapability::FunctionCalling,
+            ModelCapability::Streaming,
+        ]);
+        assert!(model.supports_tools);
+        assert!(model.supports_streaming);
+    }
+
+    #[test]
+    fn test_model_info_with_capabilities_clears_supports_when_missing() {
+        let mut model = ModelInfo::new("m", "m", 0);
+        model.add_capability(ModelCapability::FunctionCalling);
+        assert!(model.supports_tools);
+
+        let model = model.with_capabilities(vec![ModelCapability::Vision]);
+        assert!(!model.supports_tools);
+        assert!(!model.supports_streaming);
+    }
+
+    #[test]
+    fn test_model_info_summary_with_limits() {
+        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let summary = ModelInfoSummary::from_model_info(info).with_limits(Some(6144), Some(2048));
+        assert_eq!(summary.max_prompt_tokens, Some(6144));
+        assert_eq!(summary.max_completion_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_model_info_summary_with_limits_none() {
+        let info = ModelInfo::new("gpt-4", "GPT-4", 8192);
+        let summary = ModelInfoSummary::from_model_info(info).with_limits(None, None);
+        assert!(summary.max_prompt_tokens.is_none());
+        assert!(summary.max_completion_tokens.is_none());
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn test_model_capability_code_generation_round_trips_json() {
+        let cap = ModelCapability::CodeGeneration;
+        let json = serde_json::to_string(&cap)
+            // SAFETY: ModelCapability is a simple enum with known-good Serialize impl
+            .unwrap();
+        let back: ModelCapability = serde_json::from_str(&json)
+            // SAFETY: We just serialized this value; round-trip cannot fail
+            .unwrap();
+        assert_eq!(back, ModelCapability::CodeGeneration);
     }
 }

@@ -1696,14 +1696,21 @@ impl CopilotProvider {
 
         let raw_data = serde_json::to_value(&data).unwrap_or(serde_json::Value::Null);
 
+        // Populate token limits from CopilotModelLimits when the API provides them.
+        // Currently only max_context_window_tokens is available; prompt and
+        // completion limits will be added when Phase 5 expands CopilotModelLimits.
         ModelInfoSummary::new(
             info,
             state,
-            None, // max_prompt_tokens not in Copilot API
-            None, // max_completion_tokens not in Copilot API
+            None,
+            None,
             supports_tool_calls,
             supports_vision,
             raw_data,
+        )
+        .with_limits(
+            None, // max_prompt_tokens: available in Phase 5
+            None, // max_completion_tokens: available in Phase 5
         )
     }
 

@@ -525,6 +525,10 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
         "llava" => {
             model.add_capability(ModelCapability::Vision);
         }
+        "codellama" | "codegemma" | "deepseek-coder" | "starcoder" | "starcoder2" | "codestral"
+        | "qwen2.5-coder" => {
+            model.add_capability(ModelCapability::CodeGeneration);
+        }
         _ => {}
     }
 }
@@ -576,6 +580,7 @@ fn build_model_info_from_show_response(
         model_info.set_provider_metadata("capabilities", caps_joined.clone());
 
         for cap in &show.capabilities {
+            #[allow(deprecated)]
             match cap.to_lowercase().as_str() {
                 "tools" => model_info.add_capability(ModelCapability::FunctionCalling),
                 "vision" => model_info.add_capability(ModelCapability::Vision),
@@ -1037,6 +1042,28 @@ mod tests {
     }
 
     #[test]
+    fn test_add_model_capabilities_code_generation() {
+        let families = [
+            "codellama",
+            "codegemma",
+            "deepseek-coder",
+            "starcoder",
+            "starcoder2",
+            "codestral",
+            "qwen2.5-coder",
+        ];
+        for family in &families {
+            let mut model = ModelInfo::new("test", "test", 4096);
+            add_model_capabilities(&mut model, family);
+            assert!(
+                model.supports_capability(ModelCapability::CodeGeneration),
+                "Expected CodeGeneration for family: {}",
+                family
+            );
+        }
+    }
+
+    #[test]
     fn test_add_model_capabilities_vision() {
         let mut model = ModelInfo::new("llava", "LLaVA", 4096);
         add_model_capabilities(&mut model, "llava");
@@ -1119,6 +1146,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_build_model_info_from_show_response_parses_context_and_capabilities() {
         let json = r#"{
             "name": "granite4:latest",

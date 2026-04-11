@@ -772,6 +772,7 @@ impl Provider for OpenAIProvider {
             .into_iter()
             .map(|entry| {
                 let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                #[allow(deprecated)]
                 info.add_capability(ModelCapability::Completion);
                 info.add_capability(ModelCapability::FunctionCalling);
                 info
@@ -1184,6 +1185,7 @@ mod tests {
         );
     }
 
+    #[allow(deprecated)]
     #[tokio::test]
     async fn test_list_models() {
         let server = MockServer::start().await;
