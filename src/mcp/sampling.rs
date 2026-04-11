@@ -242,6 +242,20 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Provider for MockProvider {
+        fn is_authenticated(&self) -> bool {
+            false
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("mock-model")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+            Ok(vec![])
+        }
+
         async fn complete(
             &self,
             _messages: &[ProviderMessage],
@@ -250,22 +264,6 @@ mod tests {
             Ok(CompletionResponse::new(ProviderMessage::assistant(
                 &self.response_text,
             )))
-        }
-
-        async fn list_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
-            Ok(vec![])
-        }
-
-        async fn get_model_info(&self, _name: &str) -> Result<crate::providers::ModelInfo> {
-            Err(XzatomaError::Provider("no model info in mock".into()))
-        }
-
-        fn get_current_model(&self) -> Result<String> {
-            Ok("mock-model".to_string())
-        }
-
-        async fn set_model(&mut self, _model_name: String) -> Result<()> {
-            Ok(())
         }
     }
 

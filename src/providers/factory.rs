@@ -103,7 +103,7 @@ impl ProviderFactory {
             "ollama" => Ok(Box::new(OllamaProvider::new(config.ollama.clone())?)),
             "openai" => Ok(Box::new(OpenAIProvider::new(config.openai.clone())?)),
             _ => Err(crate::error::XzatomaError::Provider(format!(
-                "Unknown provider type: {}",
+                "Unknown provider type: '{}'. Supported types are: copilot, ollama, openai",
                 provider_type
             ))),
         }
@@ -189,7 +189,7 @@ impl ProviderFactory {
                 Ok(Box::new(OpenAIProvider::new(openai_config)?))
             }
             _ => Err(crate::error::XzatomaError::Provider(format!(
-                "Unknown provider type: {}",
+                "Unknown provider type: '{}'. Supported types are: copilot, ollama, openai",
                 provider_type
             ))),
         }
@@ -301,6 +301,20 @@ mod tests {
 
         let result = create_provider("invalid", &config);
         assert!(result.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("copilot"),
+            "Error message should contain 'copilot'"
+        );
+        assert!(
+            err_msg.contains("ollama"),
+            "Error message should contain 'ollama'"
+        );
+        assert!(
+            err_msg.contains("openai"),
+            "Error message should contain 'openai'"
+        );
     }
 
     #[test]
@@ -385,6 +399,14 @@ mod tests {
         // Invalid provider override
         let result = create_provider_with_override(&config, Some("invalid"), None);
         assert!(result.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("copilot"),
+            "Error should mention 'copilot'"
+        );
+        assert!(err_msg.contains("ollama"), "Error should mention 'ollama'");
+        assert!(err_msg.contains("openai"), "Error should mention 'openai'");
     }
 
     #[test]
@@ -476,6 +498,20 @@ mod tests {
         };
         let result = ProviderFactory::create_provider("unknown", &config);
         assert!(result.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("copilot"),
+            "Error message should contain 'copilot'"
+        );
+        assert!(
+            err_msg.contains("ollama"),
+            "Error message should contain 'ollama'"
+        );
+        assert!(
+            err_msg.contains("openai"),
+            "Error message should contain 'openai'"
+        );
     }
 
     #[test]
@@ -488,6 +524,71 @@ mod tests {
         };
         let result = ProviderFactory::create_provider_with_override(&config, Some("unknown"), None);
         assert!(result.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("copilot"),
+            "Error message should contain 'copilot'"
+        );
+        assert!(
+            err_msg.contains("ollama"),
+            "Error message should contain 'ollama'"
+        );
+        assert!(
+            err_msg.contains("openai"),
+            "Error message should contain 'openai'"
+        );
+    }
+
+    #[test]
+    fn test_unknown_provider_error_message_contains_all_supported_types() {
+        let config = ProviderConfig {
+            provider_type: "xyz".to_string(),
+            copilot: CopilotConfig::default(),
+            ollama: OllamaConfig::default(),
+            openai: OpenAIConfig::default(),
+        };
+
+        let result = ProviderFactory::create_provider("xyz", &config);
+        assert!(result.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg = result.err().unwrap().to_string();
+        assert!(
+            err_msg.contains("copilot"),
+            "Error message should contain 'copilot', got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("ollama"),
+            "Error message should contain 'ollama', got: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("openai"),
+            "Error message should contain 'openai', got: {}",
+            err_msg
+        );
+
+        let result_override =
+            ProviderFactory::create_provider_with_override(&config, Some("xyz"), None);
+        assert!(result_override.is_err());
+        // SAFETY: asserted is_err() above, so err() is guaranteed Some
+        let err_msg_override = result_override.err().unwrap().to_string();
+        assert!(
+            err_msg_override.contains("copilot"),
+            "Error message should contain 'copilot', got: {}",
+            err_msg_override
+        );
+        assert!(
+            err_msg_override.contains("ollama"),
+            "Error message should contain 'ollama', got: {}",
+            err_msg_override
+        );
+        assert!(
+            err_msg_override.contains("openai"),
+            "Error message should contain 'openai', got: {}",
+            err_msg_override
+        );
     }
 
     #[test]

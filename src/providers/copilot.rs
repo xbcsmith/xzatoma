@@ -1009,7 +1009,7 @@ impl CopilotProvider {
     ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
-    /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
+    /// assert_eq!(provider.get_current_model(), "gpt-5.3-codex");
     /// ```
     ///
     /// Authenticate and get Copilot token
@@ -2513,7 +2513,45 @@ impl Provider for CopilotProvider {
         }
     }
 
-    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+    /// Returns `true` if this provider has a valid non-expired Copilot token
+    /// cached in the system keyring.
+    fn is_authenticated(&self) -> bool {
+        if let Ok(cached) = self.get_cached_token() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                // SAFETY: SystemTime::now() always returns a time after UNIX_EPOCH.
+                .unwrap()
+                .as_secs();
+            cached.expires_at > now + 300
+        } else {
+            false
+        }
+    }
+
+    /// Returns `None` because the model name is stored behind a `RwLock`;
+    /// a borrowed `&str` cannot outlive the lock guard. Use
+    /// `get_current_model` for an owned copy.
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Set the active model in memory without any API validation. Callers
+    /// that need model-existence validation should call `list_models` before
+    /// calling this method.
+    fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
+    /// Fetch the list of available models from the remote API. This is the
+    /// canonical implementation method; `list_models` provides a default that
+    /// delegates here.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if authentication fails or the API call fails.
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
         tracing::debug!("Listing Copilot models from API");
         self.fetch_copilot_models().await
     }
@@ -2527,13 +2565,18 @@ impl Provider for CopilotProvider {
             .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
 
-    fn get_current_model(&self) -> Result<String> {
+    /// Get the name of the currently active model.
+    ///
+    /// Returns `"none"` if the read lock cannot be acquired.
+    ///
+    /// Overrides the trait default to read from the internal
+    /// `RwLock<CopilotConfig>` directly, since `current_model` cannot return a
+    /// borrowed reference to lock-guarded data.
+    fn get_current_model(&self) -> String {
         self.config
             .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })
-            .map(|config| config.model.clone())
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|_| "none".to_string())
     }
 
     fn get_provider_capabilities(&self) -> ProviderCapabilities {
@@ -2568,46 +2611,6 @@ impl Provider for CopilotProvider {
             .find(|m| m.id == model_name || m.name == model_name)
             .ok_or_else(|| XzatomaError::Provider(format!("Model '{}' not found", model_name)))?;
         Ok(self.convert_to_summary(data))
-    }
-
-    async fn set_model(&mut self, model_name: String) -> Result<()> {
-        // Fetch available models from API to validate
-        let models = self.fetch_copilot_models().await?;
-
-        // Find the requested model
-        let model_info = models
-            .iter()
-            .find(|m| m.name == model_name)
-            .ok_or_else(|| {
-                let available: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
-                XzatomaError::Provider(format!(
-                    "Model '{}' not found. Available models: {}",
-                    model_name,
-                    available.join(", ")
-                ))
-            })?;
-
-        // Check if model supports tool calling
-        if !model_info.supports_capability(ModelCapability::FunctionCalling) {
-            let tool_models: Vec<String> = models
-                .iter()
-                .filter(|m| m.supports_capability(ModelCapability::FunctionCalling))
-                .map(|m| m.name.clone())
-                .collect();
-
-            return Err(XzatomaError::Provider(format!(
-                "Model '{}' does not support tool calling, which is required for XZatoma. Models with tool support: {}",
-                model_name,
-                tool_models.join(", ")
-            )));
-        }
-
-        // Update the model in the config
-        let mut config = self.config.write().map_err(|_| {
-            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-        })?;
-        config.model = model_name;
-        Ok(())
     }
 }
 
@@ -2713,7 +2716,7 @@ mod tests {
     fn test_copilot_provider_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
 
     #[test]
@@ -2898,7 +2901,7 @@ mod tests {
     fn test_get_current_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
 
     #[test]
@@ -2914,31 +2917,23 @@ mod tests {
         assert!(caps.supports_streaming);
     }
 
-    #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
-    async fn test_set_model_with_valid_model() {
-        // set_model requires a live or mocked Copilot models endpoint.
-        // Use wiremock or mockito to return test model data,
-        // then call set_model with a known-good model name.
+    #[test]
+    fn test_set_model_with_valid_model() {
+        // set_model is now an infallible in-memory setter; no mock server needed.
         let config = CopilotConfig::default();
         let mut provider = CopilotProvider::new(config).unwrap();
-        let result = provider.set_model("gpt-4o".to_string()).await;
-        // Without a mock server this will fail with an auth error
-        assert!(result.is_err());
+        provider.set_model("gpt-4o");
+        assert_eq!(provider.get_current_model(), "gpt-4o");
     }
 
-    #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
-    async fn test_set_model_with_invalid_model() {
-        // set_model requires a live or mocked Copilot models endpoint.
-        // Use wiremock or mockito to validate that an invalid model name
-        // produces a descriptive error.
+    #[test]
+    fn test_set_model_with_invalid_model() {
+        // set_model is an infallible in-memory setter; validation is the
+        // caller's responsibility via list_models.
         let config = CopilotConfig::default();
         let mut provider = CopilotProvider::new(config).unwrap();
-        let result = provider
-            .set_model("nonexistent-model-xyz".to_string())
-            .await;
-        assert!(result.is_err());
+        provider.set_model("nonexistent-model-xyz");
+        assert_eq!(provider.get_current_model(), "nonexistent-model-xyz");
     }
 
     #[tokio::test]

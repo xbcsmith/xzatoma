@@ -711,11 +711,7 @@ impl Agent {
             .conversation
             .summary_model
             .clone()
-            .unwrap_or_else(|| {
-                self.provider
-                    .get_current_model()
-                    .unwrap_or_else(|_| "unknown".to_string())
-            });
+            .unwrap_or_else(|| self.provider.get_current_model());
 
         debug!("Using summary model: {}", summary_model);
 
@@ -935,6 +931,22 @@ mod tests {
 
     #[async_trait]
     impl Provider for MockProvider {
+        fn is_authenticated(&self) -> bool {
+            false
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            None
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+            Err(crate::error::XzatomaError::Provider(
+                "not supported".to_string(),
+            ))
+        }
+
         async fn complete(
             &self,
             _messages: &[Message],

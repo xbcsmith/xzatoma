@@ -472,6 +472,9 @@ impl OllamaProvider {
     }
 
     /// Invalidate the model cache
+    // set_model no longer calls invalidate_cache; retained for potential
+    // future use (e.g. explicit cache busting after external model changes).
+    #[allow(dead_code)]
     fn invalidate_cache(&self) {
         if let Ok(mut cache) = self.model_cache.write() {
             *cache = None;
@@ -712,6 +715,33 @@ impl Provider for OllamaProvider {
         Ok(response)
     }
 
+    /// Returns `true` if this provider has valid stored credentials.
+    ///
+    /// Ollama does not require authentication; this always returns `true`.
+    fn is_authenticated(&self) -> bool {
+        true
+    }
+
+    /// Returns a borrowed reference to the currently active model name, or
+    /// `None` if no model is configured.
+    ///
+    /// The model name is stored behind a `RwLock`; a borrowed reference cannot
+    /// be returned directly. Use `get_current_model` for an owned copy.
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Fetch the list of available models from the remote API. This is the
+    /// canonical implementation method; `list_models` provides a default that
+    /// delegates here.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the API call fails.
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+        self.fetch_models_from_api().await
+    }
+
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         tracing::debug!("Listing Ollama models");
 
@@ -754,13 +784,17 @@ impl Provider for OllamaProvider {
         self.fetch_model_details(model_name).await
     }
 
-    fn get_current_model(&self) -> Result<String> {
+    /// Get the name of the currently active model.
+    ///
+    /// # Returns
+    ///
+    /// Returns the model name as an owned `String`, or `"none"` if the read
+    /// lock cannot be acquired.
+    fn get_current_model(&self) -> String {
         self.config
             .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })
-            .map(|config| config.model.clone())
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|_| "none".to_string())
     }
 
     fn get_provider_capabilities(&self) -> ProviderCapabilities {
@@ -773,40 +807,13 @@ impl Provider for OllamaProvider {
         }
     }
 
-    async fn set_model(&mut self, model_name: String) -> Result<()> {
-        // Validate that the model exists by fetching the list
-        let models = self.list_models().await?;
-
-        let model_info = models.iter().find(|m| m.name == model_name);
-
-        if model_info.is_none() {
-            return Err(XzatomaError::Provider(format!(
-                "Model not found: {}",
-                model_name
-            )));
+    /// Set the active model in memory without any API validation. Callers
+    /// that need model-existence validation should call `list_models` before
+    /// calling this method.
+    fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
         }
-
-        // Check if the model supports tool calling (required for XZatoma)
-        let model = model_info.unwrap();
-        if !model.supports_capability(ModelCapability::FunctionCalling) {
-            return Err(XzatomaError::Provider(format!(
-                "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
-                model_name
-            )));
-        }
-
-        // Update the model in the config
-        let mut config = self.config.write().map_err(|_| {
-            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-        })?;
-        config.model = model_name.clone();
-        drop(config);
-
-        // Invalidate cache to ensure fresh model list next time
-        self.invalidate_cache();
-
-        tracing::info!("Switched Ollama model to: {}", model_name);
-        Ok(())
     }
 }
 
@@ -1073,7 +1080,7 @@ mod tests {
             model: "test-model".to_string(),
         };
         let provider = OllamaProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "test-model");
+        assert_eq!(provider.get_current_model(), "test-model");
     }
 
     #[test]

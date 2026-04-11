@@ -648,6 +648,44 @@ impl OpenAIProvider {
 
 #[async_trait]
 impl Provider for OpenAIProvider {
+    /// Returns `true` if this provider has a non-empty API key stored in its
+    /// configuration. Local servers that require no auth will return `false`
+    /// here; that is expected and correct.
+    fn is_authenticated(&self) -> bool {
+        self.config
+            .read()
+            .map(|c| !c.api_key.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Returns `None` because the model name is stored behind a `RwLock`;
+    /// a borrowed `&str` cannot outlive the lock guard. Use
+    /// `get_current_model` for an owned copy.
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Set the active model in memory. No API validation is performed.
+    /// Callers that require model-existence validation should call
+    /// `list_models` before calling this method.
+    fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+            tracing::info!("Switched OpenAI model to: {}", model);
+        }
+    }
+
+    /// Fetch the list of available models. Delegates to the overridden
+    /// `list_models`, which uses the 300-second in-process cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the HTTP request fails or the
+    /// response cannot be deserialized.
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+        self.list_models().await
+    }
+
     /// Complete a conversation using the OpenAI Chat Completions API.
     ///
     /// When `enable_streaming` is `true` and no tool schemas are provided, the
@@ -768,16 +806,18 @@ impl Provider for OpenAIProvider {
 
     /// Return the name of the currently configured model.
     ///
-    /// # Errors
+    /// Returns `"none"` if the read lock cannot be acquired.
     ///
-    /// Returns `XzatomaError::Provider` if the read lock cannot be acquired.
-    fn get_current_model(&self) -> Result<String> {
+    /// # Default Implementation
+    ///
+    /// Overrides the trait default to read from the internal
+    /// `RwLock<OpenAIConfig>` directly, since `current_model` cannot return a
+    /// borrowed reference to lock-guarded data.
+    fn get_current_model(&self) -> String {
         self.config
             .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })
             .map(|c| c.model.clone())
+            .unwrap_or_else(|_| "none".to_string())
     }
 
     /// Return the static capability flags for this provider.
@@ -794,32 +834,6 @@ impl Provider for OpenAIProvider {
             supports_token_counts: true,
             supports_streaming: true,
         }
-    }
-
-    /// Switch the active model after verifying it exists in the model list.
-    ///
-    /// Calls [`list_models`] to validate the model name, then writes the new
-    /// name into the configuration under the write lock.
-    ///
-    /// # Errors
-    ///
-    /// Returns `XzatomaError::Provider` if the model is not found in the list
-    /// returned by [`list_models`] or if a lock cannot be acquired.
-    async fn set_model(&mut self, model_name: String) -> Result<()> {
-        let models = self.list_models().await?;
-        if !models.iter().any(|m| m.name == model_name) {
-            return Err(XzatomaError::Provider(format!(
-                "Model not found: {}",
-                model_name
-            )));
-        }
-
-        let mut config = self.config.write().map_err(|_| {
-            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-        })?;
-        config.model = model_name.clone();
-        tracing::info!("Switched OpenAI model to: {}", model_name);
-        Ok(())
     }
 }
 
@@ -1085,8 +1099,7 @@ mod tests {
     fn test_get_current_model() {
         let config = OpenAIConfig::default();
         let provider = OpenAIProvider::new(config).unwrap();
-        let model = provider.get_current_model().unwrap();
-        assert_eq!(model, "gpt-4o-mini");
+        assert_eq!(provider.get_current_model(), "gpt-4o-mini");
     }
 
     #[test]
@@ -1197,39 +1210,23 @@ mod tests {
         assert!(models[0].supports_capability(ModelCapability::FunctionCalling));
     }
 
-    #[tokio::test]
-    async fn test_set_model_valid() {
-        let server = MockServer::start().await;
-
-        Mock::given(method("GET"))
-            .and(path("/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(models_list_body()))
-            .mount(&server)
-            .await;
-
-        let config = make_config(&server.uri());
+    #[test]
+    fn test_set_model_valid() {
+        let config = OpenAIConfig::default();
         let mut provider = OpenAIProvider::new(config).unwrap();
-
-        let result = provider.set_model("gpt-4o".to_string()).await;
-        assert!(result.is_ok(), "Expected Ok, got: {:?}", result.err());
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-4o");
+        provider.set_model("gpt-4o");
+        assert_eq!(provider.get_current_model(), "gpt-4o");
     }
 
-    #[tokio::test]
-    async fn test_set_model_invalid() {
-        let server = MockServer::start().await;
-
-        Mock::given(method("GET"))
-            .and(path("/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(models_list_body()))
-            .mount(&server)
-            .await;
-
-        let config = make_config(&server.uri());
+    #[test]
+    fn test_set_model_in_memory_setter() {
+        // set_model no longer validates against the model list; it is an
+        // infallible in-memory setter. Validation is the caller's responsibility
+        // via list_models.
+        let config = OpenAIConfig::default();
         let mut provider = OpenAIProvider::new(config).unwrap();
-
-        let result = provider.set_model("nonexistent-model".to_string()).await;
-        assert!(result.is_err(), "Expected Err for unknown model");
+        provider.set_model("nonexistent-model");
+        assert_eq!(provider.get_current_model(), "nonexistent-model");
     }
 
     #[tokio::test]
