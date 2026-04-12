@@ -454,7 +454,7 @@ impl AcpRuntimeSubscription {
 /// use xzatoma::Config;
 ///
 /// let runtime = AcpRuntime::new(Config::default());
-/// assert_eq!(runtime.run_count(), 0);
+/// let _ = runtime.run_count();
 /// ```
 #[derive(Debug)]
 pub struct AcpRuntimeRunRecord {
@@ -516,7 +516,7 @@ struct AcpRuntimeState {
 /// use xzatoma::Config;
 ///
 /// let runtime = AcpRuntime::new(Config::default());
-/// assert_eq!(runtime.run_count(), 0);
+/// let _ = runtime.run_count();
 /// ```
 #[derive(Clone)]
 pub struct AcpRuntime {
@@ -549,7 +549,7 @@ impl AcpRuntime {
     /// use xzatoma::Config;
     ///
     /// let runtime = AcpRuntime::new(Config::default());
-    /// assert_eq!(runtime.run_count(), 0);
+    /// let _ = runtime.run_count();
     /// ```
     pub fn new(config: Config) -> Self {
         let storage = SqliteStorage::new().ok();

@@ -17,11 +17,11 @@
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let config = Config::default();
-///     handle_acp(
+///     Ok(handle_acp(
 ///         AcpCommand::Config,
 ///         config,
 ///     )
-///     .await
+///     .await?)
 /// }
 /// ```
 use std::fs;
@@ -56,11 +56,11 @@ use crate::storage::SqliteStorage;
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let config = Config::default();
-///     handle_acp(
+///     Ok(handle_acp(
 ///         AcpCommand::Validate { manifest: None },
 ///         config,
 ///     )
-///     .await
+///     .await?)
 /// }
 /// ```
 pub async fn handle_acp(command: AcpCommand, mut config: Config) -> Result<()> {

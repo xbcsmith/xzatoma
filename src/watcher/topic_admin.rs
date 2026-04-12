@@ -1,4 +1,4 @@
-//! Kafka topic administration support for watcher startup.
+//!Kafka topic administration support for watcher startup.
 //!
 //! This module provides a watcher-oriented abstraction for ensuring that
 //! watcher topics exist before a watcher backend enters its consume loop.

@@ -21,11 +21,11 @@
 ///
 /// ```
 /// use xzatoma::acp::run::{
-///     now_rfc3339, AcpMessage, AcpMessagePart, AcpRole, AcpRun, AcpRunCreateRequest, AcpRunId,
-///     AcpRunSession, AcpRunState, AcpSessionId, AcpTextPart,
+///     now_rfc3339, AcpMessage, AcpMessagePart, AcpRole, AcpRun, AcpRunCreateRequest, RunId,
+///     Session, RunStatus, SessionId, AcpTextPart,
 /// };
 ///
-/// let session = AcpRunSession::new(AcpSessionId::new("session_123".to_string())?)?;
+/// let session = Session::new(SessionId::new("session_123".to_string())?)?;
 /// let request = AcpRunCreateRequest::new(
 ///     session.id.clone(),
 ///     vec![AcpMessage::new(
@@ -36,9 +36,9 @@
 ///     )?],
 /// )?;
 ///
-/// let mut run = AcpRun::new(AcpRunId::new("run_123".to_string())?, request, session)?;
-/// run.transition_to(AcpRunState::Queued)?;
-/// run.transition_to(AcpRunState::Running)?;
+/// let mut run = AcpRun::new(RunId::new("run_123".to_string())?, request, session)?;
+/// run.transition_to(RunStatus::Queued)?;
+/// run.transition_to(RunStatus::Running)?;
 /// run.append_output_message(AcpMessage::new(
 ///     AcpRole::Assistant,
 ///     vec![AcpMessagePart::Text(AcpTextPart::new(
@@ -46,7 +46,7 @@
 ///     ))],
 /// )?)?;
 ///
-/// assert_eq!(run.status.state, AcpRunState::Running);
+/// assert_eq!(run.status.state, RunStatus::Running);
 /// assert!(!now_rfc3339().is_empty());
 /// # Ok::<(), anyhow::Error>(())
 /// ```

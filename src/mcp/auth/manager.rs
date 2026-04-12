@@ -25,7 +25,7 @@
 //! use xzatoma::mcp::auth::flow::OAuthFlowConfig;
 //! use xzatoma::mcp::auth::token_store::TokenStore;
 //!
-//! # async fn example() -> xzatoma::error::Result<()> {
+//! # async fn example() -> anyhow::Result<()> {
 //! let http = Arc::new(reqwest::Client::new());
 //! let token_store = Arc::new(TokenStore);
 //! let mut manager = AuthManager::new(http, token_store);
@@ -203,7 +203,7 @@ impl AuthManager {
     /// use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
     /// use std::collections::HashMap;
     ///
-    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # async fn example() -> anyhow::Result<()> {
     /// let mut manager = AuthManager::new(
     ///     Arc::new(reqwest::Client::new()),
     ///     Arc::new(TokenStore),
@@ -311,7 +311,7 @@ impl AuthManager {
     /// # use xzatoma::mcp::auth::token_store::TokenStore;
     /// # use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
     /// # use std::collections::HashMap;
-    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # async fn example() -> anyhow::Result<()> {
     /// # let mut manager = AuthManager::new(Arc::new(reqwest::Client::new()), Arc::new(TokenStore));
     /// # manager.add_server("srv".to_string(), OAuthFlowConfig {
     /// #     server_id: "srv".to_string(),
@@ -379,7 +379,7 @@ impl AuthManager {
     /// # use xzatoma::mcp::auth::token_store::{OAuthToken, TokenStore};
     /// # use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
     /// # use std::collections::HashMap;
-    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # async fn example() -> anyhow::Result<()> {
     /// # let mut manager = AuthManager::new(Arc::new(reqwest::Client::new()), Arc::new(TokenStore));
     /// # manager.add_server("srv".to_string(), OAuthFlowConfig {
     /// #     server_id: "srv".to_string(),
