@@ -327,8 +327,15 @@ pub fn parse_mentions(input: &str) -> crate::error::Result<(Vec<Mention>, String
 
             // Try to parse a mention starting at position i+1
             if let Some((mention, consumed)) = try_parse_mention_at(&chars, i + 1) {
+                // For file mentions (files and directories), preserve the bare path in
+                // the cleaned text so the LLM retains the path reference in its
+                // instruction.  For example, "write to @tmp/output" becomes
+                // "write to tmp/output" rather than "write to ".  Search, grep, and
+                // URL mentions are pure content injections and are stripped entirely.
+                if let Mention::File(ref fm) = mention {
+                    cleaned.push_str(&fm.path);
+                }
                 mentions.push(mention);
-                // Skip the @ and the mention text in the cleaned output
                 i += 1 + consumed;
             } else {
                 cleaned.push(chars[i]);
@@ -664,9 +671,14 @@ pub async fn load_file_content(
     let metadata = fs::metadata(&file_path).await?;
 
     if !metadata.is_file() {
+        let kind_hint = if metadata.is_dir() {
+            " (is a directory — use @directory/path to get a listing)"
+        } else {
+            ""
+        };
         return Err(crate::error::XzatomaError::FileLoad(format!(
-            "Not a file: {}",
-            mention.path
+            "Not a file: {}{}",
+            mention.path, kind_hint
         )));
     }
 
@@ -700,6 +712,123 @@ pub async fn load_file_content(
         contents,
         mtime,
     ))
+}
+
+/// Load directory listing for a directory mention
+///
+/// Produces a formatted directory listing for injection into the agent prompt.
+/// Lists all files and subdirectories recursively up to `max_entries` total entries.
+/// If the directory does not yet exist, returns a note indicating it is an absent
+/// target that will be created when files are written to it.
+///
+/// # Arguments
+///
+/// * `mention_path` - The original mention path string (for display)
+/// * `dir_path` - The resolved directory path to list
+/// * `max_entries` - Maximum number of entries to include before truncating
+///
+/// # Returns
+///
+/// A formatted string describing the directory contents, suitable for prompt injection.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+/// use xzatoma::mention_parser::load_directory_content;
+///
+/// # tokio_test::block_on(async {
+/// let listing = load_directory_content("src", Path::new("/project/src"), 200).await;
+/// assert!(listing.contains("Directory listing: src"));
+/// # });
+/// ```
+pub async fn load_directory_content(
+    mention_path: &str,
+    dir_path: &Path,
+    max_entries: usize,
+) -> String {
+    use walkdir::WalkDir;
+
+    if !dir_path.exists() {
+        return format!(
+            "Directory listing: {}\nStatus: Does not exist (target output directory — will be created when files are written here)\n",
+            mention_path
+        );
+    }
+
+    let mut entries: Vec<(String, bool, u64)> = Vec::new();
+    let mut truncated = false;
+    let mut read_errors: Vec<String> = Vec::new();
+    let mut count = 0;
+
+    let walker = WalkDir::new(dir_path)
+        .min_depth(1)
+        .max_depth(10)
+        .sort_by_file_name();
+
+    for entry_result in walker {
+        if count >= max_entries {
+            truncated = true;
+            break;
+        }
+        match entry_result {
+            Ok(entry) => {
+                let rel_path = entry
+                    .path()
+                    .strip_prefix(dir_path)
+                    .unwrap_or(entry.path())
+                    .to_string_lossy()
+                    .to_string();
+                let is_dir = entry.file_type().is_dir();
+                let size = if is_dir {
+                    0
+                } else {
+                    entry.metadata().map(|m| m.len()).unwrap_or(0)
+                };
+                entries.push((rel_path, is_dir, size));
+                count += 1;
+            }
+            Err(e) => {
+                read_errors.push(format!("  (error reading entry: {})", e));
+            }
+        }
+    }
+
+    let file_count = entries.iter().filter(|(_, is_dir, _)| !*is_dir).count();
+    let dir_count = entries.iter().filter(|(_, is_dir, _)| *is_dir).count();
+
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("Directory listing: {}", mention_path));
+    lines.push(format!(
+        "Contents: {} file(s), {} subdirectorie(s)",
+        file_count, dir_count
+    ));
+    lines.push(String::new());
+
+    if file_count == 0 && dir_count == 0 {
+        lines.push("  (empty directory)".to_string());
+    } else {
+        for (path, is_dir, size) in &entries {
+            if *is_dir {
+                lines.push(format!("  {}/", path));
+            } else {
+                lines.push(format!("  {}  ({} bytes)", path, size));
+            }
+        }
+    }
+
+    for err in &read_errors {
+        lines.push(err.clone());
+    }
+
+    if truncated {
+        lines.push(format!(
+            "\n  (listing truncated at {} entries)",
+            max_entries
+        ));
+    }
+
+    lines.join("\n")
 }
 
 /// Format search results for display in prompts
@@ -1152,6 +1281,18 @@ pub async fn augment_prompt_with_mentions(
                     continue;
                 }
             };
+
+            // Handle directory mentions: inject a listing instead of erroring
+            if file_path.is_dir() {
+                tracing::debug!(
+                    "Mention path is a directory, loading listing: {}",
+                    file_path.display()
+                );
+                let dir_listing = load_directory_content(&file_mention.path, &file_path, 200).await;
+                file_contents.push(dir_listing);
+                successes.push(format!("Listed directory @{}", file_mention.path));
+                continue;
+            }
 
             // Try to get from cache first (note whether it's cached for success messaging)
             let (content, was_cached) = if let Some(cached) = cache.get(&file_path) {
@@ -2180,27 +2321,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_mentions_cleans_single_file() {
+    fn test_parse_mentions_preserves_file_path_in_cleaned() {
         let input = "@src/main.rs";
         let (_mentions, cleaned) = parse_mentions(input).unwrap();
-        // The mention should be removed, leaving empty string
-        assert_eq!(cleaned.trim(), "");
+        // The @ is stripped but the path is preserved so the LLM sees it
+        assert_eq!(cleaned.trim(), "src/main.rs");
     }
 
     #[test]
-    fn test_parse_mentions_cleans_multiple_files() {
+    fn test_parse_mentions_preserves_multiple_file_paths_in_cleaned() {
         let input = "Check @src/main.rs and @README.md please";
         let (_mentions, cleaned) = parse_mentions(input).unwrap();
-        // The mentions should be removed, leaving the rest of the text
-        assert_eq!(cleaned, "Check  and  please");
+        // Both paths are preserved without their @ prefix
+        assert_eq!(cleaned, "Check src/main.rs and README.md please");
     }
 
     #[test]
-    fn test_parse_mentions_cleans_file_with_range() {
+    fn test_parse_mentions_preserves_file_path_without_line_range() {
         let input = "Review @file.rs#L10-20 for issues";
         let (_mentions, cleaned) = parse_mentions(input).unwrap();
-        // The mention with line range should be removed
-        assert_eq!(cleaned, "Review  for issues");
+        // The path is preserved; the #L10-20 range specifier is consumed but not emitted
+        assert_eq!(cleaned, "Review file.rs for issues");
     }
 
     #[test]
@@ -2220,11 +2361,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_mentions_preserves_text() {
+    fn test_parse_mentions_preserves_file_path_with_surrounding_text() {
         let input = "Explain what @src/storage/types.rs does";
         let (_mentions, cleaned) = parse_mentions(input).unwrap();
-        // The mention should be removed, preserving other text
-        assert_eq!(cleaned, "Explain what  does");
+        // The @ is stripped but the path remains so the instruction stays complete
+        assert_eq!(cleaned, "Explain what src/storage/types.rs does");
     }
 
     #[test]
@@ -2376,5 +2517,181 @@ mod tests {
         assert!(successes[0].contains("0 match(es)"));
         assert!(augmented.contains("No matches found"));
         assert!(augmented.contains("Search for nothing"));
+    }
+
+    // ------------------------------------------------------------------
+    // Directory mention tests
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_load_directory_content_nonexistent() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let absent = temp_dir.path().join("does_not_exist");
+
+        let result = load_directory_content("does_not_exist", &absent, 200).await;
+
+        assert!(result.contains("Directory listing: does_not_exist"));
+        assert!(result.contains("Does not exist"));
+    }
+
+    #[tokio::test]
+    async fn test_load_directory_content_empty_directory() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let empty_dir = temp_dir.path().join("empty");
+        tokio::fs::create_dir(&empty_dir).await.unwrap();
+
+        let result = load_directory_content("empty", &empty_dir, 200).await;
+
+        assert!(result.contains("Directory listing: empty"));
+        assert!(result.contains("0 file(s)"));
+        assert!(result.contains("empty directory"));
+    }
+
+    #[tokio::test]
+    async fn test_load_directory_content_with_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().join("output");
+        tokio::fs::create_dir(&dir).await.unwrap();
+        tokio::fs::write(dir.join("report.md"), "# Report\n")
+            .await
+            .unwrap();
+        tokio::fs::write(dir.join("data.json"), "{\"x\": 1}")
+            .await
+            .unwrap();
+        let sub = dir.join("archive");
+        tokio::fs::create_dir(&sub).await.unwrap();
+        tokio::fs::write(sub.join("old.txt"), "archived")
+            .await
+            .unwrap();
+
+        let result = load_directory_content("output", &dir, 200).await;
+
+        assert!(result.contains("Directory listing: output"));
+        assert!(result.contains("3 file(s)"));
+        assert!(result.contains("report.md"));
+        assert!(result.contains("data.json"));
+        assert!(result.contains("archive/"));
+        assert!(result.contains("old.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_load_directory_content_truncation() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().join("many");
+        tokio::fs::create_dir(&dir).await.unwrap();
+
+        for i in 0..10 {
+            tokio::fs::write(dir.join(format!("file{:02}.txt", i)), "x")
+                .await
+                .unwrap();
+        }
+
+        // Use a low max_entries to trigger truncation
+        let result = load_directory_content("many", &dir, 3).await;
+
+        assert!(result.contains("Directory listing: many"));
+        assert!(result.contains("truncated at 3 entries"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_existing_directory_mention() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let out_dir = temp_dir.path().join("out");
+        tokio::fs::create_dir(&out_dir).await.unwrap();
+        tokio::fs::write(out_dir.join("result.txt"), "hello")
+            .await
+            .unwrap();
+
+        let mentions = vec![Mention::File(FileMention {
+            path: "out".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
+            &mentions,
+            "Write files to the output directory",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+        assert_eq!(successes.len(), 1);
+        assert!(successes[0].contains("Listed directory @out"));
+        assert!(augmented.contains("Directory listing: out"));
+        assert!(augmented.contains("result.txt"));
+        assert!(augmented.contains("Write files to the output directory"));
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_with_nonexistent_directory_mention() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // tmp/output does not exist
+        let mentions = vec![Mention::File(FileMention {
+            path: "tmp/output".to_string(),
+            start_line: None,
+            end_line: None,
+        })];
+
+        // Create the tmp dir so the parent exists but output does not
+        tokio::fs::create_dir(temp_dir.path().join("tmp"))
+            .await
+            .unwrap();
+
+        let mut cache = MentionCache::new();
+        let (augmented, errors, successes) = augment_prompt_with_mentions(
+            &mentions,
+            "Write all output to tmp/output",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
+
+        // A non-existent path that is not an existing directory falls through to
+        // the file-load path and yields a FileNotFound error — which is acceptable.
+        // The augmented prompt should still contain the user's original text.
+        assert!(augmented.contains("Write all output to tmp/output"));
+        let _ = (errors, successes); // either outcome is fine
+    }
+
+    #[tokio::test]
+    async fn test_augment_prompt_directory_mention_not_cached() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().join("assets");
+        tokio::fs::create_dir(&dir).await.unwrap();
+        tokio::fs::write(dir.join("logo.png"), b"PNG_BYTES" as &[u8])
+            .await
+            .unwrap();
+
+        let file_mention = FileMention {
+            path: "assets".to_string(),
+            start_line: None,
+            end_line: None,
+        };
+
+        let mut cache = MentionCache::new();
+        let mentions = vec![Mention::File(file_mention)];
+
+        let (augmented, errors, _successes) = augment_prompt_with_mentions(
+            &mentions,
+            "list assets",
+            temp_dir.path(),
+            1_048_576,
+            &mut cache,
+        )
+        .await;
+
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+        assert!(augmented.contains("Directory listing: assets"));
+        // Directory mentions bypass the file cache, so the cache stays empty
+        assert!(
+            cache.is_empty(),
+            "directory mentions must not populate the file cache"
+        );
     }
 }

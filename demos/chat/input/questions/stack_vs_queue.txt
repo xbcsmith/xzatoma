@@ -1,0 +1,3 @@
+Explain the difference between a stack and a queue data structure.
+
+Answer: A stack is a Last-In-First-Out (LIFO) data structure where the last element added is the first one to be removed. A queue is a First-In-First-Out (FIFO) structure where the first element added is the first one to be removed. Stacks are used for function call management and undo mechanisms, while queues are used for scheduling tasks and buffering data.

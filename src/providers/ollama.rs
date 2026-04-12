@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 /// let config = OllamaConfig {
 ///     host: "http://localhost:11434".to_string(),
 ///     model: "llama3.2:latest".to_string(),
+///     request_timeout_seconds: 600,
 /// };
 /// let provider = OllamaProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -139,7 +140,8 @@ impl OllamaProvider {
     ///
     /// # Arguments
     ///
-    /// * `config` - Ollama configuration containing host and model
+    /// * `config` - Ollama configuration containing host, model, and request timeout.
+    ///   The HTTP client timeout is set to `config.request_timeout_seconds`.
     ///
     /// # Returns
     ///
@@ -158,13 +160,14 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
     pub fn new(config: OllamaConfig) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
             .build()
             .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
@@ -193,6 +196,7 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.host(), "http://localhost:11434");
@@ -215,6 +219,7 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.model(), "llama3.2:latest");
@@ -831,6 +836,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -841,6 +847,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://localhost:11434");
@@ -851,6 +858,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.model(), "llama3.2:latest");
@@ -861,6 +869,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -882,6 +891,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -905,6 +915,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -930,6 +941,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -951,6 +963,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -980,6 +993,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1089,6 +1103,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let capabilities = provider.get_provider_capabilities();
@@ -1105,6 +1120,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test-model".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "test-model");
@@ -1188,6 +1204,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1207,6 +1224,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 

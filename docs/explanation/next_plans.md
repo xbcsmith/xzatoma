@@ -54,4 +54,9 @@ We are going to add OpenAI provider support to XZatoma. This will allow users to
 
 Write a plan with a phased approach to add OpenAI support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-[OpenAI Support Implementation Plan](./openai_support_implementation_plan.md)
+✅ COMPLETED - [OpenAI Support Implementation Plan](./openai_support_implementation_plan.md)
+
+
+## Notes
+
+FIXED - Error: tmp/output: File load error: Not a file: tmp/output (Not a file) @mentions needs to support directories.

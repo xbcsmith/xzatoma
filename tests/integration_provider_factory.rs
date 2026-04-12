@@ -28,6 +28,7 @@ fn create_test_provider_config() -> ProviderConfig {
         ollama: OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:3b".to_string(),
+            request_timeout_seconds: 600,
         },
         openai: OpenAIConfig::default(),
     }

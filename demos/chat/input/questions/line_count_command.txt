@@ -1,0 +1,3 @@
+Give me a one-line shell command to count the number of lines in a file.
+
+Answer: `wc -l`

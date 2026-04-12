@@ -215,3 +215,7 @@ chmod +x setup.sh run.sh reset.sh
 Only one `xzatoma` process may write to `tmp/xzatoma.db` at a time. Ensure no
 other chat session is running against this demo directory before starting a new
 one.
+
+## Oneliner
+
+Answer the questions in the @input/sample_questions.txt  file. Use subagents to write each question and answer to individual files in ./tmp/output

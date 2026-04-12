@@ -499,14 +499,15 @@ pub struct OpenAIProvider {
 impl OpenAIProvider {
     /// Create a new OpenAI provider instance.
     ///
-    /// Builds an HTTP client with a 120-second timeout and the `xzatoma/0.1.0`
-    /// user-agent string, then wraps the provided configuration in an
+    /// Builds an HTTP client with a timeout derived from
+    /// `config.request_timeout_seconds` and the `xzatoma/0.1.0` user-agent
+    /// string, then wraps the provided configuration in an
     /// `Arc<RwLock<_>>` for safe shared access.
     ///
     /// # Arguments
     ///
     /// * `config` - OpenAI configuration containing the API key, base URL, model,
-    ///   and streaming preference
+    ///   streaming preference, and per-request HTTP timeout
     ///
     /// # Returns
     ///
@@ -529,7 +530,7 @@ impl OpenAIProvider {
     /// ```
     pub fn new(config: OpenAIConfig) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
             .build()
             .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
@@ -706,6 +707,58 @@ impl OpenAIProvider {
         Ok(headers)
     }
 
+    /// Build HTTP headers for GET requests (model listing, model info lookup).
+    ///
+    /// Intentionally omits `Content-Type: application/json`. Some
+    /// OpenAI-compatible local servers (e.g. llama.cpp with `--models-preset`)
+    /// treat the presence of that header on a GET request as a signal that the
+    /// caller is an authenticated API client and respond with `401 Unauthorized`
+    /// when no Bearer token is present. Plain GET requests without a
+    /// `Content-Type` header are served without authentication on those servers.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the config lock cannot be acquired
+    /// or if a constructed header value is malformed.
+    fn build_get_headers(&self) -> Result<reqwest::header::HeaderMap> {
+        use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+
+        let mut headers = HeaderMap::new();
+
+        let (api_key, organization_id) = {
+            let config = self.config.read().map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
+            })?;
+            (config.api_key.clone(), config.organization_id.clone())
+        };
+
+        if !api_key.is_empty() {
+            let auth_value = format!("Bearer {}", api_key);
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&auth_value).map_err(|e| {
+                    XzatomaError::Provider(format!("Invalid API key header value: {}", e))
+                })?,
+            );
+        }
+
+        if let Some(org_id) = organization_id {
+            if !org_id.is_empty() {
+                headers.insert(
+                    HeaderName::from_static("openai-organization"),
+                    HeaderValue::from_str(&org_id).map_err(|e| {
+                        XzatomaError::Provider(format!(
+                            "Invalid organization ID header value: {}",
+                            e
+                        ))
+                    })?,
+                );
+            }
+        }
+
+        Ok(headers)
+    }
+
     /// Send a non-streaming POST to `/chat/completions` and return the parsed
     /// completion response.
     ///
@@ -739,7 +792,7 @@ impl OpenAIProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
+            return Err(self.http_error(status, body));
         }
 
         let openai_response: OpenAIResponse = response.json().await.map_err(|e| {
@@ -825,7 +878,7 @@ impl OpenAIProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
+            return Err(self.http_error(status, body));
         }
 
         let mut stream = response.bytes_stream();
@@ -899,6 +952,41 @@ impl OpenAIProvider {
             .find(|info| info.name == model_name)
             .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
+
+    /// Build an `XzatomaError::Provider` for a non-success HTTP response.
+    ///
+    /// When the server returns `401 Unauthorized` and no `api_key` is
+    /// configured, the error message appends a hint explaining how to set up
+    /// authentication. This is the most common source of 401 errors when
+    /// pointing at a local inference server that has been started with an API
+    /// key requirement.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The HTTP status code received
+    /// * `body` - The raw response body text
+    ///
+    /// # Returns
+    ///
+    /// An `XzatomaError::Provider` with a contextual error message.
+    fn http_error(&self, status: reqwest::StatusCode, body: String) -> XzatomaError {
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            let api_key_empty = self
+                .config
+                .read()
+                .map(|c| c.api_key.is_empty())
+                .unwrap_or(true);
+            if api_key_empty {
+                return XzatomaError::Provider(format!(
+                    "HTTP {}: {} -- server requires authentication; \
+                     set api_key in the OpenAI provider configuration \
+                     or start the server without requiring authentication",
+                    status, body
+                ));
+            }
+        }
+        XzatomaError::Provider(format!("HTTP {}: {}", status, body))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -907,13 +995,18 @@ impl OpenAIProvider {
 
 #[async_trait]
 impl Provider for OpenAIProvider {
-    /// Returns `true` if this provider has a non-empty API key stored in its
-    /// configuration. Local servers that require no auth will return `false`
-    /// here; that is expected and correct.
+    /// Returns `true` when the provider can make authenticated API calls.
+    ///
+    /// For providers backed by the hosted OpenAI API (`https://api.openai.com/v1`),
+    /// a non-empty `api_key` is required; this returns `false` when no key is
+    /// configured. For any other `base_url` (local servers such as llama.cpp,
+    /// vLLM, or Mistral.rs) authentication is optional: the provider returns
+    /// `true` even without a key because those servers can be used
+    /// unauthenticated by default.
     fn is_authenticated(&self) -> bool {
         self.config
             .read()
-            .map(|c| !c.api_key.is_empty())
+            .map(|c| !c.api_key.is_empty() || c.base_url != "https://api.openai.com/v1")
             .unwrap_or(false)
     }
 
@@ -991,10 +1084,18 @@ impl Provider for OpenAIProvider {
     /// Whisper, DALL-E, moderation) are excluded. Each remaining entry is
     /// annotated with capabilities inferred by [`build_capabilities_from_id`].
     ///
+    /// When the server returns `401 Unauthorized` and no `api_key` is
+    /// configured, this method falls back to returning a single-item list
+    /// containing the currently configured model rather than failing. This
+    /// handles local inference servers (e.g. llama.cpp with `--models-preset`)
+    /// that gate the `/v1/models` endpoint behind authentication even when
+    /// `/chat/completions` works without credentials.
+    ///
     /// # Errors
     ///
-    /// Returns `XzatomaError::Provider` if the HTTP request fails or the
-    /// response body cannot be deserialized.
+    /// Returns `XzatomaError::Provider` if the HTTP request fails, the
+    /// response body cannot be deserialized, or the server returns a non-401
+    /// error status.
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         if let Ok(cache) = self.model_cache.read() {
             if let Some((models, cached_at)) = cache.as_ref() {
@@ -1005,7 +1106,7 @@ impl Provider for OpenAIProvider {
             }
         }
 
-        let headers = self.build_request_headers()?;
+        let headers = self.build_get_headers()?;
         let url = format!("{}/models", self.base_url());
         tracing::debug!("Fetching OpenAI models from: {}", url);
 
@@ -1020,7 +1121,31 @@ impl Provider for OpenAIProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
+            // When the server returns 401 Unauthorized with no api_key configured,
+            // fall back to returning the currently configured model rather than
+            // failing hard. Some local inference servers (e.g. llama.cpp with
+            // --models-preset) gate the /v1/models endpoint behind authentication
+            // even when /chat/completions works without credentials.
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                let (api_key_empty, model) = self
+                    .config
+                    .read()
+                    .map(|c| (c.api_key.is_empty(), c.model.clone()))
+                    .unwrap_or_else(|_| (true, String::new()));
+                if api_key_empty && !model.is_empty() {
+                    tracing::warn!(
+                        "GET /models returned 401 Unauthorized with no api_key configured; \
+                         falling back to the configured model '{}'",
+                        model
+                    );
+                    let mut info = ModelInfo::new(model.clone(), model.clone(), 0);
+                    for cap in build_capabilities_from_id(&info.name) {
+                        info.add_capability(cap);
+                    }
+                    return Ok(vec![info]);
+                }
+            }
+            return Err(self.http_error(status, body));
         }
 
         let models_response: OpenAIModelsResponse = response.json().await.map_err(|e| {
@@ -1067,7 +1192,7 @@ impl Provider for OpenAIProvider {
 
         tracing::debug!("Fetching model info from: {}", url);
 
-        let headers = self.build_request_headers()?;
+        let headers = self.build_get_headers()?;
         let response = self
             .client
             .get(&url)
@@ -1088,7 +1213,7 @@ impl Provider for OpenAIProvider {
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
+            return Err(self.http_error(status, body));
         }
 
         match response.json::<OpenAIModelEntry>().await {
@@ -1163,6 +1288,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: false,
+            request_timeout_seconds: 600,
         }
     }
 
@@ -1916,6 +2042,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: true,
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -1963,6 +2090,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: true,
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2003,6 +2131,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: true,
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2197,6 +2326,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: true, // streaming enabled but tools force non-streaming
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2250,6 +2380,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: None,
             enable_streaming: false,
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2266,6 +2397,195 @@ mod tests {
         assert!(
             !has_auth,
             "Authorization header must be absent when api_key is empty"
+        );
+    }
+
+    #[test]
+    fn test_is_authenticated_with_key_returns_true() {
+        let config = make_config("http://localhost:8080");
+        let provider = OpenAIProvider::new(config).unwrap();
+        // make_config sets api_key to "test-key"
+        assert!(provider.is_authenticated());
+    }
+
+    #[test]
+    fn test_is_authenticated_without_key_local_url_returns_true() {
+        let config = OpenAIConfig {
+            api_key: String::new(),
+            base_url: "http://localhost:8080/v1".to_string(),
+            model: "llama-3.2".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        assert!(
+            provider.is_authenticated(),
+            "Local servers with no api_key must be considered authenticated"
+        );
+    }
+
+    #[test]
+    fn test_is_authenticated_without_key_default_url_returns_false() {
+        let config = OpenAIConfig {
+            api_key: String::new(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        assert!(
+            !provider.is_authenticated(),
+            "Hosted OpenAI API with no api_key must not be considered authenticated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_models_401_without_api_key_falls_back_to_configured_model() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {
+                    "message": "Missing bearer authentication in header",
+                    "type": "invalid_request_error"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: String::new(),
+            base_url: server.uri(),
+            model: "ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let result = provider.list_models().await;
+
+        assert!(
+            result.is_ok(),
+            "401 with no api_key must fall back to configured model, got: {:?}",
+            result.err()
+        );
+        let models = result.unwrap();
+        assert_eq!(models.len(), 1, "Fallback must return exactly one model");
+        assert_eq!(
+            models[0].name, "ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M",
+            "Fallback model name must match configured model"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_models_401_with_api_key_set_returns_error() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {
+                    "message": "Invalid API key",
+                    "type": "invalid_request_error"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "wrong-key".to_string(),
+            base_url: server.uri(),
+            model: "test-model".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let result = provider.list_models().await;
+
+        assert!(
+            result.is_err(),
+            "401 with api_key set must still propagate as an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_models_get_request_omits_content_type() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(models_list_body()))
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: String::new(),
+            base_url: server.uri(),
+            model: "test-model".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let result = provider.list_models().await;
+        assert!(
+            result.is_ok(),
+            "list_models must succeed: {:?}",
+            result.err()
+        );
+
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert!(!requests.is_empty(), "Expected at least one request");
+        let req = &requests[0];
+        let has_content_type = req
+            .headers
+            .iter()
+            .any(|(k, _)| k.as_str().eq_ignore_ascii_case("content-type"));
+        assert!(
+            !has_content_type,
+            "GET /models must not include Content-Type header; \
+             its presence causes some local servers to require authentication"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_completions_401_without_api_key_includes_hint() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {
+                    "message": "Missing bearer authentication in header",
+                    "type": "invalid_request_error"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: String::new(),
+            base_url: server.uri(),
+            model: "test-model".to_string(),
+            organization_id: None,
+            enable_streaming: false,
+            request_timeout_seconds: 600,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let messages = vec![Message::user("Hello")];
+        let result = provider.complete(&messages, &[]).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("api_key"),
+            "401 error without api_key must hint about configuring api_key; got: {}",
+            err
         );
     }
 
@@ -2287,6 +2607,7 @@ mod tests {
             model: "gpt-4o-mini".to_string(),
             organization_id: Some("myorg".to_string()),
             enable_streaming: false,
+            request_timeout_seconds: 600,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];

@@ -1,0 +1,3 @@
+What are the first ten prime numbers?
+
+Answer: The first ten prime numbers are 2, 3, 5, 7, 11, 13, 17, 19, 23, and 29.

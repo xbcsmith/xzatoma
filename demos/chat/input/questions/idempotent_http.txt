@@ -1,0 +1,3 @@
+What does the term idempotent mean in the context of HTTP methods?
+
+Answer: Idempotent in HTTP means that making the same request multiple times has the same effect as making it once, without side effects. GET, HEAD, PUT, and DELETE methods are considered idempotent, while POST is not because it can create new resources.

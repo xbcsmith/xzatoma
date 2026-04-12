@@ -438,6 +438,7 @@ mod tests {
             ollama: OllamaConfig {
                 host: "http://localhost:11434".to_string(),
                 model: "llama3.2:latest".to_string(),
+                request_timeout_seconds: 600,
             },
             openai: OpenAIConfig::default(),
         };
