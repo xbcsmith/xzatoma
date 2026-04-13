@@ -6,7 +6,9 @@
 //!
 //! # Components
 //!
-//! - [`message`]: Generic watcher wire-format message types
+//! - [`event`]: Inbound plan event type ([`GenericPlanEvent`])
+//! - [`result_event`]: Outbound plan result type ([`GenericPlanResult`])
+//! - [`message`]: Compatibility shim (re-exports from `event` and `result_event`)
 //! - [`matcher`]: Regex-based event matching for generic plan events
 //! - [`producer`]: Kafka result producer for generic watcher results
 //! - [`watcher`]: Core generic watcher service and dry-run processing flow
@@ -58,13 +60,16 @@
 //! assert!(matcher.should_process(&event));
 //! ```
 
+pub mod event;
 pub mod matcher;
 pub mod message;
 pub mod producer;
+pub mod result_event;
 pub mod watcher;
 
 pub use crate::config::GenericMatchConfig;
+pub use event::GenericPlanEvent;
 pub use matcher::GenericMatcher;
-pub use message::{GenericPlanEvent, GenericPlanResult};
 pub use producer::GenericResultProducer;
+pub use result_event::GenericPlanResult;
 pub use watcher::GenericWatcher;
