@@ -259,7 +259,7 @@ fn parse_resource_metadata_url(www_authenticate: &str) -> Option<String> {
 /// use url::Url;
 /// use xzatoma::mcp::auth::discovery::fetch_protected_resource_metadata;
 ///
-/// # async fn example() -> xzatoma::error::Result<()> {
+/// # async fn example() -> anyhow::Result<()> {
 /// let http = reqwest::Client::new();
 /// let resource = Url::parse("https://api.example.com/mcp")?;
 /// let meta = fetch_protected_resource_metadata(&http, &resource, None).await?;
@@ -439,7 +439,7 @@ fn build_as_candidate_urls(issuer: &Url) -> Vec<Url> {
 /// use url::Url;
 /// use xzatoma::mcp::auth::discovery::fetch_authorization_server_metadata;
 ///
-/// # async fn example() -> xzatoma::error::Result<()> {
+/// # async fn example() -> anyhow::Result<()> {
 /// let http = reqwest::Client::new();
 /// let issuer = Url::parse("https://auth.example.com")?;
 /// let meta = fetch_authorization_server_metadata(&http, &issuer).await?;
@@ -500,7 +500,7 @@ pub async fn fetch_authorization_server_metadata(
 /// use url::Url;
 /// use xzatoma::mcp::auth::discovery::fetch_client_id_metadata_document;
 ///
-/// # async fn example() -> xzatoma::error::Result<()> {
+/// # async fn example() -> anyhow::Result<()> {
 /// let http = reqwest::Client::new();
 /// let url = Url::parse("https://xzatoma.example.com/.well-known/client-metadata")?;
 /// let doc = fetch_client_id_metadata_document(&http, &url).await?;

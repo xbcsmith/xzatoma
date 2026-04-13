@@ -377,7 +377,7 @@ fn runtime_event_name(runtime_event: &AcpRuntimeEvent) -> String {
 /// ```
 /// use xzatoma::acp::streaming::streaming_error;
 ///
-/// let error = streaming_error("failed to encode SSE event").unwrap_err();
+/// let error = streaming_error::<()>("failed to encode SSE event").unwrap_err();
 /// assert!(error.to_string().contains("ACP streaming error"));
 /// ```
 pub fn streaming_error<T>(message: impl Into<String>) -> Result<T> {

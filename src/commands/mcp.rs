@@ -40,7 +40,7 @@ pub enum McpCommands {
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let config = Config::default();
-///     handle_mcp(McpCommands::List, config).await
+///     Ok(handle_mcp(McpCommands::List, config).await?)
 /// }
 /// ```
 pub async fn handle_mcp(command: McpCommands, config: Config) -> Result<()> {

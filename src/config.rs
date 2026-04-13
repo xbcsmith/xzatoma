@@ -135,7 +135,11 @@ impl Default for CopilotConfig {
     }
 }
 
-/// Ollama provider configuration
+/// Ollama provider configuration.
+///
+/// Configures the connection to an Ollama local inference server.
+/// The `request_timeout_seconds` field controls how long the HTTP client
+/// waits for a single completion response before abandoning the request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaConfig {
     /// Ollama server host
@@ -145,6 +149,20 @@ pub struct OllamaConfig {
     /// Model to use for Ollama
     #[serde(default = "default_ollama_model")]
     pub model: String,
+
+    /// Per-request HTTP timeout in seconds.
+    ///
+    /// Controls how long the HTTP client waits for a single completion
+    /// response before abandoning the request. Local inference servers can
+    /// take several minutes to generate a long response; set this to a value
+    /// larger than your expected worst-case generation time.
+    ///
+    /// Defaults to 600 seconds (10 minutes). The agent-level
+    /// `agent.timeout_seconds` provides a separate overall budget.
+    ///
+    /// Set via the `XZATOMA_OLLAMA_REQUEST_TIMEOUT` environment variable.
+    #[serde(default = "default_ollama_request_timeout")]
+    pub request_timeout_seconds: u64,
 }
 
 fn default_ollama_host() -> String {
@@ -155,11 +173,16 @@ fn default_ollama_model() -> String {
     "llama3.2:latest".to_string()
 }
 
+fn default_ollama_request_timeout() -> u64 {
+    600
+}
+
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
             host: default_ollama_host(),
             model: default_ollama_model(),
+            request_timeout_seconds: default_ollama_request_timeout(),
         }
     }
 }
@@ -181,6 +204,7 @@ impl Default for OllamaConfig {
 ///     model: "gpt-4o-mini".to_string(),
 ///     organization_id: None,
 ///     enable_streaming: true,
+///     request_timeout_seconds: 600,
 /// };
 /// assert_eq!(config.model, "gpt-4o-mini");
 /// assert_eq!(config.base_url, "https://api.openai.com/v1");
@@ -205,7 +229,7 @@ pub struct OpenAIConfig {
     /// * Mistral.rs: `http://localhost:1234/v1`
     ///
     /// Set via the `XZATOMA_OPENAI_BASE_URL` environment variable.
-    #[serde(default = "default_openai_base_url")]
+    #[serde(default = "default_openai_base_url", alias = "host")]
     pub base_url: String,
 
     /// Model identifier sent in the `model` field of every request body.
@@ -230,6 +254,20 @@ pub struct OpenAIConfig {
     /// Set via the `XZATOMA_OPENAI_STREAMING` environment variable.
     #[serde(default = "default_openai_streaming")]
     pub enable_streaming: bool,
+
+    /// Per-request HTTP timeout in seconds.
+    ///
+    /// Controls how long the HTTP client waits for a single completion
+    /// response before abandoning the request. Local inference servers can
+    /// take several minutes to generate a long response; set this to a value
+    /// larger than your expected worst-case generation time.
+    ///
+    /// Defaults to 600 seconds (10 minutes). The agent-level
+    /// `agent.timeout_seconds` provides a separate overall budget.
+    ///
+    /// Set via the `XZATOMA_OPENAI_REQUEST_TIMEOUT` environment variable.
+    #[serde(default = "default_openai_request_timeout")]
+    pub request_timeout_seconds: u64,
 }
 
 fn default_openai_api_key() -> String {
@@ -248,6 +286,10 @@ fn default_openai_streaming() -> bool {
     true
 }
 
+fn default_openai_request_timeout() -> u64 {
+    600
+}
+
 impl Default for OpenAIConfig {
     fn default() -> Self {
         Self {
@@ -256,6 +298,7 @@ impl Default for OpenAIConfig {
             model: default_openai_model(),
             organization_id: None,
             enable_streaming: default_openai_streaming(),
+            request_timeout_seconds: default_openai_request_timeout(),
         }
     }
 }
@@ -1088,6 +1131,14 @@ impl Config {
             self.provider.ollama.model = ollama_model;
         }
 
+        if let Ok(timeout) = std::env::var("XZATOMA_OLLAMA_REQUEST_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.ollama.request_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OLLAMA_REQUEST_TIMEOUT: {}", timeout);
+            }
+        }
+
         if let Ok(openai_api_key) = std::env::var("XZATOMA_OPENAI_API_KEY") {
             self.provider.openai.api_key = openai_api_key;
         }
@@ -1108,6 +1159,14 @@ impl Config {
             match parse_env_bool(&openai_streaming) {
                 Some(value) => self.provider.openai.enable_streaming = value,
                 None => tracing::warn!("Invalid XZATOMA_OPENAI_STREAMING: {}", openai_streaming),
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("XZATOMA_OPENAI_REQUEST_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.openai.request_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OPENAI_REQUEST_TIMEOUT: {}", timeout);
             }
         }
 
@@ -3037,6 +3096,35 @@ output_max_size: 4096
     }
 
     #[test]
+    fn test_ollama_config_request_timeout_default() {
+        let config = OllamaConfig::default();
+        assert_eq!(config.request_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_request_timeout() {
+        let yaml =
+            "host: http://localhost:11434\nmodel: llama3.2:latest\nrequest_timeout_seconds: 300\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_omits_timeout_uses_default() {
+        let yaml = "model: llama3.2:latest\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.request_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_ollama_request_timeout() {
+        let _timeout = EnvVarGuard::set("XZATOMA_OLLAMA_REQUEST_TIMEOUT", "300");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.ollama.request_timeout_seconds, 300);
+    }
+
+    #[test]
     fn test_openai_config_defaults() {
         let config = OpenAIConfig::default();
         assert_eq!(config.api_key, "");
@@ -3074,6 +3162,77 @@ model: gpt-4o
         assert_eq!(config.base_url, "https://api.openai.com/v1");
         assert!(config.organization_id.is_none());
         assert!(config.enable_streaming);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_host_alias_maps_to_base_url() {
+        // Users coming from the Ollama config convention may write `host:`
+        // instead of `base_url:`. The serde alias ensures the key is accepted
+        // and mapped to the correct field rather than silently ignored.
+        let yaml = r#"
+host: "http://127.0.0.1:8000/v1"
+model: ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M
+"#;
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(
+            config.base_url, "http://127.0.0.1:8000/v1",
+            "host: alias must map to base_url"
+        );
+        assert_eq!(config.model, "ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M");
+        assert_eq!(config.api_key, "");
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_host_alias_in_full_config() {
+        // Verify the alias works when embedded inside a full Config document,
+        // matching the shape of demos/chat/config-llamacpp.yaml before the
+        // field name was corrected.
+        let yaml = r#"
+provider:
+  type: openai
+  openai:
+    host: "http://127.0.0.1:8000/v1"
+    model: ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M
+agent: {}
+"#;
+        let config: Config = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.provider.provider_type, "openai");
+        assert_eq!(
+            config.provider.openai.base_url, "http://127.0.0.1:8000/v1",
+            "host: alias must map to base_url inside a full Config document"
+        );
+        assert_eq!(
+            config.provider.openai.model,
+            "ibm-granite/granite-4.0-h-small-GGUF:Q4_K_M"
+        );
+    }
+
+    #[test]
+    fn test_openai_config_request_timeout_default() {
+        let config = OpenAIConfig::default();
+        assert_eq!(config.request_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_request_timeout() {
+        let yaml = "base_url: http://localhost:8080/v1\nrequest_timeout_seconds: 300\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_omits_timeout_uses_default() {
+        let yaml = "model: gpt-4o\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.request_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_request_timeout() {
+        let _timeout = EnvVarGuard::set("XZATOMA_OPENAI_REQUEST_TIMEOUT", "300");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.openai.request_timeout_seconds, 300);
     }
 
     #[test]

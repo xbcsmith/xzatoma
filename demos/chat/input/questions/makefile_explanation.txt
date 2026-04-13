@@ -1,0 +1,3 @@
+Explain what a Makefile is and when you would use one.
+
+Answer: A Makefile is a script used by the `make` build automation tool to define rules for compiling and linking software. It specifies dependencies between files and the commands to build targets. You would use a Makefile to automate repetitive compilation steps, manage complex builds with multiple targets, and ensure that only modified files are recompiled, saving time and effort.

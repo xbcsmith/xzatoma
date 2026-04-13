@@ -683,7 +683,14 @@ pub mod chat {
 
         loop {
             // Build a prompt that includes provider/model when available.
-            let current_model = agent.provider().get_current_model().ok();
+            let current_model: Option<String> = {
+                let m = agent.provider().get_current_model();
+                if m == "none" {
+                    None
+                } else {
+                    Some(m)
+                }
+            };
             let prompt = if let Some(ref model) = current_model {
                 mode_state
                     .format_colored_prompt_with_provider(Some(provider_type), Some(model.as_str()))
@@ -993,7 +1000,8 @@ pub mod chat {
                             let auto_summary_threshold =
                                 config.agent.conversation.auto_summary_threshold as f64;
 
-                            if let Ok(model_name) = agent.provider().get_current_model() {
+                            {
+                                let model_name = agent.provider().get_current_model();
                                 if let Ok(_model_info) =
                                     agent.provider().get_model_info(&model_name).await
                                 {
@@ -1254,7 +1262,14 @@ pub mod chat {
                 ]);
 
                 // Get current model for highlighting
-                let current_model = agent.provider().get_current_model().ok();
+                let current_model: Option<String> = {
+                    let m = agent.provider().get_current_model();
+                    if m == "none" {
+                        None
+                    } else {
+                        Some(m)
+                    }
+                };
 
                 // Add model rows
                 for model in models {
@@ -1364,7 +1379,7 @@ pub mod chat {
                 let mut new_provider = create_provider(provider_type, &config.provider)?;
 
                 // Switch model
-                new_provider.set_model(model_info.name.clone()).await?;
+                new_provider.set_model(&model_info.name);
 
                 // Get the new context window
                 let new_context = new_provider
@@ -1507,53 +1522,47 @@ pub mod chat {
         use colored::Colorize;
 
         // Get the current model's context window
-        match agent.provider().get_current_model() {
-            Ok(model_name) => {
-                match agent.provider().get_model_info(&model_name).await {
-                    Ok(model_info) => {
-                        let context = agent.get_context_info(model_info.context_window);
+        let model_name = agent.provider().get_current_model();
+        match agent.provider().get_model_info(&model_name).await {
+            Ok(model_info) => {
+                let context = agent.get_context_info(model_info.context_window);
 
-                        println!();
-                        println!("{}", "╔════════════════════════════════════╗".cyan());
-                        println!("{}", "║     Context Window Information      ║".cyan());
-                        println!("{}", "╚════════════════════════════════════╝".cyan());
-                        println!();
+                println!();
+                println!("{}", "╔════════════════════════════════════╗".cyan());
+                println!("{}", "║     Context Window Information      ║".cyan());
+                println!("{}", "╚════════════════════════════════════╝".cyan());
+                println!();
 
-                        println!("Current Model:     {}", model_name.bold());
-                        println!(
-                            "Context Window:    {} tokens",
-                            model_info.context_window.to_string().bold()
-                        );
-                        println!(
-                            "Tokens Used:       {} tokens",
-                            context.used_tokens.to_string().bold()
-                        );
-                        println!(
-                            "Remaining:         {} tokens",
-                            context.remaining_tokens.to_string().bold()
-                        );
-                        println!("Usage:             {:.1}%", context.percentage_used);
+                println!("Current Model:     {}", model_name.bold());
+                println!(
+                    "Context Window:    {} tokens",
+                    model_info.context_window.to_string().bold()
+                );
+                println!(
+                    "Tokens Used:       {} tokens",
+                    context.used_tokens.to_string().bold()
+                );
+                println!(
+                    "Remaining:         {} tokens",
+                    context.remaining_tokens.to_string().bold()
+                );
+                println!("Usage:             {:.1}%", context.percentage_used);
 
-                        // Color code the usage percentage
-                        let usage_color = if context.percentage_used < 60.0 {
-                            context.percentage_used.to_string().green()
-                        } else if context.percentage_used < 85.0 {
-                            context.percentage_used.to_string().yellow()
-                        } else {
-                            context.percentage_used.to_string().red()
-                        };
+                // Color code the usage percentage
+                let usage_color = if context.percentage_used < 60.0 {
+                    context.percentage_used.to_string().green()
+                } else if context.percentage_used < 85.0 {
+                    context.percentage_used.to_string().yellow()
+                } else {
+                    context.percentage_used.to_string().red()
+                };
 
-                        println!();
-                        println!("Usage Level:       {}", usage_color);
-                        println!();
-                    }
-                    Err(e) => {
-                        eprintln!("{}", format!("Error getting model info: {}", e).red());
-                    }
-                }
+                println!();
+                println!("Usage Level:       {}", usage_color);
+                println!();
             }
             Err(e) => {
-                eprintln!("{}", format!("Error getting current model: {}", e).red());
+                eprintln!("{}", format!("Error getting model info: {}", e).red());
             }
         }
     }
@@ -1700,6 +1709,22 @@ pub mod chat {
 
             #[async_trait]
             impl crate::providers::Provider for TestProvider {
+                fn is_authenticated(&self) -> bool {
+                    false
+                }
+
+                fn current_model(&self) -> Option<&str> {
+                    None
+                }
+
+                fn set_model(&mut self, _model: &str) {}
+
+                async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+                    Err(crate::error::XzatomaError::Provider(
+                        "not supported".to_string(),
+                    ))
+                }
+
                 async fn complete(
                     &self,
                     _messages: &[Message],
@@ -2067,19 +2092,16 @@ pub mod r#run {
         current_provider: &Arc<dyn crate::providers::Provider>,
         summary_model: &str,
     ) -> Result<Arc<dyn crate::providers::Provider>> {
-        match current_provider.get_current_model() {
-            Ok(current_model) if current_model == summary_model => {
-                // Same model, use existing provider
-                Ok(Arc::clone(current_provider))
-            }
-            _ => {
-                // Different model or unknown current model, create new provider
-                tracing::debug!(
-                    "Creating separate provider for summarization model: {}",
-                    summary_model
-                );
-                create_provider_for_model(config, summary_model).await
-            }
+        if current_provider.get_current_model() == summary_model {
+            // Same model, use existing provider
+            Ok(Arc::clone(current_provider))
+        } else {
+            // Different model or unknown current model, create new provider
+            tracing::debug!(
+                "Creating separate provider for summarization model: {}",
+                summary_model
+            );
+            create_provider_for_model(config, summary_model).await
         }
     }
 

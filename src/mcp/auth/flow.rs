@@ -219,7 +219,7 @@ struct DcrResponse {
 /// use xzatoma::mcp::auth::flow::{OAuthFlow, OAuthFlowConfig};
 /// use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
 ///
-/// # async fn example() -> xzatoma::error::Result<()> {
+/// # async fn example() -> anyhow::Result<()> {
 /// let config = OAuthFlowConfig {
 ///     server_id: "my_server".to_string(),
 ///     resource_url: Url::parse("https://api.example.com/mcp")?,

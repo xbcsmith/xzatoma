@@ -1,0 +1,3 @@
+Write a one-paragraph summary of how Rust's ownership model prevents memory errors.
+
+Answer: Rust's ownership model enforces strict rules about how variables (called owners) refer to memory. Each value has a single owner, and when the owner goes out of scope, the memory is automatically deallocated. Borrowing allows temporary access without transferring ownership, preventing dangling references and data races. The compiler enforces these rules at compile time, ensuring memory safety without a garbage collector.

@@ -408,6 +408,7 @@ SUBAGENT DELEGATION:
 CONTEXT MENTIONS (Quick Reference):
   @file.rs              - Include file contents
   @file.rs#L10-20       - Include specific lines
+  @path/to/dir          - List directory contents
   @search:"pattern"     - Search for literal text
   @grep:"regex"         - Search with regex patterns
   @url:https://...      - Include web content
@@ -511,8 +512,8 @@ pub fn print_mention_help() {
 Context Mentions for XZatoma
 =============================
 
-Context mentions let you include file contents, search results, and web content
-in your prompts. Use @mention syntax to reference relevant information.
+Context mentions let you include file contents, directory listings, search results,
+and web content in your prompts. Use @mention syntax to reference relevant information.
 
 FILE MENTIONS
 =============
@@ -535,6 +536,27 @@ Smart Features:
   - Abbreviations: @lib → src/lib.rs, @main → src/main.rs
   - Fuzzy matching: suggests similar filenames if exact not found
   - Line range caching: fast repeated access to same file
+
+DIRECTORY MENTIONS
+==================
+Include a recursive listing of a directory's contents.
+
+Syntax:
+  @path/to/dir              - List all files and subdirectories
+  @src                      - List the src/ directory
+  @tmp/output               - List an output directory (or note it is absent)
+
+Examples:
+  Write output files to @tmp/output
+  What is in @src/tools?
+  Summarise the project layout under @docs
+
+Behaviour:
+  - If the directory exists: lists all files and subdirectories recursively
+    (up to 200 entries), showing file sizes
+  - If the directory does not yet exist: injects a note that it will be
+    created when the agent writes files there
+  - Directories are never cached (always freshly listed)
 
 SEARCH MENTIONS
 ===============
@@ -638,6 +660,12 @@ File not found:
   - Use full path: @src/path/to/file.rs
   - Check spelling and capitalization
   - Agent suggests similar filenames with fuzzy matching
+
+Directory mention shows no files:
+  - The directory may be empty — the agent will see "(empty directory)"
+  - If the path does not exist yet, the agent sees a "does not exist" note
+    and will create it when writing output files
+  - Use full relative path: @tmp/output not @/tmp/output (no absolute paths)
 
 Search returns nothing:
   - Verify spelling exactly

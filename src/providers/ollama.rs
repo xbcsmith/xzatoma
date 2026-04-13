@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 /// let config = OllamaConfig {
 ///     host: "http://localhost:11434".to_string(),
 ///     model: "llama3.2:latest".to_string(),
+///     request_timeout_seconds: 600,
 /// };
 /// let provider = OllamaProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -139,7 +140,8 @@ impl OllamaProvider {
     ///
     /// # Arguments
     ///
-    /// * `config` - Ollama configuration containing host and model
+    /// * `config` - Ollama configuration containing host, model, and request timeout.
+    ///   The HTTP client timeout is set to `config.request_timeout_seconds`.
     ///
     /// # Returns
     ///
@@ -158,13 +160,14 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
     pub fn new(config: OllamaConfig) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
             .build()
             .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
@@ -193,6 +196,7 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.host(), "http://localhost:11434");
@@ -215,6 +219,7 @@ impl OllamaProvider {
     /// let config = OllamaConfig {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
+    ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.model(), "llama3.2:latest");
@@ -472,6 +477,9 @@ impl OllamaProvider {
     }
 
     /// Invalidate the model cache
+    // set_model no longer calls invalidate_cache; retained for potential
+    // future use (e.g. explicit cache busting after external model changes).
+    #[allow(dead_code)]
     fn invalidate_cache(&self) {
         if let Ok(mut cache) = self.model_cache.write() {
             *cache = None;
@@ -521,6 +529,10 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
         }
         "llava" => {
             model.add_capability(ModelCapability::Vision);
+        }
+        "codellama" | "codegemma" | "deepseek-coder" | "starcoder" | "starcoder2" | "codestral"
+        | "qwen2.5-coder" => {
+            model.add_capability(ModelCapability::CodeGeneration);
         }
         _ => {}
     }
@@ -573,6 +585,7 @@ fn build_model_info_from_show_response(
         model_info.set_provider_metadata("capabilities", caps_joined.clone());
 
         for cap in &show.capabilities {
+            #[allow(deprecated)]
             match cap.to_lowercase().as_str() {
                 "tools" => model_info.add_capability(ModelCapability::FunctionCalling),
                 "vision" => model_info.add_capability(ModelCapability::Vision),
@@ -712,6 +725,33 @@ impl Provider for OllamaProvider {
         Ok(response)
     }
 
+    /// Returns `true` if this provider has valid stored credentials.
+    ///
+    /// Ollama does not require authentication; this always returns `true`.
+    fn is_authenticated(&self) -> bool {
+        true
+    }
+
+    /// Returns a borrowed reference to the currently active model name, or
+    /// `None` if no model is configured.
+    ///
+    /// The model name is stored behind a `RwLock`; a borrowed reference cannot
+    /// be returned directly. Use `get_current_model` for an owned copy.
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Fetch the list of available models from the remote API. This is the
+    /// canonical implementation method; `list_models` provides a default that
+    /// delegates here.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the API call fails.
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+        self.fetch_models_from_api().await
+    }
+
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         tracing::debug!("Listing Ollama models");
 
@@ -754,13 +794,17 @@ impl Provider for OllamaProvider {
         self.fetch_model_details(model_name).await
     }
 
-    fn get_current_model(&self) -> Result<String> {
+    /// Get the name of the currently active model.
+    ///
+    /// # Returns
+    ///
+    /// Returns the model name as an owned `String`, or `"none"` if the read
+    /// lock cannot be acquired.
+    fn get_current_model(&self) -> String {
         self.config
             .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })
-            .map(|config| config.model.clone())
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|_| "none".to_string())
     }
 
     fn get_provider_capabilities(&self) -> ProviderCapabilities {
@@ -773,40 +817,13 @@ impl Provider for OllamaProvider {
         }
     }
 
-    async fn set_model(&mut self, model_name: String) -> Result<()> {
-        // Validate that the model exists by fetching the list
-        let models = self.list_models().await?;
-
-        let model_info = models.iter().find(|m| m.name == model_name);
-
-        if model_info.is_none() {
-            return Err(XzatomaError::Provider(format!(
-                "Model not found: {}",
-                model_name
-            )));
+    /// Set the active model in memory without any API validation. Callers
+    /// that need model-existence validation should call `list_models` before
+    /// calling this method.
+    fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
         }
-
-        // Check if the model supports tool calling (required for XZatoma)
-        let model = model_info.unwrap();
-        if !model.supports_capability(ModelCapability::FunctionCalling) {
-            return Err(XzatomaError::Provider(format!(
-                "Model '{}' does not support tool calling. XZatoma requires models with tool/function calling support. Try llama3.2:latest, llama3.3:latest, or mistral:latest instead.",
-                model_name
-            )));
-        }
-
-        // Update the model in the config
-        let mut config = self.config.write().map_err(|_| {
-            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-        })?;
-        config.model = model_name.clone();
-        drop(config);
-
-        // Invalidate cache to ensure fresh model list next time
-        self.invalidate_cache();
-
-        tracing::info!("Switched Ollama model to: {}", model_name);
-        Ok(())
     }
 }
 
@@ -819,6 +836,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -829,6 +847,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://localhost:11434");
@@ -839,6 +858,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.model(), "llama3.2:latest");
@@ -849,6 +869,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -870,6 +891,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -893,6 +915,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -918,6 +941,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -939,6 +963,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -968,6 +993,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1030,6 +1056,28 @@ mod tests {
     }
 
     #[test]
+    fn test_add_model_capabilities_code_generation() {
+        let families = [
+            "codellama",
+            "codegemma",
+            "deepseek-coder",
+            "starcoder",
+            "starcoder2",
+            "codestral",
+            "qwen2.5-coder",
+        ];
+        for family in &families {
+            let mut model = ModelInfo::new("test", "test", 4096);
+            add_model_capabilities(&mut model, family);
+            assert!(
+                model.supports_capability(ModelCapability::CodeGeneration),
+                "Expected CodeGeneration for family: {}",
+                family
+            );
+        }
+    }
+
+    #[test]
     fn test_add_model_capabilities_vision() {
         let mut model = ModelInfo::new("llava", "LLaVA", 4096);
         add_model_capabilities(&mut model, "llava");
@@ -1055,6 +1103,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let capabilities = provider.get_provider_capabilities();
@@ -1071,9 +1120,10 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test-model".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "test-model");
+        assert_eq!(provider.get_current_model(), "test-model");
     }
 
     #[test]
@@ -1112,6 +1162,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_build_model_info_from_show_response_parses_context_and_capabilities() {
         let json = r#"{
             "name": "granite4:latest",
@@ -1153,6 +1204,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1172,6 +1224,7 @@ mod tests {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
+            request_timeout_seconds: 600,
         };
         let provider = OllamaProvider::new(config).unwrap();
 

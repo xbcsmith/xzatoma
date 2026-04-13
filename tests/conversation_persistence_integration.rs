@@ -27,6 +27,22 @@ impl MockProvider {
 
 #[async_trait]
 impl Provider for MockProvider {
+    fn is_authenticated(&self) -> bool {
+        false
+    }
+
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    fn set_model(&mut self, _model: &str) {}
+
+    async fn fetch_models(&self) -> xzatoma::error::Result<Vec<xzatoma::providers::ModelInfo>> {
+        Err(xzatoma::error::XzatomaError::Provider(
+            "not supported".to_string(),
+        ))
+    }
+
     async fn complete(
         &self,
         _messages: &[Message],

@@ -28,6 +28,7 @@ fn create_test_provider_config() -> ProviderConfig {
         ollama: OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:3b".to_string(),
+            request_timeout_seconds: 600,
         },
         openai: OpenAIConfig::default(),
     }
@@ -56,7 +57,7 @@ fn test_create_provider_with_override_no_override() {
 
     let provider = result.unwrap();
     // Should use copilot provider from config
-    assert!(provider.get_current_model().is_ok());
+    assert!(!provider.get_current_model().is_empty());
 }
 
 #[test]
@@ -68,7 +69,7 @@ fn test_create_provider_with_override_provider_only() {
     assert!(result.is_ok());
 
     let provider = result.unwrap();
-    assert!(provider.get_current_model().is_ok());
+    assert!(!provider.get_current_model().is_empty());
 }
 
 #[test]
@@ -80,7 +81,7 @@ fn test_create_provider_with_override_both() {
     assert!(result.is_ok());
 
     let provider = result.unwrap();
-    assert!(provider.get_current_model().is_ok());
+    assert!(!provider.get_current_model().is_empty());
 }
 
 #[test]
@@ -259,8 +260,8 @@ fn test_provider_override_copilot_to_ollama() {
             .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
-    assert!(parent_provider.get_current_model().is_ok());
-    assert!(subagent_provider.get_current_model().is_ok());
+    assert!(!parent_provider.get_current_model().is_empty());
+    assert!(!subagent_provider.get_current_model().is_empty());
 }
 
 #[test]
@@ -281,8 +282,8 @@ fn test_provider_override_ollama_to_copilot() {
     .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
-    assert!(parent_provider.get_current_model().is_ok());
-    assert!(subagent_provider.get_current_model().is_ok());
+    assert!(!parent_provider.get_current_model().is_empty());
+    assert!(!subagent_provider.get_current_model().is_empty());
 }
 
 #[test]
@@ -299,8 +300,8 @@ fn test_model_override_same_provider() {
             .expect("Failed to create custom provider");
 
     // Both should be valid copilot providers
-    assert!(default_provider.get_current_model().is_ok());
-    assert!(custom_provider.get_current_model().is_ok());
+    assert!(!default_provider.get_current_model().is_empty());
+    assert!(!custom_provider.get_current_model().is_empty());
 }
 
 #[test]

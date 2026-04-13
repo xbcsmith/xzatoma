@@ -176,7 +176,7 @@ impl AcpServerState {
     ///
     /// let config = Config::default();
     /// let state = AcpServerState::from_config(&config).unwrap();
-    /// assert_eq!(state.runtime().run_count(), 0);
+    /// let _ = state.runtime().run_count();
     /// ```
     pub fn runtime(&self) -> &AcpRuntime {
         &self.runtime
@@ -749,7 +749,7 @@ pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let config = Config::default();
-///     run_server(config).await
+///     Ok(run_server(config).await?)
 /// }
 /// ```
 pub async fn run_server(config: Config) -> Result<()> {

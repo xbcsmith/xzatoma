@@ -1,0 +1,75 @@
+# XZatoma Demo: Chat with llama.cpp
+#
+# Demo-local configuration for running xzatoma chat against a local llama.cpp
+# server started with --models-preset.
+#
+# Usage:
+#   xzatoma --config ./config-llamacpp.yaml --storage-path ./tmp/xzatoma.db chat
+#
+# Prerequisites:
+#   Start llama.cpp with model presets, for example:
+#     llama-server \
+#       --host 127.0.0.1 \
+#       --port 8000 \
+#       --models-preset ~/.local/llama.cpp/presets.ini \
+#       --models-max 4 \
+#       --n-gpu-layers 99
+
+provider:
+  type: openai
+  openai:
+    # Point at the local llama.cpp HTTP server.
+    # Use base_url (not host) for the OpenAI-compatible provider.
+    base_url: "http://127.0.0.1:8000/v1"
+
+    # Model name must match an entry in your presets.ini.
+    model: ibm-granite/granite-4.0-h-tiny-GGUF:Q4_K_M
+
+    # llama.cpp does not require an API key for local use.
+    # Leave api_key unset or empty.
+
+    # Stream tokens as they are generated.
+    enable_streaming: true
+
+    # Per-request HTTP timeout in seconds.
+    # Local models can take several minutes to generate long responses.
+    # This must be longer than your worst-case generation time.
+    # The agent-level timeout_seconds below is a separate overall budget.
+    request_timeout_seconds: 600
+
+agent:
+  max_turns: 20
+  # Overall agent execution budget. Keep this larger than
+  # request_timeout_seconds so the HTTP timeout fires first on slow models.
+  timeout_seconds: 600
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+  chat:
+    default_mode: planning
+    default_safety: confirm
+    allow_mode_switching: true
+
+  subagent:
+    max_depth: 1
+    default_max_turns: 5
+    output_max_size: 16384
+    chat_enabled: false
+
+skills:
+  enabled: false

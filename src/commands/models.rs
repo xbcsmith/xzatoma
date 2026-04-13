@@ -206,7 +206,7 @@ pub async fn show_current_model(config: &Config, provider_name: Option<&str>) ->
 
     let provider = providers::create_provider(provider_type, &config.provider)?;
 
-    let current_model = provider.get_current_model()?;
+    let current_model = provider.get_current_model();
 
     println!("\nCurrent Model Information\n");
     println!("Provider:       {}", provider_type);

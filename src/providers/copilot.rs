@@ -6,9 +6,9 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    convert_tools_from_json, CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo,
-    ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage,
-    ToolCall,
+    convert_tools_from_json, CompletionResponse, FinishReason, FunctionCall, Message,
+    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
+    ProviderTool, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -16,9 +16,10 @@ use futures::stream::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// GitHub OAuth device code endpoint
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -102,6 +103,9 @@ impl ModelEndpoint {
 /// Default context window size when not provided by API
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 
+/// Duration for which the model list cache is considered valid.
+const MODEL_CACHE_DURATION: Duration = Duration::from_secs(300);
+
 /// Pinned boxed stream of response events
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
@@ -130,18 +134,85 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 /// # }
 /// ```
 ///
-/// Type alias to reduce type complexity in struct fields (satisfies clippy)
-type ModelsCache = Arc<RwLock<Option<(Vec<ModelInfo>, u64)>>>;
+/// Shared in-memory cache for the Copilot model list.
+///
+/// Holds both the converted `ModelInfo` list and the raw `CopilotModelData`
+/// so that callers of `list_models` and `list_models_summary` can share the
+/// same cached fetch. `cached_at` records when the data was last populated;
+/// `is_valid` returns `true` until `MODEL_CACHE_DURATION` has elapsed.
+struct CopilotCache {
+    /// Converted model list, populated after the first successful fetch.
+    models: Option<Vec<ModelInfo>>,
+    /// Raw model data from the API, used by `list_models_summary`.
+    #[allow(dead_code)]
+    raw_models: Option<Vec<CopilotModelData>>,
+    /// Instant at which the cache was last populated.
+    cached_at: Option<Instant>,
+}
 
+impl CopilotCache {
+    /// Create a new, empty cache with no data and no timestamp.
+    fn new() -> Self {
+        Self {
+            models: None,
+            raw_models: None,
+            cached_at: None,
+        }
+    }
+
+    /// Return `true` when the cache holds data that is younger than
+    /// `MODEL_CACHE_DURATION`.
+    ///
+    /// Returns `false` when `cached_at` is `None` (i.e., the cache has never
+    /// been populated or was explicitly invalidated).
+    fn is_valid(&self) -> bool {
+        self.cached_at
+            .map(|t| t.elapsed() < MODEL_CACHE_DURATION)
+            .unwrap_or(false)
+    }
+
+    /// Reset all fields to `None`, forcing the next read to re-fetch from the
+    /// API.
+    #[allow(dead_code)]
+    fn invalidate(&mut self) {
+        self.models = None;
+        self.raw_models = None;
+        self.cached_at = None;
+    }
+}
+
+/// GitHub Copilot provider
+///
+/// This provider connects to GitHub Copilot's API to generate completions.
+/// It implements OAuth device flow for authentication and caches tokens
+/// in the system keyring.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::config::CopilotConfig;
+/// use xzatoma::providers::{CopilotProvider, Provider, Message};
+///
+/// # async fn example() -> xzatoma::error::Result<()> {
+/// let config = CopilotConfig {
+///     model: "gpt-5.3-codex".to_string(),
+///     ..Default::default()
+/// };
+/// let provider = CopilotProvider::new(config)?;
+/// let messages = vec![Message::user("Hello!")];
+/// let completion = provider.complete(&messages, &[]).await?;
+/// let message = completion.message;
+/// # Ok(())
+/// # }
+/// ```
 pub struct CopilotProvider {
     client: Client,
     config: Arc<RwLock<CopilotConfig>>,
     keyring_service: String,
     keyring_user: String,
-    /// Cached models and expiry time (epoch seconds). Uses RwLock for cheap reads.
-    models_cache: ModelsCache,
-    /// TTL (seconds) for the models cache
-    models_cache_ttl_secs: u64,
+    /// Cached model list and raw data. All accesses go through `CopilotCache`
+    /// methods (`is_valid`, `invalidate`) rather than inline TTL arithmetic.
+    models_cache: Arc<RwLock<CopilotCache>>,
 }
 
 /// Request for GitHub device code
@@ -253,6 +324,54 @@ struct CopilotUsage {
     total_tokens: usize,
 }
 
+/// Token usage reported by the `/responses` endpoint.
+///
+/// Unlike the `/chat/completions` endpoint which uses `prompt_tokens` and
+/// `completion_tokens`, the Responses API uses `input_tokens` and
+/// `output_tokens`. `total_tokens` is provided for convenience but may be
+/// absent; `effective_total` handles both cases.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ResponsesUsage {
+    /// Tokens consumed by the input (prompt and context).
+    #[serde(default)]
+    input_tokens: Option<u64>,
+    /// Tokens produced in the model's output.
+    #[serde(default)]
+    output_tokens: Option<u64>,
+    /// Pre-computed total, if the API provides it.
+    #[serde(default)]
+    total_tokens: Option<u64>,
+}
+
+impl ResponsesUsage {
+    /// Return the effective total token count.
+    ///
+    /// Uses `total_tokens` when the API provides it; otherwise sums
+    /// `input_tokens` and `output_tokens`. Returns `None` when neither
+    /// combination yields a complete value.
+    ///
+    /// # Returns
+    ///
+    /// `Some(total)` when at least a total or both input/output values are
+    /// present; `None` otherwise.
+    #[allow(dead_code)]
+    fn effective_total(&self) -> Option<u64> {
+        self.total_tokens.or_else(|| {
+            self.input_tokens
+                .and_then(|i| self.output_tokens.map(|o| i + o))
+        })
+    }
+
+    /// Convert to a `TokenUsage` value for embedding in `CompletionResponse`.
+    ///
+    /// Returns `None` when either `input_tokens` or `output_tokens` is absent.
+    fn to_token_usage(&self) -> Option<TokenUsage> {
+        let input = self.input_tokens? as usize;
+        let output = self.output_tokens? as usize;
+        Some(TokenUsage::new(input, output))
+    }
+}
+
 /// Response from Copilot models API
 #[derive(Debug, Deserialize)]
 pub(crate) struct CopilotModelsResponse {
@@ -314,20 +433,60 @@ pub(crate) struct CopilotModelCapabilities {
     pub(crate) supports: Option<CopilotModelSupports>,
 }
 
-/// Model limits
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Model limits from the Copilot API.
+///
+/// All fields are optional and deserialize to `None` when absent, preserving
+/// backward compatibility with API responses that only include
+/// `max_context_window_tokens`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct CopilotModelLimits {
+    /// Total context window (prompt + completion) in tokens.
     #[serde(default)]
     pub(crate) max_context_window_tokens: Option<usize>,
+    /// Maximum output tokens the model can generate in one request.
+    #[serde(default)]
+    pub(crate) max_output_tokens: Option<usize>,
+    /// Maximum number of prompt tokens accepted per request.
+    #[serde(default)]
+    pub(crate) max_prompt_tokens: Option<usize>,
+    /// Maximum output tokens when streaming is disabled for this model.
+    #[serde(default)]
+    pub(crate) max_non_streaming_output_tokens: Option<usize>,
 }
 
-/// Model support flags
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Model support flags from the Copilot API.
+///
+/// All fields are optional and default to `None` when absent so that future
+/// API additions do not break deserialization of older responses.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct CopilotModelSupports {
+    /// Whether the model accepts tool/function-call definitions.
     #[serde(default)]
     pub(crate) tool_calls: Option<bool>,
+    /// Whether the model can process image inputs.
     #[serde(default)]
     pub(crate) vision: Option<bool>,
+    /// Whether the model supports SSE streaming responses.
+    #[serde(default)]
+    pub(crate) streaming: Option<bool>,
+    /// Whether the model can execute multiple tool calls in parallel.
+    #[serde(default)]
+    pub(crate) parallel_tool_calls: Option<bool>,
+    /// Whether the model enforces a JSON schema on its output.
+    #[serde(default)]
+    pub(crate) structured_outputs: Option<bool>,
+    /// Whether the model supports extended-thinking / adaptive reasoning.
+    #[serde(default)]
+    pub(crate) adaptive_thinking: Option<bool>,
+    /// Upper bound on the thinking budget (tokens) when adaptive thinking is enabled.
+    #[serde(default)]
+    pub(crate) max_thinking_budget: Option<usize>,
+    /// Lower bound on the thinking budget (tokens) when adaptive thinking is enabled.
+    #[serde(default)]
+    pub(crate) min_thinking_budget: Option<usize>,
+    /// Whether the model exposes embedding dimensions configuration.
+    #[serde(default)]
+    pub(crate) dimensions: Option<bool>,
 }
 
 // ============================================================================
@@ -748,6 +907,7 @@ pub(crate) fn convert_response_input_to_messages(
 /// let message = convert_stream_event_to_message(&event);
 /// assert!(message.is_some());
 /// ```
+#[allow(dead_code)]
 pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Message> {
     match event {
         StreamEvent::Message { role, content } => {
@@ -938,6 +1098,268 @@ fn parse_sse_event(data: &str) -> Result<StreamEvent> {
         .map_err(|e| XzatomaError::SseParseError(format!("Invalid JSON: {}", e)))
 }
 
+// ---------------------------------------------------------------------------
+// Streaming accumulator helper types
+// ---------------------------------------------------------------------------
+
+/// Partially assembled tool call built up across multiple streaming events.
+struct PartialToolCall {
+    /// The stable call identifier issued by the API.
+    call_id: String,
+    /// Function name (populated on the first event for this call).
+    name: String,
+    /// Incrementally appended JSON argument fragments.
+    arguments: String,
+}
+
+/// Accumulator for the `/responses` endpoint SSE stream.
+///
+/// Collects content, reasoning, tool-call fragments, and finish reason from
+/// successive [`StreamEvent`]s and produces a [`CompletionResponse`] via
+/// [`finalize`].
+struct ResponsesAccumulator {
+    /// Accumulated text content from `Message` events.
+    content: String,
+    /// Accumulated reasoning text from `Reasoning` events, if any.
+    reasoning: Option<String>,
+    /// Partial tool calls keyed by `call_id`.
+    tool_calls: HashMap<String, PartialToolCall>,
+    /// Token usage when the endpoint includes it (not available from streaming).
+    usage: Option<TokenUsage>,
+    /// Finish reason; defaults to `Stop`.
+    finish_reason: FinishReason,
+}
+
+impl ResponsesAccumulator {
+    /// Create a new, empty [`ResponsesAccumulator`].
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            reasoning: None,
+            tool_calls: HashMap::new(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+        }
+    }
+
+    /// Process a single [`StreamEvent`] and update the accumulator state.
+    ///
+    /// Appends text from `Message` events via [`apply_response_payload`],
+    /// accumulates reasoning from `Reasoning` events, and records tool-call
+    /// fragments from `FunctionCall` events.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - A reference to one parsed [`StreamEvent`]
+    fn apply_event(&mut self, event: &StreamEvent) {
+        match event {
+            StreamEvent::Message { content, .. } => {
+                self.apply_response_payload(content);
+            }
+            StreamEvent::Reasoning { content } => {
+                let text: String = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        ResponseInputContent::OutputText { text }
+                        | ResponseInputContent::InputText { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !text.is_empty() {
+                    self.reasoning
+                        .get_or_insert_with(String::new)
+                        .push_str(&text);
+                }
+            }
+            StreamEvent::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                let entry =
+                    self.tool_calls
+                        .entry(call_id.clone())
+                        .or_insert_with(|| PartialToolCall {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            arguments: String::new(),
+                        });
+                if entry.name.is_empty() {
+                    entry.name = name.clone();
+                }
+                entry.arguments.push_str(arguments);
+            }
+            StreamEvent::Status { .. } | StreamEvent::Done => {}
+        }
+    }
+
+    /// Extract text from a slice of [`ResponseInputContent`] items and append
+    /// it to the content buffer.
+    ///
+    /// Handles `OutputText` and `InputText` variants; ignores `InputImage`.
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Content items from a `Message` or `Reasoning` event
+    fn apply_response_payload(&mut self, payload: &[ResponseInputContent]) {
+        for item in payload {
+            match item {
+                ResponseInputContent::OutputText { text }
+                | ResponseInputContent::InputText { text } => {
+                    self.content.push_str(text);
+                }
+                ResponseInputContent::InputImage { .. } => {}
+            }
+        }
+    }
+
+    /// Consume the accumulator and produce a [`CompletionResponse`].
+    ///
+    /// When tool calls were accumulated, the message is built with
+    /// [`Message::assistant_with_tools`]; otherwise the text content is used.
+    /// Reasoning is set on the response when present.
+    fn finalize(self) -> CompletionResponse {
+        let message = if !self.tool_calls.is_empty() {
+            let mut tc_list: Vec<PartialToolCall> = self.tool_calls.into_values().collect();
+            tc_list.sort_by(|a, b| a.call_id.cmp(&b.call_id));
+            let tool_calls: Vec<ToolCall> = tc_list
+                .into_iter()
+                .map(|p| ToolCall {
+                    id: p.call_id,
+                    function: FunctionCall {
+                        name: p.name,
+                        arguments: p.arguments,
+                    },
+                })
+                .collect();
+            Message::assistant_with_tools(tool_calls)
+        } else {
+            Message::assistant(self.content)
+        };
+
+        let base = if let Some(usage) = self.usage {
+            CompletionResponse::with_usage(message, usage)
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        let base = base.with_finish_reason(self.finish_reason);
+
+        if let Some(reasoning) = self.reasoning {
+            base.set_reasoning(reasoning)
+        } else {
+            base
+        }
+    }
+}
+
+/// Accumulator for the `/chat/completions` endpoint SSE stream.
+///
+/// Collects text content and tool-call fragments from successive
+/// [`StreamEvent`]s and produces a [`CompletionResponse`] via [`finalize`].
+/// When the same `call_id` appears in multiple events, argument fragments are
+/// concatenated in arrival order.
+struct ChatCompletionsAccumulator {
+    /// Accumulated text content from `Message` events.
+    content: String,
+    /// Partial tool calls keyed by `call_id`.
+    tool_calls: HashMap<String, PartialToolCall>,
+    /// Token usage, populated when the endpoint provides it.
+    usage: Option<TokenUsage>,
+    /// Finish reason; defaults to `Stop`.
+    finish_reason: FinishReason,
+}
+
+impl ChatCompletionsAccumulator {
+    /// Create a new, empty [`ChatCompletionsAccumulator`].
+    fn new() -> Self {
+        Self {
+            content: String::new(),
+            tool_calls: HashMap::new(),
+            usage: None,
+            finish_reason: FinishReason::Stop,
+        }
+    }
+
+    /// Process a single [`StreamEvent`] and update the accumulator state.
+    ///
+    /// Appends text content from `Message` events and accumulates tool-call
+    /// argument fragments from `FunctionCall` events. When the same `call_id`
+    /// appears in multiple events, the `arguments` strings are concatenated.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - A reference to one parsed [`StreamEvent`]
+    fn apply_chunk(&mut self, event: &StreamEvent) {
+        match event {
+            StreamEvent::Message { content, .. } => {
+                for item in content {
+                    match item {
+                        ResponseInputContent::OutputText { text }
+                        | ResponseInputContent::InputText { text } => {
+                            self.content.push_str(text);
+                        }
+                        ResponseInputContent::InputImage { .. } => {}
+                    }
+                }
+            }
+            StreamEvent::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => {
+                let entry =
+                    self.tool_calls
+                        .entry(call_id.clone())
+                        .or_insert_with(|| PartialToolCall {
+                            call_id: call_id.clone(),
+                            name: name.clone(),
+                            arguments: String::new(),
+                        });
+                if entry.name.is_empty() {
+                    entry.name = name.clone();
+                }
+                entry.arguments.push_str(arguments);
+            }
+            StreamEvent::Reasoning { .. } | StreamEvent::Status { .. } | StreamEvent::Done => {}
+        }
+    }
+
+    /// Consume the accumulator and produce a [`CompletionResponse`].
+    ///
+    /// When tool calls were accumulated, the message is built with
+    /// [`Message::assistant_with_tools`] ordered by `call_id`. Otherwise the
+    /// accumulated text content is used. Usage and finish reason are always set.
+    fn finalize(self) -> CompletionResponse {
+        let message = if !self.tool_calls.is_empty() {
+            let mut tc_list: Vec<PartialToolCall> = self.tool_calls.into_values().collect();
+            tc_list.sort_by(|a, b| a.call_id.cmp(&b.call_id));
+            let tool_calls: Vec<ToolCall> = tc_list
+                .into_iter()
+                .map(|p| ToolCall {
+                    id: p.call_id,
+                    function: FunctionCall {
+                        name: p.name,
+                        arguments: p.arguments,
+                    },
+                })
+                .collect();
+            Message::assistant_with_tools(tool_calls)
+        } else {
+            Message::assistant(self.content)
+        };
+
+        let base = if let Some(usage) = self.usage {
+            CompletionResponse::with_usage(message, usage)
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        base.with_finish_reason(self.finish_reason)
+    }
+}
+
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         XzatomaError::Authentication(format!(
@@ -989,10 +1411,9 @@ impl CopilotProvider {
         Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
-            keyring_service: "xzatoma".to_string(),
-            keyring_user: "github_copilot".to_string(),
-            models_cache: Arc::new(RwLock::new(None)),
-            models_cache_ttl_secs: 300, // default 5 minutes
+            keyring_service: super::factory::KEYRING_SERVICE.to_string(),
+            keyring_user: super::factory::KEYRING_COPILOT_USER.to_string(),
+            models_cache: Arc::new(RwLock::new(CopilotCache::new())),
         })
     }
 
@@ -1009,7 +1430,7 @@ impl CopilotProvider {
     ///     ..Default::default()
     /// };
     /// let provider = CopilotProvider::new(config).unwrap();
-    /// assert_eq!(provider.get_current_model().unwrap(), "gpt-5.3-codex");
+    /// assert_eq!(provider.get_current_model(), "gpt-5.3-codex");
     /// ```
     ///
     /// Authenticate and get Copilot token
@@ -1365,20 +1786,15 @@ impl CopilotProvider {
     /// If `CopilotConfig::api_base` is set, it will be used to construct the
     /// models endpoint (useful for tests/local mocking).
     async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-        // Check models cache first
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
+        // Check models cache first using CopilotCache::is_valid().
         if let Ok(cache_guard) = self.models_cache.read() {
-            if let Some((cached_models, expires_at)) = &*cache_guard {
-                if now < *expires_at {
+            if cache_guard.is_valid() {
+                if let Some(models) = &cache_guard.models {
                     tracing::debug!("Using cached Copilot models");
-                    return Ok(cached_models.clone());
-                } else {
-                    tracing::debug!("Copilot models cache expired");
+                    return Ok(models.clone());
                 }
+            } else if cache_guard.cached_at.is_some() {
+                tracing::debug!("Copilot models cache expired");
             }
         }
 
@@ -1494,7 +1910,7 @@ impl CopilotProvider {
                                     .as_ref()
                                     .and_then(|c| c.limits.as_ref())
                                     .and_then(|l| l.max_context_window_tokens)
-                                    .unwrap_or(128000); // Default to 128k if not specified
+                                    .unwrap_or(128000);
 
                                 let mut model_info = ModelInfo::new(
                                     &model_data.id,
@@ -1512,6 +1928,9 @@ impl CopilotProvider {
                                         if supports.vision.unwrap_or(false) {
                                             model_info.add_capability(ModelCapability::Vision);
                                         }
+                                        if supports.streaming.unwrap_or(false) {
+                                            model_info.add_capability(ModelCapability::Streaming);
+                                        }
                                     }
                                 }
 
@@ -1523,14 +1942,10 @@ impl CopilotProvider {
                                 models.push(model_info);
                             }
 
-                            // Cache the successful result
-                            let now = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                            let expires_at = now + self.models_cache_ttl_secs;
+                            // Populate cache via CopilotCache fields.
                             if let Ok(mut cache_guard) = self.models_cache.write() {
-                                *cache_guard = Some((models.clone(), expires_at));
+                                cache_guard.models = Some(models.clone());
+                                cache_guard.cached_at = Some(Instant::now());
                             } else {
                                 tracing::warn!("Failed to acquire write lock on models cache");
                             }
@@ -1578,7 +1993,7 @@ impl CopilotProvider {
                 .as_ref()
                 .and_then(|c| c.limits.as_ref())
                 .and_then(|l| l.max_context_window_tokens)
-                .unwrap_or(128000); // Default to 128k if not specified
+                .unwrap_or(128000);
 
             let mut model_info = ModelInfo::new(&model_data.id, &model_data.name, context_window);
 
@@ -1591,6 +2006,9 @@ impl CopilotProvider {
                     if supports.vision.unwrap_or(false) {
                         model_info.add_capability(ModelCapability::Vision);
                     }
+                    if supports.streaming.unwrap_or(false) {
+                        model_info.add_capability(ModelCapability::Streaming);
+                    }
                 }
             }
 
@@ -1602,14 +2020,10 @@ impl CopilotProvider {
             models.push(model_info);
         }
 
-        // Cache the result
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let expires_at = now + self.models_cache_ttl_secs;
+        // Populate cache via CopilotCache fields.
         if let Ok(mut cache_guard) = self.models_cache.write() {
-            *cache_guard = Some((models.clone(), expires_at));
+            cache_guard.models = Some(models.clone());
+            cache_guard.cached_at = Some(Instant::now());
         } else {
             tracing::warn!("Failed to acquire write lock on models cache");
         }
@@ -1677,7 +2091,26 @@ impl CopilotProvider {
             .and_then(|c| c.supports.as_ref())
             .and_then(|s| s.vision);
 
+        let supports_streaming = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.supports.as_ref())
+            .and_then(|s| s.streaming);
+
         let state = data.policy.as_ref().map(|p| p.state.clone());
+
+        // Extract token limits from the expanded CopilotModelLimits struct.
+        let max_prompt_tokens = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.limits.as_ref())
+            .and_then(|l| l.max_prompt_tokens);
+
+        let max_completion_tokens = data
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.limits.as_ref())
+            .and_then(|l| l.max_output_tokens);
 
         // Build capabilities vector
         let mut capabilities = Vec::new();
@@ -1686,6 +2119,9 @@ impl CopilotProvider {
         }
         if supports_vision == Some(true) {
             capabilities.push(ModelCapability::Vision);
+        }
+        if supports_streaming == Some(true) {
+            capabilities.push(ModelCapability::Streaming);
         }
         if context_window > 32000 {
             capabilities.push(ModelCapability::LongContext);
@@ -1699,12 +2135,13 @@ impl CopilotProvider {
         ModelInfoSummary::new(
             info,
             state,
-            None, // max_prompt_tokens not in Copilot API
-            None, // max_completion_tokens not in Copilot API
+            None,
+            None,
             supports_tool_calls,
             supports_vision,
             raw_data,
         )
+        .with_limits(max_prompt_tokens, max_completion_tokens)
     }
 
     /// Stream responses from GitHub Copilot responses endpoint
@@ -2016,44 +2453,17 @@ impl CopilotProvider {
 
         let stream = self.stream_response(model, input, tools).await?;
 
-        // Collect all stream events
-        let mut final_message: Option<Message> = None;
-        let mut reasoning_content: Option<String> = None;
+        let mut acc = ResponsesAccumulator::new();
 
         futures::pin_mut!(stream);
         while let Some(event_result) = stream.next().await {
             let event = event_result?;
-
-            // Capture reasoning events separately by extracting text from content items
-            if let StreamEvent::Reasoning { content } = &event {
-                let text = content
-                    .iter()
-                    .filter_map(|c| match c {
-                        ResponseInputContent::OutputText { text } => Some(text.as_str()),
-                        ResponseInputContent::InputText { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                reasoning_content = Some(text);
-            }
-
-            if let Some(msg) = convert_stream_event_to_message(&event) {
-                if msg.role == "assistant" {
-                    final_message = Some(msg);
-                }
-            }
+            acc.apply_event(&event);
         }
-
-        let response_message = final_message.unwrap_or_else(|| Message::assistant(""));
 
         tracing::debug!("Responses streaming completed");
 
-        let mut response = CompletionResponse::new(response_message).set_model(model.to_string());
-        if let Some(reasoning) = reasoning_content {
-            response = response.set_reasoning(reasoning);
-        }
-        Ok(response)
+        Ok(acc.finalize().set_model(model.to_string()))
     }
 
     /// Complete responses endpoint request without streaming
@@ -2145,6 +2555,9 @@ impl CopilotProvider {
             /// Model identifier echoed back in the response
             #[serde(default)]
             model: Option<String>,
+            /// Token usage reported by the endpoint
+            #[serde(default)]
+            usage: Option<ResponsesUsage>,
         }
 
         #[derive(Deserialize)]
@@ -2159,6 +2572,10 @@ impl CopilotProvider {
 
         let response_model = responses_resp.model.unwrap_or_else(|| model.to_string());
         let response_reasoning = responses_resp.reasoning;
+        let response_usage = responses_resp
+            .usage
+            .as_ref()
+            .and_then(|u| u.to_token_usage());
 
         // Extract message from response
         let response_item = responses_resp
@@ -2176,7 +2593,12 @@ impl CopilotProvider {
 
         tracing::debug!("/responses request completed successfully");
 
-        let mut completion = CompletionResponse::new(message).set_model(response_model);
+        let base = if let Some(usage) = response_usage {
+            CompletionResponse::with_usage(message, usage)
+        } else {
+            CompletionResponse::new(message)
+        };
+        let mut completion = base.set_model(response_model);
         if let Some(reasoning) = response_reasoning {
             completion = completion.set_reasoning(reasoning);
         }
@@ -2196,25 +2618,17 @@ impl CopilotProvider {
 
         let stream = self.stream_completion(model, messages, tools).await?;
 
-        // Collect all stream events
-        let mut final_message: Option<Message> = None;
+        let mut acc = ChatCompletionsAccumulator::new();
 
         futures::pin_mut!(stream);
         while let Some(event_result) = stream.next().await {
             let event = event_result?;
-
-            if let Some(msg) = convert_stream_event_to_message(&event) {
-                if msg.role == "assistant" {
-                    final_message = Some(msg);
-                }
-            }
+            acc.apply_chunk(&event);
         }
-
-        let response_message = final_message.unwrap_or_else(|| Message::assistant(""));
 
         tracing::debug!("Completions streaming completed");
 
-        Ok(CompletionResponse::new(response_message).set_model(model.to_string()))
+        Ok(acc.finalize().set_model(model.to_string()))
     }
 
     /// Complete chat completions endpoint request without streaming
@@ -2513,7 +2927,45 @@ impl Provider for CopilotProvider {
         }
     }
 
-    async fn list_models(&self) -> Result<Vec<ModelInfo>> {
+    /// Returns `true` if this provider has a valid non-expired Copilot token
+    /// cached in the system keyring.
+    fn is_authenticated(&self) -> bool {
+        if let Ok(cached) = self.get_cached_token() {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                // SAFETY: SystemTime::now() always returns a time after UNIX_EPOCH.
+                .unwrap()
+                .as_secs();
+            cached.expires_at > now + 300
+        } else {
+            false
+        }
+    }
+
+    /// Returns `None` because the model name is stored behind a `RwLock`;
+    /// a borrowed `&str` cannot outlive the lock guard. Use
+    /// `get_current_model` for an owned copy.
+    fn current_model(&self) -> Option<&str> {
+        None
+    }
+
+    /// Set the active model in memory without any API validation. Callers
+    /// that need model-existence validation should call `list_models` before
+    /// calling this method.
+    fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
+    /// Fetch the list of available models from the remote API. This is the
+    /// canonical implementation method; `list_models` provides a default that
+    /// delegates here.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if authentication fails or the API call fails.
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
         tracing::debug!("Listing Copilot models from API");
         self.fetch_copilot_models().await
     }
@@ -2527,13 +2979,18 @@ impl Provider for CopilotProvider {
             .ok_or_else(|| XzatomaError::Provider(format!("Model not found: {}", model_name)))
     }
 
-    fn get_current_model(&self) -> Result<String> {
+    /// Get the name of the currently active model.
+    ///
+    /// Returns `"none"` if the read lock cannot be acquired.
+    ///
+    /// Overrides the trait default to read from the internal
+    /// `RwLock<CopilotConfig>` directly, since `current_model` cannot return a
+    /// borrowed reference to lock-guarded data.
+    fn get_current_model(&self) -> String {
         self.config
             .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })
-            .map(|config| config.model.clone())
+            .map(|c| c.model.clone())
+            .unwrap_or_else(|_| "none".to_string())
     }
 
     fn get_provider_capabilities(&self) -> ProviderCapabilities {
@@ -2568,46 +3025,6 @@ impl Provider for CopilotProvider {
             .find(|m| m.id == model_name || m.name == model_name)
             .ok_or_else(|| XzatomaError::Provider(format!("Model '{}' not found", model_name)))?;
         Ok(self.convert_to_summary(data))
-    }
-
-    async fn set_model(&mut self, model_name: String) -> Result<()> {
-        // Fetch available models from API to validate
-        let models = self.fetch_copilot_models().await?;
-
-        // Find the requested model
-        let model_info = models
-            .iter()
-            .find(|m| m.name == model_name)
-            .ok_or_else(|| {
-                let available: Vec<String> = models.iter().map(|m| m.name.clone()).collect();
-                XzatomaError::Provider(format!(
-                    "Model '{}' not found. Available models: {}",
-                    model_name,
-                    available.join(", ")
-                ))
-            })?;
-
-        // Check if model supports tool calling
-        if !model_info.supports_capability(ModelCapability::FunctionCalling) {
-            let tool_models: Vec<String> = models
-                .iter()
-                .filter(|m| m.supports_capability(ModelCapability::FunctionCalling))
-                .map(|m| m.name.clone())
-                .collect();
-
-            return Err(XzatomaError::Provider(format!(
-                "Model '{}' does not support tool calling, which is required for XZatoma. Models with tool support: {}",
-                model_name,
-                tool_models.join(", ")
-            )));
-        }
-
-        // Update the model in the config
-        let mut config = self.config.write().map_err(|_| {
-            XzatomaError::Provider("Failed to acquire write lock on config".to_string())
-        })?;
-        config.model = model_name;
-        Ok(())
     }
 }
 
@@ -2713,7 +3130,7 @@ mod tests {
     fn test_copilot_provider_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
 
     #[test]
@@ -2898,7 +3315,7 @@ mod tests {
     fn test_get_current_model() {
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.get_current_model().unwrap(), "gpt-5-mini");
+        assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
 
     #[test]
@@ -2914,31 +3331,23 @@ mod tests {
         assert!(caps.supports_streaming);
     }
 
-    #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
-    async fn test_set_model_with_valid_model() {
-        // set_model requires a live or mocked Copilot models endpoint.
-        // Use wiremock or mockito to return test model data,
-        // then call set_model with a known-good model name.
+    #[test]
+    fn test_set_model_with_valid_model() {
+        // set_model is now an infallible in-memory setter; no mock server needed.
         let config = CopilotConfig::default();
         let mut provider = CopilotProvider::new(config).unwrap();
-        let result = provider.set_model("gpt-4o".to_string()).await;
-        // Without a mock server this will fail with an auth error
-        assert!(result.is_err());
+        provider.set_model("gpt-4o");
+        assert_eq!(provider.get_current_model(), "gpt-4o");
     }
 
-    #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
-    async fn test_set_model_with_invalid_model() {
-        // set_model requires a live or mocked Copilot models endpoint.
-        // Use wiremock or mockito to validate that an invalid model name
-        // produces a descriptive error.
+    #[test]
+    fn test_set_model_with_invalid_model() {
+        // set_model is an infallible in-memory setter; validation is the
+        // caller's responsibility via list_models.
         let config = CopilotConfig::default();
         let mut provider = CopilotProvider::new(config).unwrap();
-        let result = provider
-            .set_model("nonexistent-model-xyz".to_string())
-            .await;
-        assert!(result.is_err());
+        provider.set_model("nonexistent-model-xyz");
+        assert_eq!(provider.get_current_model(), "nonexistent-model-xyz");
     }
 
     #[tokio::test]
@@ -3091,10 +3500,12 @@ mod tests {
             capabilities: Some(CopilotModelCapabilities {
                 limits: Some(CopilotModelLimits {
                     max_context_window_tokens: Some(8192),
+                    ..Default::default()
                 }),
                 supports: Some(CopilotModelSupports {
                     tool_calls: Some(true),
                     vision: Some(true),
+                    ..Default::default()
                 }),
             }),
             policy: Some(CopilotModelPolicy {
@@ -3154,6 +3565,7 @@ mod tests {
             capabilities: Some(CopilotModelCapabilities {
                 limits: Some(CopilotModelLimits {
                     max_context_window_tokens: Some(200000),
+                    ..Default::default()
                 }),
                 supports: None,
             }),
@@ -3185,10 +3597,12 @@ mod tests {
             capabilities: Some(CopilotModelCapabilities {
                 limits: Some(CopilotModelLimits {
                     max_context_window_tokens: Some(4096),
+                    ..Default::default()
                 }),
                 supports: Some(CopilotModelSupports {
                     tool_calls: Some(false),
                     vision: Some(false),
+                    ..Default::default()
                 }),
             }),
             policy: None,
@@ -4245,9 +4659,8 @@ include_reasoning: true
 
     #[test]
     fn test_provider_cache_ttl() {
-        let config = CopilotConfig::default();
-        let provider = CopilotProvider::new(config).unwrap();
-        assert_eq!(provider.models_cache_ttl_secs, 300);
+        // Verify the cache duration constant matches the documented 5-minute TTL.
+        assert_eq!(MODEL_CACHE_DURATION, Duration::from_secs(300));
     }
 
     // --- Task 2.1: Message Conversion Roundtrip ---
@@ -4425,5 +4838,429 @@ include_reasoning: true
         assert_eq!(response.model.as_deref(), Some("gpt-5-mini"));
         assert!(response.usage.is_some());
         assert_eq!(response.usage.unwrap().total_tokens, 75);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: CopilotModelLimits deserialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_copilot_model_limits_deserialization_all_fields() {
+        let json = r#"{
+            "max_context_window_tokens": 128000,
+            "max_output_tokens": 4096,
+            "max_prompt_tokens": 120000,
+            "max_non_streaming_output_tokens": 2048
+        }"#;
+        let limits: CopilotModelLimits = serde_json::from_str(json).unwrap();
+        assert_eq!(limits.max_context_window_tokens, Some(128000));
+        assert_eq!(limits.max_output_tokens, Some(4096));
+        assert_eq!(limits.max_prompt_tokens, Some(120000));
+        assert_eq!(limits.max_non_streaming_output_tokens, Some(2048));
+    }
+
+    #[test]
+    fn test_copilot_model_limits_deserialization_only_context_window_backward_compat() {
+        let json = r#"{"max_context_window_tokens": 8192}"#;
+        let limits: CopilotModelLimits = serde_json::from_str(json).unwrap();
+        assert_eq!(limits.max_context_window_tokens, Some(8192));
+        assert!(limits.max_output_tokens.is_none());
+        assert!(limits.max_prompt_tokens.is_none());
+        assert!(limits.max_non_streaming_output_tokens.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: CopilotModelSupports deserialization tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_copilot_model_supports_deserialization_all_new_fields() {
+        let json = r#"{
+            "tool_calls": true,
+            "vision": false,
+            "streaming": true,
+            "parallel_tool_calls": true,
+            "structured_outputs": false,
+            "adaptive_thinking": true,
+            "max_thinking_budget": 10000,
+            "min_thinking_budget": 1000,
+            "dimensions": false
+        }"#;
+        let supports: CopilotModelSupports = serde_json::from_str(json).unwrap();
+        assert_eq!(supports.tool_calls, Some(true));
+        assert_eq!(supports.vision, Some(false));
+        assert_eq!(supports.streaming, Some(true));
+        assert_eq!(supports.parallel_tool_calls, Some(true));
+        assert_eq!(supports.structured_outputs, Some(false));
+        assert_eq!(supports.adaptive_thinking, Some(true));
+        assert_eq!(supports.max_thinking_budget, Some(10000));
+        assert_eq!(supports.min_thinking_budget, Some(1000));
+        assert_eq!(supports.dimensions, Some(false));
+    }
+
+    #[test]
+    fn test_copilot_model_supports_deserialization_only_tool_calls_and_vision() {
+        let json = r#"{"tool_calls": true, "vision": false}"#;
+        let supports: CopilotModelSupports = serde_json::from_str(json).unwrap();
+        assert_eq!(supports.tool_calls, Some(true));
+        assert_eq!(supports.vision, Some(false));
+        assert!(supports.streaming.is_none());
+        assert!(supports.parallel_tool_calls.is_none());
+        assert!(supports.structured_outputs.is_none());
+        assert!(supports.adaptive_thinking.is_none());
+        assert!(supports.max_thinking_budget.is_none());
+        assert!(supports.min_thinking_budget.is_none());
+        assert!(supports.dimensions.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: CopilotCache unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_copilot_cache_is_valid_returns_false_for_fresh_cache() {
+        let cache = CopilotCache::new();
+        assert!(
+            !cache.is_valid(),
+            "Freshly created cache must not be valid (cached_at is None)"
+        );
+    }
+
+    #[test]
+    fn test_copilot_cache_is_valid_returns_true_after_population() {
+        let mut cache = CopilotCache::new();
+        cache.models = Some(vec![]);
+        cache.cached_at = Some(Instant::now());
+        assert!(
+            cache.is_valid(),
+            "Cache with a recent timestamp must be valid"
+        );
+    }
+
+    #[test]
+    fn test_copilot_cache_is_valid_returns_false_after_duration_elapses() {
+        let mut cache = CopilotCache::new();
+        cache.models = Some(vec![]);
+        // Set cached_at to MODEL_CACHE_DURATION + 1 second in the past.
+        cache.cached_at = Some(Instant::now() - MODEL_CACHE_DURATION - Duration::from_secs(1));
+        assert!(
+            !cache.is_valid(),
+            "Cache older than MODEL_CACHE_DURATION must not be valid"
+        );
+    }
+
+    #[test]
+    fn test_copilot_cache_invalidate_resets_all_fields() {
+        let mut cache = CopilotCache::new();
+        cache.models = Some(vec![]);
+        cache.raw_models = Some(vec![]);
+        cache.cached_at = Some(Instant::now());
+
+        cache.invalidate();
+
+        assert!(
+            cache.models.is_none(),
+            "models must be None after invalidate"
+        );
+        assert!(
+            cache.raw_models.is_none(),
+            "raw_models must be None after invalidate"
+        );
+        assert!(
+            cache.cached_at.is_none(),
+            "cached_at must be None after invalidate"
+        );
+        assert!(
+            !cache.is_valid(),
+            "Cache must not be valid after invalidate"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: ResponsesAccumulator unit tests
+    // -----------------------------------------------------------------------
+
+    fn make_message_event(text: &str) -> StreamEvent {
+        StreamEvent::Message {
+            role: "assistant".to_string(),
+            content: vec![ResponseInputContent::OutputText {
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn test_responses_accumulator_apply_event_accumulates_text_deltas() {
+        let mut acc = ResponsesAccumulator::new();
+        acc.apply_event(&make_message_event("Hello"));
+        acc.apply_event(&make_message_event(", world"));
+        acc.apply_event(&make_message_event("!"));
+
+        let response = acc.finalize();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Hello, world!"),
+            "Text deltas must be concatenated in order"
+        );
+        assert!(response.reasoning.is_none());
+    }
+
+    #[test]
+    fn test_responses_accumulator_finalize_produces_expected_content() {
+        let mut acc = ResponsesAccumulator::new();
+        acc.apply_event(&make_message_event("The answer is 42"));
+
+        let response = acc.finalize();
+        assert_eq!(response.message.role, "assistant");
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("The answer is 42")
+        );
+        assert!(response.usage.is_none());
+    }
+
+    #[test]
+    fn test_responses_accumulator_captures_reasoning_from_reasoning_event() {
+        let mut acc = ResponsesAccumulator::new();
+
+        acc.apply_event(&StreamEvent::Reasoning {
+            content: vec![ResponseInputContent::OutputText {
+                text: "Thinking...".to_string(),
+            }],
+        });
+        acc.apply_event(&make_message_event("Result"));
+
+        let response = acc.finalize();
+        assert_eq!(response.message.content.as_deref(), Some("Result"));
+        assert_eq!(response.reasoning.as_deref(), Some("Thinking..."));
+    }
+
+    #[test]
+    fn test_responses_accumulator_empty_finalize_produces_empty_message() {
+        let acc = ResponsesAccumulator::new();
+        let response = acc.finalize();
+        assert_eq!(response.message.role, "assistant");
+        assert_eq!(response.message.content.as_deref(), Some(""));
+        assert!(response.reasoning.is_none());
+        assert!(response.usage.is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: ChatCompletionsAccumulator unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_chat_completions_accumulator_apply_chunk_accumulates_tool_call_deltas() {
+        let mut acc = ChatCompletionsAccumulator::new();
+
+        acc.apply_chunk(&StreamEvent::FunctionCall {
+            call_id: "call_1".to_string(),
+            name: "read_file".to_string(),
+            arguments: "{\"path\":\"a.txt\"}".to_string(),
+        });
+        acc.apply_chunk(&StreamEvent::FunctionCall {
+            call_id: "call_2".to_string(),
+            name: "write_file".to_string(),
+            arguments: "{\"path\":\"b.txt\"}".to_string(),
+        });
+
+        let response = acc.finalize();
+        let calls = response
+            .message
+            .tool_calls
+            .expect("Expected tool calls in response");
+        assert_eq!(calls.len(), 2);
+        // Tool calls are ordered by call_id string sort
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[1].id, "call_2");
+        assert_eq!(calls[1].function.name, "write_file");
+    }
+
+    #[test]
+    fn test_chat_completions_accumulator_apply_chunk_same_index_multiple_chunks() {
+        let mut acc = ChatCompletionsAccumulator::new();
+
+        // First chunk: id, name, and partial arguments
+        acc.apply_chunk(&StreamEvent::FunctionCall {
+            call_id: "call_1".to_string(),
+            name: "read_file".to_string(),
+            arguments: "{\"path\"".to_string(),
+        });
+
+        // Second chunk: same call_id, continuation of arguments
+        acc.apply_chunk(&StreamEvent::FunctionCall {
+            call_id: "call_1".to_string(),
+            name: "read_file".to_string(),
+            arguments: ":\"test.txt\"}".to_string(),
+        });
+
+        let response = acc.finalize();
+        let calls = response
+            .message
+            .tool_calls
+            .expect("Expected tool calls in response");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(
+            calls[0].function.arguments, "{\"path\":\"test.txt\"}",
+            "Arguments from multiple chunks must be concatenated"
+        );
+    }
+
+    #[test]
+    fn test_chat_completions_accumulator_text_content_from_message_event() {
+        let mut acc = ChatCompletionsAccumulator::new();
+        acc.apply_chunk(&make_message_event("Hello from completions"));
+        let response = acc.finalize();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Hello from completions")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: ResponsesUsage unit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_responses_usage_effective_total_returns_total_when_present() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            total_tokens: Some(999),
+        };
+        assert_eq!(
+            usage.effective_total(),
+            Some(999),
+            "total_tokens must be preferred when present"
+        );
+    }
+
+    #[test]
+    fn test_responses_usage_effective_total_sums_when_total_absent() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            total_tokens: None,
+        };
+        assert_eq!(
+            usage.effective_total(),
+            Some(150),
+            "Must sum input + output when total is absent"
+        );
+    }
+
+    #[test]
+    fn test_responses_usage_effective_total_none_when_both_absent() {
+        let usage = ResponsesUsage {
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+        };
+        assert!(usage.effective_total().is_none());
+    }
+
+    #[test]
+    fn test_responses_usage_to_token_usage_returns_none_when_partial() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(100),
+            output_tokens: None,
+            total_tokens: None,
+        };
+        assert!(usage.to_token_usage().is_none());
+    }
+
+    #[test]
+    fn test_responses_usage_to_token_usage_returns_usage_when_both_present() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(80),
+            output_tokens: Some(40),
+            total_tokens: None,
+        };
+        let token_usage = usage.to_token_usage().expect("Expected TokenUsage");
+        assert_eq!(token_usage.prompt_tokens, 80);
+        assert_eq!(token_usage.completion_tokens, 40);
+        assert_eq!(token_usage.total_tokens, 120);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: convert_to_summary with expanded limits
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_convert_to_summary_populates_max_prompt_and_completion_tokens() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "gpt-4-turbo".to_string(),
+            name: "GPT-4 Turbo".to_string(),
+            capabilities: Some(CopilotModelCapabilities {
+                limits: Some(CopilotModelLimits {
+                    max_context_window_tokens: Some(128000),
+                    max_output_tokens: Some(4096),
+                    max_prompt_tokens: Some(120000),
+                    max_non_streaming_output_tokens: Some(2048),
+                }),
+                supports: Some(CopilotModelSupports {
+                    tool_calls: Some(true),
+                    streaming: Some(true),
+                    ..Default::default()
+                }),
+            }),
+            policy: Some(CopilotModelPolicy {
+                state: "enabled".to_string(),
+            }),
+            supported_endpoints: vec!["responses".to_string()],
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert_eq!(
+            summary.max_prompt_tokens,
+            Some(120000),
+            "max_prompt_tokens must be populated from CopilotModelLimits::max_prompt_tokens"
+        );
+        assert_eq!(
+            summary.max_completion_tokens,
+            Some(4096),
+            "max_completion_tokens must be populated from CopilotModelLimits::max_output_tokens"
+        );
+        assert!(
+            summary.info.supports_capability(ModelCapability::Streaming),
+            "Streaming capability must be set when supports.streaming == Some(true)"
+        );
+    }
+
+    #[test]
+    fn test_convert_to_summary_limits_none_when_fields_absent() {
+        let config = CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let model_data = CopilotModelData {
+            id: "basic-model".to_string(),
+            name: "Basic Model".to_string(),
+            capabilities: Some(CopilotModelCapabilities {
+                limits: Some(CopilotModelLimits {
+                    max_context_window_tokens: Some(4096),
+                    ..Default::default()
+                }),
+                supports: None,
+            }),
+            policy: None,
+            supported_endpoints: vec![],
+        };
+
+        let summary = provider.convert_to_summary(model_data);
+
+        assert!(
+            summary.max_prompt_tokens.is_none(),
+            "max_prompt_tokens must be None when API field is absent"
+        );
+        assert!(
+            summary.max_completion_tokens.is_none(),
+            "max_completion_tokens must be None when API field is absent"
+        );
     }
 }
