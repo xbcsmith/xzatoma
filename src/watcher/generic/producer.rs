@@ -16,7 +16,7 @@
 
 use crate::config::KafkaWatcherConfig;
 use crate::error::{Result, XzatomaError};
-use crate::watcher::generic::message::GenericPlanResult;
+use crate::watcher::generic::result_event::GenericPlanResult;
 use crate::watcher::xzepr::consumer::config::{
     SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };

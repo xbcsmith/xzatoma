@@ -1,441 +1,394 @@
-//! Inbound plan event type for the generic Kafka watcher.
+//! Inbound plan event and raw Kafka message types for the generic watcher.
 //!
-//! This module defines [`GenericPlanEvent`], the trigger message a producer
-//! publishes to the watcher's input topic. The generic watcher deserializes
-//! each consumed message into a `GenericPlanEvent`, checks that
-//! `event_type == "plan"`, evaluates the optional `action`, `name`, and
-//! `version` fields against the configured
-//! [`GenericMatchConfig`](crate::config::GenericMatchConfig), and executes
-//! the embedded plan when all criteria are satisfied.
+//! This module defines two closely related types:
+//!
+//! - [`RawKafkaMessage`]: the bridge between the raw Kafka byte stream and the
+//!   parsed plan event.
+//! - [`GenericPlanEvent`]: the parsed, validated, in-memory representation of
+//!   an inbound plan trigger.
+//!
+//! # Parsing model
+//!
+//! Rather than deserializing the raw wire format into a loosely-typed JSON
+//! value and deferring plan validation to the executor, Phase 2 introduces
+//! *early parsing*: [`GenericPlanEvent::new`] calls
+//! [`PlanParser::parse_string`] on the raw payload string and returns `Err`
+//! immediately if the payload cannot be parsed or validated as a [`Plan`].
+//!
+//! Any `GenericPlanEvent` value that exists in memory is therefore guaranteed
+//! to hold a structurally valid plan.
 //!
 //! # Loop-break guarantee
 //!
-//! The primary guard against same-topic re-trigger loops is the `event_type`
-//! field:
-//!
-//! - Producers MUST set `event_type = "plan"` on every trigger event.
-//! - [`GenericPlanEvent::is_plan_event`] returns `false` for any other value.
-//! - The generic matcher calls [`GenericPlanEvent::is_plan_event`] before
-//!   evaluating any other criteria, so result events and unknown event types
-//!   are discarded without plan execution.
+//! In the Phase 1 design the loop-break was enforced by an `event_type`
+//! discriminator on the wire format. In Phase 2 the loop-break is implicit:
+//! when the watcher publishes a
+//! [`GenericPlanResult`](crate::watcher::generic::result_event::GenericPlanResult)
+//! and that JSON payload is later consumed from the same topic, it fails to
+//! parse as a [`Plan`] (the result JSON has no `name` or `steps` fields),
+//! causing [`GenericPlanEvent::new`] to return `Err`. The
+//! [`GenericEventHandler`](crate::watcher::generic::event_handler::GenericEventHandler)
+//! propagates the error and the watcher discards the message as an invalid
+//! payload without producing a new result.
 //!
 //! # Examples
 //!
 //! ```
-//! use xzatoma::watcher::generic::event::GenericPlanEvent;
-//! use serde_json::json;
+//! use xzatoma::watcher::generic::event::{GenericPlanEvent, RawKafkaMessage};
 //!
-//! let plan_value = json!({
-//!     "name": "deploy",
-//!     "steps": [{"name": "apply", "action": "kubectl apply -f manifests/"}]
-//! });
-//!
-//! let event = GenericPlanEvent::new("01JTEST0000000000000000001".to_string(), plan_value);
-//! assert_eq!(event.event_type, "plan");
-//! assert!(event.action.is_none());
+//! let yaml = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply -f manifests/\n";
+//! let event = GenericPlanEvent::new(yaml, "input.topic".to_string(), None).unwrap();
+//! assert_eq!(event.plan.name, "deploy");
+//! assert_eq!(event.source_topic, "input.topic");
 //! ```
 
+use crate::error::Result;
+use crate::tools::plan::{Plan, PlanParser};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
-/// The trigger message schema for the generic Kafka watcher.
+/// A raw Kafka message payload before plan parsing.
 ///
-/// A producer publishes a `GenericPlanEvent` to the watcher's input topic. The
-/// generic watcher deserializes each message, checks `event_type == "plan"`, then
-/// evaluates the optional `action`, `name`, and `version` fields against the
-/// configured [`GenericMatchConfig`](crate::config::GenericMatchConfig).
+/// `RawKafkaMessage` carries the raw Kafka payload string alongside the source
+/// topic and optional message key. It is the primary input to
+/// [`GenericEventHandler::handle`](crate::watcher::generic::event_handler::GenericEventHandler::handle).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::watcher::generic::event::RawKafkaMessage;
+///
+/// let msg = RawKafkaMessage {
+///     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo hi\n".to_string(),
+///     topic: "plans.input".to_string(),
+///     key: Some("correlation-123".to_string()),
+/// };
+/// assert_eq!(msg.topic, "plans.input");
+/// assert!(msg.key.is_some());
+/// ```
+#[derive(Debug, Clone)]
+pub struct RawKafkaMessage {
+    /// The raw Kafka message payload (UTF-8 encoded).
+    pub payload: String,
+    /// The Kafka topic from which this message was consumed.
+    pub topic: String,
+    /// Optional Kafka message key used as the correlation key for result tracking.
+    pub key: Option<String>,
+}
+
+/// A parsed and validated inbound plan event for the generic Kafka watcher.
+///
+/// A `GenericPlanEvent` is constructed from a raw Kafka payload via
+/// [`GenericPlanEvent::new`]. The constructor delegates to
+/// [`PlanParser::parse_string`] so any instance that reaches the matcher or
+/// executor is guaranteed to hold a structurally valid [`Plan`].
+///
+/// The `name`, `version`, and `action` fields are auto-populated from the
+/// parsed plan at construction time and may be overridden afterward (e.g. in
+/// tests or when version information is injected from an external source).
 ///
 /// # Field summary
 ///
-/// | Field        | Required | Purpose                                         |
-/// |--------------|----------|-------------------------------------------------|
-/// | `id`         | yes      | Unique event identifier (ULID recommended)      |
-/// | `event_type` | yes      | Must be `"plan"` — all other values are skipped |
-/// | `plan`       | yes      | Embedded plan (string, object, or array)        |
-/// | `action`     | no       | Action label for action-based watcher matching  |
-/// | `name`       | no       | Name label for name-based watcher matching      |
-/// | `version`    | no       | Version label for version-based matching        |
-/// | `timestamp`  | no       | RFC-3339 event creation timestamp               |
-/// | `metadata`   | no       | Arbitrary extra fields for extensibility        |
+/// | Field          | Source                                                      |
+/// |----------------|-------------------------------------------------------------|
+/// | `plan`         | Parsed and validated from the raw payload                   |
+/// | `source_topic` | Kafka topic the message was consumed from                   |
+/// | `key`          | Kafka message key (correlation identifier)                  |
+/// | `received_at`  | Set to `Utc::now()` at construction time                    |
+/// | `name`         | Auto-populated from `plan.name`                             |
+/// | `version`      | Auto-populated from `plan.version`; `None` when absent      |
+/// | `action`       | Auto-populated from `plan.action`; `None` when absent       |
 ///
 /// # Examples
 ///
 /// ```
 /// use xzatoma::watcher::generic::event::GenericPlanEvent;
-/// use serde_json::json;
 ///
-/// let plan_value = json!({
-///     "name": "deploy",
-///     "steps": [{"name": "apply", "action": "kubectl apply -f manifests/"}]
-/// });
+/// let yaml = "name: deploy\nsteps:\n  - name: s1\n    action: run deploy\n";
+/// let event = GenericPlanEvent::new(
+///     yaml,
+///     "input.topic".to_string(),
+///     Some("key-1".to_string()),
+/// )
+/// .unwrap();
 ///
-/// let event = GenericPlanEvent::new("01JTEST0000000000000000001".to_string(), plan_value);
-/// assert_eq!(event.event_type, "plan");
-/// assert!(event.action.is_none());
+/// assert_eq!(event.plan.name, "deploy");
+/// assert_eq!(event.name.as_deref(), Some("deploy"));
+/// assert_eq!(event.key.as_deref(), Some("key-1"));
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct GenericPlanEvent {
-    /// Unique event identifier. ULID format is preferred for its time-sortable
-    /// properties, but any non-empty string is accepted.
-    pub id: String,
+    /// The parsed and validated plan.
+    pub plan: Plan,
 
-    /// Event type discriminator. Must be `"plan"` for the generic watcher to
-    /// process this message. Any other value (including `"result"` or empty string)
-    /// causes the watcher to silently skip the message without plan execution.
-    pub event_type: String,
+    /// The Kafka topic from which the triggering message was consumed.
+    pub source_topic: String,
 
-    /// Optional name label used for name-based watcher matching.
+    /// The Kafka message key, used as the correlation identifier for result tracking.
+    pub key: Option<String>,
+
+    /// UTC timestamp of when this event was received and parsed.
+    pub received_at: DateTime<Utc>,
+
+    /// Name label used for name-based watcher matching.
     ///
-    /// When [`GenericMatchConfig::name`](crate::config::GenericMatchConfig) is set,
-    /// the watcher compares this field to the configured value. A `None` value
-    /// does not satisfy a name-based match criterion.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Auto-populated from [`Plan::name`] at construction time.
     pub name: Option<String>,
 
-    /// Optional version label used for version-based watcher matching.
+    /// Version label used for version-based watcher matching.
     ///
-    /// When [`GenericMatchConfig::version`](crate::config::GenericMatchConfig) is
-    /// set, the watcher compares this field to the configured value. A `None` value
-    /// does not satisfy a version-based match criterion.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Auto-populated from [`Plan::version`] at construction time when the
+    /// parsed plan carries a `version` field. `None` when the plan has no
+    /// `version`.
     pub version: Option<String>,
 
-    /// Optional action label used for action-based watcher matching.
+    /// Action label used for action-based watcher matching.
     ///
-    /// When [`GenericMatchConfig::action`](crate::config::GenericMatchConfig) is
-    /// set, the watcher compares this field to the configured value. A `None` value
-    /// does not satisfy an action-based match criterion.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Auto-populated from [`Plan::action`] at construction time when the
+    /// parsed plan carries an `action` field. `None` when the plan has no
+    /// `action`.
     pub action: Option<String>,
-
-    /// The embedded plan to execute. May be a JSON string, object, or array.
-    ///
-    /// The watcher passes this value to the plan executor after a successful match.
-    /// String values are treated as YAML plan text; object and array values are
-    /// serialized to JSON before being handed to the executor.
-    pub plan: serde_json::Value,
-
-    /// Optional RFC-3339 event creation timestamp.
-    ///
-    /// Consumers may use this for event ordering or staleness checks. The watcher
-    /// does not enforce a maximum age by default; that logic belongs in the matcher.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<DateTime<Utc>>,
-
-    /// Optional arbitrary metadata for extensibility.
-    ///
-    /// Producers may include any additional fields here (e.g. correlation IDs,
-    /// environment tags). The watcher does not inspect this field; it is preserved
-    /// in the corresponding
-    /// [`GenericPlanResult`](crate::watcher::generic::result_event::GenericPlanResult)
-    /// for traceability.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
 }
 
 impl GenericPlanEvent {
-    /// Create a minimal plan trigger event.
+    /// Parse a raw Kafka payload into a validated plan event.
     ///
-    /// Sets `event_type` to `"plan"` and `timestamp` to the current UTC time.
-    /// All optional matching fields (`action`, `name`, `version`) default to `None`.
+    /// Calls [`PlanParser::parse_string`] to parse the payload as YAML or
+    /// JSON, then populates the event fields. Returns `Err` if the payload
+    /// cannot be parsed or if the parsed plan fails validation (e.g. empty
+    /// `name`, empty `steps`, or a step with no `action`).
     ///
     /// # Arguments
     ///
-    /// * `id` - Unique event identifier (ULID format recommended)
-    /// * `plan` - Embedded plan as a JSON value (string, object, or array)
+    /// * `payload`      - Raw UTF-8 Kafka payload containing a YAML or JSON plan
+    /// * `source_topic` - The Kafka topic from which the message was consumed
+    /// * `key`          - Optional Kafka message key (used as the correlation key)
     ///
     /// # Returns
     ///
-    /// A new `GenericPlanEvent` with `event_type = "plan"` and the given id and plan.
+    /// A `GenericPlanEvent` with `received_at` set to the current UTC time and
+    /// `name`, `version`, and `action` auto-populated from the parsed plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `payload` cannot be deserialized as a [`Plan`] or if
+    /// plan validation fails.
     ///
     /// # Examples
     ///
     /// ```
     /// use xzatoma::watcher::generic::event::GenericPlanEvent;
-    /// use serde_json::json;
     ///
-    /// let event = GenericPlanEvent::new(
-    ///     "01JTEST0000000000000000001".to_string(),
-    ///     json!("name: hello\nsteps:\n  - name: s1\n    action: echo hi\n"),
-    /// );
-    /// assert_eq!(event.event_type, "plan");
-    /// assert!(event.is_plan_event());
+    /// let yaml = "name: deploy\nsteps:\n  - name: s1\n    action: run deploy\n";
+    /// let event = GenericPlanEvent::new(yaml, "input.topic".to_string(), None).unwrap();
+    /// assert_eq!(event.plan.name, "deploy");
+    /// assert_eq!(event.name.as_deref(), Some("deploy"));
     /// ```
-    pub fn new(id: String, plan: serde_json::Value) -> Self {
-        Self {
-            id,
-            event_type: "plan".to_string(),
-            name: None,
-            version: None,
-            action: None,
+    pub fn new(payload: &str, source_topic: String, key: Option<String>) -> Result<Self> {
+        let plan = PlanParser::parse_string(payload)?;
+        let name = Some(plan.name.clone());
+        let version = plan.version.clone();
+        let action = plan.action.clone();
+        Ok(Self {
             plan,
-            timestamp: Some(Utc::now()),
-            metadata: None,
-        }
-    }
-
-    /// Return `true` if this event should be processed as a plan trigger.
-    ///
-    /// This is the primary loop-break check: the generic matcher calls this before
-    /// evaluating any other matching criteria. Events where `event_type != "plan"`
-    /// — including result events (`event_type = "result"`) — are discarded without
-    /// plan execution.
-    ///
-    /// # Returns
-    ///
-    /// `true` when `event_type == "plan"`, `false` for all other values.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use xzatoma::watcher::generic::event::GenericPlanEvent;
-    /// use serde_json::json;
-    ///
-    /// let plan_event = GenericPlanEvent::new("id-1".to_string(), json!(null));
-    /// assert!(plan_event.is_plan_event());
-    ///
-    /// let mut result_event = GenericPlanEvent::new("id-2".to_string(), json!(null));
-    /// result_event.event_type = "result".to_string();
-    /// assert!(!result_event.is_plan_event());
-    /// ```
-    pub fn is_plan_event(&self) -> bool {
-        self.event_type == "plan"
+            source_topic,
+            key,
+            received_at: Utc::now(),
+            name,
+            version,
+            action,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
-    // -------------------------------------------------------------------------
-    // GenericPlanEvent tests
-    // -------------------------------------------------------------------------
+    // ---------------------------------------------------------------------------
+    // Shared test payloads
+    // ---------------------------------------------------------------------------
 
-    #[test]
-    fn test_generic_plan_event_new_sets_event_type_to_plan() {
-        let event = GenericPlanEvent::new("id-001".to_string(), json!(null));
-        assert_eq!(event.event_type, "plan");
-    }
+    const VALID_YAML: &str = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply\n";
+    const VALID_YAML_WITH_ACTION: &str =
+        "name: deploy\naction: deploy-prod\nsteps:\n  - name: apply\n    action: kubectl apply\n";
+    const VALID_YAML_WITH_VERSION: &str =
+        "name: deploy\nversion: v1.2.3\nsteps:\n  - name: apply\n    action: kubectl apply\n";
+    const VALID_JSON: &str =
+        r#"{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply"}]}"#;
 
-    #[test]
-    fn test_generic_plan_event_new_sets_id() {
-        let event = GenericPlanEvent::new("my-custom-id".to_string(), json!(null));
-        assert_eq!(event.id, "my-custom-id");
-    }
-
-    #[test]
-    fn test_generic_plan_event_new_optional_fields_are_none() {
-        let event = GenericPlanEvent::new("id-002".to_string(), json!(null));
-        assert!(event.name.is_none());
-        assert!(event.version.is_none());
-        assert!(event.action.is_none());
-        assert!(event.metadata.is_none());
-    }
+    // ---------------------------------------------------------------------------
+    // Task 2.6 required tests
+    // ---------------------------------------------------------------------------
 
     #[test]
-    fn test_generic_plan_event_new_sets_timestamp() {
-        let event = GenericPlanEvent::new("id-003".to_string(), json!(null));
-        assert!(event.timestamp.is_some());
-    }
-
-    #[test]
-    fn test_generic_plan_event_is_plan_event_returns_true_for_plan_type() {
-        let event = GenericPlanEvent::new("id-004".to_string(), json!(null));
-        assert!(event.is_plan_event());
-    }
-
-    #[test]
-    fn test_generic_plan_event_is_plan_event_returns_false_for_result_type() {
-        let mut event = GenericPlanEvent::new("id-005".to_string(), json!(null));
-        event.event_type = "result".to_string();
-        assert!(!event.is_plan_event());
-    }
-
-    #[test]
-    fn test_generic_plan_event_is_plan_event_returns_false_for_unknown_type() {
-        let mut event = GenericPlanEvent::new("id-006".to_string(), json!(null));
-        event.event_type = "unknown".to_string();
-        assert!(!event.is_plan_event());
-    }
-
-    #[test]
-    fn test_generic_plan_event_is_plan_event_returns_false_for_empty_type() {
-        let mut event = GenericPlanEvent::new("id-007".to_string(), json!(null));
-        event.event_type = String::new();
-        assert!(!event.is_plan_event());
-    }
-
-    #[test]
-    fn test_generic_plan_event_roundtrip_all_fields() {
-        // Construct an event with every optional field populated.
-        let original = GenericPlanEvent {
-            id: "01JFULL0000000000000000001".to_string(),
-            event_type: "plan".to_string(),
-            name: Some("deploy-service".to_string()),
-            version: Some("2.1.0".to_string()),
-            action: Some("deploy".to_string()),
-            plan: json!({
-                "name": "Deploy Service",
-                "steps": [{"name": "apply", "action": "kubectl apply"}]
-            }),
-            timestamp: Some(
-                DateTime::parse_from_rfc3339("2025-01-15T12:00:00Z")
-                    .unwrap()
-                    .with_timezone(&Utc),
-            ),
-            metadata: Some(json!({"env": "production", "region": "us-east-1"})),
-        };
-
-        let json_str = serde_json::to_string(&original).unwrap();
-        let restored: GenericPlanEvent = serde_json::from_str(&json_str).unwrap();
-
-        assert_eq!(restored, original);
-        assert_eq!(restored.name.as_deref(), Some("deploy-service"));
-        assert_eq!(restored.version.as_deref(), Some("2.1.0"));
-        assert_eq!(restored.action.as_deref(), Some("deploy"));
-        assert!(restored.metadata.is_some());
-    }
-
-    #[test]
-    fn test_generic_plan_event_roundtrip_only_action() {
-        // Only `action` is provided among the optional matching fields.
-        let original = GenericPlanEvent {
-            id: "01JACTION000000000000000001".to_string(),
-            event_type: "plan".to_string(),
-            name: None,
-            version: None,
-            action: Some("quickstart".to_string()),
-            plan: json!("name: Quick\nsteps:\n  - name: s1\n    action: echo hi\n"),
-            timestamp: None,
-            metadata: None,
-        };
-
-        let json_str = serde_json::to_string(&original).unwrap();
-
-        // Verify optional None fields are omitted from JSON (skip_serializing_if).
-        let json_value: serde_json::Value = serde_json::from_str(&json_str).unwrap();
-        assert!(
-            json_value.get("name").is_none(),
-            "name should be absent when None"
-        );
-        assert!(
-            json_value.get("version").is_none(),
-            "version should be absent when None"
-        );
-        assert!(
-            json_value.get("timestamp").is_none(),
-            "timestamp should be absent when None"
-        );
-        assert!(
-            json_value.get("metadata").is_none(),
-            "metadata should be absent when None"
-        );
-        assert_eq!(json_value["action"], "quickstart");
-
-        let restored: GenericPlanEvent = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(restored, original);
-    }
-
-    #[test]
-    fn test_generic_plan_event_roundtrip_only_name_and_version() {
-        // Only `name` and `version` are provided — no `action`.
-        let original = GenericPlanEvent {
-            id: "01JNAMEVER00000000000000001".to_string(),
-            event_type: "plan".to_string(),
-            name: Some("my-service".to_string()),
-            version: Some("1.0.0".to_string()),
-            action: None,
-            plan: json!({"name": "Service Plan", "steps": []}),
-            timestamp: None,
-            metadata: None,
-        };
-
-        let json_str = serde_json::to_string(&original).unwrap();
-        let restored: GenericPlanEvent = serde_json::from_str(&json_str).unwrap();
-
-        assert_eq!(restored.name.as_deref(), Some("my-service"));
-        assert_eq!(restored.version.as_deref(), Some("1.0.0"));
-        assert!(restored.action.is_none());
-        assert_eq!(restored, original);
-    }
-
-    #[test]
-    fn test_generic_plan_event_roundtrip_minimal() {
-        // Only the required fields: `id`, `event_type`, and `plan`.
-        let original = GenericPlanEvent {
-            id: "01JMINIMAL0000000000000001".to_string(),
-            event_type: "plan".to_string(),
-            name: None,
-            version: None,
-            action: None,
-            plan: json!("name: Minimal\nsteps:\n  - name: s1\n    action: echo minimal\n"),
-            timestamp: None,
-            metadata: None,
-        };
-
-        let json_str = serde_json::to_string(&original).unwrap();
-        let restored: GenericPlanEvent = serde_json::from_str(&json_str).unwrap();
-
-        assert_eq!(restored.id, "01JMINIMAL0000000000000001");
-        assert_eq!(restored.event_type, "plan");
-        assert!(restored.name.is_none());
-        assert!(restored.version.is_none());
-        assert!(restored.action.is_none());
-        assert!(restored.timestamp.is_none());
-        assert!(restored.metadata.is_none());
-        assert_eq!(restored, original);
-    }
-
-    #[test]
-    fn test_generic_plan_event_non_plan_event_type_roundtrips_correctly() {
-        // A result event round-trips correctly but is_plan_event() must return false.
-        let original = GenericPlanEvent {
-            id: "01JRESULT000000000000000001".to_string(),
-            event_type: "result".to_string(),
-            name: None,
-            version: None,
-            action: None,
-            plan: json!(null),
-            timestamp: None,
-            metadata: None,
-        };
-
-        let json_str = serde_json::to_string(&original).unwrap();
-        let restored: GenericPlanEvent = serde_json::from_str(&json_str).unwrap();
-
-        assert_eq!(restored.event_type, "result");
-        assert!(
-            !restored.is_plan_event(),
-            "result event_type must be rejected by matcher"
-        );
-        assert_eq!(restored, original);
-    }
-
-    #[test]
-    fn test_generic_plan_event_plan_field_accepts_string_value() {
+    fn test_new_valid_yaml_payload() {
         let event = GenericPlanEvent::new(
-            "id-str".to_string(),
-            json!("name: Plain\nsteps:\n  - name: s1\n    action: echo 1\n"),
-        );
-        assert!(event.plan.is_string());
+            VALID_YAML,
+            "input.topic".to_string(),
+            Some("k1".to_string()),
+        )
+        .unwrap();
+        assert_eq!(event.plan.name, "deploy");
+        assert_eq!(event.source_topic, "input.topic");
+        assert_eq!(event.key.as_deref(), Some("k1"));
+        assert_eq!(event.name.as_deref(), Some("deploy"));
     }
 
     #[test]
-    fn test_generic_plan_event_plan_field_accepts_object_value() {
-        let event = GenericPlanEvent::new(
-            "id-obj".to_string(),
-            json!({"name": "Object Plan", "steps": []}),
-        );
-        assert!(event.plan.is_object());
+    fn test_new_valid_json_payload() {
+        let event = GenericPlanEvent::new(VALID_JSON, "input.topic".to_string(), None).unwrap();
+        assert_eq!(event.plan.name, "deploy");
+        assert_eq!(event.plan.steps.len(), 1);
     }
 
     #[test]
-    fn test_generic_plan_event_plan_field_accepts_array_value() {
-        let event = GenericPlanEvent::new(
-            "id-arr".to_string(),
-            json!([{"task": "step1"}, {"task": "step2"}]),
+    fn test_new_invalid_payload_returns_err() {
+        let result = GenericPlanEvent::new("not a valid plan", "t".to_string(), None);
+        assert!(result.is_err(), "malformed payload must return Err");
+    }
+
+    #[test]
+    fn test_new_missing_tasks_returns_err() {
+        // Structurally valid YAML with an empty steps list must fail validation.
+        let result = GenericPlanEvent::new("name: test\nsteps: []\n", "t".to_string(), None);
+        assert!(
+            result.is_err(),
+            "plan with no tasks must return Err from validation"
         );
-        assert!(event.plan.is_array());
+    }
+
+    #[test]
+    fn test_new_received_at_is_recent() {
+        let before = Utc::now();
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        let after = Utc::now();
+        assert!(
+            event.received_at >= before,
+            "received_at must not be before construction"
+        );
+        assert!(
+            event.received_at <= after,
+            "received_at must not be after construction"
+        );
+    }
+
+    #[test]
+    fn test_clone_produces_independent_copy() {
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        let mut cloned = event.clone();
+        cloned.plan.name = "different".to_string();
+        // The original must not be affected.
+        assert_eq!(event.plan.name, "deploy");
+        assert_eq!(cloned.plan.name, "different");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Additional coverage
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_new_action_auto_populated_from_plan() {
+        let event = GenericPlanEvent::new(VALID_YAML_WITH_ACTION, "t".to_string(), None).unwrap();
+        assert_eq!(
+            event.action.as_deref(),
+            Some("deploy-prod"),
+            "action should be auto-populated from plan.action"
+        );
+    }
+
+    #[test]
+    fn test_new_action_is_none_when_plan_has_no_action() {
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        assert!(
+            event.action.is_none(),
+            "action should be None when plan carries no action field"
+        );
+    }
+
+    #[test]
+    fn test_new_version_auto_populated_from_plan() {
+        let event = GenericPlanEvent::new(VALID_YAML_WITH_VERSION, "t".to_string(), None).unwrap();
+        assert_eq!(
+            event.version.as_deref(),
+            Some("v1.2.3"),
+            "version should be auto-populated from plan.version"
+        );
+    }
+
+    #[test]
+    fn test_new_version_defaults_to_none_when_plan_has_no_version() {
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        assert!(
+            event.version.is_none(),
+            "version should be None when plan carries no version field"
+        );
+    }
+
+    #[test]
+    fn test_new_name_auto_populated_from_plan() {
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        assert_eq!(
+            event.name.as_deref(),
+            Some("deploy"),
+            "name should mirror plan.name"
+        );
+    }
+
+    #[test]
+    fn test_raw_kafka_message_fields_accessible() {
+        let msg = RawKafkaMessage {
+            payload: "payload-data".to_string(),
+            topic: "my-topic".to_string(),
+            key: Some("my-key".to_string()),
+        };
+        assert_eq!(msg.payload, "payload-data");
+        assert_eq!(msg.topic, "my-topic");
+        assert_eq!(msg.key.as_deref(), Some("my-key"));
+    }
+
+    #[test]
+    fn test_raw_kafka_message_key_can_be_none() {
+        let msg = RawKafkaMessage {
+            payload: "data".to_string(),
+            topic: "t".to_string(),
+            key: None,
+        };
+        assert!(msg.key.is_none());
+    }
+
+    #[test]
+    fn test_new_key_propagated_to_event() {
+        let event = GenericPlanEvent::new(
+            VALID_YAML,
+            "t".to_string(),
+            Some("correlation-abc".to_string()),
+        )
+        .unwrap();
+        assert_eq!(event.key.as_deref(), Some("correlation-abc"));
+    }
+
+    #[test]
+    fn test_new_key_is_none_when_not_provided() {
+        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        assert!(event.key.is_none());
+    }
+
+    #[test]
+    fn test_new_result_json_payload_returns_err() {
+        // Simulate a GenericPlanResult JSON being consumed back on the same
+        // topic. It must fail to parse as a Plan, providing the loop-break.
+        let result_json = r#"{
+            "id": "01JRESULT000000000000000001",
+            "event_type": "result",
+            "trigger_event_id": "01JTRIGGER000000000000000",
+            "success": true,
+            "summary": "done",
+            "timestamp": "2025-01-01T00:00:00Z"
+        }"#;
+        let err = GenericPlanEvent::new(result_json, "t".to_string(), None);
+        assert!(
+            err.is_err(),
+            "result event JSON must fail to parse as a plan"
+        );
     }
 }

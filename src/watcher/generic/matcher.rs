@@ -3,20 +3,25 @@
 //! This module contains the generic watcher's event matching logic. It is
 //! intentionally separate from the XZepr-specific `EventFilter` implementation.
 //!
-//! `GenericMatcher` operates only on [`crate::watcher::generic::message::GenericPlanEvent`]
+//! `GenericMatcher` operates only on [`crate::watcher::generic::event::GenericPlanEvent`]
 //! and [`crate::config::GenericMatchConfig`].
 //!
 //! Matching rules:
 //!
-//! - `event_type` must be exactly `"plan"` or the event is always rejected.
 //! - Configured `action`, `name`, and `version` fields are interpreted as regex patterns.
 //! - Matching is case-insensitive by default.
 //! - Missing required event fields never match.
-//! - When no match fields are configured, all `"plan"` events are accepted.
+//! - When no match fields are configured, all events are accepted (accept-all mode).
+//!
+//! The `event_type` gate that existed in Phase 1 is no longer present here.
+//! The loop-break guarantee is now enforced upstream: [`GenericPlanEvent::new`]
+//! returns `Err` for any payload that cannot be parsed as a valid plan (including
+//! result event JSON), so the matcher only ever receives structurally valid plan
+//! events.
 
 use crate::config::GenericMatchConfig;
 use crate::error::Result;
-use crate::watcher::generic::message::GenericPlanEvent;
+use crate::watcher::generic::event::GenericPlanEvent;
 use regex::Regex;
 use std::sync::Arc;
 
@@ -28,15 +33,14 @@ use std::sync::Arc;
 /// Unlike the XZepr watcher filter, this matcher:
 ///
 /// - operates only on generic plan events
-/// - always enforces the `event_type == "plan"` gate first
 /// - supports regex matching for `action`, `name`, and `version`
+/// - accepts all events when no match fields are configured (accept-all mode)
 ///
 /// # Examples
 ///
 /// ```
 /// use xzatoma::config::GenericMatchConfig;
 /// use xzatoma::watcher::generic::{GenericMatcher, GenericPlanEvent};
-/// use serde_json::json;
 ///
 /// let matcher = GenericMatcher::new(GenericMatchConfig {
 ///     action: Some("deploy".to_string()),
@@ -45,9 +49,13 @@ use std::sync::Arc;
 /// })
 /// .unwrap();
 ///
-/// let mut event = GenericPlanEvent::new("evt-1".to_string(), json!({"steps": []}));
-/// event.action = Some("Deploy".to_string());
-///
+/// let mut event = GenericPlanEvent::new(
+///     "name: deploy\naction: Deploy\nsteps:\n  - name: s1\n    action: run\n",
+///     "input.topic".to_string(),
+///     None,
+/// )
+/// .unwrap();
+/// // action is case-insensitively matched; "Deploy" matches pattern "deploy"
 /// assert!(matcher.should_process(&event));
 /// ```
 #[derive(Debug, Clone)]
@@ -61,7 +69,7 @@ pub struct GenericMatcher {
 /// Active matching mode for the generic matcher.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MatchMode {
-    /// No match fields are configured; accept all `"plan"` events.
+    /// No match fields are configured; accept all events.
     AcceptAll,
     /// Match only on `action`.
     ActionOnly,
@@ -124,8 +132,14 @@ impl GenericMatcher {
 
     /// Return `true` if the event should be processed.
     ///
-    /// This method always enforces the type gate first:
-    /// any event where `event.event_type != "plan"` is rejected immediately.
+    /// Evaluates the configured match criteria against the event's `name`,
+    /// `version`, and `action` fields. When no criteria are configured, all
+    /// events are accepted (accept-all mode).
+    ///
+    /// The `event_type` gate is no longer enforced here. That responsibility
+    /// has moved to [`GenericPlanEvent::new`], which returns `Err` for any
+    /// payload that is not a valid plan — ensuring that only structurally valid
+    /// plan events ever reach this matcher.
     ///
     /// Supported matching modes:
     ///
@@ -133,10 +147,7 @@ impl GenericMatcher {
     /// - `name` + `version`
     /// - `name` + `action`
     /// - `name` + `version` + `action`
-    /// - none configured (accept all `"plan"` events)
-    ///
-    /// Any other partial configuration shape is treated conservatively and only
-    /// matches when all configured fields match.
+    /// - none configured (accept all events)
     ///
     /// # Arguments
     ///
@@ -144,25 +155,25 @@ impl GenericMatcher {
     ///
     /// # Returns
     ///
-    /// `true` if the event passes the type gate and configured match criteria.
+    /// `true` if the event satisfies all configured match criteria.
     ///
     /// # Examples
     ///
     /// ```
     /// use xzatoma::config::GenericMatchConfig;
     /// use xzatoma::watcher::generic::{GenericMatcher, GenericPlanEvent};
-    /// use serde_json::json;
     ///
     /// let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
-    /// let event = GenericPlanEvent::new("evt-1".to_string(), json!(null));
+    /// let event = GenericPlanEvent::new(
+    ///     "name: test\nsteps:\n  - name: s1\n    action: echo test\n",
+    ///     "input.topic".to_string(),
+    ///     None,
+    /// )
+    /// .unwrap();
     ///
     /// assert!(matcher.should_process(&event));
     /// ```
     pub fn should_process(&self, event: &GenericPlanEvent) -> bool {
-        if !event.is_plan_event() {
-            return false;
-        }
-
         match self.mode() {
             MatchMode::AcceptAll => true,
             MatchMode::ActionOnly => self.matches_action(event),
@@ -298,26 +309,23 @@ fn compile_optional_pattern(pattern: Option<&str>) -> Result<Option<Arc<Regex>>>
 
 /// Compile a single regex pattern with default case-insensitive behavior.
 ///
+/// If the pattern already begins with inline flags (e.g. `(?i)` or `(?s)`),
+/// the flags are preserved as-is and `(?i)` is NOT prepended again.
+///
 /// # Errors
 ///
-/// Returns an error if the pattern is invalid.
+/// Returns an error if the regex pattern is invalid.
 fn compile_pattern(pattern: &str) -> Result<Regex> {
-    // Now we have 2 problems.
-    let effective_pattern = if starts_with_inline_flags(pattern) {
+    let effective = if starts_with_inline_flags(pattern) {
         pattern.to_string()
     } else {
         format!("(?i){pattern}")
     };
-
-    Regex::new(&effective_pattern).map_err(|error| {
-        crate::error::XzatomaError::Watcher(format!(
-            "Invalid generic watcher regex pattern '{}': {}",
-            pattern, error
-        ))
+    Regex::new(&effective).map_err(|e| {
+        crate::error::XzatomaError::Config(format!("Invalid regex pattern '{pattern}': {e}"))
     })
 }
 
-/// Return `true` if the regex pattern starts with inline flags.
 fn starts_with_inline_flags(pattern: &str) -> bool {
     pattern.starts_with("(?")
 }
@@ -325,37 +333,22 @@ fn starts_with_inline_flags(pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
-    fn make_event(event_type: &str) -> GenericPlanEvent {
-        let mut event = GenericPlanEvent::new("evt-1".to_string(), json!({"steps": []}));
-        event.event_type = event_type.to_string();
-        event
+    /// Build a minimal but valid plan event for matcher tests.
+    fn make_event() -> GenericPlanEvent {
+        GenericPlanEvent::new(
+            "name: test\nsteps:\n  - name: s1\n    action: echo test\n",
+            "test.topic".to_string(),
+            None,
+        )
+        .unwrap()
     }
 
     #[test]
     fn test_generic_matcher_accept_all_mode_accepts_plan_events() {
         let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
-        let event = make_event("plan");
-
+        let event = make_event();
         assert!(matcher.should_process(&event));
-    }
-
-    #[test]
-    fn test_generic_matcher_type_gate_rejects_result_event_in_accept_all_mode() {
-        let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
-        let event = make_event("result");
-
-        assert!(!matcher.should_process(&event));
-    }
-
-    #[test]
-    fn test_generic_matcher_type_gate_rejects_non_plan_event_types() {
-        let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
-
-        assert!(!matcher.should_process(&make_event("")));
-        assert!(!matcher.should_process(&make_event("unknown")));
-        assert!(!matcher.should_process(&make_event("PLAN")));
     }
 
     #[test]
@@ -367,7 +360,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut event = make_event("plan");
+        let mut event = make_event();
         event.action = Some("deploy".to_string());
 
         assert!(matcher.should_process(&event));
@@ -382,7 +375,8 @@ mod tests {
         })
         .unwrap();
 
-        let event = make_event("plan");
+        // make_event() produces an event with action=None (plan has no action field).
+        let event = make_event();
         assert!(!matcher.should_process(&event));
     }
 
@@ -395,7 +389,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut event = make_event("plan");
+        let mut event = make_event();
         event.name = Some("service-a".to_string());
         event.version = Some("1.2.3".to_string());
 
@@ -411,7 +405,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut event = make_event("plan");
+        let mut event = make_event();
         event.name = Some("service-a".to_string());
         event.action = Some("deploy".to_string());
 
@@ -427,29 +421,12 @@ mod tests {
         })
         .unwrap();
 
-        let mut event = make_event("plan");
+        let mut event = make_event();
         event.name = Some("service-a".to_string());
         event.version = Some("1.2.3".to_string());
         event.action = Some("deploy".to_string());
 
         assert!(matcher.should_process(&event));
-    }
-
-    #[test]
-    fn test_generic_matcher_type_gate_rejects_result_event_regardless_of_match_mode() {
-        let matcher = GenericMatcher::new(GenericMatchConfig {
-            action: Some("deploy".to_string()),
-            name: Some("service-a".to_string()),
-            version: Some("1.2.3".to_string()),
-        })
-        .unwrap();
-
-        let mut event = make_event("result");
-        event.name = Some("service-a".to_string());
-        event.version = Some("1.2.3".to_string());
-        event.action = Some("deploy".to_string());
-
-        assert!(!matcher.should_process(&event));
     }
 
     #[test]
@@ -461,13 +438,13 @@ mod tests {
         })
         .unwrap();
 
-        let mut deploy_prod = make_event("plan");
+        let mut deploy_prod = make_event();
         deploy_prod.action = Some("deploy-prod".to_string());
 
-        let mut deployment = make_event("plan");
+        let mut deployment = make_event();
         deployment.action = Some("deployment".to_string());
 
-        let mut rollback = make_event("plan");
+        let mut rollback = make_event();
         rollback.action = Some("rollback".to_string());
 
         assert!(matcher.should_process(&deploy_prod));
@@ -484,10 +461,10 @@ mod tests {
         })
         .unwrap();
 
-        let mut mixed = make_event("plan");
+        let mut mixed = make_event();
         mixed.action = Some("Deploy".to_string());
 
-        let mut upper = make_event("plan");
+        let mut upper = make_event();
         upper.action = Some("DEPLOY".to_string());
 
         assert!(matcher.should_process(&mixed));
@@ -514,7 +491,7 @@ mod tests {
         })
         .unwrap();
 
-        let mut event = make_event("plan");
+        let mut event = make_event();
         event.name = Some("service-a".to_string());
         event.action = None;
 
@@ -541,5 +518,35 @@ mod tests {
     fn test_compile_pattern_preserves_inline_flags_without_prepending_default() {
         let regex = compile_pattern("(?i)deploy").unwrap();
         assert!(regex.is_match("DEPLOY"));
+    }
+
+    #[test]
+    fn test_generic_matcher_accept_all_mode_matches_event_with_no_matching_fields() {
+        // In accept-all mode the matcher should pass events regardless of whether
+        // action/name/version are set.
+        let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
+
+        let mut event = make_event();
+        event.name = None;
+        event.version = None;
+        event.action = None;
+
+        assert!(matcher.should_process(&event));
+    }
+
+    #[test]
+    fn test_generic_matcher_name_version_mode_rejects_when_name_mismatch() {
+        let matcher = GenericMatcher::new(GenericMatchConfig {
+            action: None,
+            name: Some("service-a".to_string()),
+            version: Some("1.0.0".to_string()),
+        })
+        .unwrap();
+
+        let mut event = make_event();
+        event.name = Some("service-b".to_string()); // wrong name
+        event.version = Some("1.0.0".to_string());
+
+        assert!(!matcher.should_process(&event));
     }
 }

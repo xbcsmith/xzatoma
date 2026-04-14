@@ -9,13 +9,20 @@ use std::fs;
 use std::path::Path;
 
 /// Execution Plan
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     /// Plan name (title)
     pub name: String,
     /// Optional plan description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional version label used by the generic watcher for version-based event matching.
+    ///
+    /// When set, this value is matched against the `version` field of an incoming
+    /// `GenericPlanEvent`. Set to `None` to disable version-based matching; the plan
+    /// remains eligible for name-based or action-based matching by the watcher.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     /// Optional action label used by the generic watcher for event-to-plan matching.
     ///
     /// When set, this value is matched against the `action` field of an incoming
@@ -31,7 +38,7 @@ pub struct Plan {
 }
 
 /// A single step in a plan
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanStep {
     /// Step name/title
     pub name: String,
@@ -48,6 +55,7 @@ impl Plan {
         Self {
             name,
             description: None,
+            version: None,
             action: None,
             steps,
         }
@@ -61,6 +69,51 @@ impl Plan {
     /// If plan has no steps
     pub fn is_empty(&self) -> bool {
         self.steps.is_empty()
+    }
+
+    /// Format the plan as an instruction prompt for the agent executor.
+    ///
+    /// Produces a human-readable task description containing the plan name and all
+    /// step names and actions in order. This string is used by
+    /// [`GenericEventHandler`](crate::watcher::generic::event_handler::GenericEventHandler)
+    /// as the prompt passed to the agent when executing a plan received over Kafka.
+    ///
+    /// # Returns
+    ///
+    /// A formatted multi-line instruction string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::plan::{Plan, PlanStep};
+    ///
+    /// let plan = Plan {
+    ///     name: "Deploy Service".to_string(),
+    ///     description: None,
+    ///     version: None,
+    ///     action: None,
+    ///     steps: vec![
+    ///         PlanStep::new("build".to_string()).with_action("cargo build --release".to_string()),
+    ///         PlanStep::new("deploy".to_string()).with_action("kubectl apply -f deploy.yaml".to_string()),
+    ///     ],
+    /// };
+    ///
+    /// let instruction = plan.to_instruction();
+    /// assert!(instruction.contains("Deploy Service"));
+    /// assert!(instruction.contains("cargo build --release"));
+    /// assert!(instruction.contains("kubectl apply -f deploy.yaml"));
+    /// ```
+    pub fn to_instruction(&self) -> String {
+        let steps_s = self
+            .steps
+            .iter()
+            .map(|s| format!("- {}: {}", s.name, s.action))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
+            self.name, steps_s
+        )
     }
 }
 
@@ -91,6 +144,53 @@ impl PlanStep {
 pub struct PlanParser;
 
 impl PlanParser {
+    /// Parse a plan from a raw string, attempting JSON then YAML format.
+    ///
+    /// This is the primary entry point for parsing inbound Kafka message payloads
+    /// into [`Plan`] values. When the trimmed content begins with `{`, JSON is
+    /// attempted first; all other content is parsed as YAML (which also handles
+    /// valid JSON that does not start with `{`). Validation is performed as part
+    /// of each format's parser.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - Raw plan text in YAML or JSON format
+    ///
+    /// # Returns
+    ///
+    /// A validated [`Plan`] on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the content cannot be parsed or if the parsed plan
+    /// fails validation (empty name, no steps, or a step with no action).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::plan::PlanParser;
+    ///
+    /// let yaml = "name: Deploy\nsteps:\n  - name: s1\n    action: echo ok\n";
+    /// let plan = PlanParser::parse_string(yaml).unwrap();
+    /// assert_eq!(plan.name, "Deploy");
+    ///
+    /// let json = r#"{"name":"Deploy","steps":[{"name":"s1","action":"echo ok"}]}"#;
+    /// let plan2 = PlanParser::parse_string(json).unwrap();
+    /// assert_eq!(plan2.name, "Deploy");
+    /// ```
+    pub fn parse_string(content: &str) -> Result<Plan> {
+        let trimmed = content.trim();
+        // JSON objects start with '{'; try JSON parsing first for those.
+        if trimmed.starts_with('{') {
+            if let Ok(plan) = Self::from_json(content) {
+                return Ok(plan);
+            }
+        }
+        // Default to YAML parsing for all other content (YAML is a superset of JSON,
+        // so valid JSON without a leading '{' is also handled here).
+        Self::from_yaml(content)
+    }
+
     /// Parse a plan from a file.
     ///
     /// Supports `.yaml`, `.yml`, `.json`, and `.md` extensions.
@@ -228,6 +328,7 @@ impl PlanParser {
         let plan = Plan {
             name,
             description,
+            version: None,
             action: None,
             steps,
         };
@@ -405,6 +506,7 @@ steps:
         let plan = Plan {
             name: "".to_string(),
             description: None,
+            version: None,
             action: None,
             steps: vec![PlanStep::new("s".to_string()).with_action("a".to_string())],
         };
@@ -414,6 +516,7 @@ steps:
         let plan2 = Plan {
             name: "n".to_string(),
             description: None,
+            version: None,
             action: None,
             steps: Vec::new(),
         };
@@ -423,6 +526,7 @@ steps:
         let plan3 = Plan {
             name: "n".to_string(),
             description: None,
+            version: None,
             action: None,
             steps: vec![PlanStep::new("step".to_string())],
         };
@@ -448,6 +552,83 @@ steps:
         };
         let loaded = load_plan(p.to_str().unwrap()).await.unwrap();
         assert_eq!(loaded.name, "Quick Plan");
+    }
+
+    #[test]
+    fn test_plan_version_field_optional_roundtrip() {
+        // A plan without `version` must parse successfully.
+        let yaml_no_version =
+            "name: No Version Plan\nsteps:\n  - name: s1\n    action: do something\n";
+        let plan = PlanParser::from_yaml(yaml_no_version).unwrap();
+        assert_eq!(
+            plan.version, None,
+            "version should default to None when absent"
+        );
+
+        // A plan with `version` must round-trip through YAML correctly.
+        let yaml_with_version = "name: Versioned Plan\nversion: v2.1.0\nsteps:\n  - name: s1\n    action: run deployment\n";
+        let plan2 = PlanParser::from_yaml(yaml_with_version).unwrap();
+        assert_eq!(
+            plan2.version.as_deref(),
+            Some("v2.1.0"),
+            "version field should deserialize correctly"
+        );
+    }
+
+    #[test]
+    fn test_parse_string_parses_yaml() {
+        let yaml = "name: YAML Plan\nsteps:\n  - name: s1\n    action: echo yaml\n";
+        let plan = PlanParser::parse_string(yaml).unwrap();
+        assert_eq!(plan.name, "YAML Plan");
+        assert_eq!(plan.steps.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_string_parses_json() {
+        let json = r#"{"name":"JSON Plan","steps":[{"name":"s1","action":"echo json"}]}"#;
+        let plan = PlanParser::parse_string(json).unwrap();
+        assert_eq!(plan.name, "JSON Plan");
+        assert_eq!(plan.steps[0].name, "s1");
+    }
+
+    #[test]
+    fn test_parse_string_returns_err_for_invalid_content() {
+        let result = PlanParser::parse_string("this is not a plan");
+        assert!(result.is_err(), "invalid content should return Err");
+    }
+
+    #[test]
+    fn test_parse_string_returns_err_for_empty_steps() {
+        let result = PlanParser::parse_string("name: Empty\nsteps: []\n");
+        assert!(result.is_err(), "plan with no steps should return Err");
+    }
+
+    #[test]
+    fn test_to_instruction_contains_plan_name_and_steps() {
+        let plan = Plan::new(
+            "Deploy App".to_string(),
+            vec![
+                PlanStep::new("build".to_string()).with_action("cargo build".to_string()),
+                PlanStep::new("push".to_string()).with_action("docker push".to_string()),
+            ],
+        );
+        let instruction = plan.to_instruction();
+        assert!(
+            instruction.contains("Deploy App"),
+            "instruction must contain plan name"
+        );
+        assert!(
+            instruction.contains("cargo build"),
+            "instruction must contain step action"
+        );
+        assert!(
+            instruction.contains("docker push"),
+            "instruction must contain step action"
+        );
+        assert!(
+            instruction.contains("Execute this plan"),
+            "instruction must have header"
+        );
     }
 
     #[test]
