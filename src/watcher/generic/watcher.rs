@@ -2,7 +2,7 @@
 //!
 //! This module provides the generic watcher implementation that consumes
 //! generic plan events, evaluates them with [`GenericEventHandler`], and
-//! publishes [`GenericPlanResult`] messages through [`GenericResultProducer`].
+//! publishes [`GenericPlanResult`] messages through [`ResultProducerTrait`].
 //!
 //! The watcher builds an `rdkafka::consumer::StreamConsumer` from the
 //! configured Kafka settings and enters a consume loop that dispatches
@@ -27,8 +27,8 @@ use crate::error::Result;
 use crate::watcher::generic::event::RawKafkaMessage;
 use crate::watcher::generic::event_handler::{GenericEventHandler, GenericTask};
 use crate::watcher::generic::matcher::GenericMatcher;
-use crate::watcher::generic::producer::GenericResultProducer;
 use crate::watcher::generic::result_event::GenericPlanResult;
+use crate::watcher::generic::result_producer::{GenericResultProducer, ResultProducerTrait};
 
 use futures::StreamExt;
 use rdkafka::consumer::{Consumer, StreamConsumer};
@@ -116,7 +116,7 @@ pub struct GenericWatcher {
     config: Arc<Config>,
     kafka_config: KafkaWatcherConfig,
     event_handler: GenericEventHandler,
-    producer: Arc<GenericResultProducer>,
+    producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
     published_results: Arc<Mutex<Vec<GenericPlanResult>>>,
@@ -184,7 +184,7 @@ impl GenericWatcher {
 
         let event_handler = GenericEventHandler::new(Some(matcher), None);
 
-        let producer = Arc::new(
+        let producer: Arc<dyn ResultProducerTrait> = Arc::new(
             GenericResultProducer::new(&kafka_config)
                 .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
         );
@@ -222,7 +222,7 @@ impl GenericWatcher {
         info!(
             brokers = %self.kafka_config.brokers,
             topic = %self.kafka_config.topic,
-            output_topic = %self.producer.output_topic(),
+            output_topic = %self.output_topic(),
             matcher = %self.matcher_summary(),
             dry_run = self.dry_run,
             "Starting generic watcher service"
@@ -451,7 +451,10 @@ impl GenericWatcher {
     ///
     /// The effective output topic.
     pub fn output_topic(&self) -> &str {
-        self.producer.output_topic()
+        self.kafka_config
+            .output_topic
+            .as_deref()
+            .unwrap_or(self.kafka_config.topic.as_str())
     }
 
     /// Return a snapshot of published results recorded by the watcher.

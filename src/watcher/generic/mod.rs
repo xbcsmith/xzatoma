@@ -12,7 +12,9 @@
 //! - [`event_handler`]: Five-step event pipeline ([`GenericEventHandler`]) and
 //!   task type ([`GenericTask`])
 //! - [`matcher`]: Semver-aware event matching for generic plan events
-//! - [`producer`]: Kafka result producer for generic watcher results
+//! - [`result_producer`]: Producer abstraction ([`ResultProducerTrait`]) and
+//!   implementations ([`GenericResultProducer`], [`FakeResultProducer`],
+//!   [`BufferedResultProducer`]) for generic watcher results
 //! - [`watcher`]: Core generic watcher service and dry-run processing flow
 //!
 //! # Loop prevention
@@ -96,14 +98,17 @@
 pub mod event;
 pub mod event_handler;
 pub mod matcher;
-pub mod producer;
 pub mod result_event;
+pub mod result_producer;
 pub mod watcher;
 
 pub use crate::config::GenericMatchConfig;
 pub use event::{GenericPlanEvent, RawKafkaMessage};
 pub use event_handler::{GenericEventHandler, GenericTask};
 pub use matcher::GenericMatcher;
-pub use producer::GenericResultProducer;
 pub use result_event::GenericPlanResult;
+pub use result_producer::{
+    BufferedResultProducer, FakeResultProducer, GenericResultProducer, ResultProducerTrait,
+    DEFAULT_DLQ_MAX_BUFFERED,
+};
 pub use watcher::GenericWatcher;
