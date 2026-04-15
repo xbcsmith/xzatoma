@@ -11,7 +11,7 @@
 //! - [`result_event`]: Outbound plan result type ([`GenericPlanResult`])
 //! - [`event_handler`]: Five-step event pipeline ([`GenericEventHandler`]) and
 //!   task type ([`GenericTask`])
-//! - [`matcher`]: Regex-based event matching for generic plan events
+//! - [`matcher`]: Semver-aware event matching for generic plan events
 //! - [`producer`]: Kafka result producer for generic watcher results
 //! - [`watcher`]: Core generic watcher service and dry-run processing flow
 //!
@@ -42,6 +42,30 @@
 //! - `name` + `action`
 //! - `name` + `version` + `action`
 //! - accept-all for all valid plan events when no match fields are configured
+//!
+//! # Accept-all semantics
+//!
+//! A [`GenericMatcher`] constructed from a [`crate::config::GenericMatchConfig`]
+//! where all three fields (`action`, `name`, `version`) are `None` operates in
+//! **accept-all** mode. In this mode every structurally valid plan event that
+//! reaches the matcher is passed to the executor without any predicate check.
+//!
+//! Operators must be aware that an empty match config causes the watcher to
+//! process **every** plan event consumed from the input topic. This is useful
+//! for single-purpose watchers that are dedicated to one topic, but it can
+//! lead to unintended execution if multiple plan types are published to the
+//! same topic. Use [`GenericMatcher::has_predicates`] to confirm at startup
+//! that at least one predicate is configured when selective matching is
+//! required.
+//!
+//! # Version matching
+//!
+//! The `version` predicate uses [`crate::watcher::version_matches`] rather
+//! than a regex. This allows operators to write standard semver constraints
+//! such as `">=2.0.0"` or `"^1"`. When the configured constraint cannot be
+//! parsed as a [`semver::VersionReq`], the function falls back to
+//! case-insensitive exact string equality so that plain version tags continue
+//! to work. The `action` and `name` predicates continue to use regex matching.
 //!
 //! # Examples
 //!

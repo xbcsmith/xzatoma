@@ -63,6 +63,9 @@ colored = "2.1"
 # Regex for validation
 regex = "1.10"
 
+# Semantic versioning for version constraint matching
+semver = "1.0"
+
 # Kafka client for watcher consumer, producer, and topic admin
 rdkafka = { version = "0.36", features = ["cmake-build", "ssl"] }
 
