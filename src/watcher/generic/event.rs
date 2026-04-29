@@ -1,11 +1,11 @@
-//! Inbound plan event and raw Kafka message types for the generic watcher.
+//! Inbound plan event type for the generic Kafka watcher.
 //!
-//! This module defines two closely related types:
+//! This module defines [`GenericPlanEvent`]: the parsed, validated, in-memory
+//! representation of an inbound plan trigger.
 //!
-//! - [`RawKafkaMessage`]: the bridge between the raw Kafka byte stream and the
-//!   parsed plan event.
-//! - [`GenericPlanEvent`]: the parsed, validated, in-memory representation of
-//!   an inbound plan trigger.
+//! The raw Kafka message boundary type [`RawKafkaMessage`] lives in
+//! [`crate::watcher::generic::consumer`] and is re-exported from
+//! [`crate::watcher::generic`].
 //!
 //! # Parsing model
 //!
@@ -34,7 +34,7 @@
 //! # Examples
 //!
 //! ```
-//! use xzatoma::watcher::generic::event::{GenericPlanEvent, RawKafkaMessage};
+//! use xzatoma::watcher::generic::event::GenericPlanEvent;
 //!
 //! let yaml = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply -f manifests/\n";
 //! let event = GenericPlanEvent::new(yaml, "input.topic".to_string(), None).unwrap();
@@ -45,35 +45,6 @@
 use crate::error::Result;
 use crate::tools::plan::{Plan, PlanParser};
 use chrono::{DateTime, Utc};
-
-/// A raw Kafka message payload before plan parsing.
-///
-/// `RawKafkaMessage` carries the raw Kafka payload string alongside the source
-/// topic and optional message key. It is the primary input to
-/// [`GenericEventHandler::handle`](crate::watcher::generic::event_handler::GenericEventHandler::handle).
-///
-/// # Examples
-///
-/// ```
-/// use xzatoma::watcher::generic::event::RawKafkaMessage;
-///
-/// let msg = RawKafkaMessage {
-///     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo hi\n".to_string(),
-///     topic: "plans.input".to_string(),
-///     key: Some("correlation-123".to_string()),
-/// };
-/// assert_eq!(msg.topic, "plans.input");
-/// assert!(msg.key.is_some());
-/// ```
-#[derive(Debug, Clone)]
-pub struct RawKafkaMessage {
-    /// The raw Kafka message payload (UTF-8 encoded).
-    pub payload: String,
-    /// The Kafka topic from which this message was consumed.
-    pub topic: String,
-    /// Optional Kafka message key used as the correlation key for result tracking.
-    pub key: Option<String>,
-}
 
 /// A parsed and validated inbound plan event for the generic Kafka watcher.
 ///
@@ -203,6 +174,7 @@ impl GenericPlanEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::watcher::generic::consumer::RawKafkaMessage;
 
     // ---------------------------------------------------------------------------
     // Shared test payloads

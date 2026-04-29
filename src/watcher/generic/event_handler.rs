@@ -26,7 +26,7 @@
 //!
 //! ```
 //! use xzatoma::config::GenericMatchConfig;
-//! use xzatoma::watcher::generic::event::RawKafkaMessage;
+//! use xzatoma::watcher::generic::RawKafkaMessage;
 //! use xzatoma::watcher::generic::event_handler::GenericEventHandler;
 //!
 //! # #[tokio::main]
@@ -50,7 +50,8 @@
 
 use crate::error::Result;
 use crate::tools::plan::{Plan, PlanParser};
-use crate::watcher::generic::event::{GenericPlanEvent, RawKafkaMessage};
+use crate::watcher::generic::consumer::RawKafkaMessage;
+use crate::watcher::generic::event::GenericPlanEvent;
 use crate::watcher::generic::matcher::GenericMatcher;
 use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
@@ -67,7 +68,7 @@ use tracing::{debug, info};
 /// # Examples
 ///
 /// ```
-/// use xzatoma::watcher::generic::event::RawKafkaMessage;
+/// use xzatoma::watcher::generic::RawKafkaMessage;
 /// use xzatoma::watcher::generic::event_handler::GenericEventHandler;
 ///
 /// # #[tokio::main]
@@ -191,7 +192,7 @@ impl GenericEventHandler {
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::watcher::generic::event::RawKafkaMessage;
+    /// use xzatoma::watcher::generic::RawKafkaMessage;
     /// use xzatoma::watcher::generic::event_handler::GenericEventHandler;
     ///
     /// # #[tokio::main]

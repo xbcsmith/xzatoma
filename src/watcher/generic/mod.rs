@@ -6,8 +6,10 @@
 //!
 //! # Components
 //!
-//! - [`event`]: Inbound plan event type ([`GenericPlanEvent`]) and raw message
-//!   bridge ([`RawKafkaMessage`])
+//! - [`consumer`]: Consumer abstraction ([`GenericConsumerTrait`]) and
+//!   implementations ([`RealGenericConsumer`], [`FakeGenericConsumer`]) plus
+//!   the raw message bridge ([`RawKafkaMessage`])
+//! - [`event`]: Inbound plan event type ([`GenericPlanEvent`])
 //! - [`result_event`]: Outbound plan result type ([`GenericPlanResult`])
 //! - [`event_handler`]: Five-step event pipeline ([`GenericEventHandler`]) and
 //!   task type ([`GenericTask`])
@@ -95,6 +97,7 @@
 //! [`Plan`]: crate::tools::plan::Plan
 //! [`PlanParser::parse_string`]: crate::tools::plan::PlanParser::parse_string
 
+pub mod consumer;
 pub mod event;
 pub mod event_handler;
 pub mod matcher;
@@ -103,7 +106,10 @@ pub mod result_producer;
 pub mod watcher;
 
 pub use crate::config::GenericMatchConfig;
-pub use event::{GenericPlanEvent, RawKafkaMessage};
+pub use consumer::{
+    FakeGenericConsumer, GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
+};
+pub use event::GenericPlanEvent;
 pub use event_handler::{GenericEventHandler, GenericTask};
 pub use matcher::GenericMatcher;
 pub use result_event::GenericPlanResult;
