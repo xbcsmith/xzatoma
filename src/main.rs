@@ -197,6 +197,16 @@ async fn main() -> Result<()> {
             commands::mcp::handle_mcp(command, config).await?;
             Ok(())
         }
+        Commands::Agent {
+            provider,
+            model,
+            allow_dangerous,
+            working_dir,
+        } => {
+            commands::agent::handle_agent(provider, model, allow_dangerous, working_dir, config)
+                .await?;
+            Ok(())
+        }
         Commands::Acp { command } => {
             tracing::info!("Starting ACP command");
             match &command {
@@ -244,6 +254,6 @@ fn init_tracing() {
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 }

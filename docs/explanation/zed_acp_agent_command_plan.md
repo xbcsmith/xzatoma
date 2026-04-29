@@ -70,6 +70,12 @@ Resolved product decisions:
 - `docs/reference/acp_api.md`, `docs/reference/acp_configuration.md`, and
   `docs/how-to/run_xzatoma_as_an_acp_server.md` document the HTTP ACP server,
   not the Zed stdio protocol.
+- Zed's ACP client implementation exposes IDE-side integration surfaces that
+  XZatoma should explicitly support: editor-aware text-file reads and writes,
+  IDE terminal creation and lifecycle operations, user permission requests, rich
+  tool-call rendering with metadata, diffs, raw input, raw output, file
+  locations, terminal output, available commands, session mode selection,
+  session config option selection, and model selection.
 - Existing demos under `demos/` cover chat, MCP, provider-specific flows, and
   watchers, but no Zed ACP subprocess integration.
 
@@ -96,6 +102,18 @@ Resolved product decisions:
 - Provider/model vision support varies. The ACP layer should accept image
   content, but execution should fail clearly when the selected provider/model
   cannot process images.
+- Zed exposes IDE-side capabilities to ACP agents, including reading text files,
+  writing text files, creating terminals, waiting for terminal output,
+  requesting permission, selecting models, selecting session modes, setting
+  session config options, and rendering tool calls with diffs, terminals,
+  locations, raw input, raw output, and command metadata. XZatoma needs explicit
+  support for these ACP client/IDE integration surfaces instead of relying only
+  on its local file and terminal tools.
+- Zed's chat window can display mode selectors and config option selectors when
+  an ACP agent returns `SessionModeState` and `SessionConfigOption` data from
+  session creation or load/resume responses. XZatoma must expose modes such as
+  planning, write, safe, and full autonomous operation through those protocol
+  surfaces so the user can change XZatoma runtime behavior directly from Zed.
 - Session state must survive multiple prompt requests during one subprocess
   lifetime and should resume from SQLite when Zed restarts the subprocess for
   the same workspace.
@@ -609,9 +627,283 @@ Add protocol integration tests for:
 - Provider/model overrides from CLI are reflected in session state.
 - Model listing failures do not prevent Zed from opening an agent session.
 
-### Phase 5: Prompt Execution, Streaming Updates, Queueing, and Cancellation
+### Phase 5: Zed IDE Tooling and Runtime Controls
 
-#### Task 5.1 Add an agent execution event layer
+#### Task 5.1 Review and map Zed ACP client capabilities
+
+Review Zed's ACP client behavior and map each IDE capability to XZatoma support.
+
+Zed currently initializes ACP agents with client capabilities for:
+
+- Reading text files from the open project.
+- Writing text files through the editor buffer system.
+- Creating terminals in the IDE.
+- Reading terminal output.
+- Waiting for terminal exit.
+- Killing and releasing terminals.
+- Requesting permission from the user.
+- Receiving session notifications for tool calls, diffs, terminals, mode
+  changes, config option changes, available commands, and session metadata.
+
+XZatoma should support these capabilities intentionally. The stdio agent must
+prefer Zed client requests when the user is operating through Zed and should
+keep local filesystem/terminal fallback behavior for non-Zed contexts only when
+it is safe and explicitly configured.
+
+#### Task 5.2 Add an IDE tool bridge abstraction
+
+Add an IDE tool bridge layer under the ACP stdio implementation that can call
+Zed-provided client methods through the active ACP connection.
+
+The bridge should support:
+
+- `read_text_file` for editor-aware file reads.
+- `write_text_file` for editor-aware file writes and diff display.
+- `create_terminal` for commands that should appear in Zed's terminal UI.
+- `terminal_output` for reading terminal content.
+- `wait_for_terminal_exit` for command completion.
+- `kill_terminal` and `release_terminal` for cleanup.
+- `request_permission` for user approval decisions in the Zed UI.
+
+The bridge should expose a small internal interface that XZatoma tools can use
+without depending directly on the ACP SDK types everywhere.
+
+#### Task 5.3 Add Zed-aware tools to XZatoma's tool registry
+
+Add tools that use the IDE bridge when an ACP stdio session is active.
+
+Recommended initial tools:
+
+- `ide_read_text_file`: read a file through Zed's current project buffers.
+- `ide_write_text_file`: write a full text file through Zed so edits appear in
+  the editor and are saved consistently.
+- `ide_open_terminal`: create a terminal command visible in Zed.
+- `ide_terminal_output`: inspect the current terminal output.
+- `ide_wait_for_terminal_exit`: wait for a command to finish.
+- `ide_kill_terminal`: terminate a running IDE terminal command.
+- `ide_request_permission`: ask the Zed user to approve a risky operation.
+- `ide_apply_diff`: emit an ACP diff/tool-call update for review before writing,
+  then apply through `ide_write_text_file` when approved.
+
+Keep the tool set generic. These are IDE transport variants of file, terminal,
+permission, and diff operations, not specialized application tools.
+
+#### Task 5.4 Route existing file and terminal operations through the IDE bridge
+
+When `xzatoma agent` is running inside Zed, configure the agent environment so
+standard file and terminal operations can use the IDE bridge.
+
+The routing rules should be explicit:
+
+- Planning/read-only mode can call `read_text_file` and terminal output
+  inspection but must not write files or create destructive terminal commands.
+- Write mode can write files through Zed after satisfying the configured safety
+  policy.
+- Safe mode must request permission through Zed before dangerous writes or
+  commands.
+- Full autonomous mode may perform allowed writes and commands without
+  prompting, subject to workspace and configuration limits.
+- If a Zed client capability is not advertised, fall back only when the fallback
+  is safe and configured; otherwise return a clear tool error.
+
+This routing keeps Zed's editor state, open buffers, diffs, and terminals in
+sync with agent actions.
+
+#### Task 5.5 Advertise XZatoma session modes to Zed
+
+Return `SessionModeState` from `NewSessionResponse`, `LoadSessionResponse`, and
+`ResumeSessionResponse` once those responses are implemented.
+
+Recommended initial modes:
+
+- `planning`: read-only analysis. No file writes and no destructive terminal
+  commands.
+- `write`: file edits and non-destructive terminal commands allowed subject to
+  safety policy.
+- `safe`: write-capable mode that requests Zed user approval for risky actions.
+- `full_autonomous`: write-capable mode that skips confirmations within
+  configured limits.
+
+Choose mode IDs that are stable and lowercase. Mode names and descriptions
+should be clear because Zed displays them in the mode selector.
+
+The current mode should be derived from effective XZatoma configuration and CLI
+flags at session creation time.
+
+#### Task 5.6 Implement `SetSessionModeRequest`
+
+Handle Zed's session mode changes by implementing `SetSessionModeRequest`.
+
+The handler should:
+
+1. Validate the session ID.
+2. Validate the requested mode ID.
+3. Update the session's runtime chat mode, safety mode, and terminal execution
+   mode.
+4. Rebuild or reconfigure the session tool registry if the mode changes tool
+   availability.
+5. Persist the selected mode in ACP stdio session metadata.
+6. Send `CurrentModeUpdate` notifications when the mode changes.
+7. Return a successful response or a protocol error with a clear message.
+
+The mode change must affect subsequent queued prompts. It should not mutate a
+prompt that is already running unless the implementation explicitly supports
+that safely.
+
+#### Task 5.7 Advertise session config options to Zed
+
+Return ACP `SessionConfigOption` entries for settings the user should be able to
+change from the Zed chat window.
+
+Recommended config options:
+
+- Provider/model selection if not fully covered by ACP model state.
+- Safety policy: always confirm, confirm dangerous actions, never confirm.
+- Terminal execution mode: interactive, restricted autonomous, full autonomous.
+- Tool routing: prefer Zed IDE tools, prefer local tools, or require IDE tools.
+- Vision input: enabled or disabled.
+- Subagent delegation: enabled or disabled.
+- MCP tools: enabled or disabled for the session.
+- Max turns for the current session.
+
+Use Zed's select config option UI for discrete values. Keep option IDs stable so
+Zed settings can store defaults.
+
+#### Task 5.8 Implement `SetSessionConfigOptionRequest`
+
+Handle `SetSessionConfigOptionRequest` for every advertised config option.
+
+The handler should:
+
+1. Validate the session ID.
+2. Validate the config option ID and selected value.
+3. Update session runtime state.
+4. Rebuild affected providers, tools, or prompt settings when required.
+5. Persist the setting in ACP stdio session metadata.
+6. Return the full updated config option list.
+7. Send `ConfigOptionUpdate` notifications when options change outside the
+   direct request path.
+
+Invalid values should return protocol errors and leave the previous setting
+unchanged.
+
+#### Task 5.9 Add ACP model selection support
+
+Use Zed's ACP model selector support in addition to the existing provider model
+listing.
+
+The stdio agent should:
+
+- Return `SessionModelState` with available models and current model.
+- Handle `SetSessionModelRequest`.
+- Update the provider/model used for subsequent prompts.
+- Rebuild subagent tool configuration if it depends on the provider.
+- Persist selected model in session metadata.
+- Reject model changes while a prompt is running unless the change can be safely
+  queued for the next prompt.
+
+This allows users to switch models from the Zed chat window without restarting
+the agent subprocess.
+
+#### Task 5.10 Emit rich ACP tool call updates for Zed rendering
+
+Map XZatoma tool execution events to ACP `ToolCall` and `ToolCallUpdate`
+notifications that Zed can render richly.
+
+Tool call notifications should include:
+
+- Stable tool call IDs.
+- Tool kind, such as read, edit, execute, search, or other.
+- Human-readable title.
+- Tool name in ACP metadata using Zed's `tool_name` convention.
+- Locations for file reads and writes when available.
+- Diff content for file edits.
+- Terminal content for IDE terminal commands.
+- Raw input and raw output for debugging.
+- Status transitions from pending to in progress to completed, failed, rejected,
+  or cancelled.
+
+This phase should make Zed's chat UI show XZatoma tool activity as first-class
+IDE interactions instead of plain text logs.
+
+#### Task 5.11 Support available commands in the chat window
+
+Expose ACP available commands for XZatoma capabilities that are useful from the
+Zed chat input.
+
+Recommended commands:
+
+- `mode`: show or change XZatoma mode.
+- `model`: show or change the current model.
+- `safety`: show or change the safety policy.
+- `tools`: summarize available XZatoma and IDE tools.
+- `context`: show current conversation context usage.
+- `summarize`: summarize and compact conversation history.
+- `skills`: list active skills.
+- `mcp`: list connected MCP servers and tools.
+
+Send `AvailableCommandsUpdate` notifications when available commands change due
+to mode, MCP, skills, or provider changes.
+
+#### Task 5.12 Testing Requirements
+
+Add unit tests for:
+
+- Mode definition conversion to ACP `SessionModeState`.
+- Mode changes updating chat mode, safety mode, and terminal execution mode.
+- Config option generation and validation.
+- Config option updates preserving previous values on invalid input.
+- Model state generation and model update validation.
+- IDE tool bridge routing decisions.
+- Tool call metadata, locations, raw input, raw output, diffs, and terminal
+  content mapping.
+- Available command generation.
+
+Add in-memory ACP protocol tests for:
+
+- `NewSessionRequest` returns modes, current mode, models, and config options.
+- `SetSessionModeRequest` changes the current mode and emits
+  `CurrentModeUpdate`.
+- `SetSessionConfigOptionRequest` returns updated config options and emits
+  `ConfigOptionUpdate` when appropriate.
+- `SetSessionModelRequest` changes the current model.
+- Zed client filesystem requests are used when IDE file tools run.
+- Zed client terminal requests are used when IDE terminal tools run.
+- Permission requests are sent to the client for risky operations in safe mode.
+- Tool calls render as ACP tool call notifications with useful metadata.
+- Available commands update when session capabilities change.
+
+#### Task 5.13 Deliverables
+
+- IDE tool bridge abstraction.
+- Zed-aware file, terminal, permission, and diff tools.
+- Tool registry integration for ACP stdio sessions.
+- Session mode definitions and state.
+- `SetSessionModeRequest` handler.
+- Session config option definitions and state.
+- `SetSessionConfigOptionRequest` handler.
+- ACP model state and `SetSessionModelRequest` support.
+- Rich ACP tool call notification mapping.
+- Available command generation and update notifications.
+- Tests for mode, config, model, IDE tools, permissions, and tool rendering.
+
+#### Task 5.14 Success Criteria
+
+- Zed's chat window shows a mode selector for XZatoma sessions.
+- Changing mode in Zed updates XZatoma runtime behavior for subsequent prompts.
+- Zed's config option controls can update safety, terminal, vision, subagent,
+  MCP, and tool-routing settings.
+- Zed's model selector can change the model used by later prompts.
+- File reads and writes can go through Zed's editor-aware client APIs.
+- Terminal commands can appear in Zed's terminal UI.
+- Risky actions can request approval through the Zed UI.
+- XZatoma tool activity renders as rich ACP tool calls with status, metadata,
+  locations, diffs, and terminal output.
+- Existing local CLI behavior remains unchanged outside `xzatoma agent`.
+
+### Phase 6: Prompt Execution, Streaming Updates, Queueing, and Cancellation
+
+#### Task 6.1 Add an agent execution event layer
 
 Refactor `src/agent/core.rs` so `Agent::execute` remains available but delegates
 to a lower-level execution path that can emit events.
@@ -633,7 +925,7 @@ Recommended events:
 Keep existing `Agent::execute` behavior by using a no-op observer and returning
 the same final response string.
 
-#### Task 5.2 Add cancellation-aware execution
+#### Task 6.2 Add cancellation-aware execution
 
 Add an execution path that accepts a `tokio_util::sync::CancellationToken`.
 
@@ -651,7 +943,7 @@ cancellation can interrupt long awaits. If a subprocess or external tool cannot
 be interrupted immediately, stop at the next safe boundary and document the
 limitation.
 
-#### Task 5.3 Implement queued `PromptRequest` handling
+#### Task 6.3 Implement queued `PromptRequest` handling
 
 Handle `PromptRequest` by enqueuing work into the target session's FIFO prompt
 queue.
@@ -672,7 +964,7 @@ The handler should:
 If the queue is full, return a protocol error explaining that the session is
 busy.
 
-#### Task 5.4 Run queued prompt workers
+#### Task 6.4 Run queued prompt workers
 
 Each session's prompt worker should:
 
@@ -688,7 +980,7 @@ Each session's prompt worker should:
 The worker must keep the MCP manager handle alive while prompts execute so MCP
 tools remain callable.
 
-#### Task 5.5 Map XZatoma events to ACP session updates
+#### Task 6.5 Map XZatoma events to ACP session updates
 
 Map XZatoma execution events into ACP session notifications conservatively:
 
@@ -704,7 +996,7 @@ Map XZatoma execution events into ACP session notifications conservatively:
 
 Avoid double-emitting final assistant text.
 
-#### Task 5.6 Implement `CancelNotification`
+#### Task 6.6 Implement `CancelNotification`
 
 Handle cancellation notifications by locating the session's current cancellation
 token and calling `cancel()`.
@@ -716,7 +1008,7 @@ Zed supplies it.
 If no prompt is currently running, record the cancellation request as a no-op
 and log a debug message to stderr. Do not treat it as fatal.
 
-#### Task 5.7 Define stop reason mapping
+#### Task 6.7 Define stop reason mapping
 
 Map XZatoma execution outcomes to ACP stop reasons:
 
@@ -731,7 +1023,7 @@ Map XZatoma execution outcomes to ACP stop reasons:
 Use exact enum values from the `agent-client-protocol` schema during
 implementation.
 
-#### Task 5.8 Testing Requirements
+#### Task 6.8 Testing Requirements
 
 Add unit tests for:
 
@@ -755,7 +1047,7 @@ Add in-memory protocol tests for:
 - Cancellation changes the prompt response to a cancelled stop reason.
 - Multiple prompts for one session complete in arrival order.
 
-#### Task 5.9 Deliverables
+#### Task 6.9 Deliverables
 
 - Evented agent execution.
 - Cancellation-aware execution.
@@ -766,7 +1058,7 @@ Add in-memory protocol tests for:
 - Text and vision prompt tests.
 - Queue ordering tests.
 
-#### Task 5.10 Success Criteria
+#### Task 6.10 Success Criteria
 
 - Zed can send text prompts and receive visible output from XZatoma.
 - Zed can send vision prompts to supported providers/models.
@@ -776,9 +1068,9 @@ Add in-memory protocol tests for:
 - Existing `chat`, `run`, and HTTP ACP execution paths remain backward
   compatible.
 
-### Phase 6: Documentation, Demo, and Quality Gates
+### Phase 7: Documentation, Demo, and Quality Gates
 
-#### Task 6.1 Update ACP documentation
+#### Task 7.1 Update ACP documentation
 
 Update `docs/reference/acp_configuration.md` to distinguish between:
 
@@ -791,7 +1083,7 @@ overrides.
 Update `docs/reference/acp_api.md` to clarify that it describes the HTTP ACP
 API, not the stdio ACP protocol.
 
-#### Task 6.2 Add Zed setup how-to
+#### Task 7.2 Add Zed setup how-to
 
 Create `docs/how-to/zed_acp_agent_setup.md`.
 
@@ -807,7 +1099,7 @@ The guide should include:
 
 Use lowercase underscore filename per project rules.
 
-#### Task 6.3 Add final implementation explanation
+#### Task 7.3 Add final implementation explanation
 
 After implementation, create
 `docs/explanation/zed_acp_agent_command_implementation.md`.
@@ -826,7 +1118,7 @@ The implementation summary should cover:
 Update `docs/explanation/implementations.md` with a link to the new
 implementation document.
 
-#### Task 6.4 Add a Zed ACP demo
+#### Task 7.4 Add a Zed ACP demo
 
 Create `demos/zed_acp/`.
 
@@ -843,7 +1135,7 @@ Recommended contents:
 All YAML files must use `.yaml`. All Markdown files must use lowercase
 underscore names except `README.md`.
 
-#### Task 6.5 Update high-level project docs
+#### Task 7.5 Update high-level project docs
 
 Update `README.md` or the appropriate high-level documentation to mention Zed
 ACP stdio integration.
@@ -854,7 +1146,7 @@ interactive user command.
 Avoid overstating provider vision coverage. Document support as provider/model
 dependent.
 
-#### Task 6.6 Testing Requirements
+#### Task 7.6 Testing Requirements
 
 Prefer in-memory ACP protocol tests for most coverage.
 
@@ -869,7 +1161,7 @@ Ensure documentation and examples use:
 - Lowercase underscore Markdown filenames, except `README.md`.
 - No emojis.
 
-#### Task 6.7 Quality Gates
+#### Task 7.7 Quality Gates
 
 Before considering the implementation complete, run the required project quality
 gates in order:
@@ -887,7 +1179,7 @@ For every changed Markdown file, run:
 If a required tool is unavailable locally, document that explicitly in the final
 implementation notes rather than claiming the gate passed.
 
-#### Task 6.8 Deliverables
+#### Task 7.8 Deliverables
 
 - `docs/reference/acp_configuration.md` updated.
 - `docs/reference/acp_api.md` clarified.
@@ -898,7 +1190,7 @@ implementation notes rather than claiming the gate passed.
 - `demos/zed_acp/` added with safe examples.
 - `README.md` or CLI reference mentions `xzatoma agent`.
 
-#### Task 6.9 Success Criteria
+#### Task 7.9 Success Criteria
 
 - A user can configure Zed to launch `xzatoma agent`.
 - Documentation clearly distinguishes HTTP ACP from stdio ACP.
@@ -916,8 +1208,10 @@ implementation notes rather than claiming the gate passed.
    capability claims are truthful.
 4. Add session persistence, resume, model advertisement, and ACP stdio
    configuration.
-5. Add evented/cancellable agent execution and queued prompt handling.
-6. Add documentation, demos, and final quality-gate cleanup.
+5. Add Zed IDE tool bridge, runtime modes, session config options, model
+   selection, and rich tool-call rendering.
+6. Add evented/cancellable agent execution and queued prompt handling.
+7. Add documentation, demos, and final quality-gate cleanup.
 
 ## Summary of File Changes
 
@@ -929,6 +1223,8 @@ implementation notes rather than claiming the gate passed.
 - `tests/acp_stdio_handshake.rs` — in-memory initialize and new-session tests.
 - `tests/acp_stdio_prompt.rs` — in-memory prompt, notification, queue, vision,
   and cancellation tests.
+- `tests/acp_stdio_ide_tools.rs` — in-memory tests for Zed IDE client tools,
+  modes, config options, model selection, permissions, and rich tool rendering.
 - `docs/how-to/zed_acp_agent_setup.md` — Zed setup guide.
 - `docs/explanation/zed_acp_agent_command_implementation.md` — post-build
   implementation summary.
@@ -953,6 +1249,11 @@ implementation notes rather than claiming the gate passed.
 - `src/providers/copilot.rs` — add vision request mapping if supported.
 - `src/providers/openai.rs` — add vision request mapping if supported.
 - `src/providers/ollama.rs` — add vision request mapping if supported.
+- `src/tools/` — add Zed-aware IDE file, terminal, permission, and diff tools,
+  or add bridge-backed variants of existing tools for ACP stdio sessions.
+- `src/acp/stdio.rs` — add IDE client method bridge, session modes, config
+  options, model selection handlers, available commands, and rich tool-call
+  notification mapping.
 - `src/storage/mod.rs` — add ACP stdio session schema and methods.
 - `src/storage/types.rs` — add stored stdio session record types if useful.
 - `src/config.rs` — add ACP stdio and vision configuration plus environment

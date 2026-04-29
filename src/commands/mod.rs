@@ -56,6 +56,9 @@ pub mod mcp;
 // ACP server management commands
 pub mod acp;
 
+// ACP stdio agent command for Zed and other ACP-compatible clients
+pub mod agent;
+
 // Skills management commands
 pub mod skills;
 

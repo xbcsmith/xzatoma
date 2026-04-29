@@ -52,6 +52,7 @@ pub mod run;
 pub mod runtime;
 pub mod server;
 pub mod session;
+pub mod stdio;
 pub mod streaming;
 pub mod types;
 
