@@ -10,6 +10,20 @@ testing, and a Kafka consumer loop that treats all errors as fatal. Each phase
 is self-contained and leaves the codebase in a compilable, tested state before
 the next phase begins.
 
+## Completion Status
+
+| Phase | Title                                | Status   |
+| ----- | ------------------------------------ | -------- |
+| 1     | Module Organization                  | Complete |
+| 2     | Early Plan Parsing and Event Handler | Complete |
+| 3     | Matcher Version Predicate            | Complete |
+| 4     | Producer Abstraction and Reliability | Complete |
+| 5     | Consumer Abstraction                 | Complete |
+
+All five phases are complete. The codebase has 210 watcher tests passing with 17
+broker-dependent tests marked `#[ignore]`. All four quality gates pass:
+`cargo fmt`, `cargo check`, `cargo clippy -- -D warnings`, `cargo test`.
+
 ## Current State Analysis
 
 ### Existing Infrastructure
@@ -608,3 +622,14 @@ Add integration-style unit tests to `src/watcher/generic/watcher.rs` using
 - The five watcher loop tests in Task 5.7 pass without a live Kafka connection
 - `cargo clippy --all-targets --all-features -- -D warnings` passes with no
   suppression attributes added to suppress legitimate warnings
+
+### Phase 5 Completion Notes
+
+Completed. New module `src/watcher/generic/consumer.rs` contains
+`RawKafkaMessage` (relocated from `event.rs`), `GenericConsumerTrait`,
+`RealGenericConsumer`, `FakeGenericConsumer`, and
+`is_transient_kafka_recv_error`. `GenericWatcher::start` now accepts
+`Option<Box<dyn GenericConsumerTrait>>` and no longer constructs any rdkafka
+type directly. All five Task 5.7 watcher loop tests pass without a live Kafka
+connection. Implementation summary:
+`docs/explanation/generic_watcher_phase5_consumer_abstraction.md`.

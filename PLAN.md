@@ -125,6 +125,7 @@ Implementation Phases sections follow the following pattern:
 #### Task 2.6 Success Criteria
 ```
 
+Each phase should have a list of deliverables that can be checked off as they are completed, and a clear definition of success for the phase. The plan should be detailed enough that another engineer could pick it up and execute on it without needing to ask for additional context.
 
 ## General Rules
 

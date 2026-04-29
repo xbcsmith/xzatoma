@@ -2365,7 +2365,7 @@ pub mod watch {
                 });
 
                 tokio::select! {
-                    result = watcher.start() => {
+                    result = watcher.start(None) => {
                         result.map_err(|error| XzatomaError::Watcher(error.to_string()))
                     }
                     _ = shutdown_rx.recv() => {

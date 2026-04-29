@@ -1,12 +1,15 @@
 //! Generic Kafka watcher core.
 //!
 //! This module provides the generic watcher implementation that consumes
-//! generic plan events, evaluates them with [`GenericMatcher`], and publishes
-//! [`GenericPlanResult`] messages through [`GenericResultProducer`].
+//! generic plan events, evaluates them with [`GenericEventHandler`], and
+//! publishes [`GenericPlanResult`] messages through [`ResultProducerTrait`].
 //!
-//! The watcher builds an `rdkafka::consumer::StreamConsumer` from the
-//! configured Kafka settings and enters a consume loop that dispatches
-//! each message through [`GenericWatcher::process_payload`].
+//! The watcher uses [`GenericConsumerTrait`] to receive messages and enters a
+//! consume loop that dispatches each message through
+//! [`GenericWatcher::process_event`]. In production a
+//! [`RealGenericConsumer`] wraps the rdkafka `StreamConsumer`; tests inject a
+//! [`crate::watcher::generic::consumer::FakeGenericConsumer`] via
+//! [`GenericWatcher::start`]'s optional consumer parameter.
 //!
 //! # Dry-run behavior
 //!
@@ -17,27 +20,28 @@
 //!
 //! # Plan execution
 //!
-//! In non-dry-run mode, the `plan` field is extracted from
-//! [`GenericPlanEvent`], normalized into text, and passed to
-//! `crate::commands::run::run_plan_with_options` for execution through the
-//! standard agent plan-execution path. The result captures actual
-//! success/failure status from the execution.
+//! In non-dry-run mode, the instruction derived from the resolved plan is
+//! passed to `crate::commands::run::run_plan_with_options` for execution
+//! through the standard agent plan-execution path. The result captures
+//! actual success/failure status from the execution.
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
 use crate::error::Result;
+use crate::watcher::generic::consumer::{
+    GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
+};
+use crate::watcher::generic::event_handler::{GenericEventHandler, GenericTask};
 use crate::watcher::generic::matcher::GenericMatcher;
-use crate::watcher::generic::message::{GenericPlanEvent, GenericPlanResult};
-use crate::watcher::generic::producer::GenericResultProducer;
+use crate::watcher::generic::result_event::GenericPlanResult;
+use crate::watcher::generic::result_producer::{GenericResultProducer, ResultProducerTrait};
 
-use futures::StreamExt;
-use rdkafka::consumer::{Consumer, StreamConsumer};
-use rdkafka::Message;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, error, info, warn};
+use ulid::Ulid;
 
 /// Errors that can occur in the generic watcher service.
 #[derive(Error, Debug)]
@@ -54,14 +58,6 @@ pub enum GenericWatcherError {
     #[error("Producer error: {0}")]
     Producer(String),
 
-    /// Message deserialization error.
-    #[error("Deserialization error: {0}")]
-    Deserialization(String),
-
-    /// Plan extraction error.
-    #[error("Plan extraction error: {0}")]
-    PlanExtraction(String),
-
     /// Plan execution error.
     #[error("Plan execution error: {0}")]
     Execution(String),
@@ -77,17 +73,20 @@ pub enum MessageDisposition {
     Processed,
     /// The event was valid but did not satisfy the configured matcher.
     SkippedNoMatch,
-    /// The event was syntactically valid but rejected by the `event_type` gate.
+    /// Reserved for backward compatibility; no longer returned by the Phase 2
+    /// pipeline (result-event JSON now fails plan parsing and is classified
+    /// as `InvalidPayload`).
     SkippedNonPlanEvent,
-    /// The payload could not be parsed as a generic plan event.
+    /// The payload could not be parsed as a valid plan event.
     InvalidPayload,
 }
 
 /// Main generic watcher service for processing generic plan events from Kafka.
 ///
 /// The watcher validates its configuration at construction time, compiles the
-/// configured regular expressions through [`GenericMatcher`], and constructs a
-/// result producer via [`GenericResultProducer`].
+/// configured regular expressions through [`GenericMatcher`], wraps the matcher
+/// in a [`GenericEventHandler`], and constructs a result producer via
+/// [`GenericResultProducer`].
 ///
 /// Concurrency is controlled through an [`Arc<Semaphore>`], mirroring the
 /// pattern used by the XZepr watcher.
@@ -98,7 +97,7 @@ pub enum MessageDisposition {
 /// use xzatoma::config::{Config, KafkaWatcherConfig, WatcherType};
 /// use xzatoma::watcher::generic::watcher::GenericWatcher;
 ///
-/// # async fn example() -> anyhow::Result<()> {
+/// # fn example() -> anyhow::Result<()> {
 /// let mut config = Config::default();
 /// config.watcher.watcher_type = WatcherType::Generic;
 /// config.watcher.kafka = Some(KafkaWatcherConfig {
@@ -118,8 +117,8 @@ pub enum MessageDisposition {
 pub struct GenericWatcher {
     config: Arc<Config>,
     kafka_config: KafkaWatcherConfig,
-    matcher: Arc<GenericMatcher>,
-    producer: Arc<GenericResultProducer>,
+    event_handler: GenericEventHandler,
+    producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
     published_results: Arc<Mutex<Vec<GenericPlanResult>>>,
@@ -131,8 +130,8 @@ impl GenericWatcher {
     ///
     /// # Arguments
     ///
-    /// * `config` - Global XZatoma configuration containing watcher settings
-    /// * `dry_run` - If true, matching events are classified and published as
+    /// * `config`   - Global XZatoma configuration containing watcher settings
+    /// * `dry_run`  - If true, matching events are classified and published as
     ///   synthetic successes without executing the embedded plan
     ///
     /// # Returns
@@ -182,12 +181,12 @@ impl GenericWatcher {
             "Configuring generic watcher"
         );
 
-        let matcher = Arc::new(
-            GenericMatcher::new(watcher_config.generic_match.clone())
-                .map_err(|e| GenericWatcherError::Matcher(e.to_string()))?,
-        );
+        let matcher = GenericMatcher::new(watcher_config.generic_match.clone())
+            .map_err(|e| GenericWatcherError::Matcher(e.to_string()))?;
 
-        let producer = Arc::new(
+        let event_handler = GenericEventHandler::new(Some(matcher), None);
+
+        let producer: Arc<dyn ResultProducerTrait> = Arc::new(
             GenericResultProducer::new(&kafka_config)
                 .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
         );
@@ -199,7 +198,7 @@ impl GenericWatcher {
         Ok(Self {
             config: Arc::new(config),
             kafka_config,
-            matcher,
+            event_handler,
             producer,
             execution_semaphore,
             dry_run,
@@ -208,47 +207,94 @@ impl GenericWatcher {
         })
     }
 
+    /// Replace the result producer with the provided implementation.
+    ///
+    /// This builder method enables injection of test doubles such as
+    /// [`crate::watcher::generic::result_producer::FakeResultProducer`]
+    /// so the watcher loop can be exercised without a live Kafka broker.
+    ///
+    /// # Arguments
+    ///
+    /// * `producer` - The producer implementation to use
+    ///
+    /// # Returns
+    ///
+    /// `self` with the producer replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use xzatoma::config::{Config, KafkaWatcherConfig, WatcherType};
+    /// use xzatoma::watcher::generic::watcher::GenericWatcher;
+    /// use xzatoma::watcher::generic::result_producer::FakeResultProducer;
+    ///
+    /// # fn example() -> anyhow::Result<()> {
+    /// let mut config = Config::default();
+    /// config.watcher.watcher_type = WatcherType::Generic;
+    /// config.watcher.kafka = Some(KafkaWatcherConfig {
+    ///     brokers: "localhost:9092".to_string(),
+    ///     topic: "generic.input".to_string(),
+    ///     output_topic: Some("generic.output".to_string()),
+    ///     group_id: "xzatoma-generic-doc-test".to_string(),
+    ///     auto_create_topics: true,
+    ///     security: None,
+    ///     num_partitions: 1,
+    ///     replication_factor: 1,
+    /// });
+    /// let watcher = GenericWatcher::new(config, true)?
+    ///     .with_producer(Arc::new(FakeResultProducer::new()));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_producer(mut self, producer: Arc<dyn ResultProducerTrait>) -> Self {
+        self.producer = producer;
+        self
+    }
+
     /// Start the generic watcher consume loop.
     ///
-    /// Builds an `rdkafka::consumer::StreamConsumer` from the configured Kafka
-    /// settings, subscribes to the input topic, and enters a message-stream
-    /// loop. Each message payload is dispatched through
-    /// [`GenericWatcher::process_payload`]. The loop runs until [`stop`] is
-    /// called, the message stream ends, or a fatal Kafka error occurs.
+    /// Accepts an optional pre-built consumer. When `consumer_override` is
+    /// `None`, [`build_consumer`](GenericWatcher::build_consumer) constructs a
+    /// [`RealGenericConsumer`] from the watcher's Kafka configuration.
+    /// When `Some(consumer)` is provided (typically a
+    /// [`crate::watcher::generic::consumer::FakeGenericConsumer`]), that
+    /// consumer is used directly — no Kafka connection is established.
     ///
-    /// Topic auto-creation is handled by `run_watch` in `commands/mod.rs`
-    /// before the watcher is constructed. Callers using `GenericWatcher`
-    /// directly should ensure topics exist before calling `start()`.
+    /// The loop calls [`GenericConsumerTrait::next`] for each message, passes
+    /// it to [`GenericWatcher::process_event`], then calls
+    /// [`GenericConsumerTrait::commit`] to advance the committed offset.
+    ///
+    /// The loop exits when the consumer stream is exhausted (`None`), when
+    /// [`stop`](GenericWatcher::stop) is called, or when a fatal consumer
+    /// error occurs.
+    ///
+    /// # Arguments
+    ///
+    /// * `consumer_override` - Optional pre-built consumer; `None` uses the
+    ///   real Kafka consumer built from [`get_kafka_config`]
     ///
     /// # Errors
     ///
-    /// Returns an error if the Kafka consumer cannot be created or
-    /// subscribed, or if a fatal Kafka streaming error occurs.
-    pub async fn start(&mut self) -> Result<()> {
+    /// Returns an error if the consumer cannot be created, subscribed, or if
+    /// a fatal consumer error occurs during the loop.
+    pub async fn start(
+        &mut self,
+        consumer_override: Option<Box<dyn GenericConsumerTrait>>,
+    ) -> Result<()> {
         info!(
             brokers = %self.kafka_config.brokers,
             topic = %self.kafka_config.topic,
-            output_topic = %self.producer.output_topic(),
-            matcher = %self.matcher.summary(),
+            output_topic = %self.output_topic(),
+            matcher = %self.matcher_summary(),
             dry_run = self.dry_run,
             "Starting generic watcher service"
         );
 
-        // Build rdkafka client config from watcher settings.
-        let mut client_config = rdkafka::ClientConfig::new();
-        for (key, value) in self.get_kafka_config() {
-            client_config.set(&key, &value);
-        }
-
-        let consumer: StreamConsumer = client_config.create().map_err(|e| {
-            GenericWatcherError::Config(format!("Failed to create Kafka consumer: {}", e))
-        })?;
-
-        consumer
-            .subscribe(&[&self.kafka_config.topic])
-            .map_err(|e| {
-                GenericWatcherError::Config(format!("Failed to subscribe to topic: {}", e))
-            })?;
+        let mut consumer: Box<dyn GenericConsumerTrait> = match consumer_override {
+            Some(c) => c,
+            None => Box::new(self.build_consumer()?),
+        };
 
         self.running.store(true, Ordering::SeqCst);
 
@@ -258,14 +304,10 @@ impl GenericWatcher {
             "Generic watcher consuming from Kafka"
         );
 
-        let mut stream = consumer.stream();
-
         while self.running.load(Ordering::SeqCst) {
-            // Use select with a short timeout so we can periodically check the
-            // running flag even when no messages are arriving.
             let message = tokio::select! {
                 biased;
-                msg = stream.next() => msg,
+                msg = consumer.next() => msg,
                 () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                     debug!("No messages received, checking shutdown flag");
                     continue;
@@ -273,27 +315,18 @@ impl GenericWatcher {
             };
 
             match message {
-                Some(Ok(borrowed_message)) => match borrowed_message.payload_view::<str>() {
-                    Some(Ok(payload)) => {
-                        if let Err(e) = self.process_payload(payload).await {
-                            error!(error = %e, "Failed to process generic watcher message");
-                        }
+                Some(Ok(msg)) => {
+                    if let Err(e) = self.process_event(msg).await {
+                        error!(error = %e, "Failed to process generic watcher message");
                     }
-                    Some(Err(e)) => {
-                        error!("Error decoding message payload as UTF-8: {}", e);
+                    if let Err(e) = consumer.commit().await {
+                        warn!(error = %e, "Failed to commit Kafka offset");
                     }
-                    None => {
-                        debug!("Received message with empty payload, skipping");
-                    }
-                },
+                }
                 Some(Err(e)) => {
-                    error!("Kafka consumer error: {}", e);
+                    warn!(error = %e, "Fatal consumer error encountered; stopping watcher");
                     self.running.store(false, Ordering::SeqCst);
-                    return Err(GenericWatcherError::Config(format!(
-                        "Kafka consumer error: {}",
-                        e
-                    ))
-                    .into());
+                    return Err(e);
                 }
                 None => {
                     warn!("Message stream ended unexpectedly");
@@ -325,17 +358,15 @@ impl GenericWatcher {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Process a single raw JSON payload as a generic plan event.
+    /// Process a single raw plan payload string as a generic plan event.
     ///
-    /// This is the core message handling path used by the consume loop and
-    /// unit tests. It deserializes the payload, enforces the
-    /// `event_type == "plan"` gate via the matcher, optionally performs
-    /// dry-run execution handling, builds a [`GenericPlanResult`], and
-    /// publishes it.
+    /// Convenience wrapper used by unit tests and the legacy consume path. It
+    /// constructs a [`RawKafkaMessage`] with the configured input topic and no
+    /// message key, then delegates to [`process_event`].
     ///
     /// # Arguments
     ///
-    /// * `payload` - Raw JSON payload from the configured Kafka topic
+    /// * `payload` - Raw plan payload string (YAML or JSON)
     ///
     /// # Returns
     ///
@@ -343,26 +374,26 @@ impl GenericWatcher {
     ///
     /// # Errors
     ///
-    /// Returns an error only if plan extraction, execution, or result
-    /// publishing fails after successful deserialization.
+    /// Returns an error if plan execution or result publishing fails after a
+    /// successful parse and match.
     pub async fn process_payload(&self, payload: &str) -> Result<MessageDisposition> {
-        let event: GenericPlanEvent = match serde_json::from_str(payload) {
-            Ok(event) => event,
-            Err(err) => {
-                error!("Failed to deserialize generic plan event: {}", err);
-                debug!("Raw generic payload: {}", payload);
-                return Ok(MessageDisposition::InvalidPayload);
-            }
+        let msg = RawKafkaMessage {
+            payload: payload.to_string(),
+            topic: self.kafka_config.topic.clone(),
+            key: None,
         };
-
-        self.process_event(event).await
+        self.process_event(msg).await
     }
 
-    /// Process a fully deserialized generic plan event.
+    /// Process a single raw Kafka message through the event handler pipeline.
+    ///
+    /// Delegates to [`GenericEventHandler::handle`] for parsing, matching, and
+    /// plan resolution. On a successful match, acquires the execution semaphore
+    /// and either performs a dry-run or executes the plan.
     ///
     /// # Arguments
     ///
-    /// * `event` - The deserialized generic plan event
+    /// * `msg` - The raw Kafka message (payload, topic, key)
     ///
     /// # Returns
     ///
@@ -371,71 +402,66 @@ impl GenericWatcher {
     ///
     /// # Errors
     ///
-    /// Returns an error if plan normalization or result publishing fails.
-    pub async fn process_event(&self, event: GenericPlanEvent) -> Result<MessageDisposition> {
-        if !event.is_plan_event() {
-            debug!(
-                event_id = %event.id,
-                event_type = %event.event_type,
-                "Discarding non-plan event before processing"
-            );
-            return Ok(MessageDisposition::SkippedNonPlanEvent);
+    /// Returns an error if plan execution or result publishing fails.
+    pub async fn process_event(&self, msg: RawKafkaMessage) -> Result<MessageDisposition> {
+        match self.event_handler.handle(msg).await {
+            Err(e) => {
+                debug!(error = %e, "Plan parse or validation failed; treating as invalid payload");
+                Ok(MessageDisposition::InvalidPayload)
+            }
+            Ok(None) => {
+                debug!("Event did not satisfy configured match criteria; skipping");
+                Ok(MessageDisposition::SkippedNoMatch)
+            }
+            Ok(Some(task)) => {
+                let _permit = self.execution_semaphore.acquire().await.map_err(|e| {
+                    GenericWatcherError::Execution(format!(
+                        "failed to acquire execution semaphore: {}",
+                        e
+                    ))
+                })?;
+
+                let result = if self.dry_run {
+                    info!(
+                        plan_name = %task.plan.name,
+                        "Dry-run mode enabled; skipping generic plan execution"
+                    );
+
+                    let trigger_id = task
+                        .correlation_key
+                        .clone()
+                        .unwrap_or_else(|| Ulid::new().to_string());
+
+                    let mut result = GenericPlanResult::new(
+                        trigger_id,
+                        true,
+                        "Dry-run: matching generic plan event processed without execution"
+                            .to_string(),
+                    );
+                    result.plan_output = Some(json!({
+                        "mode": "dry_run",
+                        "plan_name": task.plan.name,
+                        "instruction": task.instruction,
+                        "step_count": task.plan.steps.len(),
+                    }));
+                    result
+                } else {
+                    self.execute_plan(&task).await?
+                };
+
+                self.producer.publish(&result).await?;
+                self.published_results.lock().await.push(result.clone());
+
+                debug!(
+                    result_id = %result.id,
+                    trigger_event_id = %result.trigger_event_id,
+                    success = result.success,
+                    "Published generic watcher result"
+                );
+
+                Ok(MessageDisposition::Processed)
+            }
         }
-
-        if !self.matcher.should_process(&event) {
-            debug!(
-                event_id = %event.id,
-                event_type = %event.event_type,
-                name = ?event.name,
-                version = ?event.version,
-                action = ?event.action,
-                "Skipping generic event because it did not match configured criteria"
-            );
-            return Ok(MessageDisposition::SkippedNoMatch);
-        }
-
-        let _permit = self.execution_semaphore.acquire().await.map_err(|e| {
-            GenericWatcherError::Execution(format!("failed to acquire execution semaphore: {}", e))
-        })?;
-
-        let normalized_plan = Self::extract_plan_text(&event.plan)?;
-        let result = if self.dry_run {
-            info!(
-                event_id = %event.id,
-                "Dry-run mode enabled; skipping generic plan execution"
-            );
-
-            let mut result = GenericPlanResult::new(
-                event.id.clone(),
-                true,
-                "Dry-run: matching generic plan event processed without execution".to_string(),
-            );
-            result.plan_output = Some(json!({
-                "mode": "dry_run",
-                "plan_text": normalized_plan,
-                "event": {
-                    "id": event.id,
-                    "name": event.name,
-                    "version": event.version,
-                    "action": event.action,
-                }
-            }));
-            result
-        } else {
-            self.execute_plan(&event, &normalized_plan).await?
-        };
-
-        self.producer.publish(&result).await?;
-        self.published_results.lock().await.push(result.clone());
-
-        debug!(
-            result_id = %result.id,
-            trigger_event_id = %result.trigger_event_id,
-            success = result.success,
-            "Published generic watcher result"
-        );
-
-        Ok(MessageDisposition::Processed)
     }
 
     /// Return the matcher summary string for structured logging and tests.
@@ -444,7 +470,11 @@ impl GenericWatcher {
     ///
     /// A human-readable matcher summary.
     pub fn matcher_summary(&self) -> String {
-        self.matcher.summary()
+        self.event_handler
+            .matcher
+            .as_ref()
+            .map(|m| m.summary())
+            .unwrap_or_else(|| "accept-all".to_string())
     }
 
     /// Return the configured output topic used by the result producer.
@@ -453,7 +483,10 @@ impl GenericWatcher {
     ///
     /// The effective output topic.
     pub fn output_topic(&self) -> &str {
-        self.producer.output_topic()
+        self.kafka_config
+            .output_topic
+            .as_deref()
+            .unwrap_or(self.kafka_config.topic.as_str())
     }
 
     /// Return a snapshot of published results recorded by the watcher.
@@ -469,9 +502,6 @@ impl GenericWatcher {
     }
 
     /// Build a generic Kafka-style configuration map from watcher settings.
-    ///
-    /// This helper produces the key-value pairs used to construct both the
-    /// `StreamConsumer` in [`start`] and to expose configuration in tests.
     ///
     /// # Returns
     ///
@@ -500,46 +530,15 @@ impl GenericWatcher {
         settings
     }
 
-    /// Normalize a generic plan payload into text for execution and logging.
-    ///
-    /// String plans are preserved as-is. Object and array plans are serialized
-    /// into pretty JSON text. A missing or null plan is rejected.
-    ///
-    /// # Arguments
-    ///
-    /// * `plan` - The raw plan value from the event
-    ///
-    /// # Returns
-    ///
-    /// A textual plan representation.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the plan is null or cannot be serialized.
-    pub fn extract_plan_text(plan: &Value) -> Result<String> {
-        match plan {
-            Value::String(value) => Ok(value.clone()),
-            Value::Object(_) | Value::Array(_) => serde_json::to_string_pretty(plan)
-                .map_err(|e| GenericWatcherError::PlanExtraction(e.to_string()).into()),
-            Value::Null => Err(GenericWatcherError::PlanExtraction(
-                "generic event is missing a usable plan payload".to_string(),
-            )
-            .into()),
-            Value::Bool(_) | Value::Number(_) => serde_json::to_string_pretty(plan)
-                .map_err(|e| GenericWatcherError::PlanExtraction(e.to_string()).into()),
-        }
-    }
-
-    /// Execute a normalized plan payload via the standard agent execution path.
+    /// Execute a validated plan task via the standard agent execution path.
     ///
     /// Delegates to `crate::commands::run::run_plan_with_options` with the
-    /// normalized plan text as the prompt. The execution result (success or
+    /// task instruction as the prompt. The execution result (success or
     /// failure) is captured into a [`GenericPlanResult`].
     ///
     /// # Arguments
     ///
-    /// * `event` - The triggering event
-    /// * `normalized_plan` - The extracted textual plan representation
+    /// * `task` - The resolved and validated plan task
     ///
     /// # Returns
     ///
@@ -547,22 +546,18 @@ impl GenericWatcher {
     ///
     /// # Errors
     ///
-    /// Returns an error if the normalized plan is empty after trimming.
-    async fn execute_plan(
-        &self,
-        event: &GenericPlanEvent,
-        normalized_plan: &str,
-    ) -> Result<GenericPlanResult> {
-        let trimmed = normalized_plan.trim();
+    /// Returns an error if the task instruction is empty after trimming.
+    async fn execute_plan(&self, task: &GenericTask) -> Result<GenericPlanResult> {
+        let trimmed = task.instruction.trim();
         if trimmed.is_empty() {
             return Err(GenericWatcherError::Execution(
-                "normalized plan cannot be empty".to_string(),
+                "task instruction cannot be empty".to_string(),
             )
             .into());
         }
 
         info!(
-            event_id = %event.id,
+            plan_name = %task.plan.name,
             bytes = trimmed.len(),
             "Executing generic watcher plan via run_plan_with_options"
         );
@@ -589,19 +584,37 @@ impl GenericWatcher {
             ),
         };
 
-        let mut result = GenericPlanResult::new(event.id.clone(), success, summary);
+        let trigger_id = task
+            .correlation_key
+            .clone()
+            .unwrap_or_else(|| Ulid::new().to_string());
+
+        let mut result = GenericPlanResult::new(trigger_id, success, summary);
         result.plan_output = Some(json!({
             "mode": "execute",
-            "plan_text": trimmed,
+            "plan_name": task.plan.name,
+            "instruction": trimmed,
             "success": success,
-            "event": {
-                "id": event.id,
-                "name": event.name,
-                "version": event.version,
-                "action": event.action,
-            }
         }));
         Ok(result)
+    }
+
+    /// Build a configured and subscribed [`RealGenericConsumer`] from the
+    /// watcher's Kafka settings.
+    ///
+    /// Sets `enable.auto.commit=false` so that offset advances require an
+    /// explicit call to [`GenericConsumerTrait::commit`].
+    ///
+    /// # Returns
+    ///
+    /// A ready-to-use [`RealGenericConsumer`] subscribed to the input topic.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the consumer cannot be created or if subscription
+    /// to the configured input topic fails.
+    fn build_consumer(&self) -> Result<RealGenericConsumer> {
+        RealGenericConsumer::from_config(&self.get_kafka_config(), &self.kafka_config.topic)
     }
 
     /// Return the configured Kafka security protocol string.
@@ -647,7 +660,6 @@ mod tests {
         SkillsConfig, WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
     };
     use crate::mcp::config::McpConfig;
-    use serde_json::json;
     use std::collections::HashMap;
 
     fn test_config(match_config: GenericMatchConfig) -> Config {
@@ -686,56 +698,126 @@ mod tests {
         }
     }
 
-    fn matching_event() -> GenericPlanEvent {
-        let mut event = GenericPlanEvent::new(
-            "01JTESTMATCH00000000000001".to_string(),
-            json!({
-                "name": "deploy",
-                "steps": [
-                    {"name": "apply", "action": "kubectl apply -f manifests/"}
-                ]
-            }),
-        );
-        event.name = Some("deploy-service".to_string());
-        event.version = Some("v1.2.3".to_string());
-        event.action = Some("deploy-prod".to_string());
-        event
-    }
+    /// A valid YAML plan payload used by watcher tests.
+    const MATCHING_PLAN_YAML: &str = concat!(
+        "name: deploy\n",
+        "version: v1.2.3\n",
+        "action: deploy-prod\n",
+        "steps:\n",
+        "  - name: apply\n",
+        "    action: kubectl apply -f manifests/\n",
+    );
+
+    /// A valid YAML plan payload whose action does NOT match "rollback.*".
+    const NON_MATCHING_PLAN_YAML: &str = concat!(
+        "name: deploy\n",
+        "action: deploy-prod\n",
+        "steps:\n",
+        "  - name: apply\n",
+        "    action: kubectl apply -f manifests/\n",
+    );
+
+    // -------------------------------------------------------------------------
+    // Non-ignored tests (no Kafka broker required)
+    // -------------------------------------------------------------------------
 
     #[test]
-    fn test_extract_plan_text_with_string_plan() {
-        let plan = json!("name: test\nsteps:\n  - name: step1\n    action: echo hi\n");
-        let extracted = GenericWatcher::extract_plan_text(&plan).unwrap();
-        assert!(extracted.contains("name: test"));
-    }
+    fn test_generic_watcher_new_requires_kafka_config() {
+        let mut config = test_config(GenericMatchConfig::default());
+        config.watcher.kafka = None;
 
-    #[test]
-    fn test_extract_plan_text_with_object_plan() {
-        let plan = json!({"name": "test", "steps": []});
-        let extracted = GenericWatcher::extract_plan_text(&plan).unwrap();
-        assert!(extracted.contains("\"name\": \"test\""));
-    }
-
-    #[test]
-    fn test_extract_plan_text_with_array_plan() {
-        let plan = json!([{"name": "step1"}, {"name": "step2"}]);
-        let extracted = GenericWatcher::extract_plan_text(&plan).unwrap();
-        assert!(extracted.contains("\"name\": \"step1\""));
-        assert!(extracted.contains("\"name\": \"step2\""));
-    }
-
-    #[test]
-    fn test_extract_plan_text_with_missing_plan_returns_error() {
-        let plan = Value::Null;
-        let result = GenericWatcher::extract_plan_text(&plan);
+        let result = GenericWatcher::new(config, true);
         assert!(result.is_err());
     }
 
-    // The following tests construct a full GenericWatcher which creates a real
-    // FutureProducer inside GenericResultProducer::new(). The producer publish
-    // path requires an actual Kafka broker, so these tests are marked #[ignore]
-    // for CI environments without a running broker. Run them explicitly with:
-    //   cargo test --all-features -- --ignored
+    #[tokio::test]
+    async fn test_generic_watcher_process_payload_invalid_content_returns_invalid_payload() {
+        let watcher =
+            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
+        let disposition = watcher.process_payload("not a valid plan").await.unwrap();
+        assert_eq!(disposition, MessageDisposition::InvalidPayload);
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_process_payload_result_json_returns_invalid_payload() {
+        // A GenericPlanResult JSON consumed back on the same topic must be
+        // discarded as InvalidPayload (loop-break guarantee).
+        let result_json = r#"{
+            "id": "01JRESULT",
+            "event_type": "result",
+            "trigger_event_id": "01JTRIGGER",
+            "success": true,
+            "summary": "done",
+            "timestamp": "2025-01-01T00:00:00Z"
+        }"#;
+        let watcher =
+            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
+        let disposition = watcher.process_payload(result_json).await.unwrap();
+        assert_eq!(disposition, MessageDisposition::InvalidPayload);
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_process_payload_non_matching_event_returns_skipped_no_match() {
+        // Matcher configured for "rollback.*"; plan has action "deploy-prod".
+        let watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("rollback.*".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap();
+        let disposition = watcher
+            .process_payload(NON_MATCHING_PLAN_YAML)
+            .await
+            .unwrap();
+        assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_process_payload_empty_steps_returns_invalid_payload() {
+        let watcher =
+            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
+        let disposition = watcher
+            .process_payload("name: test\nsteps: []\n")
+            .await
+            .unwrap();
+        assert_eq!(disposition, MessageDisposition::InvalidPayload);
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_matcher_summary_accept_all() {
+        let watcher =
+            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
+        let summary = watcher.matcher_summary();
+        assert!(
+            summary.contains("accept-all"),
+            "default config should produce accept-all summary"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_matcher_summary_action_only() {
+        let watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("deploy.*".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap();
+        let summary = watcher.matcher_summary();
+        assert!(
+            summary.contains("action"),
+            "action-only config must appear in summary"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Ignored tests (require a running Kafka broker for the publish step)
+    // -------------------------------------------------------------------------
 
     #[tokio::test]
     #[ignore]
@@ -743,15 +825,14 @@ mod tests {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
                 action: Some("deploy.*".to_string()),
-                name: Some("deploy-service".to_string()),
+                name: Some("deploy".to_string()),
                 version: Some("v1.2.3".to_string()),
             }),
             true,
         )
         .unwrap();
 
-        let payload = serde_json::to_string(&matching_event()).unwrap();
-        let disposition = watcher.process_payload(&payload).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::Processed);
 
@@ -767,22 +848,6 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_generic_watcher_dry_run_discards_result_event_on_same_topic() {
-        let watcher =
-            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
-
-        let mut result_like_event = matching_event();
-        result_like_event.event_type = "result".to_string();
-
-        let payload = serde_json::to_string(&result_like_event).unwrap();
-        let disposition = watcher.process_payload(&payload).await.unwrap();
-
-        assert_eq!(disposition, MessageDisposition::SkippedNonPlanEvent);
-        assert!(watcher.published_results().await.is_empty());
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_dry_run_skips_non_matching_event() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -794,8 +859,7 @@ mod tests {
         )
         .unwrap();
 
-        let payload = serde_json::to_string(&matching_event()).unwrap();
-        let disposition = watcher.process_payload(&payload).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
         assert!(watcher.published_results().await.is_empty());
@@ -806,7 +870,7 @@ mod tests {
     async fn test_generic_watcher_process_event_matching_action_is_processed() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
-                action: Some("deploy".to_string()),
+                action: Some("deploy-prod".to_string()),
                 name: None,
                 version: None,
             }),
@@ -814,10 +878,13 @@ mod tests {
         )
         .unwrap();
 
-        let mut event = matching_event();
-        event.action = Some("deploy".to_string());
+        let msg = RawKafkaMessage {
+            payload: MATCHING_PLAN_YAML.to_string(),
+            topic: "generic.input".to_string(),
+            key: Some("01JTESTMATCH00000000000001".to_string()),
+        };
 
-        let disposition = watcher.process_event(event).await.unwrap();
+        let disposition = watcher.process_event(msg).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::Processed);
 
@@ -833,7 +900,7 @@ mod tests {
     async fn test_generic_watcher_process_event_non_matching_action_is_skipped() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
-                action: Some("deploy".to_string()),
+                action: Some("rollback".to_string()),
                 name: None,
                 version: None,
             }),
@@ -841,26 +908,18 @@ mod tests {
         )
         .unwrap();
 
-        let mut event = matching_event();
-        event.action = Some("rollback".to_string());
+        let msg = RawKafkaMessage {
+            payload: MATCHING_PLAN_YAML.to_string(),
+            topic: "generic.input".to_string(),
+            key: None,
+        };
 
-        let disposition = watcher.process_event(event).await.unwrap();
+        let disposition = watcher.process_event(msg).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
         assert!(watcher.published_results().await.is_empty());
     }
 
-    #[tokio::test]
-    #[ignore]
-    async fn test_generic_watcher_process_payload_invalid_json_returns_invalid_payload() {
-        let watcher =
-            GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
-        let disposition = watcher.process_payload("not json").await.unwrap();
-        assert_eq!(disposition, MessageDisposition::InvalidPayload);
-    }
-
-    // This test constructs a watcher with security settings. The FutureProducer
-    // creation may require a reachable broker; marked #[ignore] for safety.
     #[test]
     #[ignore]
     fn test_generic_watcher_get_kafka_config_includes_security_settings() {
@@ -893,21 +952,172 @@ mod tests {
     }
 
     #[test]
-    fn test_generic_watcher_new_requires_kafka_config() {
-        let mut config = test_config(GenericMatchConfig::default());
-        config.watcher.kafka = None;
-
-        let result = GenericWatcher::new(config, true);
-        assert!(result.is_err());
-    }
-
-    // This test constructs a watcher (which creates a real FutureProducer);
-    // marked #[ignore] because it needs a reachable broker to succeed.
-    #[test]
     #[ignore]
     fn test_generic_watcher_output_topic_uses_producer_resolution() {
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
         assert_eq!(watcher.output_topic(), "generic.output");
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 5: FakeGenericConsumer + FakeResultProducer integration tests
+    // -------------------------------------------------------------------------
+
+    use crate::watcher::generic::consumer::{FakeGenericConsumer, RawKafkaMessage as TestRawMsg};
+    use crate::watcher::generic::result_producer::FakeResultProducer;
+    use std::sync::atomic::Ordering as AtomicOrdering;
+
+    #[tokio::test]
+    async fn test_watcher_processes_matching_event_via_fake_consumer() {
+        let fake_producer = Arc::new(FakeResultProducer::new());
+        let mut watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("deploy.*".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap()
+        .with_producer(fake_producer.clone());
+
+        let items = vec![Ok(TestRawMsg {
+            payload: MATCHING_PLAN_YAML.to_string(),
+            topic: "generic.input".to_string(),
+            key: Some("key-p5-001".to_string()),
+        })];
+
+        let fake_consumer = FakeGenericConsumer::new(items);
+        watcher.start(Some(Box::new(fake_consumer))).await.unwrap();
+
+        let published = fake_producer.published_events().await;
+        assert_eq!(
+            published.len(),
+            1,
+            "one matching event must produce one result"
+        );
+        assert!(published[0].success, "dry-run result must be successful");
+
+        let recorded = watcher.published_results().await;
+        assert_eq!(recorded.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_watcher_discards_non_plan_event() {
+        // A GenericPlanResult JSON consumed back on the same topic fails plan
+        // parsing and is classified as InvalidPayload (loop-break guarantee).
+        let result_json = r#"{"id":"01J","event_type":"result","success":true,"summary":"done","trigger_event_id":"01T","timestamp":"2025-01-01T00:00:00Z"}"#;
+        let fake_producer = Arc::new(FakeResultProducer::new());
+        let watcher = GenericWatcher::new(test_config(GenericMatchConfig::default()), true)
+            .unwrap()
+            .with_producer(fake_producer.clone());
+
+        let msg = TestRawMsg {
+            payload: result_json.to_string(),
+            topic: "generic.input".to_string(),
+            key: None,
+        };
+
+        // Verify the disposition directly: Phase 2 returns InvalidPayload for
+        // non-plan payloads (SkippedNonPlanEvent is reserved for back-compat
+        // and is no longer emitted by the Phase 2 pipeline).
+        let disposition = watcher.process_event(msg.clone()).await.unwrap();
+        assert_eq!(disposition, MessageDisposition::InvalidPayload);
+
+        // No result must have been published.
+        assert!(
+            fake_producer.published_events().await.is_empty(),
+            "non-plan event must not produce a result"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_watcher_skips_non_matching_event() {
+        let fake_producer = Arc::new(FakeResultProducer::new());
+        let watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("rollback.*".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap()
+        .with_producer(fake_producer.clone());
+
+        // MATCHING_PLAN_YAML has action "deploy-prod" which does NOT match "rollback.*"
+        let msg = TestRawMsg {
+            payload: MATCHING_PLAN_YAML.to_string(),
+            topic: "generic.input".to_string(),
+            key: None,
+        };
+
+        let disposition = watcher.process_event(msg).await.unwrap();
+        assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
+        assert!(
+            fake_producer.published_events().await.is_empty(),
+            "non-matching event must not produce a result"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_watcher_invalid_json_produces_invalid_payload() {
+        let fake_producer = Arc::new(FakeResultProducer::new());
+        let watcher = GenericWatcher::new(test_config(GenericMatchConfig::default()), true)
+            .unwrap()
+            .with_producer(fake_producer.clone());
+
+        let disposition = watcher
+            .process_payload("not valid json or yaml")
+            .await
+            .unwrap();
+        assert_eq!(disposition, MessageDisposition::InvalidPayload);
+        assert!(fake_producer.published_events().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_watcher_commit_called_after_each_message() {
+        let fake_producer = Arc::new(FakeResultProducer::new());
+        let mut watcher = GenericWatcher::new(
+            test_config(GenericMatchConfig {
+                action: Some("deploy.*".to_string()),
+                name: None,
+                version: None,
+            }),
+            true,
+        )
+        .unwrap()
+        .with_producer(fake_producer.clone());
+
+        let items = vec![
+            Ok(TestRawMsg {
+                payload: MATCHING_PLAN_YAML.to_string(),
+                topic: "generic.input".to_string(),
+                key: None,
+            }),
+            // non-matching: still gets a commit
+            Ok(TestRawMsg {
+                payload: NON_MATCHING_PLAN_YAML.to_string(),
+                topic: "generic.input".to_string(),
+                key: None,
+            }),
+            // invalid: still gets a commit
+            Ok(TestRawMsg {
+                payload: "not a plan at all".to_string(),
+                topic: "generic.input".to_string(),
+                key: None,
+            }),
+        ];
+
+        let fake_consumer = FakeGenericConsumer::new(items);
+        let commit_handle = fake_consumer.commit_counter();
+
+        watcher.start(Some(Box::new(fake_consumer))).await.unwrap();
+
+        assert_eq!(
+            commit_handle.load(AtomicOrdering::SeqCst),
+            3,
+            "commit must be called once per received message regardless of disposition"
+        );
     }
 }
