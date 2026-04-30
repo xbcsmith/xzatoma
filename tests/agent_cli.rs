@@ -1,9 +1,12 @@
 #![allow(deprecated)]
 
+use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serial_test::serial;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, Command as StdCommand, Stdio};
 use tempfile::TempDir;
 
 fn minimal_config_yaml() -> String {
@@ -33,23 +36,73 @@ fn temp_config_file(contents: &str) -> (TempDir, std::path::PathBuf) {
     (temp_dir, config_path)
 }
 
-#[test]
-#[serial]
-fn test_agent_command_startup_does_not_write_to_stdout() {
-    let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
+fn spawn_agent(config_path: &std::path::Path) -> Child {
+    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("agent")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
-    cmd.arg("--config").arg(&config_path).arg("agent");
+    cmd.spawn().expect("agent command should spawn")
+}
 
-    cmd.assert().success().stdout(predicate::str::is_empty());
+fn read_initialize_response(child: &mut Child) -> serde_json::Value {
+    let stdin = child.stdin.as_mut().expect("agent stdin should be piped");
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":1,"clientCapabilities":{{}}}}}}"#
+    )
+    .expect("initialize request should be written");
+
+    let stdout = child.stdout.take().expect("agent stdout should be piped");
+    let mut reader = BufReader::new(stdout);
+    let mut response = String::new();
+    reader
+        .read_line(&mut response)
+        .expect("initialize response should be readable");
+
+    serde_json::from_str(&response).expect("initialize response should be valid JSON")
+}
+
+fn terminate_child(mut child: Child) {
+    match child.kill() {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {}
+        Err(error) => panic!("agent process should be killable: {}", error),
+    }
+
+    match child.wait() {
+        Ok(_status) => {}
+        Err(error) => panic!("agent process should be waitable: {}", error),
+    }
 }
 
 #[test]
 #[serial]
-fn test_agent_command_accepts_provider_model_and_allow_dangerous_without_stdout() {
+fn test_agent_command_initialize_returns_xzatoma_metadata() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut child = spawn_agent(&config_path);
+    let response = read_initialize_response(&mut child);
+    terminate_child(child);
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 1);
+    assert_eq!(response["result"]["agentInfo"]["name"], "xzatoma");
+    assert_eq!(
+        response["result"]["agentInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+#[test]
+#[serial]
+fn test_agent_command_accepts_provider_model_and_allow_dangerous_for_initialize() {
+    let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
+
+    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
     cmd.arg("--config")
         .arg(&config_path)
         .arg("agent")
@@ -57,25 +110,44 @@ fn test_agent_command_accepts_provider_model_and_allow_dangerous_without_stdout(
         .arg("ollama")
         .arg("--model")
         .arg("llama3.2:latest")
-        .arg("--allow-dangerous");
+        .arg("--allow-dangerous")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    cmd.assert().success().stdout(predicate::str::is_empty());
+    let mut child = cmd.spawn().expect("agent command should spawn");
+    let response = read_initialize_response(&mut child);
+    terminate_child(child);
+
+    assert_eq!(response["result"]["agentInfo"]["name"], "xzatoma");
+    assert_eq!(
+        response["result"]["agentCapabilities"]["promptCapabilities"]["image"],
+        true
+    );
 }
 
 #[test]
 #[serial]
-fn test_agent_command_accepts_working_dir_without_stdout() {
+fn test_agent_command_accepts_working_dir_for_initialize() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
     let workspace = TempDir::new().expect("workspace temp dir should be created");
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
     cmd.arg("--config")
         .arg(&config_path)
         .arg("agent")
         .arg("--working-dir")
-        .arg(workspace.path());
+        .arg(workspace.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    cmd.assert().success().stdout(predicate::str::is_empty());
+    let mut child = cmd.spawn().expect("agent command should spawn");
+    let response = read_initialize_response(&mut child);
+    terminate_child(child);
+
+    assert_eq!(response["result"]["agentInfo"]["name"], "xzatoma");
+    assert_eq!(response["result"]["protocolVersion"], 1);
 }
 
 #[test]
