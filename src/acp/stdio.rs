@@ -34,13 +34,16 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::acp::prompt_input::{
+    acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
+};
 use crate::agent::Agent as XzatomaAgent;
 use crate::commands::build_agent_environment;
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
 use crate::prompts;
-use crate::providers::{create_provider_with_override, Provider};
+use crate::providers::{create_provider_with_override, Message, MultimodalPromptInput, Provider};
 use crate::tools::SubagentTool;
 
 use acp_sdk::schema as acp;
@@ -426,15 +429,32 @@ impl AcpStdioServerState {
             })?;
 
         let (response_tx, response_rx) = oneshot::channel();
-        let prompt_queue = {
+        let (prompt_queue, workspace_root, provider_name, model_name) = {
             let mut session = session.lock().await;
             session.last_activity = chrono::Utc::now().to_rfc3339();
-            session.prompt_queue.clone()
+            (
+                session.prompt_queue.clone(),
+                session.workspace_root.clone(),
+                session.provider_name.clone(),
+                session.current_model_name.clone(),
+            )
         };
+
+        let prompt_input = acp_content_blocks_to_prompt_input(
+            &request.prompt,
+            &self.config.acp.stdio,
+            &workspace_root,
+        )
+        .map_err(|error| acp_internal_error(error.to_string()))?;
+
+        validate_provider_supports_prompt_input(&provider_name, &model_name, &prompt_input)
+            .map_err(|error| acp_internal_error(error.to_string()))?;
+
+        let message = prompt_input_to_user_message(prompt_input).map_err(acp_internal_error)?;
 
         prompt_queue
             .send(QueuedPrompt {
-                request,
+                messages: vec![message],
                 response_tx,
             })
             .await
@@ -449,7 +469,7 @@ impl AcpStdioServerState {
 }
 
 struct QueuedPrompt {
-    request: acp::PromptRequest,
+    messages: Vec<Message>,
     response_tx: oneshot::Sender<acp_sdk::Result<acp::PromptResponse>>,
 }
 
@@ -735,7 +755,7 @@ async fn run_prompt_worker(
         let response = execute_queued_prompt(
             &session_id,
             Arc::clone(&agent),
-            queued_prompt.request,
+            queued_prompt.messages,
             &cancellation_token,
         )
         .await;
@@ -751,24 +771,22 @@ async fn run_prompt_worker(
 async fn execute_queued_prompt(
     session_id: &acp::SessionId,
     agent: Arc<Mutex<XzatomaAgent>>,
-    request: acp::PromptRequest,
+    messages: Vec<Message>,
     cancellation_token: &CancellationToken,
 ) -> acp_sdk::Result<acp::PromptResponse> {
     if cancellation_token.is_cancelled() {
         return Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
     }
 
-    let prompt_text = prompt_blocks_to_text(&request.prompt).map_err(acp_internal_error)?;
-
     tracing::debug!(
         session_id = %session_id,
-        prompt_length = prompt_text.len(),
-        "Processing ACP queued prompt"
+        message_count = messages.len(),
+        "Processing ACP queued multimodal prompt"
     );
 
     let mut agent = agent.lock().await;
     agent
-        .execute(prompt_text)
+        .execute_provider_messages(messages)
         .await
         .map_err(|error| acp_internal_error(format!("prompt execution failed: {}", error)))?;
 
@@ -779,50 +797,13 @@ async fn execute_queued_prompt(
     }
 }
 
-fn prompt_blocks_to_text(blocks: &[acp::ContentBlock]) -> std::result::Result<String, String> {
-    let mut parts = Vec::with_capacity(blocks.len());
-
-    for block in blocks {
-        match block {
-            acp::ContentBlock::Text(text) => parts.push(text.text.clone()),
-            acp::ContentBlock::Image(image) => {
-                let mut description = format!("[Image: {}]", image.mime_type);
-                if let Some(uri) = &image.uri {
-                    description.push_str(&format!(" {}", uri));
-                }
-                parts.push(description);
-            }
-            acp::ContentBlock::Audio(audio) => {
-                parts.push(format!("[Audio: {}]", audio.mime_type));
-            }
-            acp::ContentBlock::ResourceLink(resource) => {
-                parts.push(format!(
-                    "[Resource link: {} <{}>]",
-                    resource.name, resource.uri
-                ));
-            }
-            acp::ContentBlock::Resource(resource) => match &resource.resource {
-                acp::EmbeddedResourceResource::TextResourceContents(text) => {
-                    parts.push(format!("[Resource: {}]\n{}", text.uri, text.text));
-                }
-                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
-                    let mime_type = blob
-                        .mime_type
-                        .as_deref()
-                        .unwrap_or("application/octet-stream");
-                    parts.push(format!("[Binary resource: {} ({})]", blob.uri, mime_type));
-                }
-                _ => parts.push("[Unsupported embedded resource]".to_string()),
-            },
-            _ => parts.push("[Unsupported ACP content block]".to_string()),
-        }
-    }
-
-    let prompt = parts.join("\n\n");
-    if prompt.trim().is_empty() {
-        Err("ACP prompt did not contain usable content".to_string())
+fn prompt_input_to_user_message(
+    input: MultimodalPromptInput,
+) -> std::result::Result<Message, String> {
+    if input.has_images() {
+        Message::try_user_from_multimodal_input(input)
     } else {
-        Ok(prompt)
+        Message::try_user_from_text_input(input)
     }
 }
 
@@ -996,19 +977,13 @@ mod tests {
     }
 
     #[test]
-    fn test_prompt_blocks_to_text_converts_text_and_resource_links() {
-        let blocks = vec![
-            acp::ContentBlock::from("hello"),
-            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-                "main.rs",
-                "file:///workspace/src/main.rs",
-            )),
-        ];
+    fn test_prompt_input_to_user_message_converts_text_input() {
+        let message = prompt_input_to_user_message(MultimodalPromptInput::text("hello"));
 
-        let text = prompt_blocks_to_text(&blocks);
-
-        assert!(matches!(text, Ok(ref value) if value.contains("hello")));
-        assert!(matches!(text, Ok(ref value) if value.contains("main.rs")));
+        assert!(matches!(
+            message,
+            Ok(ref value) if value.content.as_deref() == Some("hello")
+        ));
     }
 
     #[tokio::test]

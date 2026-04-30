@@ -156,6 +156,7 @@ impl SamplingHandler for XzatomaSamplingHandler {
                     Some(Message {
                         role: role.to_string(),
                         content: Some(text),
+                        content_parts: None,
                         tool_calls: None,
                         tool_call_id: None,
                     })

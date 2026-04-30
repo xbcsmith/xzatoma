@@ -15,7 +15,7 @@ fn test_config() -> Config {
 }
 
 fn test_state(config: &Config) -> AcpServerState {
-    let runtime = AcpRuntime::new(config.clone());
+    let runtime = AcpRuntime::new_in_memory(config.clone());
     let executor = AcpExecutor::new_mock_success(
         config.clone(),
         runtime.clone(),
@@ -254,8 +254,8 @@ async fn test_get_run_events_returns_ordered_replayable_history() {
 
 #[tokio::test]
 async fn test_invalid_input_handling_rejects_unsupported_artifact_input() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -303,8 +303,8 @@ async fn test_invalid_input_handling_rejects_unsupported_artifact_input() {
 
 #[tokio::test]
 async fn test_not_found_run_lookup_returns_not_found() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let run_response = app

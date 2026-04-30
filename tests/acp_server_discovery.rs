@@ -11,13 +11,32 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
+use xzatoma::acp::executor::AcpExecutor;
+use xzatoma::acp::runtime::AcpRuntime;
 use xzatoma::acp::server::{build_router, AcpServerState};
 use xzatoma::config::{AcpCompatibilityMode, Config};
 
+fn test_config() -> Config {
+    let mut config = Config::default();
+    config.provider.provider_type = "ollama".to_string();
+    config
+}
+
+fn test_state(config: &Config) -> AcpServerState {
+    let runtime = AcpRuntime::new_in_memory(config.clone());
+    let executor = AcpExecutor::new_mock_success(
+        config.clone(),
+        runtime.clone(),
+        "mock ACP discovery test response".to_string(),
+    );
+
+    AcpServerState::from_parts(config, runtime, executor).expect("state should build")
+}
+
 #[tokio::test]
 async fn test_ping_success_in_versioned_mode() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -44,8 +63,8 @@ async fn test_ping_success_in_versioned_mode() {
 
 #[tokio::test]
 async fn test_agents_list_shape_success() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -84,8 +103,8 @@ async fn test_agents_list_shape_success() {
 
 #[tokio::test]
 async fn test_agents_list_supports_offset_and_limit() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -115,8 +134,8 @@ async fn test_agents_list_supports_offset_and_limit() {
 
 #[tokio::test]
 async fn test_agent_by_name_success() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -184,8 +203,8 @@ async fn test_agent_by_name_success() {
 
 #[tokio::test]
 async fn test_agent_by_name_not_found() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -214,8 +233,8 @@ async fn test_agent_by_name_not_found() {
 
 #[tokio::test]
 async fn test_manifest_json_schema_shape() {
-    let config = Config::default();
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let config = test_config();
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let response = app
@@ -253,10 +272,10 @@ async fn test_manifest_json_schema_shape() {
 
 #[tokio::test]
 async fn test_root_compatible_mode_exposes_direct_acp_paths() {
-    let mut config = Config::default();
+    let mut config = test_config();
     config.acp.compatibility_mode = AcpCompatibilityMode::RootCompatible;
 
-    let state = AcpServerState::from_config(&config).expect("state should build");
+    let state = test_state(&config);
     let app = build_router(state, &config.acp);
 
     let ping_response = app

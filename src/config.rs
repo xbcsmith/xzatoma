@@ -392,6 +392,10 @@ pub struct AcpConfig {
     /// Optional persistence tuning for future ACP session and event storage.
     #[serde(default)]
     pub persistence: AcpPersistenceConfig,
+
+    /// ACP stdio subprocess configuration for Zed-compatible integrations.
+    #[serde(default)]
+    pub stdio: AcpStdioConfig,
 }
 
 fn default_acp_enabled() -> bool {
@@ -420,6 +424,7 @@ impl Default for AcpConfig {
             base_path: default_acp_base_path(),
             default_run_mode: AcpDefaultRunMode::default(),
             persistence: AcpPersistenceConfig::default(),
+            stdio: AcpStdioConfig::default(),
         }
     }
 }
@@ -494,6 +499,152 @@ impl Default for AcpPersistenceConfig {
             max_events_per_run: default_acp_max_events_per_run(),
             max_completed_runs: default_acp_max_completed_runs(),
         }
+    }
+}
+
+/// ACP stdio subprocess configuration.
+///
+/// Controls prompt input policy for ACP clients such as Zed that launch
+/// XZatoma as a stdio JSON-RPC subprocess.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AcpStdioConfig {
+    /// Enable image input handling for ACP stdio prompt requests.
+    #[serde(default = "default_acp_stdio_vision_enabled")]
+    pub vision_enabled: bool,
+
+    /// Maximum decoded bytes allowed for a single image input.
+    #[serde(default = "default_acp_stdio_max_image_bytes")]
+    pub max_image_bytes: usize,
+
+    /// Image MIME types accepted from ACP prompt content blocks.
+    #[serde(default = "default_acp_stdio_allowed_image_mime_types")]
+    pub allowed_image_mime_types: Vec<String>,
+
+    /// Allow image prompt content to reference local files.
+    #[serde(default = "default_acp_stdio_allow_image_file_references")]
+    pub allow_image_file_references: bool,
+
+    /// Allow image prompt content to reference remote URLs.
+    #[serde(default = "default_acp_stdio_allow_remote_image_urls")]
+    pub allow_remote_image_urls: bool,
+}
+
+fn default_acp_stdio_vision_enabled() -> bool {
+    true
+}
+
+fn default_acp_stdio_max_image_bytes() -> usize {
+    10 * 1024 * 1024
+}
+
+fn default_acp_stdio_allowed_image_mime_types() -> Vec<String> {
+    vec![
+        "image/png".to_string(),
+        "image/jpeg".to_string(),
+        "image/webp".to_string(),
+        "image/gif".to_string(),
+    ]
+}
+
+fn default_acp_stdio_allow_image_file_references() -> bool {
+    true
+}
+
+fn default_acp_stdio_allow_remote_image_urls() -> bool {
+    false
+}
+
+impl Default for AcpStdioConfig {
+    fn default() -> Self {
+        Self {
+            vision_enabled: default_acp_stdio_vision_enabled(),
+            max_image_bytes: default_acp_stdio_max_image_bytes(),
+            allowed_image_mime_types: default_acp_stdio_allowed_image_mime_types(),
+            allow_image_file_references: default_acp_stdio_allow_image_file_references(),
+            allow_remote_image_urls: default_acp_stdio_allow_remote_image_urls(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod acp_stdio_config_tests {
+    use super::*;
+
+    #[test]
+    fn test_acp_stdio_config_default_enables_vision_with_safe_limits() {
+        let config = AcpStdioConfig::default();
+
+        assert!(config.vision_enabled);
+        assert_eq!(config.max_image_bytes, 10 * 1024 * 1024);
+        assert!(config.allow_image_file_references);
+        assert!(!config.allow_remote_image_urls);
+        assert_eq!(
+            config.allowed_image_mime_types,
+            vec![
+                "image/png".to_string(),
+                "image/jpeg".to_string(),
+                "image/webp".to_string(),
+                "image/gif".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_config_validate_accepts_default_acp_stdio_vision_policy() {
+        let config = Config::default_config();
+
+        let result = config.validate();
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_acp_stdio_max_image_bytes() {
+        let mut config = Config::default_config();
+        config.acp.stdio.max_image_bytes = 0;
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("acp.stdio.max_image_bytes"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_empty_acp_stdio_allowed_image_mime_types() {
+        let mut config = Config::default_config();
+        config.acp.stdio.allowed_image_mime_types.clear();
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("allowed_image_mime_types cannot be empty"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_non_image_acp_stdio_mime_type() {
+        let mut config = Config::default_config();
+        config.acp.stdio.allowed_image_mime_types = vec!["application/octet-stream".to_string()];
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("must start with 'image/'"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_blank_acp_stdio_mime_type() {
+        let mut config = Config::default_config();
+        config.acp.stdio.allowed_image_mime_types = vec![" ".to_string()];
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("cannot contain empty values"))
+        );
     }
 }
 
@@ -1763,6 +1914,89 @@ impl Config {
                 );
             }
         }
+
+        if let Ok(vision_enabled) = std::env::var("XZATOMA_ACP_STDIO_VISION_ENABLED") {
+            match parse_env_bool(&vision_enabled) {
+                Some(value) => {
+                    self.acp.stdio.vision_enabled = value;
+                    tracing::debug!(
+                        vision_enabled = value,
+                        "Env override: XZATOMA_ACP_STDIO_VISION_ENABLED"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_VISION_ENABLED: {}",
+                    vision_enabled
+                ),
+            }
+        }
+
+        if let Ok(max_image_bytes) = std::env::var("XZATOMA_ACP_STDIO_MAX_IMAGE_BYTES") {
+            if let Ok(value) = max_image_bytes.parse::<usize>() {
+                self.acp.stdio.max_image_bytes = value;
+                tracing::debug!(
+                    max_image_bytes = value,
+                    "Env override: XZATOMA_ACP_STDIO_MAX_IMAGE_BYTES"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_MAX_IMAGE_BYTES: {}",
+                    max_image_bytes
+                );
+            }
+        }
+
+        if let Ok(mime_types) = std::env::var("XZATOMA_ACP_STDIO_ALLOWED_IMAGE_MIME_TYPES") {
+            let parsed: Vec<String> = mime_types
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect();
+
+            if parsed.is_empty() {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_ALLOWED_IMAGE_MIME_TYPES: no MIME types provided"
+                );
+            } else {
+                self.acp.stdio.allowed_image_mime_types = parsed;
+                tracing::debug!("Env override: XZATOMA_ACP_STDIO_ALLOWED_IMAGE_MIME_TYPES");
+            }
+        }
+
+        if let Ok(allow_file_references) =
+            std::env::var("XZATOMA_ACP_STDIO_ALLOW_IMAGE_FILE_REFERENCES")
+        {
+            match parse_env_bool(&allow_file_references) {
+                Some(value) => {
+                    self.acp.stdio.allow_image_file_references = value;
+                    tracing::debug!(
+                        allow_image_file_references = value,
+                        "Env override: XZATOMA_ACP_STDIO_ALLOW_IMAGE_FILE_REFERENCES"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_ALLOW_IMAGE_FILE_REFERENCES: {}",
+                    allow_file_references
+                ),
+            }
+        }
+
+        if let Ok(allow_remote_urls) = std::env::var("XZATOMA_ACP_STDIO_ALLOW_REMOTE_IMAGE_URLS") {
+            match parse_env_bool(&allow_remote_urls) {
+                Some(value) => {
+                    self.acp.stdio.allow_remote_image_urls = value;
+                    tracing::debug!(
+                        allow_remote_image_urls = value,
+                        "Env override: XZATOMA_ACP_STDIO_ALLOW_REMOTE_IMAGE_URLS"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_ALLOW_REMOTE_IMAGE_URLS: {}",
+                    allow_remote_urls
+                ),
+            }
+        }
     }
 
     fn apply_cli_overrides(&mut self, cli: &crate::cli::Cli) {
@@ -2076,6 +2310,34 @@ impl Config {
             return Err(XzatomaError::Config(
                 "acp.persistence.max_completed_runs must be greater than 0".to_string(),
             ));
+        }
+
+        if self.acp.stdio.max_image_bytes == 0 {
+            return Err(XzatomaError::Config(
+                "acp.stdio.max_image_bytes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.stdio.allowed_image_mime_types.is_empty() {
+            return Err(XzatomaError::Config(
+                "acp.stdio.allowed_image_mime_types cannot be empty".to_string(),
+            ));
+        }
+
+        for mime_type in &self.acp.stdio.allowed_image_mime_types {
+            let trimmed = mime_type.trim();
+            if trimmed.is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.stdio.allowed_image_mime_types cannot contain empty values".to_string(),
+                ));
+            }
+
+            if !trimmed.starts_with("image/") {
+                return Err(XzatomaError::Config(format!(
+                    "acp.stdio.allowed_image_mime_types value '{}' must start with 'image/'",
+                    mime_type
+                )));
+            }
         }
 
         Ok(())

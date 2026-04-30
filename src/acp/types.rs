@@ -1561,6 +1561,7 @@ mod tests {
         let provider_message = providers::Message {
             role: "developer".to_string(),
             content: Some("hello".to_string()),
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         };

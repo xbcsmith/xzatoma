@@ -636,6 +636,189 @@ impl Agent {
         Ok(final_message)
     }
 
+    /// Executes the agent with already-constructed provider messages.
+    ///
+    /// This entry point is used by transports that need to preserve richer
+    /// provider-layer message data, such as ACP stdio multimodal prompts with
+    /// ordered text and image content parts. The messages are appended to the
+    /// current conversation before the normal autonomous execution loop runs.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Provider-layer messages to append before execution
+    ///
+    /// # Returns
+    ///
+    /// Returns the final assistant response text or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if `messages` is empty. Returns the same
+    /// errors as [`Self::execute`] for provider calls, tool execution, iteration
+    /// limits, and timeouts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::providers::Message;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let tools = ToolRegistry::new();
+    /// # let config = AgentConfig::default();
+    /// # let mut agent = Agent::new(provider, tools, config)?;
+    /// let messages = vec![Message::user("Describe this task")];
+    /// let result = agent.execute_provider_messages(messages).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_provider_messages(&mut self, messages: Vec<Message>) -> Result<String> {
+        if messages.is_empty() {
+            return Err(XzatomaError::Provider(
+                "provider message execution requires at least one message".to_string(),
+            ));
+        }
+
+        let start_time = Instant::now();
+        let timeout = Duration::from_secs(self.config.timeout_seconds);
+
+        info!("Starting agent execution from provider messages");
+
+        for message in messages {
+            self.conversation.add_message(message);
+        }
+
+        let mut iteration = 0;
+
+        loop {
+            iteration += 1;
+
+            if iteration > self.config.max_turns {
+                warn!("Maximum iterations ({}) exceeded", self.config.max_turns);
+                return Err(XzatomaError::MaxIterationsExceeded {
+                    limit: self.config.max_turns,
+                    message: format!(
+                        "Agent exceeded maximum iteration limit of {}",
+                        self.config.max_turns
+                    ),
+                });
+            }
+
+            if start_time.elapsed() > timeout {
+                warn!("Agent execution timeout after {:?}", start_time.elapsed());
+                return Err(XzatomaError::Config(format!(
+                    "Agent execution timeout after {} seconds",
+                    self.config.timeout_seconds
+                )));
+            }
+
+            debug!(
+                "Iteration {}/{}, tokens: {}/{}",
+                iteration,
+                self.config.max_turns,
+                self.conversation.token_count(),
+                self.conversation.max_tokens()
+            );
+
+            let tool_definitions = self.tools.all_definitions();
+            let prompt_messages = self.messages_with_transient_system_messages();
+            let completion_response = self
+                .provider
+                .complete(&prompt_messages, &tool_definitions)
+                .await?;
+
+            let message = completion_response.message;
+            debug!("Provider response: {:?}", message);
+
+            if let Some(usage) = completion_response.usage {
+                self.conversation.update_from_provider_usage(&usage);
+
+                let mut accumulated_usage = self.accumulated_usage.lock().unwrap();
+                if let Some(existing) = *accumulated_usage {
+                    *accumulated_usage = Some(TokenUsage::new(
+                        existing.prompt_tokens + usage.prompt_tokens,
+                        existing.completion_tokens + usage.completion_tokens,
+                    ));
+                } else {
+                    *accumulated_usage = Some(usage);
+                }
+                drop(accumulated_usage);
+            }
+
+            self.conversation.add_message(message.clone());
+
+            if let Some(tool_calls) = &message.tool_calls {
+                if tool_calls.is_empty() {
+                    debug!("Provider returned empty tool calls, stopping");
+                    break;
+                }
+
+                debug!("Executing {} tool calls", tool_calls.len());
+
+                for tool_call in tool_calls {
+                    let result = self.execute_tool_call(tool_call).await?;
+                    self.conversation
+                        .add_tool_result(&tool_call.id, result.to_message());
+                }
+
+                let auto_threshold = self.config.conversation.auto_summary_threshold as f64;
+                if self.conversation.should_auto_summarize(auto_threshold) {
+                    warn!(
+                        "Context window critical (>{}%), triggering automatic summarization",
+                        (auto_threshold * 100.0) as u8
+                    );
+
+                    match self.perform_auto_summarization().await {
+                        Ok(_) => {
+                            info!("Automatic summarization complete, conversation pruned");
+                        }
+                        Err(error) => {
+                            warn!(
+                                "Automatic summarization failed: {}. Continuing with pruning.",
+                                error
+                            );
+                            self.conversation.prune_if_needed();
+                        }
+                    }
+                }
+
+                continue;
+            }
+
+            if message.content.is_some() {
+                debug!("Provider returned final response, stopping");
+                break;
+            }
+
+            warn!("Provider returned neither content nor tool calls");
+            return Err(XzatomaError::Provider(
+                "Provider returned invalid response (no content or tool calls)".to_string(),
+            ));
+        }
+
+        let final_message = self
+            .conversation
+            .messages()
+            .iter()
+            .rev()
+            .find(|message| message.role == "assistant")
+            .and_then(|message| message.content.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "No response from assistant".to_string());
+
+        info!(
+            "Agent execution completed in {} iterations, {} seconds",
+            iteration,
+            start_time.elapsed().as_secs()
+        );
+
+        Ok(final_message)
+    }
+
     /// Executes a single tool call
     ///
     /// # Arguments
@@ -1035,6 +1218,7 @@ mod tests {
             responses.push(Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: format!("call_{}", i),
                     function: FunctionCall {
@@ -1066,6 +1250,7 @@ mod tests {
         let provider = MockProvider::new(vec![Message {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         }]);
@@ -1084,6 +1269,7 @@ mod tests {
             Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: "call_1".to_string(),
                     function: FunctionCall {
@@ -1139,6 +1325,7 @@ mod tests {
             responses.push(Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: format!("call_{}", i),
                     function: FunctionCall {

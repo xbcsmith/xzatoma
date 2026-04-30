@@ -18,8 +18,11 @@
 
 pub use super::trait_mod::Provider;
 pub use super::types::{
-    convert_tools_from_json, validate_message_sequence, CompletionResponse, FunctionCall, Message,
-    ModelCapability, ModelInfo, ModelInfoSummary, ProviderCapabilities, ProviderFunction,
-    ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderTool, ProviderToolCall,
-    TokenUsage, ToolCall,
+    convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
+    CompletionResponse, FunctionCall, ImagePromptPart, ImagePromptSource, Message, ModelCapability,
+    ModelInfo, ModelInfoSummary, MultimodalPromptInput, PromptInputPart, ProviderCapabilities,
+    ProviderFunction, ProviderFunctionCall, ProviderImagePromptPart, ProviderImagePromptSource,
+    ProviderMessage, ProviderMessageContentPart, ProviderMessageContentParts, ProviderPromptInput,
+    ProviderPromptInputPart, ProviderRequest, ProviderTextPromptPart, ProviderTool,
+    ProviderToolCall, TextPromptPart, TokenUsage, ToolCall,
 };
