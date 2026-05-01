@@ -42,10 +42,12 @@
 /// assert_eq!(direct_message.role, AcpRole::User);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
+pub mod available_commands;
 pub mod error;
 pub mod events;
 pub mod executor;
 pub mod handlers;
+pub mod ide_bridge;
 pub mod manifest;
 pub mod prompt_input;
 pub mod routes;
@@ -53,8 +55,11 @@ pub mod run;
 pub mod runtime;
 pub mod server;
 pub mod session;
+pub mod session_config;
+pub mod session_mode;
 pub mod stdio;
 pub mod streaming;
+pub mod tool_notifications;
 pub mod types;
 
 pub use error::{AcpError, AcpValidationError};

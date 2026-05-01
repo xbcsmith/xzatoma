@@ -35,9 +35,16 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::acp::available_commands::build_available_commands;
+use crate::acp::ide_bridge::{IdeBridge, IdeCapabilities};
 use crate::acp::prompt_input::{
     acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
 };
+use crate::acp::session_config::{build_session_config_options, SessionRuntimeState};
+use crate::acp::session_mode::{
+    build_session_mode_state, mode_runtime_effect, MODE_FULL_AUTONOMOUS, MODE_WRITE,
+};
+
 use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
 use crate::config::{Config, ExecutionMode};
@@ -49,6 +56,7 @@ use crate::providers::{
     MultimodalPromptInput, Provider,
 };
 use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
+use crate::tools::ide_tools::register_ide_tools;
 use crate::tools::SubagentTool;
 
 use acp_sdk::schema as acp;
@@ -229,6 +237,12 @@ pub struct ActiveSessionState {
     prompt_worker_handle: JoinHandle<()>,
     mcp_manager: Option<Arc<RwLock<McpClientManager>>>,
     last_activity: String,
+    /// The currently active ACP session mode ID (e.g. "planning", "write").
+    current_mode_id: String,
+    /// Runtime configuration state for the session (safety, terminal, routing, etc.).
+    runtime_state: SessionRuntimeState,
+    /// IDE tool bridge, present when the Zed client advertised IDE capabilities.
+    ide_bridge: Option<Arc<IdeBridge>>,
 }
 
 impl ActiveSessionState {
@@ -332,6 +346,33 @@ impl ActiveSessionState {
     pub fn prompt_worker_finished(&self) -> bool {
         self.prompt_worker_handle.is_finished()
     }
+
+    /// Returns the current ACP session mode ID.
+    ///
+    /// # Returns
+    ///
+    /// Returns the active mode ID string (e.g. `"planning"`, `"write"`).
+    pub fn current_mode_id(&self) -> &str {
+        &self.current_mode_id
+    }
+
+    /// Returns the current session runtime state.
+    ///
+    /// # Returns
+    ///
+    /// Returns a reference to the runtime configuration state.
+    pub fn runtime_state(&self) -> &SessionRuntimeState {
+        &self.runtime_state
+    }
+
+    /// Returns whether an IDE bridge is active for this session.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the Zed client advertised IDE capabilities.
+    pub fn has_ide_bridge(&self) -> bool {
+        self.ide_bridge.is_some()
+    }
 }
 
 struct AcpStdioServerState {
@@ -339,6 +380,8 @@ struct AcpStdioServerState {
     options: AcpStdioAgentOptions,
     sessions: ActiveSessionRegistry,
     storage: Option<SqliteStorage>,
+    /// Client capabilities received during ACP initialize, shared across handlers.
+    client_capabilities: Arc<Mutex<Option<acp::ClientCapabilities>>>,
 }
 
 impl AcpStdioServerState {
@@ -349,6 +392,7 @@ impl AcpStdioServerState {
             options,
             sessions: ActiveSessionRegistry::new(),
             storage,
+            client_capabilities: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -363,12 +407,14 @@ impl AcpStdioServerState {
             options,
             sessions: ActiveSessionRegistry::new(),
             storage,
+            client_capabilities: Arc::new(Mutex::new(None)),
         }
     }
 
     async fn create_session(
         &self,
         request: acp::NewSessionRequest,
+        connection: Option<ConnectionTo<AcpClientRole>>,
     ) -> Result<acp::NewSessionResponse> {
         if self.sessions.len().await >= self.config.acp.stdio.max_active_sessions {
             return Err(XzatomaError::Config(format!(
@@ -396,8 +442,39 @@ impl AcpStdioServerState {
         )?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
 
+        // Create the session ID early so it can be used by the IDE bridge and
+        // passed through to the agent, storage, and prompt worker consistently.
+        let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
+
         let model_state =
             advertise_session_models(provider.as_ref(), &self.config, &model_name).await;
+
+        // Build IDE bridge when client advertised IDE capabilities and a connection is available.
+        let ide_bridge = {
+            let caps_lock = self.client_capabilities.lock().await;
+            if let (Some(connection), Some(caps)) = (connection.as_ref(), caps_lock.as_ref()) {
+                let ide_caps = IdeCapabilities::from_client_capabilities(caps);
+                if ide_caps.read_text_file || ide_caps.write_text_file || ide_caps.terminal {
+                    Some(Arc::new(IdeBridge::new(
+                        connection.clone(),
+                        session_id.clone(),
+                        ide_caps,
+                    )))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(bridge) = &ide_bridge {
+            register_ide_tools(&mut tools, Arc::clone(bridge));
+        }
+
+        // Determine initial session mode from effective configuration.
+        let current_mode_id = initial_mode_id_from_config(&self.config);
+        let runtime_state = SessionRuntimeState::from_config(&self.config);
 
         if tools.get("subagent").is_none() {
             let subagent_tool = SubagentTool::new_with_config(
@@ -428,7 +505,6 @@ impl AcpStdioServerState {
         }
         agent.set_transient_system_messages(transient_system_messages);
 
-        let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
         let conversation_uuid = agent.conversation().id().to_string();
 
         if let Some(storage) = &self.storage {
@@ -465,6 +541,9 @@ impl AcpStdioServerState {
             Some(model_name.clone()),
         ));
 
+        let mode_state = build_session_mode_state(&current_mode_id);
+        let config_options = build_session_config_options(&runtime_state);
+
         let active_session = ActiveSessionState {
             session_id: session_id.clone(),
             workspace_root,
@@ -477,11 +556,177 @@ impl AcpStdioServerState {
             prompt_worker_handle,
             mcp_manager: env.mcp_manager,
             last_activity: chrono::Utc::now().to_rfc3339(),
+            current_mode_id,
+            runtime_state,
+            ide_bridge,
         };
 
         self.sessions.insert(active_session).await;
 
-        Ok(acp::NewSessionResponse::new(session_id).models(model_state))
+        Ok(acp::NewSessionResponse::new(session_id)
+            .models(model_state)
+            .modes(mode_state)
+            .config_options(config_options))
+    }
+
+    /// Handles a `SetSessionModeRequest` from the Zed client.
+    ///
+    /// Validates the session and the requested mode, applies the runtime effect
+    /// (chat mode, safety mode, terminal execution mode), rebuilds agent system
+    /// messages, and returns the new mode ID for notification dispatch.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The incoming mode change request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is not found or the mode ID is invalid.
+    async fn set_session_mode(&self, request: acp::SetSessionModeRequest) -> Result<String> {
+        let session = self
+            .sessions
+            .get(&request.session_id)
+            .await
+            .ok_or_else(|| {
+                XzatomaError::Internal(format!("unknown ACP session: {}", request.session_id))
+            })?;
+
+        let mode_id = request.mode_id.0.as_ref().to_string();
+        let effect = mode_runtime_effect(&mode_id)?;
+
+        let mut session_lock = session.lock().await;
+        session_lock.current_mode_id = mode_id.clone();
+        session_lock.runtime_state.safety_mode_str = effect.safety_mode_str.clone();
+        session_lock.runtime_state.terminal_mode = effect.terminal_mode;
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+
+        // Rebuild transient system messages so the mode constraint is enforced
+        // on the next prompt turn.
+        {
+            use crate::chat_mode::{ChatMode, SafetyMode};
+            let chat_mode = ChatMode::parse_str(&effect.chat_mode_str).unwrap_or(ChatMode::Write);
+            let safety_mode =
+                SafetyMode::parse_str(&effect.safety_mode_str).unwrap_or(SafetyMode::AlwaysConfirm);
+            let system_prompt = crate::prompts::build_system_prompt(chat_mode, safety_mode);
+            let agent = session_lock.xzatoma_agent.clone();
+            drop(session_lock);
+            let mut agent_lock = agent.lock().await;
+            agent_lock.set_transient_system_messages(vec![system_prompt]);
+        }
+
+        tracing::info!(
+            session_id = %request.session_id,
+            mode_id = %mode_id,
+            "ACP session mode changed"
+        );
+
+        Ok(mode_id)
+    }
+
+    /// Handles a `SetSessionConfigOptionRequest` from the Zed client.
+    ///
+    /// Validates the config ID and value, applies the runtime change, and returns
+    /// the full refreshed config option list for the response.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The incoming config option change request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is not found or the config change is invalid.
+    async fn set_session_config_option(
+        &self,
+        request: acp::SetSessionConfigOptionRequest,
+    ) -> Result<Vec<acp::SessionConfigOption>> {
+        use crate::acp::session_config::apply_config_option_change;
+
+        let session = self
+            .sessions
+            .get(&request.session_id)
+            .await
+            .ok_or_else(|| {
+                XzatomaError::Internal(format!("unknown ACP session: {}", request.session_id))
+            })?;
+
+        let config_id = request.config_id.0.as_ref().to_string();
+        let value_id = request.value.0.as_ref().to_string();
+
+        let mut session_lock = session.lock().await;
+        let (effect, updated_options) =
+            apply_config_option_change(&config_id, &value_id, &session_lock.runtime_state)?;
+
+        // Apply the effects from the config change.
+        if let Some(safety) = effect.safety_mode_str {
+            session_lock.runtime_state.safety_mode_str = safety;
+        }
+        if let Some(terminal_mode) = effect.terminal_mode {
+            session_lock.runtime_state.terminal_mode = terminal_mode;
+        }
+        if let Some(routing) = effect.tool_routing {
+            session_lock.runtime_state.tool_routing = routing;
+        }
+        if let Some(vision) = effect.vision_enabled {
+            session_lock.runtime_state.vision_enabled = vision;
+        }
+        if let Some(subagents) = effect.subagents_enabled {
+            session_lock.runtime_state.subagents_enabled = subagents;
+        }
+        if let Some(mcp) = effect.mcp_enabled {
+            session_lock.runtime_state.mcp_enabled = mcp;
+        }
+        if let Some(turns) = effect.max_turns {
+            session_lock.runtime_state.max_turns = turns;
+        }
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+
+        tracing::info!(
+            session_id = %request.session_id,
+            config_id = %config_id,
+            value_id = %value_id,
+            "ACP session config option changed"
+        );
+
+        Ok(updated_options)
+    }
+
+    /// Handles a `SetSessionModelRequest` from the Zed client.
+    ///
+    /// Updates the current model name in session state so subsequent prompts and
+    /// persistence operations use the newly selected model. Because the live
+    /// provider is wrapped in `Arc<dyn Provider>` without interior mutability,
+    /// the provider itself is not rebuilt in-flight; the change is effective for
+    /// persistence and display immediately and for inference on the next session.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The incoming model selection request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session is not found.
+    async fn set_session_model(&self, request: acp::SetSessionModelRequest) -> Result<()> {
+        let session = self
+            .sessions
+            .get(&request.session_id)
+            .await
+            .ok_or_else(|| {
+                XzatomaError::Internal(format!("unknown ACP session: {}", request.session_id))
+            })?;
+
+        let model_id = request.model_id.0.as_ref().to_string();
+
+        let mut session_lock = session.lock().await;
+        session_lock.current_model_name = model_id.clone();
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+
+        tracing::info!(
+            session_id = %request.session_id,
+            model_id = %model_id,
+            "ACP session model changed (takes effect on next session restart for inference)"
+        );
+
+        Ok(())
     }
 
     async fn enqueue_prompt(
@@ -634,10 +879,19 @@ where
         .builder()
         .name("xzatoma")
         .on_receive_request(
-            async move |initialize: acp::InitializeRequest,
-                        responder: Responder<acp::InitializeResponse>,
-                        _connection: ConnectionTo<AcpClientRole>| {
-                responder.respond(handle_initialize(initialize))
+            {
+                let state = Arc::clone(&state);
+                async move |initialize: acp::InitializeRequest,
+                            responder: Responder<acp::InitializeResponse>,
+                            _cx: ConnectionTo<AcpClientRole>| {
+                    // Store client capabilities for IDE bridge construction during
+                    // session creation. The connection clone is captured per-session.
+                    {
+                        let mut caps = state.client_capabilities.lock().await;
+                        *caps = Some(initialize.client_capabilities.clone());
+                    }
+                    responder.respond(handle_initialize(initialize))
+                }
             },
             acp_sdk::on_receive_request!(),
         )
@@ -646,11 +900,30 @@ where
                 let state = Arc::clone(&state);
                 async move |new_session: acp::NewSessionRequest,
                             responder: Responder<acp::NewSessionResponse>,
-                            _connection: ConnectionTo<AcpClientRole>| {
-                    match state.create_session(new_session).await {
-                        Ok(response) => responder.respond(response),
-                        Err(error) => responder.respond_with_error(acp_internal_error(error)),
+                            cx: ConnectionTo<AcpClientRole>| {
+                    let session_id_for_notify;
+                    match state.create_session(new_session, Some(cx.clone())).await {
+                        Ok(response) => {
+                            session_id_for_notify = response.session_id.clone();
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            let _ = responder.respond_with_error(acp_internal_error(error));
+                            return Ok(());
+                        }
                     }
+                    // Send available commands notification after session is established.
+                    let commands = build_available_commands();
+                    let _ = cx.send_notification_to(
+                        AcpClientRole,
+                        acp::SessionNotification::new(
+                            session_id_for_notify,
+                            acp::SessionUpdate::AvailableCommandsUpdate(
+                                acp::AvailableCommandsUpdate::new(commands),
+                            ),
+                        ),
+                    );
+                    Ok(())
                 }
             },
             acp_sdk::on_receive_request!(),
@@ -660,11 +933,99 @@ where
                 let state = Arc::clone(&state);
                 async move |prompt: acp::PromptRequest,
                             responder: Responder<acp::PromptResponse>,
-                            _connection: ConnectionTo<AcpClientRole>| {
+                            _connection: ConnectionTo<AcpClientRole>|
+                            -> acp_sdk::Result<()> {
                     match state.enqueue_prompt(prompt).await {
-                        Ok(response) => responder.respond(response),
-                        Err(error) => responder.respond_with_error(error),
+                        Ok(response) => {
+                            let _ = responder.respond(response);
+                        }
+                        Err(error) => {
+                            let _ = responder.respond_with_error(error);
+                        }
                     }
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: acp::SetSessionModeRequest,
+                            responder: Responder<acp::SetSessionModeResponse>,
+                            cx: ConnectionTo<AcpClientRole>|
+                            -> acp_sdk::Result<()> {
+                    let session_id = request.session_id.clone();
+                    match state.set_session_mode(request).await {
+                        Ok(new_mode_id) => {
+                            let _ = responder.respond(acp::SetSessionModeResponse::new());
+                            let _ = cx.send_notification_to(
+                                AcpClientRole,
+                                acp::SessionNotification::new(
+                                    session_id,
+                                    acp::SessionUpdate::CurrentModeUpdate(
+                                        acp::CurrentModeUpdate::new(new_mode_id),
+                                    ),
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            let _ = responder.respond_with_error(acp_internal_error(error));
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: acp::SetSessionConfigOptionRequest,
+                            responder: Responder<acp::SetSessionConfigOptionResponse>,
+                            cx: ConnectionTo<AcpClientRole>|
+                            -> acp_sdk::Result<()> {
+                    let session_id = request.session_id.clone();
+                    match state.set_session_config_option(request).await {
+                        Ok(updated_options) => {
+                            let response =
+                                acp::SetSessionConfigOptionResponse::new(updated_options.clone());
+                            let _ = responder.respond(response);
+                            let _ = cx.send_notification_to(
+                                AcpClientRole,
+                                acp::SessionNotification::new(
+                                    session_id,
+                                    acp::SessionUpdate::ConfigOptionUpdate(
+                                        acp::ConfigOptionUpdate::new(updated_options),
+                                    ),
+                                ),
+                            );
+                        }
+                        Err(error) => {
+                            let _ = responder.respond_with_error(acp_internal_error(error));
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |request: acp::SetSessionModelRequest,
+                            responder: Responder<acp::SetSessionModelResponse>,
+                            _connection: ConnectionTo<AcpClientRole>|
+                            -> acp_sdk::Result<()> {
+                    match state.set_session_model(request).await {
+                        Ok(()) => {
+                            let _ = responder.respond(acp::SetSessionModelResponse::new());
+                        }
+                        Err(error) => {
+                            let _ = responder.respond_with_error(acp_internal_error(error));
+                        }
+                    }
+                    Ok(())
                 }
             },
             acp_sdk::on_receive_request!(),
@@ -795,6 +1156,9 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
                 .load_session(false)
                 .prompt_capabilities(acp::PromptCapabilities::new().image(true))
                 .mcp_capabilities(acp::McpCapabilities::new())
+                // Advertise session mode, config, and model capabilities so Zed
+                // knows to show the mode selector, config controls, and model
+                // switcher in the chat UI.
                 .session_capabilities(acp::SessionCapabilities::new()),
         )
         .auth_methods(Vec::new())
@@ -819,6 +1183,22 @@ fn current_model_name(config: &Config) -> &str {
         "ollama" => &config.provider.ollama.model,
         "openai" => &config.provider.openai.model,
         _ => "unknown",
+    }
+}
+
+/// Determines the initial ACP session mode ID from the effective configuration.
+///
+/// When `allow_dangerous` (full-autonomous) is active the mode defaults to
+/// `full_autonomous`. The write mode is used by default because it matches the
+/// standard XZatoma `write` chat mode with safe confirmation policy.
+fn initial_mode_id_from_config(config: &Config) -> String {
+    use crate::config::ExecutionMode;
+    if config.agent.terminal.default_mode == ExecutionMode::FullAutonomous {
+        MODE_FULL_AUTONOMOUS.to_string()
+    } else if config.agent.chat.default_mode == "planning" {
+        crate::acp::session_mode::MODE_PLANNING.to_string()
+    } else {
+        MODE_WRITE.to_string()
     }
 }
 
@@ -1542,9 +1922,10 @@ mod tests {
         );
 
         let response = state
-            .create_session(acp::NewSessionRequest::new(
-                workspace_dir.path().to_path_buf(),
-            ))
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
             .await
             .expect("session creation should succeed");
 
@@ -1618,9 +1999,10 @@ mod tests {
         );
 
         let response = state
-            .create_session(acp::NewSessionRequest::new(
-                workspace_dir.path().to_path_buf(),
-            ))
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
             .await
             .expect("session creation should succeed");
 
@@ -1746,12 +2128,14 @@ mod tests {
         );
 
         let response = state
-            .create_session(acp::NewSessionRequest::new(
-                workspace_dir.path().to_path_buf(),
-            ))
-            .await;
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
+            .await
+            .expect("session creation should succeed");
 
-        assert!(response.is_ok());
+        assert!(!response.session_id.0.is_empty());
     }
 
     #[tokio::test]
@@ -1768,9 +2152,10 @@ mod tests {
 
         let workspace_dir = tempfile::tempdir().expect("workspace should be created");
         let response = state
-            .create_session(acp::NewSessionRequest::new(
-                workspace_dir.path().to_path_buf(),
-            ))
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
             .await
             .expect("session creation should succeed");
 
@@ -1884,6 +2269,391 @@ mod tests {
             );
         })
         .await;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5: Session mode, config option, model, and IDE bridge tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_new_session_response_includes_session_modes() {
+        run_client_server_test(|connection| async move {
+            let initialize_resp = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+            assert!(initialize_resp.is_ok(), "initialize should succeed");
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let modes = new_session_resp
+                .modes
+                .as_ref()
+                .expect("modes should be advertised in NewSessionResponse");
+            assert!(
+                !modes.available_modes.is_empty(),
+                "modes list should be non-empty"
+            );
+            let mode_ids: Vec<&str> = modes
+                .available_modes
+                .iter()
+                .map(|m| m.id.0.as_ref())
+                .collect();
+            assert!(
+                mode_ids.contains(&"planning"),
+                "planning mode should be advertised"
+            );
+            assert!(
+                mode_ids.contains(&"write"),
+                "write mode should be advertised"
+            );
+            assert!(mode_ids.contains(&"safe"), "safe mode should be advertised");
+            assert!(
+                mode_ids.contains(&"full_autonomous"),
+                "full_autonomous mode should be advertised"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_new_session_response_includes_config_options() {
+        run_client_server_test(|connection| async move {
+            let initialize_resp = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+            assert!(initialize_resp.is_ok(), "initialize should succeed");
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let config_options = new_session_resp
+                .config_options
+                .as_ref()
+                .expect("config_options should be advertised in NewSessionResponse");
+            assert!(
+                !config_options.is_empty(),
+                "config options list should be non-empty"
+            );
+            let ids: Vec<&str> = config_options.iter().map(|o| o.id.0.as_ref()).collect();
+            assert!(
+                ids.contains(&"safety_policy"),
+                "safety_policy should be present"
+            );
+            assert!(
+                ids.contains(&"terminal_execution"),
+                "terminal_execution should be present"
+            );
+            assert!(
+                ids.contains(&"tool_routing"),
+                "tool_routing should be present"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_changes_current_mode() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "planning"),
+            ))
+            .await;
+
+            assert!(
+                set_mode_resp.is_ok(),
+                "set_session_mode to planning should succeed"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_unknown_session_returns_error() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new("nonexistent-session-id", "planning"),
+            ))
+            .await;
+
+            assert!(
+                set_mode_resp.is_err(),
+                "set_session_mode with unknown session_id should return an error"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_invalid_mode_returns_error() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id, "invalid_mode_xyz"),
+            ))
+            .await;
+
+            assert!(
+                set_mode_resp.is_err(),
+                "set_session_mode with unknown mode should return an error"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_config_option_returns_updated_options() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let config_resp = receive_response(connection.send_request(
+                acp::SetSessionConfigOptionRequest::new(
+                    session_id,
+                    "safety_policy",
+                    "never_confirm",
+                ),
+            ))
+            .await
+            .expect("set_session_config_option should succeed");
+
+            assert!(
+                !config_resp.config_options.is_empty(),
+                "response should include updated config options"
+            );
+            let safety_opt = config_resp
+                .config_options
+                .iter()
+                .find(|o| o.id.0.as_ref() == "safety_policy")
+                .expect("safety_policy option should be in response");
+            if let acp::SessionConfigKind::Select(select) = &safety_opt.kind {
+                assert_eq!(
+                    select.current_value.0.as_ref(),
+                    "never_confirm",
+                    "safety_policy should be updated to never_confirm"
+                );
+            } else {
+                panic!("safety_policy should be a select option");
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_config_option_invalid_value_returns_error() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let config_resp = receive_response(connection.send_request(
+                acp::SetSessionConfigOptionRequest::new(
+                    session_id,
+                    "safety_policy",
+                    "completely_invalid_value",
+                ),
+            ))
+            .await;
+
+            assert!(
+                config_resp.is_err(),
+                "set_session_config_option with invalid value should return an error"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_model_changes_model() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            // Use the current model from the advertised list.
+            let models = new_session_resp
+                .models
+                .as_ref()
+                .expect("models should be advertised");
+            let current_model_id = models.current_model_id.0.as_ref().to_string();
+
+            let set_model_resp = receive_response(connection.send_request(
+                acp::SetSessionModelRequest::new(session_id, current_model_id),
+            ))
+            .await;
+
+            assert!(
+                set_model_resp.is_ok(),
+                "set_session_model with current model should succeed"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_all_valid_modes_succeed() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            for mode in &["planning", "write", "safe", "full_autonomous"] {
+                let set_mode_resp = receive_response(
+                    connection
+                        .send_request(acp::SetSessionModeRequest::new(session_id.clone(), *mode)),
+                )
+                .await;
+                assert!(
+                    set_mode_resp.is_ok(),
+                    "set_session_mode to '{}' should succeed",
+                    mode
+                );
+            }
+        })
+        .await;
+    }
+
+    #[test]
+    fn test_create_session_includes_current_mode_id() {
+        let config = Config::default();
+        let mode_id = initial_mode_id_from_config(&config);
+        assert!(!mode_id.is_empty(), "initial mode id should be non-empty");
+        let valid_modes = ["planning", "write", "safe", "full_autonomous"];
+        assert!(
+            valid_modes.contains(&mode_id.as_str()),
+            "initial mode id '{}' should be one of the valid modes",
+            mode_id
+        );
+    }
+
+    #[test]
+    fn test_initial_mode_id_from_config_default_is_planning() {
+        let config = Config::default();
+        let mode_id = initial_mode_id_from_config(&config);
+        assert_eq!(
+            mode_id, "planning",
+            "default config (planning chat mode) should produce planning session mode"
+        );
+    }
+
+    #[test]
+    fn test_initial_mode_id_from_config_full_autonomous_when_allow_dangerous() {
+        let mut config = Config::default();
+        config.agent.terminal.default_mode = crate::config::ExecutionMode::FullAutonomous;
+        config.agent.chat.default_safety = "yolo".to_string();
+        let mode_id = initial_mode_id_from_config(&config);
+        assert_eq!(
+            mode_id, "full_autonomous",
+            "full autonomous terminal mode should produce full_autonomous session mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_active_session_state_includes_mode_and_runtime_state() {
+        let workspace_dir = tempfile::tempdir().expect("workspace should be created");
+        let config = Config::default();
+        let state = AcpStdioServerState::new_with_storage(
+            config,
+            AcpStdioAgentOptions::new(None, None, false, None),
+            None,
+        );
+
+        let response = state
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
+            .await
+            .expect("session creation should succeed");
+
+        let session = state
+            .sessions
+            .get(&response.session_id)
+            .await
+            .expect("active session should exist");
+        let session_lock = session.lock().await;
+
+        assert!(!session_lock.current_mode_id().is_empty());
+        assert!(!session_lock.runtime_state().safety_mode_str.is_empty());
+        assert!(
+            !session_lock.has_ide_bridge(),
+            "no IDE bridge without connection"
+        );
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
