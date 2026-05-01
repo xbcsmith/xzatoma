@@ -5,12 +5,14 @@
 
 pub mod conversation;
 pub mod core;
+pub mod events;
 pub mod metrics;
 pub mod persistence;
 pub mod quota;
 
 pub use conversation::{ContextInfo, ContextStatus, Conversation};
 pub use core::Agent;
+pub use events::{AgentExecutionEvent, AgentObserver, NoOpObserver};
 pub use metrics::{init_metrics_exporter, SubagentMetrics};
 pub use persistence::{
     new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,

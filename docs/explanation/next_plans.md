@@ -64,9 +64,13 @@ FIXED - Error: tmp/output: File load error: Not a file: tmp/output (Not a file) 
 
 ### Add Thinkng Mode support
 
-We want to add support for a "thinking mode" where the agent can indicate that it is thinking and not ready to respond yet. This will allow us to provide better feedback to the user and prevent timeouts when the agent is processing a complex task. We will need to define a new message type for "thinking" and update the agent loop to handle this new message type appropriately. We will also need to update the CLI and any relevant demos to demonstrate this new feature. We need to be able to set none, Extra High, High, Medium, or Low thinking modes. The thinking mode should be set by the agent in the response message and should be based on the complexity of the task being processed. For example, if the agent is processing a task that requires multiple steps or interactions with external tools, it may set the thinking mode to "High" to indicate that it is still working on the task and may not have a response ready yet. Default to whatever the provider returns if they have a specific field for it, otherwise default to "High" if not provided by the provider.
+We want to add support for a "thinking mode" where the agent can indicate that it is thinking and not ready to respond yet. This will allow us to provide better feedback to the user and prevent timeouts when the agent is processing a complex task. We will need to define a new message type for "thinking" and update the agent loop to handle this new message type appropriately. To make this work add streaming support to the providers calls. This will include properly wiring up AgentThoughtChunk from ACP to the provider response and then to the agent loop to handle the thinking mode. adding <|thinking|> tags to the messages and never inject them into the prompt and make sure to parse <|channel> thoughts\n <channel|> blocks.
 
-This includes support for setting it from Zed's Chat window in ACP mode.
+We need to be able to set thinking mode from the provider API. With the ability to set the mode to none, Extra High, High, Medium, or Low thinking modes when availabel. The thinking mode should be set by the agent in the response message and should be based on the complexity of the task being processed. For example, if the agent is processing a task that requires multiple steps or interactions with external tools, it may set the thinking mode to "High" to indicate that it is still working on the task and may not have a response ready yet.
+
+Default to whatever the provider returns if they have a specific field for it, otherwise default to "High" if not provided by the provider. We will also need to update the CLI and any relevant demos to demonstrate this new features.
+
+This includes support for setting thinking mode from Zed's Chat window in ACP mode.
 
 Write a plan with a phased approach to add Thinking Mode support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 

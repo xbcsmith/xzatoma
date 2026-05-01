@@ -221,6 +221,10 @@ pub enum XzatomaError {
     /// ACP protocol error (consolidated from multiple variants)
     #[error("ACP error: {0}")]
     Acp(#[from] crate::acp::error::AcpError),
+
+    /// Execution was cancelled via a cancellation token.
+    #[error("Execution cancelled")]
+    Cancelled,
 }
 
 /// Result type alias for XZatoma operations.
@@ -696,5 +700,11 @@ mod tests {
         let error: XzatomaError = acp_err.into();
         assert!(matches!(error, XzatomaError::Acp(_)));
         assert!(error.to_string().contains("ACP error"));
+    }
+
+    #[test]
+    fn test_cancelled_error_display() {
+        let error = XzatomaError::Cancelled;
+        assert_eq!(error.to_string(), "Execution cancelled");
     }
 }
