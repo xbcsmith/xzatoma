@@ -17,9 +17,10 @@
 //! # Ok(())
 //! # }
 //! ```
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(not(test))]
 use agent_client_protocol::ByteStreams;
@@ -37,13 +38,17 @@ use uuid::Uuid;
 use crate::acp::prompt_input::{
     acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
 };
-use crate::agent::Agent as XzatomaAgent;
+use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
 use crate::prompts;
-use crate::providers::{create_provider_with_override, Message, MultimodalPromptInput, Provider};
+use crate::providers::{
+    create_provider_with_override, Message, ModelCapability, ModelInfo as XzatomaModelInfo,
+    MultimodalPromptInput, Provider,
+};
+use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
 use crate::tools::SubagentTool;
 
 use acp_sdk::schema as acp;
@@ -333,14 +338,31 @@ struct AcpStdioServerState {
     config: Config,
     options: AcpStdioAgentOptions,
     sessions: ActiveSessionRegistry,
+    storage: Option<SqliteStorage>,
 }
 
 impl AcpStdioServerState {
     fn new(config: Config, options: AcpStdioAgentOptions) -> Self {
+        let storage = open_stdio_storage(&config);
         Self {
             config,
             options,
             sessions: ActiveSessionRegistry::new(),
+            storage,
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_storage(
+        config: Config,
+        options: AcpStdioAgentOptions,
+        storage: Option<SqliteStorage>,
+    ) -> Self {
+        Self {
+            config,
+            options,
+            sessions: ActiveSessionRegistry::new(),
+            storage,
         }
     }
 
@@ -348,10 +370,21 @@ impl AcpStdioServerState {
         &self,
         request: acp::NewSessionRequest,
     ) -> Result<acp::NewSessionResponse> {
+        if self.sessions.len().await >= self.config.acp.stdio.max_active_sessions {
+            return Err(XzatomaError::Config(format!(
+                "ACP stdio active session limit reached: {}",
+                self.config.acp.stdio.max_active_sessions
+            )));
+        }
+
         let workspace_root =
             resolve_workspace_root(&request.cwd, self.options.working_dir.as_deref())?;
+        let workspace_root = normalize_workspace_root(&workspace_root);
         let provider_name = self.config.provider.provider_type.clone();
         let model_name = current_model_name(&self.config).to_string();
+
+        let resumed_conversation =
+            load_resumable_conversation(self.storage.as_ref(), &workspace_root, &self.config);
 
         let env = build_agent_environment(&self.config, &workspace_root, true).await?;
         let mut tools = env.tool_registry;
@@ -362,6 +395,9 @@ impl AcpStdioServerState {
             self.options.model.as_deref(),
         )?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
+
+        let model_state =
+            advertise_session_models(provider.as_ref(), &self.config, &model_name).await;
 
         if tools.get("subagent").is_none() {
             let subagent_tool = SubagentTool::new_with_config(
@@ -374,8 +410,16 @@ impl AcpStdioServerState {
             tools.register("subagent", Arc::new(subagent_tool));
         }
 
-        let mut agent =
-            XzatomaAgent::new_from_shared_provider(provider, tools, self.config.agent.clone())?;
+        let mut agent = if let Some(conversation) = resumed_conversation {
+            XzatomaAgent::with_conversation_and_shared_provider(
+                Arc::clone(&provider),
+                tools,
+                self.config.agent.clone(),
+                conversation,
+            )?
+        } else {
+            XzatomaAgent::new_from_shared_provider(provider, tools, self.config.agent.clone())?
+        };
 
         let mut transient_system_messages =
             vec![prompts::build_system_prompt(env.chat_mode, env.safety_mode)];
@@ -385,16 +429,40 @@ impl AcpStdioServerState {
         agent.set_transient_system_messages(transient_system_messages);
 
         let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
-        let conversation_uuid = Uuid::new_v4().to_string();
+        let conversation_uuid = agent.conversation().id().to_string();
+
+        if let Some(storage) = &self.storage {
+            if let Err(error) = persist_initial_stdio_session(
+                storage,
+                &session_id,
+                &workspace_root,
+                &conversation_uuid,
+                &provider_name,
+                Some(model_name.as_str()),
+                &mut agent,
+            ) {
+                tracing::warn!(
+                    session_id = %session_id,
+                    conversation_id = %conversation_uuid,
+                    error = %error,
+                    "Failed to persist ACP stdio session mapping"
+                );
+            }
+        }
+
         let xzatoma_agent = Arc::new(Mutex::new(agent));
         let current_cancellation_token = CancellationToken::new();
-        let (prompt_queue, prompt_receiver) = mpsc::channel(32);
+        let (prompt_queue, prompt_receiver) =
+            mpsc::channel(self.config.acp.stdio.prompt_queue_capacity);
 
         let prompt_worker_handle = tokio::spawn(run_prompt_worker(
             session_id.clone(),
             Arc::clone(&xzatoma_agent),
             prompt_receiver,
             current_cancellation_token.clone(),
+            self.storage.clone(),
+            conversation_uuid.clone(),
+            Some(model_name.clone()),
         ));
 
         let active_session = ActiveSessionState {
@@ -413,7 +481,7 @@ impl AcpStdioServerState {
 
         self.sessions.insert(active_session).await;
 
-        Ok(acp::NewSessionResponse::new(session_id))
+        Ok(acp::NewSessionResponse::new(session_id).models(model_state))
     }
 
     async fn enqueue_prompt(
@@ -440,6 +508,16 @@ impl AcpStdioServerState {
             )
         };
 
+        if let Some(storage) = &self.storage {
+            if let Err(error) = storage.touch_acp_stdio_session(request.session_id.0.as_ref()) {
+                tracing::warn!(
+                    session_id = %request.session_id,
+                    error = %error,
+                    "Failed to update ACP stdio session activity"
+                );
+            }
+        }
+
         let prompt_input = acp_content_blocks_to_prompt_input(
             &request.prompt,
             &self.config.acp.stdio,
@@ -453,13 +531,12 @@ impl AcpStdioServerState {
         let message = prompt_input_to_user_message(prompt_input).map_err(acp_internal_error)?;
 
         prompt_queue
-            .send(QueuedPrompt {
+            .try_send(QueuedPrompt {
                 messages: vec![message],
                 response_tx,
             })
-            .await
             .map_err(|error| {
-                acp_internal_error(format!("session prompt queue is closed: {}", error))
+                prompt_queue_send_error(error, self.config.acp.stdio.prompt_queue_capacity)
             })?;
 
         response_rx.await.map_err(|error| {
@@ -745,11 +822,324 @@ fn current_model_name(config: &Config) -> &str {
     }
 }
 
+fn open_stdio_storage(config: &Config) -> Option<SqliteStorage> {
+    if !config.acp.stdio.persist_sessions {
+        return None;
+    }
+
+    match SqliteStorage::new() {
+        Ok(storage) => {
+            prune_old_stdio_sessions(&storage, config);
+            Some(storage)
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "ACP stdio session persistence is unavailable"
+            );
+            None
+        }
+    }
+}
+
+fn prune_old_stdio_sessions(storage: &SqliteStorage, config: &Config) {
+    let cutoff = chrono::Utc::now()
+        - chrono::Duration::seconds(config.acp.stdio.session_timeout_seconds as i64);
+    if let Err(error) = storage.prune_acp_stdio_sessions_older_than(cutoff) {
+        tracing::warn!(
+            error = %error,
+            "Failed to prune stale ACP stdio session mappings"
+        );
+    }
+}
+
+fn normalize_workspace_root(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn load_resumable_conversation(
+    storage: Option<&SqliteStorage>,
+    workspace_root: &Path,
+    config: &Config,
+) -> Option<Conversation> {
+    if !config.acp.stdio.persist_sessions || !config.acp.stdio.resume_by_workspace {
+        return None;
+    }
+
+    let storage = storage?;
+    let workspace_key = workspace_root.to_string_lossy().to_string();
+    let mapping = match storage.load_latest_acp_stdio_session_by_workspace_root(&workspace_key) {
+        Ok(Some(mapping)) => mapping,
+        Ok(None) => return None,
+        Err(error) => {
+            tracing::warn!(
+                workspace_root = %workspace_key,
+                error = %error,
+                "Failed to load ACP stdio session mapping"
+            );
+            return None;
+        }
+    };
+
+    let conversation_id = mapping.conversation_id.clone();
+    let loaded = match storage.load_conversation(&conversation_id) {
+        Ok(Some(loaded)) => loaded,
+        Ok(None) => {
+            tracing::warn!(
+                workspace_root = %workspace_key,
+                conversation_id = %conversation_id,
+                "ACP stdio resume mapping points to a missing conversation"
+            );
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(
+                workspace_root = %workspace_key,
+                conversation_id = %conversation_id,
+                error = %error,
+                "Failed to load ACP stdio resume conversation"
+            );
+            return None;
+        }
+    };
+
+    let conversation_uuid = match Uuid::parse_str(&conversation_id) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!(
+                workspace_root = %workspace_key,
+                conversation_id = %conversation_id,
+                error = %error,
+                "ACP stdio resume conversation ID is not a UUID"
+            );
+            return None;
+        }
+    };
+
+    let (title, _model, messages) = loaded;
+    Some(Conversation::with_history(
+        conversation_uuid,
+        title,
+        messages,
+        config.agent.conversation.max_tokens,
+        config.agent.conversation.min_retain_turns,
+        config.agent.conversation.prune_threshold.into(),
+    ))
+}
+
+fn persist_initial_stdio_session(
+    storage: &SqliteStorage,
+    session_id: &acp::SessionId,
+    workspace_root: &Path,
+    conversation_uuid: &str,
+    provider_name: &str,
+    model_name: Option<&str>,
+    agent: &mut XzatomaAgent,
+) -> Result<()> {
+    persist_conversation_checkpoint(storage, conversation_uuid, agent, model_name)?;
+
+    let now = chrono::Utc::now();
+    let mut metadata = BTreeMap::new();
+    metadata.insert("transport".to_string(), "stdio".to_string());
+    metadata.insert("client".to_string(), "zed".to_string());
+
+    storage.save_acp_stdio_session(&PublicStoredAcpStdioSession {
+        session_id: session_id.0.to_string(),
+        workspace_root: workspace_root.to_string_lossy().to_string(),
+        conversation_id: conversation_uuid.to_string(),
+        provider_type: provider_name.to_string(),
+        model: model_name.map(ToString::to_string),
+        created_at: now,
+        updated_at: now,
+        metadata,
+    })
+}
+
+async fn advertise_session_models(
+    provider: &dyn Provider,
+    config: &Config,
+    current_model_name: &str,
+) -> acp::SessionModelState {
+    let provider_capabilities = provider.get_provider_capabilities();
+    let available_models = if provider_capabilities.supports_model_listing
+        && should_attempt_stdio_model_listing(config)
+    {
+        match tokio::time::timeout(
+            Duration::from_secs(config.acp.stdio.model_list_timeout_seconds),
+            provider.list_models(),
+        )
+        .await
+        {
+            Ok(Ok(models)) => models,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    provider = %config.provider.provider_type,
+                    error = %error,
+                    "ACP stdio model listing failed; falling back to current model"
+                );
+                Vec::new()
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    provider = %config.provider.provider_type,
+                    timeout_seconds = config.acp.stdio.model_list_timeout_seconds,
+                    "ACP stdio model listing timed out; falling back to current model"
+                );
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut advertised = map_models_for_acp(available_models);
+    if !advertised
+        .iter()
+        .any(|model| model.model_id.0.as_ref() == current_model_name)
+    {
+        advertised.push(acp_model_info_from_current_model(
+            current_model_name,
+            config,
+            provider,
+        ));
+    }
+
+    acp::SessionModelState::new(current_model_name.to_string(), advertised)
+}
+
+fn should_attempt_stdio_model_listing(config: &Config) -> bool {
+    match config.provider.provider_type.as_str() {
+        "copilot" => false,
+        "openai" => {
+            let hosted_openai = config.provider.openai.base_url.trim_end_matches('/')
+                == "https://api.openai.com/v1";
+            !hosted_openai || !config.provider.openai.api_key.trim().is_empty()
+        }
+        _ => true,
+    }
+}
+
+fn map_models_for_acp(models: Vec<XzatomaModelInfo>) -> Vec<acp::ModelInfo> {
+    models
+        .into_iter()
+        .map(|model| {
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "contextWindow".to_string(),
+                serde_json::json!(model.context_window),
+            );
+            meta.insert(
+                "supportsTools".to_string(),
+                serde_json::json!(
+                    model.supports_tools
+                        || model.supports_capability(ModelCapability::FunctionCalling)
+                ),
+            );
+            meta.insert(
+                "supportsVision".to_string(),
+                serde_json::json!(model.supports_capability(ModelCapability::Vision)),
+            );
+            meta.insert(
+                "supportsStreaming".to_string(),
+                serde_json::json!(
+                    model.supports_streaming
+                        || model.supports_capability(ModelCapability::Streaming)
+                ),
+            );
+            meta.insert(
+                "providerSpecific".to_string(),
+                serde_json::json!(model.provider_specific),
+            );
+
+            acp::ModelInfo::new(model.name, model.display_name).meta(Some(meta))
+        })
+        .collect()
+}
+
+fn acp_model_info_from_current_model(
+    current_model_name: &str,
+    config: &Config,
+    provider: &dyn Provider,
+) -> acp::ModelInfo {
+    let capabilities = provider.get_provider_capabilities();
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "provider".to_string(),
+        serde_json::json!(config.provider.provider_type),
+    );
+    meta.insert("supportsTools".to_string(), serde_json::json!(true));
+    meta.insert(
+        "supportsVision".to_string(),
+        serde_json::json!(capabilities.supports_vision),
+    );
+    meta.insert(
+        "supportsStreaming".to_string(),
+        serde_json::json!(capabilities.supports_streaming),
+    );
+
+    acp::ModelInfo::new(
+        current_model_name.to_string(),
+        current_model_name.to_string(),
+    )
+    .description(Some(format!(
+        "Current {} model",
+        config.provider.provider_type
+    )))
+    .meta(Some(meta))
+}
+
+fn persist_conversation_checkpoint(
+    storage: &SqliteStorage,
+    conversation_uuid: &str,
+    agent: &mut XzatomaAgent,
+    model_name: Option<&str>,
+) -> Result<()> {
+    if agent.conversation().title() == "New Conversation" {
+        if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
+            agent.conversation_mut().set_title(title);
+        }
+    }
+
+    storage.save_conversation(
+        conversation_uuid,
+        agent.conversation().title(),
+        model_name,
+        agent.conversation().messages(),
+    )
+}
+
+fn first_user_prompt_title(messages: &[Message]) -> Option<String> {
+    messages
+        .iter()
+        .find(|message| message.role == "user")
+        .and_then(|message| message.content.as_deref())
+        .map(truncate_title)
+}
+
+fn truncate_title(value: &str) -> String {
+    const MAX_TITLE_CHARS: usize = 80;
+    let trimmed = value.trim();
+    let mut title = String::new();
+
+    for character in trimmed.chars().take(MAX_TITLE_CHARS) {
+        title.push(character);
+    }
+
+    if title.is_empty() {
+        "ACP Stdio Conversation".to_string()
+    } else {
+        title
+    }
+}
+
 async fn run_prompt_worker(
     session_id: acp::SessionId,
     agent: Arc<Mutex<XzatomaAgent>>,
     mut prompt_receiver: mpsc::Receiver<QueuedPrompt>,
     cancellation_token: CancellationToken,
+    storage: Option<SqliteStorage>,
+    conversation_uuid: String,
+    model_name: Option<String>,
 ) {
     while let Some(queued_prompt) = prompt_receiver.recv().await {
         let response = execute_queued_prompt(
@@ -757,6 +1147,9 @@ async fn run_prompt_worker(
             Arc::clone(&agent),
             queued_prompt.messages,
             &cancellation_token,
+            storage.as_ref(),
+            &conversation_uuid,
+            model_name.as_deref(),
         )
         .await;
 
@@ -773,6 +1166,9 @@ async fn execute_queued_prompt(
     agent: Arc<Mutex<XzatomaAgent>>,
     messages: Vec<Message>,
     cancellation_token: &CancellationToken,
+    storage: Option<&SqliteStorage>,
+    conversation_uuid: &str,
+    model_name: Option<&str>,
 ) -> acp_sdk::Result<acp::PromptResponse> {
     if cancellation_token.is_cancelled() {
         return Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
@@ -790,6 +1186,21 @@ async fn execute_queued_prompt(
         .await
         .map_err(|error| acp_internal_error(format!("prompt execution failed: {}", error)))?;
 
+    if !cancellation_token.is_cancelled() {
+        if let Some(storage) = storage {
+            if let Err(error) =
+                persist_conversation_checkpoint(storage, conversation_uuid, &mut agent, model_name)
+            {
+                tracing::warn!(
+                    session_id = %session_id,
+                    conversation_id = %conversation_uuid,
+                    error = %error,
+                    "Failed to persist ACP stdio conversation checkpoint"
+                );
+            }
+        }
+    }
+
     if cancellation_token.is_cancelled() {
         Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
     } else {
@@ -804,6 +1215,21 @@ fn prompt_input_to_user_message(
         Message::try_user_from_multimodal_input(input)
     } else {
         Message::try_user_from_text_input(input)
+    }
+}
+
+fn prompt_queue_send_error(
+    error: mpsc::error::TrySendError<QueuedPrompt>,
+    capacity: usize,
+) -> acp_sdk::Error {
+    match error {
+        mpsc::error::TrySendError::Full(_) => acp_internal_error(format!(
+            "session prompt queue is full (capacity {})",
+            capacity
+        )),
+        mpsc::error::TrySendError::Closed(_) => {
+            acp_internal_error("session prompt queue is closed")
+        }
     }
 }
 
@@ -840,7 +1266,8 @@ mod tests {
         Fut: std::future::Future<Output = ()> + Send + 'static,
     {
         let (server_channel, client_channel) = Channel::duplex();
-        let config = Config::default();
+        let mut config = Config::default();
+        config.acp.stdio.persist_sessions = false;
         let options = AcpStdioAgentOptions::new(None, None, false, None);
 
         let server = tokio::spawn(async move {
@@ -1095,6 +1522,352 @@ mod tests {
             assert_ne!(first.session_id, second.session_id);
         })
         .await;
+    }
+
+    #[tokio::test]
+    async fn test_create_session_persists_mapping() {
+        let storage_dir = tempfile::tempdir().expect("tempdir should be created");
+        let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
+            .expect("storage should initialize");
+        let workspace_dir = tempfile::tempdir().expect("workspace should be created");
+
+        let mut config = Config::default();
+        config.acp.stdio.persist_sessions = true;
+        config.provider.provider_type = "copilot".to_string();
+
+        let state = AcpStdioServerState::new_with_storage(
+            config,
+            AcpStdioAgentOptions::new(None, None, false, None),
+            Some(storage.clone()),
+        );
+
+        let response = state
+            .create_session(acp::NewSessionRequest::new(
+                workspace_dir.path().to_path_buf(),
+            ))
+            .await
+            .expect("session creation should succeed");
+
+        let loaded = storage
+            .load_latest_acp_stdio_session_by_workspace_root(
+                &workspace_dir
+                    .path()
+                    .canonicalize()
+                    .expect("workspace should canonicalize")
+                    .to_string_lossy(),
+            )
+            .expect("mapping lookup should succeed")
+            .expect("mapping should exist");
+
+        assert_eq!(loaded.session_id, response.session_id.0.as_ref());
+        assert_eq!(loaded.provider_type, "copilot");
+        assert!(storage
+            .load_conversation(&loaded.conversation_id)
+            .expect("conversation lookup should succeed")
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn test_create_session_rehydrates_workspace_conversation_history() {
+        let storage_dir = tempfile::tempdir().expect("tempdir should be created");
+        let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
+            .expect("storage should initialize");
+        let workspace_dir = tempfile::tempdir().expect("workspace should be created");
+        let conversation_id = Uuid::new_v4().to_string();
+
+        storage
+            .save_conversation(
+                &conversation_id,
+                "Existing ACP Conversation",
+                Some("gpt-5-mini"),
+                &[
+                    Message::user("previous prompt"),
+                    Message::assistant("previous answer"),
+                ],
+            )
+            .expect("conversation save should succeed");
+
+        let now = chrono::Utc::now();
+        storage
+            .save_acp_stdio_session(&PublicStoredAcpStdioSession {
+                session_id: "xzatoma-existing".to_string(),
+                workspace_root: workspace_dir
+                    .path()
+                    .canonicalize()
+                    .expect("workspace should canonicalize")
+                    .to_string_lossy()
+                    .to_string(),
+                conversation_id: conversation_id.clone(),
+                provider_type: "copilot".to_string(),
+                model: Some("gpt-5-mini".to_string()),
+                created_at: now,
+                updated_at: now,
+                metadata: BTreeMap::new(),
+            })
+            .expect("mapping save should succeed");
+
+        let mut config = Config::default();
+        config.acp.stdio.persist_sessions = true;
+        config.acp.stdio.resume_by_workspace = true;
+        config.provider.provider_type = "copilot".to_string();
+
+        let state = AcpStdioServerState::new_with_storage(
+            config,
+            AcpStdioAgentOptions::new(None, None, false, None),
+            Some(storage),
+        );
+
+        let response = state
+            .create_session(acp::NewSessionRequest::new(
+                workspace_dir.path().to_path_buf(),
+            ))
+            .await
+            .expect("session creation should succeed");
+
+        let session = state
+            .sessions
+            .get(&response.session_id)
+            .await
+            .expect("active session should exist");
+        let session = session.lock().await;
+        let agent = session.xzatoma_agent();
+        let agent = agent.lock().await;
+
+        assert_eq!(session.conversation_uuid(), conversation_id);
+        assert_eq!(agent.conversation().title(), "Existing ACP Conversation");
+        assert_eq!(agent.conversation().messages().len(), 2);
+    }
+
+    #[test]
+    fn test_persist_conversation_checkpoint_saves_conversation_history() {
+        let storage_dir = tempfile::tempdir().expect("tempdir should be created");
+        let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
+            .expect("storage should initialize");
+        let config = Config::default();
+        let mut agent = XzatomaAgent::new(
+            FailingModelListProvider,
+            crate::tools::ToolRegistry::new(),
+            config.agent.clone(),
+        )
+        .expect("agent should initialize");
+
+        agent
+            .conversation_mut()
+            .add_user_message("Persist this conversation checkpoint title");
+        agent
+            .conversation_mut()
+            .add_assistant_message("checkpoint response");
+
+        let conversation_id = Uuid::new_v4().to_string();
+        persist_conversation_checkpoint(
+            &storage,
+            &conversation_id,
+            &mut agent,
+            Some("fallback-model"),
+        )
+        .expect("checkpoint should persist");
+
+        let loaded = storage
+            .load_conversation(&conversation_id)
+            .expect("conversation lookup should succeed")
+            .expect("conversation should exist");
+
+        assert_eq!(loaded.0, "Persist this conversation checkpoint title");
+        assert_eq!(loaded.1.as_deref(), Some("fallback-model"));
+        assert_eq!(loaded.2.len(), 2);
+        assert_eq!(
+            loaded.2[0].content.as_deref(),
+            Some("Persist this conversation checkpoint title")
+        );
+        assert_eq!(loaded.2[1].content.as_deref(), Some("checkpoint response"));
+    }
+
+    #[tokio::test]
+    async fn test_missing_conversation_fallback_does_not_fail_session_creation() {
+        let storage_dir = tempfile::tempdir().expect("tempdir should be created");
+        let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
+            .expect("storage should initialize");
+        let workspace_dir = tempfile::tempdir().expect("workspace should be created");
+
+        let now = chrono::Utc::now();
+        let conversation_id = Uuid::new_v4().to_string();
+
+        storage
+            .save_conversation(
+                &conversation_id,
+                "Conversation to delete",
+                Some("gpt-5-mini"),
+                &[Message::user("deleted conversation prompt")],
+            )
+            .expect("conversation save should succeed");
+
+        storage
+            .save_acp_stdio_session(&PublicStoredAcpStdioSession {
+                session_id: "xzatoma-missing-conversation".to_string(),
+                workspace_root: workspace_dir
+                    .path()
+                    .canonicalize()
+                    .expect("workspace should canonicalize")
+                    .to_string_lossy()
+                    .to_string(),
+                conversation_id: conversation_id.clone(),
+                provider_type: "copilot".to_string(),
+                model: Some("gpt-5-mini".to_string()),
+                created_at: now,
+                updated_at: now,
+                metadata: BTreeMap::new(),
+            })
+            .expect("mapping save should succeed");
+
+        let connection =
+            rusqlite::Connection::open(storage.database_path()).expect("connection should open");
+        connection
+            .execute("PRAGMA foreign_keys = OFF", [])
+            .expect("foreign key checks should disable");
+        connection
+            .execute(
+                "DELETE FROM conversations WHERE id = ?",
+                rusqlite::params![conversation_id.as_str()],
+            )
+            .expect("conversation delete should succeed");
+        connection
+            .execute("PRAGMA foreign_keys = ON", [])
+            .expect("foreign key checks should re-enable");
+
+        let mut config = Config::default();
+        config.acp.stdio.persist_sessions = true;
+        config.acp.stdio.resume_by_workspace = true;
+        config.provider.provider_type = "copilot".to_string();
+
+        let state = AcpStdioServerState::new_with_storage(
+            config,
+            AcpStdioAgentOptions::new(None, None, false, None),
+            Some(storage),
+        );
+
+        let response = state
+            .create_session(acp::NewSessionRequest::new(
+                workspace_dir.path().to_path_buf(),
+            ))
+            .await;
+
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_copilot_model_listing_fallback_still_returns_new_session_response() {
+        let mut config = Config::default();
+        config.acp.stdio.persist_sessions = false;
+        config.provider.provider_type = "copilot".to_string();
+
+        let state = AcpStdioServerState::new_with_storage(
+            config,
+            AcpStdioAgentOptions::new(None, None, false, None),
+            None,
+        );
+
+        let workspace_dir = tempfile::tempdir().expect("workspace should be created");
+        let response = state
+            .create_session(acp::NewSessionRequest::new(
+                workspace_dir.path().to_path_buf(),
+            ))
+            .await
+            .expect("session creation should succeed");
+
+        assert!(!response.session_id.0.is_empty());
+        assert!(response.models.is_some());
+        assert_eq!(
+            response
+                .models
+                .expect("models should be advertised")
+                .current_model_id
+                .0
+                .as_ref(),
+            current_model_name(&state.config)
+        );
+    }
+
+    struct FailingModelListProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for FailingModelListProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("fallback-model")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<XzatomaModelInfo>> {
+            Err(XzatomaError::Provider("model listing failed".to_string()))
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<crate::providers::CompletionResponse> {
+            Ok(crate::providers::CompletionResponse::new(
+                Message::assistant("ok"),
+            ))
+        }
+
+        fn get_provider_capabilities(&self) -> crate::providers::ProviderCapabilities {
+            crate::providers::ProviderCapabilities {
+                supports_model_listing: true,
+                supports_model_details: false,
+                supports_model_switching: true,
+                supports_token_counts: false,
+                supports_streaming: true,
+                supports_vision: true,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_advertise_session_models_falls_back_to_current_model_when_listing_fails() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.acp.stdio.model_list_timeout_seconds = 1;
+
+        let provider = FailingModelListProvider;
+        let model_state = advertise_session_models(&provider, &config, "fallback-model").await;
+
+        assert_eq!(model_state.current_model_id.0.as_ref(), "fallback-model");
+        assert_eq!(model_state.available_models.len(), 1);
+
+        let fallback = &model_state.available_models[0];
+        assert_eq!(fallback.model_id.0.as_ref(), "fallback-model");
+        assert_eq!(fallback.name, "fallback-model");
+
+        let meta = fallback
+            .meta
+            .as_ref()
+            .expect("fallback model should include metadata");
+        assert_eq!(meta.get("provider"), Some(&serde_json::json!("ollama")));
+        assert_eq!(meta.get("supportsVision"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            meta.get("supportsStreaming"),
+            Some(&serde_json::json!(true))
+        );
+    }
+
+    #[test]
+    fn test_prompt_queue_capacity_error_is_descriptive() {
+        let (response_tx, _response_rx) = oneshot::channel();
+        let error = prompt_queue_send_error(
+            mpsc::error::TrySendError::Full(QueuedPrompt {
+                messages: vec![Message::user("hello")],
+                response_tx,
+            }),
+            1,
+        );
+
+        assert!(error.to_string().contains("session prompt queue is full"));
+        assert!(error.to_string().contains("capacity 1"));
     }
 
     #[tokio::test]

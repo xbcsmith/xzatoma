@@ -509,6 +509,30 @@ impl Default for AcpPersistenceConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AcpStdioConfig {
+    /// Persist ACP stdio session mappings for workspace resume.
+    #[serde(default = "default_acp_stdio_persist_sessions")]
+    pub persist_sessions: bool,
+
+    /// Resume the most recent ACP stdio conversation for the same workspace.
+    #[serde(default = "default_acp_stdio_resume_by_workspace")]
+    pub resume_by_workspace: bool,
+
+    /// Maximum number of active stdio sessions in one subprocess.
+    #[serde(default = "default_acp_stdio_max_active_sessions")]
+    pub max_active_sessions: usize,
+
+    /// Inactive session timeout in seconds.
+    #[serde(default = "default_acp_stdio_session_timeout_seconds")]
+    pub session_timeout_seconds: u64,
+
+    /// Per-session prompt queue capacity.
+    #[serde(default = "default_acp_stdio_prompt_queue_capacity")]
+    pub prompt_queue_capacity: usize,
+
+    /// Timeout in seconds for model list advertisement during session creation.
+    #[serde(default = "default_acp_stdio_model_list_timeout_seconds")]
+    pub model_list_timeout_seconds: u64,
+
     /// Enable image input handling for ACP stdio prompt requests.
     #[serde(default = "default_acp_stdio_vision_enabled")]
     pub vision_enabled: bool,
@@ -528,6 +552,30 @@ pub struct AcpStdioConfig {
     /// Allow image prompt content to reference remote URLs.
     #[serde(default = "default_acp_stdio_allow_remote_image_urls")]
     pub allow_remote_image_urls: bool,
+}
+
+fn default_acp_stdio_persist_sessions() -> bool {
+    true
+}
+
+fn default_acp_stdio_resume_by_workspace() -> bool {
+    true
+}
+
+fn default_acp_stdio_max_active_sessions() -> usize {
+    32
+}
+
+fn default_acp_stdio_session_timeout_seconds() -> u64 {
+    3600
+}
+
+fn default_acp_stdio_prompt_queue_capacity() -> usize {
+    16
+}
+
+fn default_acp_stdio_model_list_timeout_seconds() -> u64 {
+    5
 }
 
 fn default_acp_stdio_vision_enabled() -> bool {
@@ -558,6 +606,12 @@ fn default_acp_stdio_allow_remote_image_urls() -> bool {
 impl Default for AcpStdioConfig {
     fn default() -> Self {
         Self {
+            persist_sessions: default_acp_stdio_persist_sessions(),
+            resume_by_workspace: default_acp_stdio_resume_by_workspace(),
+            max_active_sessions: default_acp_stdio_max_active_sessions(),
+            session_timeout_seconds: default_acp_stdio_session_timeout_seconds(),
+            prompt_queue_capacity: default_acp_stdio_prompt_queue_capacity(),
+            model_list_timeout_seconds: default_acp_stdio_model_list_timeout_seconds(),
             vision_enabled: default_acp_stdio_vision_enabled(),
             max_image_bytes: default_acp_stdio_max_image_bytes(),
             allowed_image_mime_types: default_acp_stdio_allowed_image_mime_types(),
@@ -575,6 +629,12 @@ mod acp_stdio_config_tests {
     fn test_acp_stdio_config_default_enables_vision_with_safe_limits() {
         let config = AcpStdioConfig::default();
 
+        assert!(config.persist_sessions);
+        assert!(config.resume_by_workspace);
+        assert_eq!(config.max_active_sessions, 32);
+        assert_eq!(config.session_timeout_seconds, 3600);
+        assert_eq!(config.prompt_queue_capacity, 16);
+        assert_eq!(config.model_list_timeout_seconds, 5);
         assert!(config.vision_enabled);
         assert_eq!(config.max_image_bytes, 10 * 1024 * 1024);
         assert!(config.allow_image_file_references);
@@ -644,6 +704,54 @@ mod acp_stdio_config_tests {
 
         assert!(
             matches!(result, Err(XzatomaError::Config(message)) if message.contains("cannot contain empty values"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_acp_stdio_max_active_sessions() {
+        let mut config = Config::default_config();
+        config.acp.stdio.max_active_sessions = 0;
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("acp.stdio.max_active_sessions"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_acp_stdio_session_timeout_seconds() {
+        let mut config = Config::default_config();
+        config.acp.stdio.session_timeout_seconds = 0;
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("acp.stdio.session_timeout_seconds"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_acp_stdio_prompt_queue_capacity() {
+        let mut config = Config::default_config();
+        config.acp.stdio.prompt_queue_capacity = 0;
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("acp.stdio.prompt_queue_capacity"))
+        );
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_acp_stdio_model_list_timeout_seconds() {
+        let mut config = Config::default_config();
+        config.acp.stdio.model_list_timeout_seconds = 0;
+
+        let result = config.validate();
+
+        assert!(
+            matches!(result, Err(XzatomaError::Config(message)) if message.contains("acp.stdio.model_list_timeout_seconds"))
         );
     }
 }
@@ -1915,6 +2023,103 @@ impl Config {
             }
         }
 
+        if let Ok(persist_sessions) = std::env::var("XZATOMA_ACP_STDIO_PERSIST_SESSIONS") {
+            match parse_env_bool(&persist_sessions) {
+                Some(value) => {
+                    self.acp.stdio.persist_sessions = value;
+                    tracing::debug!(
+                        persist_sessions = value,
+                        "Env override: XZATOMA_ACP_STDIO_PERSIST_SESSIONS"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_PERSIST_SESSIONS: {}",
+                    persist_sessions
+                ),
+            }
+        }
+
+        if let Ok(resume_by_workspace) = std::env::var("XZATOMA_ACP_STDIO_RESUME_BY_WORKSPACE") {
+            match parse_env_bool(&resume_by_workspace) {
+                Some(value) => {
+                    self.acp.stdio.resume_by_workspace = value;
+                    tracing::debug!(
+                        resume_by_workspace = value,
+                        "Env override: XZATOMA_ACP_STDIO_RESUME_BY_WORKSPACE"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_RESUME_BY_WORKSPACE: {}",
+                    resume_by_workspace
+                ),
+            }
+        }
+
+        if let Ok(max_active_sessions) = std::env::var("XZATOMA_ACP_STDIO_MAX_ACTIVE_SESSIONS") {
+            if let Ok(value) = max_active_sessions.parse::<usize>() {
+                self.acp.stdio.max_active_sessions = value;
+                tracing::debug!(
+                    max_active_sessions = value,
+                    "Env override: XZATOMA_ACP_STDIO_MAX_ACTIVE_SESSIONS"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_MAX_ACTIVE_SESSIONS: {}",
+                    max_active_sessions
+                );
+            }
+        }
+
+        if let Ok(session_timeout_seconds) =
+            std::env::var("XZATOMA_ACP_STDIO_SESSION_TIMEOUT_SECONDS")
+        {
+            if let Ok(value) = session_timeout_seconds.parse::<u64>() {
+                self.acp.stdio.session_timeout_seconds = value;
+                tracing::debug!(
+                    session_timeout_seconds = value,
+                    "Env override: XZATOMA_ACP_STDIO_SESSION_TIMEOUT_SECONDS"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_SESSION_TIMEOUT_SECONDS: {}",
+                    session_timeout_seconds
+                );
+            }
+        }
+
+        if let Ok(prompt_queue_capacity) = std::env::var("XZATOMA_ACP_STDIO_PROMPT_QUEUE_CAPACITY")
+        {
+            if let Ok(value) = prompt_queue_capacity.parse::<usize>() {
+                self.acp.stdio.prompt_queue_capacity = value;
+                tracing::debug!(
+                    prompt_queue_capacity = value,
+                    "Env override: XZATOMA_ACP_STDIO_PROMPT_QUEUE_CAPACITY"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_PROMPT_QUEUE_CAPACITY: {}",
+                    prompt_queue_capacity
+                );
+            }
+        }
+
+        if let Ok(model_list_timeout_seconds) =
+            std::env::var("XZATOMA_ACP_STDIO_MODEL_LIST_TIMEOUT_SECONDS")
+        {
+            if let Ok(value) = model_list_timeout_seconds.parse::<u64>() {
+                self.acp.stdio.model_list_timeout_seconds = value;
+                tracing::debug!(
+                    model_list_timeout_seconds = value,
+                    "Env override: XZATOMA_ACP_STDIO_MODEL_LIST_TIMEOUT_SECONDS"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_STDIO_MODEL_LIST_TIMEOUT_SECONDS: {}",
+                    model_list_timeout_seconds
+                );
+            }
+        }
+
         if let Ok(vision_enabled) = std::env::var("XZATOMA_ACP_STDIO_VISION_ENABLED") {
             match parse_env_bool(&vision_enabled) {
                 Some(value) => {
@@ -2312,6 +2517,30 @@ impl Config {
             ));
         }
 
+        if self.acp.stdio.max_active_sessions == 0 {
+            return Err(XzatomaError::Config(
+                "acp.stdio.max_active_sessions must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.stdio.session_timeout_seconds == 0 {
+            return Err(XzatomaError::Config(
+                "acp.stdio.session_timeout_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.stdio.prompt_queue_capacity == 0 {
+            return Err(XzatomaError::Config(
+                "acp.stdio.prompt_queue_capacity must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.stdio.model_list_timeout_seconds == 0 {
+            return Err(XzatomaError::Config(
+                "acp.stdio.model_list_timeout_seconds must be greater than 0".to_string(),
+            ));
+        }
+
         if self.acp.stdio.max_image_bytes == 0 {
             return Err(XzatomaError::Config(
                 "acp.stdio.max_image_bytes must be greater than 0".to_string(),
@@ -2451,6 +2680,42 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_acp_stdio_fields() {
+        let _persist_sessions = EnvVarGuard::set("XZATOMA_ACP_STDIO_PERSIST_SESSIONS", "false");
+        let _resume_by_workspace =
+            EnvVarGuard::set("XZATOMA_ACP_STDIO_RESUME_BY_WORKSPACE", "false");
+        let _max_active_sessions = EnvVarGuard::set("XZATOMA_ACP_STDIO_MAX_ACTIVE_SESSIONS", "8");
+        let _session_timeout_seconds =
+            EnvVarGuard::set("XZATOMA_ACP_STDIO_SESSION_TIMEOUT_SECONDS", "120");
+        let _prompt_queue_capacity =
+            EnvVarGuard::set("XZATOMA_ACP_STDIO_PROMPT_QUEUE_CAPACITY", "4");
+        let _model_list_timeout_seconds =
+            EnvVarGuard::set("XZATOMA_ACP_STDIO_MODEL_LIST_TIMEOUT_SECONDS", "2");
+        let _vision_enabled = EnvVarGuard::set("XZATOMA_ACP_STDIO_VISION_ENABLED", "false");
+        let _max_image_bytes = EnvVarGuard::set("XZATOMA_ACP_STDIO_MAX_IMAGE_BYTES", "4096");
+        let _allowed_image_mime_types = EnvVarGuard::set(
+            "XZATOMA_ACP_STDIO_ALLOWED_IMAGE_MIME_TYPES",
+            "image/png,image/webp",
+        );
+
+        let mut config = Config::default_config();
+        config.apply_env_vars();
+
+        assert!(!config.acp.stdio.persist_sessions);
+        assert!(!config.acp.stdio.resume_by_workspace);
+        assert_eq!(config.acp.stdio.max_active_sessions, 8);
+        assert_eq!(config.acp.stdio.session_timeout_seconds, 120);
+        assert_eq!(config.acp.stdio.prompt_queue_capacity, 4);
+        assert_eq!(config.acp.stdio.model_list_timeout_seconds, 2);
+        assert!(!config.acp.stdio.vision_enabled);
+        assert_eq!(config.acp.stdio.max_image_bytes, 4096);
+        assert_eq!(
+            config.acp.stdio.allowed_image_mime_types,
+            vec!["image/png".to_string(), "image/webp".to_string()]
+        );
     }
 
     #[test]
