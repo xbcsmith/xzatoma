@@ -15,6 +15,33 @@ ACP support is configured under the top-level `acp` section in
 The ACP server is disabled by default and only starts when you explicitly invoke
 the ACP server command.
 
+## ACP modes
+
+XZatoma supports two distinct ACP integration modes. They use different
+transports and serve different client types.
+
+### HTTP server mode
+
+Started with `xzatoma acp serve`. Exposes an HTTP server that ACP-compatible
+REST clients can call directly. Configuration lives under `acp:` in
+`config/config.yaml`.
+
+This is the mode documented in the remainder of this file.
+
+### Stdio agent mode
+
+Started with `xzatoma agent`. Zed and other ACP-compatible IDEs launch XZatoma
+as a subprocess and communicate over stdin/stdout using newline-delimited
+JSON-RPC. Configuration lives under `acp.stdio:` in `config/config.yaml`.
+
+Stdout is reserved exclusively for JSON-RPC protocol traffic. All diagnostic
+output and tracing goes to stderr. Do not add logging, banners, or debug output
+to stdout in agent mode.
+
+See `docs/how-to/zed_acp_agent_setup.md` for Zed configuration instructions. See
+`docs/reference/acp_configuration.md` (the `acp.stdio` section below) for the
+full stdio field reference.
+
 ## Configuration schema
 
 ```/dev/null/config.yaml#L1-16
@@ -327,8 +354,156 @@ Await and resume semantics are implemented, but partial compatibility caveats
 may still exist between ACP client expectations and the underlying XZatoma
 execution model.
 
+## Stdio ACP configuration (`acp.stdio`)
+
+These fields control the behavior of `xzatoma agent`, the stdio ACP subprocess.
+All fields live under `acp.stdio:` in `config/config.yaml`.
+
+### `acp.stdio.persist_sessions`
+
+- Type: boolean
+- Default: `true`
+
+When true, ACP stdio session mappings are written to the local SQLite database.
+This enables workspace-based conversation resume across subprocess restarts.
+
+### `acp.stdio.resume_by_workspace`
+
+- Type: boolean
+- Default: `true`
+
+When true, a new session for a known workspace automatically rehydrates the most
+recent conversation stored for that workspace. Set to `false` to always start
+fresh conversations.
+
+### `acp.stdio.max_active_sessions`
+
+- Type: integer
+- Default: `32`
+
+Maximum number of concurrent ACP stdio sessions in a single subprocess. Requests
+that would exceed this limit are rejected with a configuration error.
+
+### `acp.stdio.session_timeout_seconds`
+
+- Type: integer
+- Default: `3600`
+
+Inactive session timeout in seconds. Sessions idle longer than this value may be
+pruned from the in-memory registry during cleanup passes.
+
+### `acp.stdio.prompt_queue_capacity`
+
+- Type: integer
+- Default: `8`
+
+Maximum number of prompts that can be queued for a single session at one time.
+When the queue is full, additional prompt requests are rejected immediately with
+a descriptive error. Increase this if your workflow submits many prompts in
+rapid succession.
+
+### `acp.stdio.model_list_timeout_seconds`
+
+- Type: integer
+- Default: `5`
+
+Timeout in seconds for the model advertisement request sent to the provider
+during session creation. If the provider does not respond within this window,
+XZatoma falls back to advertising only the current model.
+
+### `acp.stdio.vision_enabled`
+
+- Type: boolean
+- Default: `true`
+
+Controls whether image content blocks in ACP prompt requests are accepted. When
+`false`, any prompt that includes image content is rejected with a clear error
+before reaching the provider. Set to `false` when using a text-only provider to
+avoid misleading capability advertisement.
+
+Vision support also depends on the provider and model. See
+`docs/how-to/zed_acp_agent_setup.md` for per-provider guidance.
+
+### `acp.stdio.max_image_bytes`
+
+- Type: integer
+- Default: `5242880` (5 MiB)
+
+Maximum decoded byte size for a single inline base64 image. Images that exceed
+this limit are rejected. Reduce this value on memory-constrained systems.
+
+### `acp.stdio.allowed_image_mime_types`
+
+- Type: list of strings
+- Default: `["image/png", "image/jpeg", "image/webp", "image/gif"]`
+
+MIME types accepted from ACP prompt image content blocks. Requests containing
+unsupported MIME types are rejected with a descriptive error.
+
+### `acp.stdio.allow_image_file_references`
+
+- Type: boolean
+- Default: `true`
+
+When true, image content blocks that reference a local file path are resolved
+from the session workspace root. When `false`, only inline base64 image data is
+accepted.
+
+### `acp.stdio.allow_remote_image_urls`
+
+- Type: boolean
+- Default: `false`
+
+When true, image content blocks that contain `http://` or `https://` URLs are
+fetched and decoded. Disabled by default to prevent unintended outbound
+requests.
+
+## Stdio environment variable overrides
+
+The following environment variables override `acp.stdio` fields:
+
+| Environment variable                            | Field                                   |
+| ----------------------------------------------- | --------------------------------------- |
+| `XZATOMA_ACP_STDIO_PERSIST_SESSIONS`            | `acp.stdio.persist_sessions`            |
+| `XZATOMA_ACP_STDIO_RESUME_BY_WORKSPACE`         | `acp.stdio.resume_by_workspace`         |
+| `XZATOMA_ACP_STDIO_MAX_ACTIVE_SESSIONS`         | `acp.stdio.max_active_sessions`         |
+| `XZATOMA_ACP_STDIO_SESSION_TIMEOUT`             | `acp.stdio.session_timeout_seconds`     |
+| `XZATOMA_ACP_STDIO_PROMPT_QUEUE_CAPACITY`       | `acp.stdio.prompt_queue_capacity`       |
+| `XZATOMA_ACP_STDIO_VISION_ENABLED`              | `acp.stdio.vision_enabled`              |
+| `XZATOMA_ACP_STDIO_MAX_IMAGE_BYTES`             | `acp.stdio.max_image_bytes`             |
+| `XZATOMA_ACP_STDIO_ALLOW_IMAGE_FILE_REFERENCES` | `acp.stdio.allow_image_file_references` |
+| `XZATOMA_ACP_STDIO_ALLOW_REMOTE_IMAGE_URLS`     | `acp.stdio.allow_remote_image_urls`     |
+
+Boolean values follow the same conventions as the HTTP ACP environment
+variables: true values are `1`, `true`, `yes`, `on`; false values are `0`,
+`false`, `no`, `off`.
+
+## Stdio configuration example
+
+```yaml
+acp:
+  stdio:
+    persist_sessions: true
+    resume_by_workspace: true
+    max_active_sessions: 32
+    session_timeout_seconds: 3600
+    prompt_queue_capacity: 8
+    model_list_timeout_seconds: 5
+    vision_enabled: true
+    max_image_bytes: 5242880
+    allowed_image_mime_types:
+      - image/png
+      - image/jpeg
+      - image/webp
+      - image/gif
+    allow_image_file_references: true
+    allow_remote_image_urls: false
+```
+
 ## Related documentation
 
 - `docs/how-to/run_xzatoma_as_an_acp_server.md`
 - `docs/reference/acp_api.md`
 - `docs/explanation/acp_implementation.md`
+- `docs/how-to/zed_acp_agent_setup.md`
+- `docs/explanation/zed_acp_agent_command_implementation.md`

@@ -1,0 +1,25 @@
+# Zed ACP demo configuration for Ollama with vision support
+# Requires: ollama pull granite3.2-vision:2b
+provider:
+  provider_type: ollama
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "granite3.2-vision:2b"
+
+agent:
+  max_turns: 20
+  timeout_seconds: 180
+
+acp:
+  stdio:
+    persist_sessions: true
+    resume_by_workspace: true
+    vision_enabled: true
+    max_image_bytes: 5242880
+    allowed_image_mime_types:
+      - image/png
+      - image/jpeg
+      - image/webp
+      - image/gif
+    allow_image_file_references: true
+    allow_remote_image_urls: false
+    prompt_queue_capacity: 8

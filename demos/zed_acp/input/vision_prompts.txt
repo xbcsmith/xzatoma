@@ -1,0 +1,12 @@
+# Vision example prompts for xzatoma agent in Zed
+#
+# These prompts require a vision-capable model. See README.md for setup.
+# Attach an image to the Zed agent panel prompt before sending each one.
+
+Describe what you see in the attached image.
+
+What colors are dominant in this image?
+
+Does this image contain any text? If so, transcribe it.
+
+Describe any code or diagrams visible in this image.

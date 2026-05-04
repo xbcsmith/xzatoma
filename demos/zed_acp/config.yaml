@@ -1,0 +1,16 @@
+# Default Zed ACP demo configuration (Ollama, text-only)
+provider:
+  provider_type: ollama
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "granite4:3b"
+
+agent:
+  max_turns: 20
+  timeout_seconds: 120
+
+acp:
+  stdio:
+    persist_sessions: true
+    resume_by_workspace: true
+    vision_enabled: false
+    prompt_queue_capacity: 8

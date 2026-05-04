@@ -325,6 +325,24 @@ state under `tmp/`, and passes the 13-point isolation audit.
 Documentation: **[demo_implementation.md](demo_implementation.md)** - canonical
 implementation summary with validation matrix (7 demos x 13 checks, all true)
 
+### Zed ACP Agent Command -- Complete
+
+Seven-phase implementation of `xzatoma agent`, the ACP stdio subprocess mode for
+Zed and other ACP-compatible IDE clients.
+
+- **Phase 1** - Dependency, CLI, and stdio safety foundation
+- **Phase 2** - ACP stdio handshake and session creation
+- **Phase 3** - Text and vision input model
+- **Phase 4** - Session persistence, resume, and model advertisement
+- **Phase 5** - Zed IDE tooling and runtime controls
+- **Phase 6** - Prompt execution, streaming updates, queueing, and cancellation
+- **Phase 7** - Documentation, demo, and quality gates
+
+Documentation:
+**[zed_acp_agent_command_implementation.md](zed_acp_agent_command_implementation.md)**
+-- canonical implementation summary covering transport architecture, session
+lifecycle, prompt queuing, evented execution, cancellation, and follow-up work.
+
 ---
 
 ## MCP Phase 0: Repository Integration Scaffold (2025-07-XX)

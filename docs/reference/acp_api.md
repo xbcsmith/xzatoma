@@ -1,5 +1,18 @@
 # ACP API Reference
 
+## Scope
+
+This document describes XZatoma's **HTTP ACP API** only. It covers the REST
+endpoints exposed by `xzatoma acp serve`.
+
+For the stdio ACP protocol used by Zed and other IDE clients, see:
+
+- `docs/how-to/zed_acp_agent_setup.md` -- how to configure Zed to launch
+  `xzatoma agent`
+- `docs/reference/acp_configuration.md` -- full `acp.stdio` field reference
+- `docs/explanation/zed_acp_agent_command_implementation.md` -- implementation
+  overview
+
 ## Overview
 
 This document describes XZatoma's ACP-compatible HTTP API surface for server
