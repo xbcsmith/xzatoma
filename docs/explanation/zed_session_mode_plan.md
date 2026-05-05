@@ -1,696 +1,765 @@
-# Zed Session Mode Selector Implementation Plan
+# XZatoma Zed Session Mode Selector: Remaining Gaps Implementation Plan
 
 ## Overview
 
-This plan adds a mode selector widget to Atoma's Zed IDE chat window that maps
-to Atoma's existing `TerminalMode` security levels (Interactive, Restricted,
-Full Autonomous). When a user switches modes in Zed's UI, a `session/set_mode`
-JSON-RPC request is sent to Atoma over stdio. Atoma will handle this by storing
-the mode per-session and threading it into the tool registry at prompt time.
-This removes the need to hard-code `terminal_mode: restricted` in the config
-file for Zed users.
+This plan covers the four remaining functional gaps in XZatoma's Zed ACP
+integration. The core session mode infrastructure has already been implemented:
+`src/acp/session_mode.rs` defines four modes (`planning`, `write`, `safe`,
+`full_autonomous`), the `SetSessionModeRequest` handler is registered and
+working, `NewSessionResponse` includes populated `modes` and `config_options`,
+`tool_notifications.rs` sends structured tool-call UI cards, and the IDE bridge
+is operational.
 
-The plan also addresses three additional gaps discovered when auditing Atoma
-against Zed's ACP agent harness: (1) all non-text `ContentBlock` types in
-`PromptRequest` are silently discarded, making `@mentions` of files,
-diagnostics, and git diffs completely non-functional; (2) MCP servers forwarded
-by Zed in `NewSessionRequest.mcp_servers` are ignored, so project-specific
-context servers never reach Atoma; and (3) tool calls stream as raw text
-instead of structured UI cards, producing noisy output in the chat window.
+The four gaps addressed by this plan are:
+
+1. `PromptCapabilities.embedded_context` is not advertised, causing Zed to hide
+   `#diagnostics`, `#git-diff`, `#rules`, `#thread`, and `#fetch` from the
+   mention completion menu and to send file references as `ResourceLink` stubs.
+2. `ContentBlock::Resource(EmbeddedResource)` blocks containing
+   `TextResourceContents` (file contents, diagnostics, git diffs, rules) are
+   rejected with an error in `acp_content_blocks_to_prompt_input`, making all
+   file and context mentions non-functional even when Zed does send them.
+3. Non-image `ContentBlock::ResourceLink` blocks are rejected with an error,
+   breaking directory mentions and file references from older Zed clients.
+4. Zed-forwarded MCP servers in `NewSessionRequest.mcp_servers` are never read
+   or connected, so project-specific context servers (database, GitHub, custom
+   indexers) configured in Zed project settings are unavailable to the agent.
+5. When `set_session_mode` is called, the `TerminalTool`'s `CommandValidator`
+   inside the agent's tool registry still holds the original `ExecutionMode`
+   from session creation. Mode changes only rebuild system messages; they do not
+   enforce new terminal permission policies at the tool level.
+
+---
 
 ## Current State Analysis
 
 ### Existing Infrastructure
 
-- `TerminalMode` enum (`src/config.rs` L74-85): three variants — `Interactive`,
-  `RestrictedAutonomous` (`"restricted"`), `FullAutonomous` (`"full"`) — with
-  `serde` rename attributes already matching the ACP mode ID strings Zed will
-  send.
-- `PermissionManager::set_mode()` (`src/security/permissions.rs` L239-241):
-  method already exists to mutate mode at runtime; it is currently never called
-  after startup.
-- `SessionState` struct (`src/commands/agent.rs` L92-101): holds per-session
-  data (executor, cancel token, conversation ULID, cwd) but has no
-  `terminal_mode` field.
-- `make_agent_builder` (`src/commands/agent.rs` L272-277): registers handlers
-  for `InitializeRequest` (L288-307), `NewSessionRequest` (L311-490), and
-  `PromptRequest` (L494-672). No `SetSessionModeRequest` handler exists.
-- `NewSessionResponse` construction (`src/commands/agent.rs` L471-474):
-  optionally chains `.models(state)` but never calls `.modes(...)`.
-- `agent-client-protocol` v0.11.1 (Cargo.toml L12): already exports
-  `SessionModeState`, `SessionMode`, `SessionModeId`, `SetSessionModeRequest`,
-  and `SetSessionModeResponse` with no additional feature flag required. No
-  crate upgrade is needed.
+- `src/acp/session_mode.rs`: Defines `MODE_PLANNING`, `MODE_WRITE`, `MODE_SAFE`,
+  `MODE_FULL_AUTONOMOUS` constants, `build_session_modes()`,
+  `build_session_mode_state()`, `ModeRuntimeEffect`, and `mode_runtime_effect()`
+  with full unit test coverage. No changes needed.
+
+- `src/acp/stdio.rs`: `run_stdio_agent_with_transport` registers handlers for
+  `InitializeRequest`, `NewSessionRequest`, `PromptRequest`,
+  `SetSessionModeRequest`, `SetSessionConfigOptionRequest`,
+  `SetSessionModelRequest`, and `CancelNotification`. All handlers are wired and
+  tested. `ActiveSessionState` holds `current_mode_id: String` and
+  `runtime_state: SessionRuntimeState`.
+
+- `src/acp/session_config.rs`: Defines `SessionRuntimeState` with fields
+  `safety_mode_str`, `terminal_mode`, `tool_routing`, `vision_enabled`,
+  `subagents_enabled`, `mcp_enabled`, `max_turns`. Implements
+  `build_session_config_options()` and `apply_config_option_change()`.
+
+- `src/acp/tool_notifications.rs`: Implements `tool_kind_for_name()`,
+  `build_tool_call_start()`, `build_tool_call_completion()`,
+  `build_tool_call_failure()`, `build_tool_call_locations()`, and
+  `generate_tool_call_id()`. The `AcpSessionObserver` in `src/acp/stdio.rs`
+  routes `ToolCallStarted`, `ToolCallCompleted`, and `ToolCallFailed` events to
+  `SessionUpdate::ToolCall` and `SessionUpdate::ToolCallUpdate` notifications.
+
+- `src/acp/prompt_input.rs`: `acp_content_blocks_to_prompt_input()` handles
+  `ContentBlock::Text` and `ContentBlock::Image`. Image `ResourceLink` and
+  `BlobResourceContents` within `Resource` blocks are routed to image
+  conversion. Non-image paths in both variants currently return errors.
+
+- `src/tools/terminal.rs`: `CommandValidator` holds a `pub mode: ExecutionMode`
+  field that governs command validation policy. `TerminalTool` holds a
+  `pub validator: CommandValidator`. Both fields are public but the tool is
+  stored as `Arc<dyn ToolExecutor>` in `ToolRegistry`, providing only immutable
+  access through the trait object.
+
+- `src/agent/core.rs`: `Agent` struct stores `tools: ToolRegistry` as a private
+  field. The only public accessor is `pub fn tools(&self) -> &ToolRegistry`.
+  There is no `tools_mut()` accessor and no method to replace a registered tool.
+
+- `agent-client-protocol` v0.11.1 depends on `agent-client-protocol-schema`
+  v0.12.0. `PromptCapabilities.embedded_context` is available unconditionally in
+  the schema (no feature flag required). `NewSessionRequest.mcp_servers` is a
+  `Vec<acp::McpServer>` field available unconditionally.
 
 ### Identified Issues
 
-1. `NewSessionResponse.modes` is always `None` — Zed never receives a mode
-   advertisement, so no `ModeSelector` widget appears in the chat window.
-2. No `session/set_mode` handler is registered in `make_agent_builder` —
-   Zed's RPC call is silently dropped.
-3. `SessionState` has no `terminal_mode` field — mode cannot vary per session.
-4. `PermissionManager::set_mode()` is unreachable at runtime from the Zed
-   stdio path.
-5. `register_mcp_tools` is never called in the Zed stdio agent path
-   (`src/commands/agent.rs`), while every other execution path calls it —
-   this means MCP tools are absent from Zed agent sessions entirely (a
-   pre-existing gap that must be addressed to make mode enforcement meaningful).
-6. `terminal_mode: restricted` must be set in the config file today for Zed
-   users to get safe defaults, which is an undiscoverable footgun.
-7. `PromptCapabilities` is advertised with all flags `false` (the
-   `PromptCapabilities::new()` default) — `embedded_context: false` causes
-   Zed to hide `#diagnostics`, `#git-diff`, `#rules`, and `#thread` from the
-   `@mention` completion menu and to send all file references as `ResourceLink`
-   stubs rather than inline content.
-8. The `PromptRequest` handler (`src/commands/agent.rs` L503-506) matches only
-   `ContentBlock::Text` and discards every other variant with `_ => None`,
-   meaning `ResourceLink`, `Resource(EmbeddedResource)`, and `Image` blocks
-   sent by Zed are silently dropped — `@mentions` are non-functional even when
-   Zed does send them.
-9. `NewSessionRequest.mcp_servers` (the `Vec<McpServer>` forwarded by Zed
-   containing all project-level MCP servers) is never accessed; Atoma only
-   uses its own config-file MCP servers, ignoring any project-specific context
-   servers the user has configured in Zed.
-10. Tool calls stream as raw `AgentMessageChunk` text (`"Tool: {name} |
-{preview}"` at `src/commands/agent.rs` L595-600) instead of structured
-    `SessionUpdate::ToolCall` notifications, so Zed cannot render collapsible
-    tool cards with status indicators.
+1. `handle_initialize()` in `src/acp/stdio.rs` L1193-1195 advertises only
+   `.image(true)` in `PromptCapabilities`. The `embedded_context` field is
+   `false` (the struct default), so Zed suppresses file and context mention
+   types from the completion menu.
+
+2. `acp_content_blocks_to_prompt_input()` in `src/acp/prompt_input.rs` L90-98
+   routes all `ContentBlock::Resource(resource)` blocks to
+   `convert_embedded_resource()`, which rejects `TextResourceContents` with a
+   non-image MIME type by returning
+   `Err(provider_error("unsupported embedded text resource ..."))`. This makes
+   every file mention, `#diagnostics` block, `#git-diff` block, and `#rules`
+   block fail at the protocol boundary.
+
+3. `acp_content_blocks_to_prompt_input()` in `src/acp/prompt_input.rs` L73-84
+   routes all `ContentBlock::ResourceLink(resource)` blocks to
+   `convert_image_resource_link()` when the MIME type is an image type, or
+   returns `Err(provider_error("unsupported resource link ..."))` for all other
+   MIME types. Directory mentions and non-image file links always fail.
+
+4. `create_session()` in `src/acp/stdio.rs` builds
+   `env = build_agent_environment()` from the XZatoma config file and passes
+   `env.mcp_manager` directly to `ActiveSessionState`. The `request.mcp_servers`
+   field (ACP type `Vec<acp::McpServer>`) is never read. Zed-forwarded MCP
+   servers are silently ignored.
+
+5. `set_session_mode()` in `src/acp/stdio.rs` updates
+   `session_lock.runtime_state.terminal_mode` and rebuilds the agent's transient
+   system messages. It does not update the `CommandValidator.mode` field inside
+   the `TerminalTool` stored in the agent's tool registry. After a mode change,
+   the terminal tool still enforces the `ExecutionMode` that was set at session
+   creation time.
+
+---
 
 ## Implementation Phases
 
 ---
 
-### Phase 1: Session State and Mode Mapping Foundation
+### Phase 1: Embedded Context Capability and Rich Content Block Handling
 
-#### 1.1 Add `terminal_mode` Field to `SessionState`
+This phase fixes the three content-pipeline gaps that prevent Zed's `@mention`
+system from working. All three fixes are in two files and must be implemented
+together because they share test infrastructure.
 
-In `src/commands/agent.rs`, add a `terminal_mode: TerminalMode` field to the
-`SessionState` struct (L92-101). Update the `Debug` impl (L103-113) to include
-the new field. The field must be `pub` to match the existing field visibility
-pattern.
+#### Task 1.1: Advertise `embedded_context: true` in `PromptCapabilities`
 
-#### 1.2 Initialize `terminal_mode` from Global Config on Session Creation
+**File**: `src/acp/stdio.rs`
 
-In the `NewSessionRequest` handler (`src/commands/agent.rs` L311-490), when
-constructing and inserting the new `SessionState` (L479-487), set
-`terminal_mode: config_clone.terminal_mode` where `config_clone` is the
-`Arc<Config>` already captured in the closure. This preserves backward
-compatibility: a config file with `terminal_mode: restricted` continues to
-work, and sessions default to whatever the operator configured.
+**Location**: `pub fn handle_initialize()`, lines 1184-1203.
 
-#### 1.3 Add `TerminalMode` to `SessionMode` Mapping
+**Current code** (lines 1193-1195):
 
-Add a `const` or `impl` block in `src/commands/agent.rs` (near the top, after
-the existing constants) that maps each `TerminalMode` variant to an ACP
-`SessionModeId` and display name:
-
-- `Interactive` → id `"interactive"`, name `"Interactive"`, description
-  `"Requires approval before executing each command"`
-- `RestrictedAutonomous` → id `"restricted"`, name `"Restricted"`, description
-  `"Blocks dangerous commands; no approval prompts"`
-- `FullAutonomous` → id `"full"`, name `"Full Autonomous"`, description
-  `"Executes all commands without restriction"`
-
-Add a `From<&str>` or `TryFrom<SessionModeId>` conversion back to
-`TerminalMode` for use in the `set_mode` handler. Return an error for
-unrecognized mode ID strings.
-
-#### 1.4 Testing Requirements
-
-- Unit test: `terminal_mode` field on `SessionState` initializes from config
-  correctly for all three `TerminalMode` variants.
-- Unit test: `TerminalMode` round-trips through the string ID mapping (all
-  three variants → string → `TerminalMode` without error; unknown string
-  returns `Err`).
-
-#### 1.5 Deliverables
-
-- `SessionState` has a `terminal_mode: TerminalMode` field initialized from
-  global config at session creation.
-- A bidirectional mapping between `TerminalMode` and ACP `SessionModeId`
-  strings exists and is covered by unit tests.
-
-#### 1.6 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- `cargo test` passes with new unit tests for the mapping and initialization.
-
----
-
-### Phase 2: Mode Advertisement in `NewSessionResponse`
-
-#### 2.1 Construct `SessionModeState` in the `session/new` Handler
-
-In the `NewSessionRequest` handler (`src/commands/agent.rs` L462-474), before
-building the response, construct a `SessionModeState` using the types already
-available from `agent-client-protocol` v0.11.1:
-
-- `available_modes`: a `Vec<SessionMode>` with all three entries from the
-  Phase 1 mapping, in the order Interactive → Restricted → Full Autonomous.
-- `current_mode_id`: the `SessionModeId` derived from the session's resolved
-  `terminal_mode` (the value that was just stored in `SessionState`).
-
-#### 2.2 Chain `.modes()` onto `NewSessionResponse`
-
-Replace the existing response construction block (L471-474) with a single
-builder chain that always sets both `models` (when available) and `modes`:
-
-```text
-NewSessionResponse::new(session_id.clone())
-    .modes(session_mode_state)
-    .models(state)   // optional, only when model_state.is_some()
+```rust
+acp::AgentCapabilities::new()
+    .load_session(false)
+    .prompt_capabilities(acp::PromptCapabilities::new().image(true))
 ```
 
-The `.modes()` call must come before `.models()` because Zed's `config_state()`
-function ignores `modes` when `config_options` is present, but modes and models
-are not mutually exclusive.
+**Required change**: Replace the `.prompt_capabilities(...)` call with:
 
-#### 2.3 Testing Requirements
-
-- Unit test: the `NewSessionResponse` produced by the handler includes a
-  non-`None` `modes` field.
-- Unit test: `current_mode_id` in the response matches the `TerminalMode` set
-  in config for each of the three variants.
-- Unit test: `available_modes` always contains exactly three entries with the
-  correct ids, names, and descriptions.
-
-#### 2.4 Deliverables
-
-- Every `NewSessionResponse` from the Zed stdio agent includes a populated
-  `modes` field.
-- Zed's `ModeSelector` widget appears in the chat window for Atoma sessions.
-
-#### 2.5 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- Manual verification: start `atoma agent` and connect via Zed — a mode
-  selector dropdown appears in the chat window showing `Restricted` as the
-  default.
-
----
-
-### Phase 3: `session/set_mode` Handler
-
-#### 3.1 Register `SetSessionModeRequest` Handler
-
-In `make_agent_builder` (`src/commands/agent.rs`), add a fourth
-`.on_receive_request()` call after the `PromptRequest` handler (after L672)
-using the same `on_receive_request!()` macro pattern. The handler signature
-follows the existing pattern:
-
-```text
-async move |req: SetSessionModeRequest, responder, _cx| { ... }
+```rust
+.prompt_capabilities(
+    acp::PromptCapabilities::new()
+        .image(true)
+        .embedded_context(true),
+)
 ```
 
-The handler must capture `Arc::clone(&sessions)` as `sessions_for_set_mode`.
+No feature flag or crate upgrade is needed.
+`PromptCapabilities::embedded_context` is a stable field in
+`agent-client-protocol-schema` v0.12.0, which is already a direct dependency.
 
-#### 3.2 Implement the Handler Body
+**Effect**: Zed enables `ContentBlock::Resource` blocks in prompt requests and
+shows `#diagnostics`, `#git-diff`, `#rules`, `#thread`, and `#fetch` in the
+mention completion menu.
 
-Inside the `SetSessionModeRequest` handler:
+#### Task 1.2: Handle `TextResourceContents` in `ContentBlock::Resource` Dispatch
 
-1. Parse `req.mode_id` using the `TryFrom<SessionModeId>` conversion added in
-   Phase 1. Return `responder.respond_with_error(Error::invalid_params())` for
-   unrecognized mode IDs.
-2. Lock the sessions map and look up `req.session_id`. Return
-   `responder.respond_with_error(Error::invalid_request())` if the session does
-   not exist (mirrors the pattern in the `PromptRequest` handler at L533-545).
-3. Update `session_state.terminal_mode` to the parsed `TerminalMode`.
-4. Log the mode change at `info!` level, including `session_id` and the new
-   mode string.
-5. Respond with `SetSessionModeResponse::default()` (the type serializes as an
-   empty JSON object `{}`).
+**File**: `src/acp/prompt_input.rs`
 
-#### 3.3 Testing Requirements
+**Location**: `pub fn acp_content_blocks_to_prompt_input()`, the
+`ContentBlock::Resource(resource)` arm, lines 90-98.
 
-- Unit test: sending a valid `SetSessionModeRequest` updates `SessionState`
-  `terminal_mode` to the new value.
-- Unit test: sending an unknown `mode_id` returns a JSON-RPC error response and
-  does not modify session state.
-- Unit test: sending a `SetSessionModeRequest` for a non-existent `session_id`
-  returns a JSON-RPC error.
-- Unit test: all three valid mode IDs (`"interactive"`, `"restricted"`,
-  `"full"`) are accepted and stored correctly.
+**Current behavior**: All `ContentBlock::Resource(resource)` blocks are passed
+to `convert_embedded_resource()`. That function checks
+`is_image_mime_type(Some(mime_type))` on `TextResourceContents` and returns an
+error when the MIME type is not an image type.
 
-#### 3.4 Deliverables
+**Required change**: Replace the single
+`ContentBlock::Resource(resource) => ...` arm with an explicit dispatch on the
+inner `EmbeddedResourceResource` variant:
 
-- `session/set_mode` is a registered, functional JSON-RPC handler.
-- Mode changes are persisted on `SessionState` and survive across subsequent
-  `session/prompt` calls within the same session.
-
-#### 3.5 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- `cargo test` passes with new handler unit tests.
-- Manual verification: switching modes in the Zed `ModeSelector` does not
-  produce an error and the selected mode label persists.
-
----
-
-### Phase 4: Thread Per-Session Mode into Tool Registry
-
-#### 4.1 Fix Missing `register_mcp_tools` Call
-
-In the `NewSessionRequest` handler in `src/commands/agent.rs`, add the
-`register_mcp_tools` call when constructing the `ToolRegistry` for each session.
-Every other execution path (`src/commands/chat.rs` L164, `src/commands/run.rs`
-L747, `src/acp/executor.rs` L377) calls this function; the Zed stdio path is
-the only one that does not. Pass the session's resolved `terminal_mode` and
-`headless: true` (all Zed stdio sessions are headless — the user interacts via
-the Zed UI, not Atoma's CLI prompts).
-
-#### 4.2 Apply Session `terminal_mode` at Prompt Time
-
-In the `PromptRequest` handler, the session's `terminal_mode` must be extracted
-alongside the other session data in the `sessions.lock()` block (L511-532) and
-included in the tuple returned (currently `(executor_arc, cancel_token,
-conversation_ulid, cwd)`). Add `terminal_mode: TerminalMode` to this tuple.
-
-Before calling `exec.run_iteration()` inside the prompt loop, update the
-executor's tool registry's `PermissionManager` with the current session mode.
-Expose a method on `AgentExecutor` (e.g., `apply_terminal_mode(mode:
-TerminalMode)`) in `src/agent/executor.rs` that calls
-`PermissionManager::set_mode()` on any registered tools that hold a
-`PermissionManager`. Alternatively, store the session's `terminal_mode` on the
-`AgentExecutor` itself and apply it at the start of each iteration.
-
-#### 4.3 Rebuild Tool Registry on Mode Change (Optional Enhancement)
-
-If rebuilding the `ToolRegistry` on mode change is simpler than patching
-`PermissionManager` in place, the `SetSessionModeRequest` handler from Phase 3
-can instead rebuild and replace the executor's tool registry. This trades
-simplicity of the set-mode handler for simplicity of the prompt handler. Choose
-whichever approach produces fewer unsafe patterns. Document the decision in
-`docs/explanation/implementations.md`.
-
-#### 4.4 Testing Requirements
-
-- Unit test: after a `SetSessionModeRequest` changes mode to `"full"`, the next
-  prompt execution uses `TerminalMode::FullAutonomous` in the
-  `PermissionManager`.
-- Unit test: after a `SetSessionModeRequest` changes mode to `"interactive"`,
-  the `PermissionManager` reflects `TerminalMode::Interactive`.
-- Integration test: end-to-end using `FakeTransport` — send `session/new`,
-  then `session/set_mode` to `"restricted"`, then `session/prompt`; assert
-  that the tool registry's permission manager is in `RestrictedAutonomous`
-  mode.
-- Verify `register_mcp_tools` is called during `session/new` by asserting at
-  least one tool is registered in the executor's tool registry.
-
-#### 4.5 Deliverables
-
-- MCP tools are registered in the Zed stdio agent path (parity with all other
-  execution paths).
-- The `PermissionManager` inside the tool registry reflects the session's
-  current `terminal_mode` at the start of each prompt iteration.
-- Mode changes take effect on the very next prompt turn within the session.
-
-#### 4.6 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- `cargo nextest run --all-features` passes with new integration test.
-- Manual verification: switch to `Full Autonomous` mode in Zed and confirm
-  Atoma executes a terminal command without restriction; switch back to
-  `Restricted` and confirm dangerous commands are blocked.
-
----
-
-### Phase 5: Rich Context Support
-
-Atoma currently advertises `PromptCapabilities::new()` in its
-`InitializeResponse`, which defaults `embedded_context`, `image`, and `audio`
-all to `false`. This causes two concrete failures: Zed hides high-value mention
-types from the completion menu, and `ContentBlock` variants other than `Text`
-are silently dropped by the `PromptRequest` handler. This phase enables
-embedded context and repairs the content block dispatch.
-
-#### 5.1 Enable `embedded_context` and `image` in `PromptCapabilities`
-
-In the `InitializeRequest` handler (`src/commands/agent.rs` L288-307), replace
-the bare `PromptCapabilities::new()` call with:
-
-```text
-PromptCapabilities::new()
-    .embedded_context(true)
-    .image(true)
+```rust
+acp::ContentBlock::Resource(resource) => match &resource.resource {
+    acp::EmbeddedResourceResource::TextResourceContents(text) => {
+        if is_image_mime_type(text.mime_type.as_deref()) {
+            // Image disguised as a text resource (rare); fall back to URI conversion.
+            parts.push(PromptInputPart::image(convert_embedded_resource(
+                resource,
+                config,
+                workspace_root,
+            )?));
+        } else {
+            // Inline file content, diagnostics, git diff, rules, etc.
+            let header = format!("\n[Context: {}]\n", text.uri);
+            let body = format!("{}{}", header, text.text);
+            if !body.trim().is_empty() {
+                parts.push(PromptInputPart::text(body));
+            }
+        }
+    }
+    acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+        // Binary blob: always attempt image conversion.
+        parts.push(PromptInputPart::image(convert_embedded_resource(
+            resource,
+            config,
+            workspace_root,
+        )?));
+    }
+    _ => {
+        return Err(provider_error("unsupported embedded ACP resource variant"));
+    }
+},
 ```
 
-`embedded_context: true` unlocks the full Zed mention menu — `#diagnostics`,
-`#git-diff`, `#rules`, `#thread`, and `#fetch` — and switches file mentions
-from `ResourceLink` stubs to fully-inlined `Resource(EmbeddedResource)` blocks.
-`image: true` allows pasted images to be forwarded to vision-capable providers.
+**Rationale**: `TextResourceContents.text` holds the full content of the
+referenced resource as a UTF-8 string. Prepending a URI header gives the model
+the source context. The existing `convert_embedded_resource()` function is
+reused for the binary/image path to avoid duplication.
 
-The `audio` flag can remain `false`; no provider Atoma supports accepts audio
-content.
+#### Task 1.3: Handle Non-Image `ContentBlock::ResourceLink` as Text Placeholders
 
-#### 5.2 Expand `ContentBlock` Dispatch in `PromptRequest`
+**File**: `src/acp/prompt_input.rs`
 
-Replace the text-only `filter_map` (L503-506) with a full `match` over every
-`ContentBlock` variant, assembling a combined prompt string to pass to
-`exec.add_user_message()`. The conversion rules are:
+**Location**: `pub fn acp_content_blocks_to_prompt_input()`, the
+`ContentBlock::ResourceLink(resource)` arm, lines 73-84.
 
-- `ContentBlock::Text(t)` — include `t.text` directly (existing behavior).
-- `ContentBlock::Resource(embedded)` — match on `embedded.resource`:
-  - `EmbeddedResourceResource::TextResourceContents(trc)` — prepend a context
-    header `\n[Context: {trc.uri}]\n` followed by `trc.text`. This is the
-    primary path for `#file`, `#diagnostics`, `#selection`, `#git-diff`, and
-    `#rules` when `embedded_context: true`.
-  - `EmbeddedResourceResource::BlobResourceContents(_)` — emit a placeholder
-    `[Binary resource: {blob.uri}]` so the model knows content was attached but
-    could not be inlined.
-- `ContentBlock::ResourceLink(link)` — emit `[Reference: {link.name}
-({link.uri})]`. This path is still exercised for directory mentions and
-  for sessions on older Zed clients that do not send embedded content.
-- `ContentBlock::Image(img)` — if the session's provider is vision-capable,
-  pass the image data through to the model using the existing
-  `ToolResult::success_with_images` path that `read_file` already exercises.
-  If not vision-capable, emit `[Image attachment — vision not available]`.
-- `ContentBlock::Audio(_)` — emit `[Audio attachment — not supported]` since
-  no Atoma provider accepts audio.
+**Current behavior**: Non-image MIME types return
+`Err(provider_error("unsupported resource link ..."))`.
 
-All content blocks from a single `PromptRequest` must be assembled into one
-string before calling `exec.add_user_message()`. Preserve the existing join on
-`"\n"` between blocks.
+**Required change**: Replace the current arm with:
 
-#### 5.3 Add Image-Capable Flag to `SessionState`
-
-To decide whether to pass images to the provider at prompt time, `SessionState`
-needs to know whether the current provider is vision-capable. Inspect
-`executor.get_current_model()` after provider attachment in the
-`NewSessionRequest` handler and set a `vision_capable: bool` flag on
-`SessionState`. The `read_file` tool already has this logic — reuse the same
-model-name check.
-
-#### 5.4 Testing Requirements
-
-- Unit test: a `PromptRequest` containing only `ContentBlock::Text` blocks
-  produces the same result as before (no regression).
-- Unit test: a `PromptRequest` with a `ContentBlock::Resource` wrapping
-  `TextResourceContents { text: "fn main() {}", uri: "file:///src/main.rs" }`
-  includes both the URI header and the text body in the assembled prompt string.
-- Unit test: a `PromptRequest` with a `ContentBlock::ResourceLink` produces
-  a `[Reference: ...]` placeholder (not an empty string or a panic).
-- Unit test: a `PromptRequest` mixing `Text` + `Resource` + `ResourceLink`
-  blocks assembles all three into one string separated by `"\n"`.
-- Unit test: `InitializeResponse` from `make_agent_builder` contains
-  `PromptCapabilities` with `embedded_context: true` and `image: true`.
-
-#### 5.5 Deliverables
-
-- `PromptCapabilities` advertises `embedded_context: true` and `image: true`.
-- All five `ContentBlock` variants are handled without panicking or silently
-  discarding content.
-- Zed's `@mention` completion menu shows `#diagnostics`, `#git-diff`, `#rules`,
-  `#thread`, and `#fetch` for Atoma sessions.
-- File mentions send inline content rather than stubs.
-
-#### 5.6 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- `cargo test` passes with all new unit tests.
-- Manual verification: type `#diagnostics` in the Zed chat window for an Atoma
-  session — the option appears in the completion menu and sending it results in
-  LSP diagnostic content appearing in Atoma's received prompt.
-
----
-
-### Phase 6: Zed MCP Server Integration
-
-Zed forwards all project-configured MCP servers in `NewSessionRequest.mcp_servers`
-(`Vec<McpServer>`). Atoma currently never reads this field. This phase connects
-those servers per-session and registers their tools, giving the agent access to
-project-specific context servers (e.g., a database server, a GitHub server, a
-custom indexer) that the user has configured in Zed — without requiring those
-servers to also appear in Atoma's `atoma.yaml`.
-
-#### 6.1 Add `McpClientManager` to `SessionState`
-
-Add a `mcp_manager: Option<Arc<RwLock<McpClientManager>>>` field to
-`SessionState` (`src/commands/agent.rs` L92-101). This stores a per-session MCP
-client manager so that servers connected for one session are isolated from other
-sessions. Update the `Debug` impl (L103-113) to handle the new field with a
-`"<mcp_manager>"` placeholder, mirroring the executor field pattern.
-
-#### 6.2 Pass `McpClientManager` into `make_agent_builder`
-
-Add a sixth parameter `mcp_manager: Arc<RwLock<McpClientManager>>` to
-`make_agent_builder` (`src/commands/agent.rs` L272-277) so the
-`NewSessionRequest` closure can clone it per-session. In `handle_agent`
-(`src/commands/agent.rs` L761-820), create a shared `McpClientManager` using
-the same construction pattern as `execute_plan_task` in `src/commands/run.rs`
-(L690-700): `McpClientManager::new(Arc::new(reqwest::Client::new()), Arc::new(TokenStore))`.
-Call `manager.connect_all(&config.mcp).await` to connect any servers already
-present in the config file before handing the manager to `make_agent_builder`.
-
-#### 6.3 Convert and Connect Zed-Forwarded MCP Servers
-
-In the `NewSessionRequest` handler, after step 6 (provider attachment, L454-467)
-and before step 8 (model listing, L451-470), iterate over `req.mcp_servers` and
-convert each to an Atoma `McpServerConfig` (`src/mcp/server.rs` L219-260):
-
-- `McpServer::Stdio(s)` — construct:
-  ```text
-  McpServerConfig {
-      id: s.name.clone(),
-      transport: McpServerTransportConfig::Stdio {
-          executable: s.command.to_string_lossy().into_owned(),
-          args: s.args.clone(),
-          env: s.env.iter().map(|e| (e.name.clone(), e.value.clone())).collect(),
-          working_dir: None,
-      },
-      enabled: true,
-      tools_enabled: true,
-      .. McpServerConfig::default()
-  }
-  ```
-- `McpServer::Http(h)` — construct with `McpServerTransportConfig::Http`,
-  parsing `h.url` as a `url::Url` and building headers from `h.headers`.
-- `McpServer::Sse(s)` — same shape as `Http`.
-
-For each converted config, call `mcp_manager_clone.write().await.connect(cfg).await`
-and log a `warn!` (do not abort) if any individual server fails to connect,
-matching the error-tolerance pattern in `run.rs` L697-704.
-
-After all servers are connected, call `register_mcp_tools` (full signature at
-`src/mcp/tool_bridge.rs` L497-501) on the session's `ToolRegistry`, passing the
-session's `terminal_mode` and `headless: true`. Store the manager on the
-`SessionState.mcp_manager` field.
-
-#### 6.4 Deduplicate Against Config-File Servers
-
-Before connecting a Zed-forwarded server, check whether a server with the same
-`id` is already registered in the manager (from the config-file `connect_all`
-call in Phase 7.2). Skip forwarded servers whose `name` collides with an
-existing server ID and log a `debug!` noting the collision. This prevents
-duplicate tool registrations when a user has the same server in both their
-Atoma config and their Zed project settings.
-
-#### 6.5 Testing Requirements
-
-- Unit test: a `NewSessionRequest` with an empty `mcp_servers` list produces
-  the same `SessionState` as before (no regression; `mcp_manager` holds the
-  global manager with zero Zed-added servers).
-- Unit test: a `NewSessionRequest` containing one `McpServer::Stdio` entry
-  results in `McpClientManager::connect()` being called with the correctly
-  converted `McpServerConfig` (use a mock manager).
-- Unit test: an `McpServer::Stdio` whose `name` matches an already-registered
-  server is skipped without error.
-- Unit test: a failed `connect()` call does not abort session creation — the
-  session is created and the error is logged.
-
-#### 6.6 Deliverables
-
-- `handle_agent` creates and passes a `McpClientManager` into
-  `make_agent_builder`.
-- Zed-forwarded MCP servers are connected per-session and their tools are
-  registered in the session's `ToolRegistry`.
-- Config-file and Zed-forwarded servers coexist without duplicate registrations.
-
-#### 6.7 Success Criteria
-
-- `cargo check --all-targets --all-features` passes.
-- `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- `cargo test` passes with new unit tests.
-- Manual verification: add a test MCP server to a Zed project's `settings.json`,
-  open a new Atoma chat, and confirm the server's tools appear in the agent's
-  available tool set.
-
----
-
-### Phase 7: Tool Call UI Cards
-
-Currently, all tool call events stream as plain `AgentMessageChunk` text
-(`"Tool: {name} | {preview}"`). Zed renders these as raw text lines instead of
-the collapsible tool cards its UI supports. This phase replaces that with
-structured `SessionUpdate::ToolCall` and `SessionUpdate::ToolCallUpdate`
-notifications. It also requires adding a pre-execution notification hook to
-`AgentExecutor`, since tool execution currently happens silently inside
-`execute_iteration` with no external visibility before the result is returned.
-
-#### 7.1 Add a Tool Notification Callback to `AgentExecutor`
-
-Add an optional `tool_notifier: Option<Arc<dyn Fn(ToolCallEvent) + Send + Sync>>`
-field to `AgentExecutor` in `src/agent/executor.rs`. Define a `ToolCallEvent`
-enum in the same file:
-
-```text
-pub enum ToolCallEvent {
-    Started { call_id: String, tool_name: String, args_preview: String },
-    Completed { call_id: String, tool_name: String, output_preview: String },
-    Failed { call_id: String, tool_name: String, error: String },
+```rust
+acp::ContentBlock::ResourceLink(resource) => {
+    if is_image_mime_type(resource.mime_type.as_deref()) {
+        parts.push(PromptInputPart::image(convert_image_resource_link(
+            resource,
+            config,
+            workspace_root,
+        )?));
+    } else {
+        // Directory mentions, file stubs from older Zed clients, and any
+        // non-image resource link: emit a text reference placeholder so the
+        // model knows a resource was referenced without failing the prompt.
+        let placeholder = format!("[Reference: {} ({})]", resource.name, resource.uri);
+        parts.push(PromptInputPart::text(placeholder));
+    }
 }
 ```
 
-Add a builder method `with_tool_notifier(cb: Arc<dyn Fn(ToolCallEvent) + Send + Sync>) -> Self`
-on `AgentExecutor`. Inside `execute_iteration`, before calling
-`self.tool_registry.execute_tool_full()` (L476-478), fire
-`notifier(ToolCallEvent::Started { ... })` with a ULID for `call_id` and the
-first 120 characters of `args_json` as `args_preview`. After receiving the
-`ToolResult`, fire `ToolCallEvent::Completed` or `ToolCallEvent::Failed`
-accordingly, reusing the same `call_id`.
+**Rationale**: The placeholder provides context to the model without requiring
+XZatoma to perform a live file read at the protocol boundary. If the user
+intends the model to read the file, the model can call `read_file` as a tool
+call. Failing the entire prompt for a non-image resource link is a worse
+default.
 
-When `tool_notifier` is `None` (all existing non-Zed execution paths), the
-executor behaves identically to today — no behavioral change for `atoma run`,
-`atoma chat`, or `atoma serve`.
+#### Task 1.4: Testing Requirements
 
-#### 7.2 Wire the Notifier in the `PromptRequest` Handler
+All tests must be placed in the `mod tests` block inside
+`src/acp/prompt_input.rs`. Existing tests must continue to pass without
+modification.
 
-In the `PromptRequest` handler (`src/commands/agent.rs` L494-672), before
-acquiring the executor lock, construct a notifier closure that captures
-`cx_clone.clone()` and `session_id.clone()`, and converts each `ToolCallEvent`
-to the appropriate `SessionUpdate`:
+- **test_text_resource_contents_converted_to_text_part**: Construct a
+  `ContentBlock::Resource` wrapping
+  `EmbeddedResourceResource::TextResourceContents` with
+  `uri: "file:///src/main.rs"` and `text: "fn main() {}"` and
+  `mime_type: Some("text/plain")`. Assert that the returned
+  `MultimodalPromptInput` has one text part containing both
+  `[Context: file:///src/main.rs]` and `fn main() {}` in the part text.
 
-- `ToolCallEvent::Started { call_id, tool_name, args_preview }`:
-  ```text
-  SessionUpdate::ToolCall(
-      ToolCall::new(call_id, tool_name)
-          .kind(tool_kind_from_name(&tool_name))
-          .status(ToolCallStatus::InProgress)
-          .raw_input(serde_json::from_str(&args_preview).ok())
-  )
-  ```
-- `ToolCallEvent::Completed { call_id, tool_name, output_preview }`:
-  ```text
-  SessionUpdate::ToolCallUpdate(
-      ToolCallUpdate::new(call_id)
-          .status(ToolCallStatus::Completed)
-          .content(vec![ToolCallContent::from(output_preview)])
-  )
-  ```
-- `ToolCallEvent::Failed { call_id, tool_name, error }`:
-  ```text
-  SessionUpdate::ToolCallUpdate(
-      ToolCallUpdate::new(call_id)
-          .status(ToolCallStatus::Failed)
-          .content(vec![ToolCallContent::from(error)])
-  )
-  ```
+- **test_text_resource_contents_with_diagnostics_mime_type**: Same as above but
+  use `mime_type: Some("text/x-diagnostics")`. Assert the text part is produced
+  (not an error).
 
-Call `exec.set_tool_notifier(Arc::new(notifier))` after acquiring the executor
-lock and before entering the `'iteration` loop.
+- **test_text_resource_contents_with_no_mime_type**: Use `mime_type: None`.
+  Assert the text part is produced (not an error) because the absence of a MIME
+  type is treated as non-image.
 
-Remove the existing `IterationResult::ToolCall` arm at L593-600 that sends the
-raw text chunk. The notifier now handles that notification path.
+- **test_blob_resource_with_image_mime_type_remains_image_path**: Construct a
+  `ContentBlock::Resource` wrapping
+  `EmbeddedResourceResource::BlobResourceContents` with
+  `mime_type: Some("image/png")`. Assert the function either succeeds with an
+  image part or returns the existing image-validation error (not a new
+  "unsupported resource" error).
 
-#### 7.3 Add `tool_kind_from_name` Helper
+- **test_non_image_resource_link_produces_placeholder**: Construct a
+  `ContentBlock::ResourceLink` with `name: "src/"`, `uri: "file:///src/"`, and
+  `mime_type: Some("inode/directory")`. Assert the returned
+  `MultimodalPromptInput` has one text part whose text contains both `src/` and
+  `file:///src/`.
 
-Add a private function `tool_kind_from_name(name: &str) -> ToolKind` near the
-top of `src/commands/agent.rs` that maps tool names to `ToolKind` variants
-from `agent-client-protocol`. The mapping should cover Atoma's built-in tools:
+- **test_non_image_resource_link_with_no_mime_type_produces_placeholder**: Same
+  as above but with `mime_type: None`. Assert a text placeholder is produced.
 
-| Tool name prefix                              | `ToolKind`          |
-| --------------------------------------------- | ------------------- |
-| `read_file`, `list_directory`                 | `ToolKind::Read`    |
-| `edit_file`, `write_file`, `create_directory` | `ToolKind::Edit`    |
-| `delete_path`, `move_path`, `copy_path`       | `ToolKind::Move`    |
-| `grep`, `find_path`                           | `ToolKind::Search`  |
-| `execute_command`                             | `ToolKind::Execute` |
-| `fetch`                                       | `ToolKind::Fetch`   |
-| `subagent`                                    | `ToolKind::Other`   |
-| anything else (MCP tools, ACP tools)          | `ToolKind::Other`   |
+- **test_image_resource_link_still_routed_to_image_path**: Construct a
+  `ContentBlock::ResourceLink` with `mime_type: Some("image/png")` and a valid
+  `uri`. Assert the image conversion path is invoked (existing behavior
+  preserved).
 
-#### 7.4 Testing Requirements
+- **test_mixed_prompt_with_text_resource_and_plain_text**: Construct a
+  `PromptRequest` containing both a `ContentBlock::Text` block and a
+  `ContentBlock::Resource(TextResourceContents)` block. Assert both parts are
+  present in the assembled `MultimodalPromptInput` and their order is preserved.
 
-- Unit test: when `tool_notifier` is `None`, `execute_iteration` behavior is
-  unchanged — existing tests must continue to pass without modification.
-- Unit test: when `tool_notifier` is `Some`, a `ToolCallEvent::Started` is
-  fired before `execute_tool_full` is called, and `ToolCallEvent::Completed`
-  or `ToolCallEvent::Failed` is fired after.
-- Unit test: `tool_kind_from_name` returns the correct `ToolKind` for each
-  of the mapped tool names and `ToolKind::Other` for an unknown name.
-- Unit test: the `PromptRequest` handler no longer emits a raw text chunk for
-  a tool call — confirm no `AgentMessageChunk` with `"Tool:"` prefix is sent
-  when a tool notifier is installed.
+- **test_handle_initialize_advertises_embedded_context**: In `src/acp/stdio.rs`
+  `mod tests`, update the existing test
+  `test_handle_initialize_advertises_text_and_vision_prompt_capabilities` to
+  also assert
+  `response.agent_capabilities.prompt_capabilities.embedded_context == true`.
+  Add a new test
+  `test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol`
+  that uses `run_client_server_test` to send an `InitializeRequest` over the
+  full protocol stack and asserts `embedded_context == true` in the response.
 
-#### 7.5 Deliverables
+#### Task 1.5: Deliverables
 
-- `AgentExecutor` has an optional `tool_notifier` field and `ToolCallEvent`
-  enum, with zero behavioral change when the notifier is absent.
-- The `PromptRequest` handler installs a notifier that sends
-  `SessionUpdate::ToolCall` and `SessionUpdate::ToolCallUpdate` notifications.
-- Raw `"Tool: {name} | {preview}"` text chunks are no longer emitted for tool
-  calls.
+- [ ] `src/acp/stdio.rs`: `handle_initialize()` advertises
+      `embedded_context: true`.
+- [ ] `src/acp/prompt_input.rs`: `ContentBlock::Resource` with
+      `TextResourceContents` produces a text part containing the URI header and
+      resource text.
+- [ ] `src/acp/prompt_input.rs`: `ContentBlock::Resource` with
+      `BlobResourceContents` continues to route through the image conversion
+      path.
+- [ ] `src/acp/prompt_input.rs`: Non-image `ContentBlock::ResourceLink` produces
+      a `[Reference: name (uri)]` text placeholder instead of an error.
+- [ ] Image `ContentBlock::ResourceLink` behavior is unchanged.
+- [ ] All new unit tests pass. All pre-existing tests pass.
 
-#### 7.6 Success Criteria
+#### Task 1.6: Success Criteria
 
-- `cargo check --all-targets --all-features` passes.
-- `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- `cargo nextest run --all-features` passes with new unit tests.
-- Manual verification: trigger a tool call (e.g., ask Atoma to read a file)
-  and confirm the Zed chat window renders a collapsible tool card with the
-  tool name, a running spinner while in progress, and a completion status
-  when done — with no raw `"Tool:"` text line visible.
+- `cargo fmt --all` produces no diff.
+- `cargo check --all-targets --all-features` exits with code 0.
+- `cargo clippy --all-targets --all-features -- -D warnings` exits with code 0.
+- `cargo test --all-features` exits with code 0, including all new tests listed
+  in Task 1.4.
+- Manual verification: type `@` in a Zed chat window with XZatoma connected and
+  confirm that `#diagnostics`, `#git-diff`, `#rules`, `#thread`, and `#fetch`
+  appear in the completion menu. Send a `#file` mention and confirm the file
+  content is visible in the agent's context without an error.
 
 ---
 
-### Phase 8: Configuration Cleanup and Documentation
+### Phase 2: Zed-Forwarded MCP Server Integration
 
-#### 8.1 Remove Hard-Coded `terminal_mode` from Zed-Specific Config Examples
+This phase connects per-project MCP servers forwarded by Zed in
+`NewSessionRequest.mcp_servers` to the session's live `McpClientManager`. These
+are the MCP servers the user has configured in their Zed project settings, not
+in XZatoma's `config.yaml`.
 
-Search for any sample config files, README blocks, or documentation that
-instructs Zed users to set `terminal_mode: restricted` explicitly. Remove or
-replace these with a note that the mode is now controlled through the Zed chat
-window and defaults to `Restricted`. Keep the `terminal_mode` field in
-`Config` (it remains valid for non-Zed execution paths such as `atoma run` and
-`atoma chat`).
+#### Task 2.1: Add `convert_acp_mcp_server` Helper
 
-#### 8.2 Update `ZedAgentConfig` Documentation
+**File**: `src/acp/stdio.rs`
 
-In `src/config.rs` (L1566-1589), update the doc comment on `ZedAgentConfig` to
-note that `terminal_mode` for Zed sessions is now initialized from
-`Config::terminal_mode` at session creation and can be overridden at runtime
-via Zed's mode selector. Add a note that `allow_dangerous: true` in
-`ZedAgentConfig` overrides the selected mode for operator-controlled
-deployments.
+**Location**: Add as a private free function near `initial_mode_id_from_config`
+(around line 1232).
 
-#### 8.3 Update `docs/explanation/implementations.md`
+**Purpose**: Converts a single `acp::McpServer` variant to an XZatoma
+`McpServerConfig`. The function must handle all three `acp::McpServer` variants.
 
-Add an implementation entry covering all preceding phases following the
-mandatory format defined in `AGENTS.md` Rule 8. Include the files changed,
-a one-paragraph summary, and a brief testing note.
+**Type signatures required**:
 
-#### 8.4 Testing Requirements
+- Input: `&acp::McpServer`
+- Output: `Result<crate::mcp::server::McpServerConfig>`
 
-- Verify that an Atoma config file with no `terminal_mode` field results in
-  the Zed mode selector defaulting to `Restricted` (the existing
-  `#[default]` on `TerminalMode::Interactive` may need to be changed to
-  `RestrictedAutonomous` — confirm this is the correct safe default for the
-  Zed agent path, or handle the default mapping explicitly in Phase 1 code).
-- Confirm that setting `terminal_mode: full` in the config file and connecting
-  via Zed shows `Full Autonomous` as the initial mode in the selector.
+**Conversion rules**:
 
-#### 8.5 Deliverables
+- `acp::McpServer::Stdio(s)`: Build `McpServerConfig` with:
 
-- No documentation instructs Zed users to manually configure `terminal_mode`.
-- `ZedAgentConfig` doc comments are accurate.
-- `docs/explanation/implementations.md` is updated.
+  - `id`: `s.name.clone()` — sanitize with `s.name.to_ascii_lowercase()` and
+    replace all characters that are not ASCII lowercase letters, digits,
+    underscores, or hyphens with underscores to satisfy `McpServerConfig`'s ID
+    validation regex `^[a-z0-9_-]{1,64}$`. Truncate to 64 characters. If the
+    result is empty after sanitization, return an error.
+  - `transport`:
+    `McpServerTransportConfig::Stdio { executable: s.command.to_string_lossy().into_owned(), args: s.args.clone(), env: s.env.iter().map(|e| (e.name.clone(), e.value.clone())).collect::<HashMap<String, String>>(), working_dir: None }`
+  - `enabled: true`, `tools_enabled: true`
+  - All capability flags (`resources_enabled`, `prompts_enabled`,
+    `sampling_enabled`, `elicitation_enabled`): `false`
+  - `timeout_seconds: None` (use the manager's global default)
 
-#### 8.6 Success Criteria
+- `acp::McpServer::Http(h)`: Build `McpServerConfig` with:
 
-- `markdownlint --fix --config .markdownlint.json` passes on all modified
-  markdown files.
-- `prettier --write --parser markdown --prose-wrap always` passes on all
+  - `id`: sanitized from `h.name` using the same rule as Stdio.
+  - `transport`:
+    `McpServerTransportConfig::Http { endpoint: h.url.parse::<url::Url>().map_err(|e| XzatomaError::Config(format!(...)))?, headers: h.headers.iter().map(|hdr| (hdr.name.clone(), hdr.value.clone())).collect(), timeout_seconds: None, oauth: None }`
+  - `enabled: true`, `tools_enabled: true`, all other flags `false`.
+
+- `acp::McpServer::Sse(s)`: Build `McpServerConfig` with the same shape as
+  `Http` using `s.url` and `s.headers` and `s.name`.
+
+Call `cfg.validate()` at the end of each arm before returning `Ok(cfg)`. Return
+the validation error as-is on failure.
+
+#### Task 2.2: Connect Zed-Forwarded Servers in `create_session`
+
+**File**: `src/acp/stdio.rs`
+
+**Location**: `async fn create_session()`. Insert the new logic block after
+`let workspace_root = normalize_workspace_root(&workspace_root);` and before the
+provider creation block. The `env` variable (which holds `env.mcp_manager`) is
+built inside this function before the `ActiveSessionState` is constructed, so
+the manager is available to modify.
+
+**Implementation steps** (in order):
+
+1. After `build_agent_environment()` returns `env`, check if
+   `env.mcp_manager.is_some()`. If none, skip the entire Zed MCP block.
+   Zed-forwarded servers are only connected when the global MCP manager was
+   successfully initialized.
+
+2. Iterate over `request.mcp_servers` (type `Vec<acp::McpServer>`):
+
+   ```rust
+   for acp_server in &request.mcp_servers {
+       ...
+   }
+   ```
+
+3. For each server, call `convert_acp_mcp_server(acp_server)`. On `Err`, log a
+   `warn!` including `session_id` and the error, then `continue` to the next
+   server. Do not abort session creation.
+
+4. Check deduplication: obtain a read lock on `env.mcp_manager` and call
+   `manager.connected_servers()`. If any existing server entry has an `id` equal
+   to the converted config's `id`, log a `debug!` message with the collision and
+   `continue`.
+
+5. Obtain a write lock on `env.mcp_manager` and call
+   `manager.connect(cfg).await`. On `Err`, log a `warn!` including `session_id`,
+   the server id, and the error, then `continue`. Do not abort.
+
+6. On success, log an `info!` with `session_id` and the connected server id.
+
+7. After the loop, call `register_mcp_tools` on `env.tool_registry` for the
+   Zed-forwarded servers. Use the initial `execution_mode` from
+   `config.agent.terminal.default_mode` and `headless: true`.
+
+**Note**: The imports required are already present in `src/acp/stdio.rs`
+(`use crate::mcp::manager::McpClientManager` is already imported). Add
+`use crate::mcp::server::{McpServerConfig, McpServerTransportConfig}` at the top
+of the file if not already imported.
+
+#### Task 2.3: Testing Requirements
+
+All new tests are placed in `mod tests` inside `src/acp/stdio.rs`.
+
+- **test_create_session_with_empty_mcp_servers_list_does_not_error**: Send a
+  `NewSessionRequest` with no MCP servers. Assert the session is created
+  successfully (same behavior as before).
+
+- **test_convert_acp_mcp_server_stdio_produces_valid_config**: Call
+  `convert_acp_mcp_server` with an
+  `acp::McpServer::Stdio(McpServerStdio::new( "my-server", "/usr/bin/mcp-tool").args(vec!["--flag".to_string()]))`.
+  Assert the returned `McpServerConfig` has `id == "my-server"`,
+  `transport == McpServerTransportConfig::Stdio { executable: "/usr/bin/mcp-tool", args: ["--flag"], ... }`,
+  and `enabled == true`.
+
+- **test_convert_acp_mcp_server_http_produces_valid_config**: Call
+  `convert_acp_mcp_server` with an
+  `acp::McpServer::Http(McpServerHttp::new( "http-server", "http://localhost:8080/mcp"))`.
+  Assert the returned config has a valid `McpServerTransportConfig::Http` with
+  the correct endpoint URL.
+
+- **test_convert_acp_mcp_server_sanitizes_name_with_spaces**: Call
+  `convert_acp_mcp_server` with a server whose `name` is `"My MCP Server!"`.
+  Assert the returned `id` is `"my_mcp_server_"` (or equivalent sanitized form).
+
+- **test_convert_acp_mcp_server_rejects_empty_name**: Call
+  `convert_acp_mcp_server` with `name: ""`. Assert the function returns `Err`.
+
+- **test_convert_acp_mcp_server_rejects_invalid_http_url**: Call
+  `convert_acp_mcp_server` with `acp::McpServer::Http(...)` using
+  `url: "not a url"`. Assert the function returns `Err`.
+
+#### Task 2.4: Deliverables
+
+- [ ] `src/acp/stdio.rs`: Private function `convert_acp_mcp_server` is
+      implemented and handles all three `acp::McpServer` variants with full
+      input sanitization.
+- [ ] `src/acp/stdio.rs`: `create_session()` reads `request.mcp_servers`,
+      converts each server, deduplicates by id, connects each with error
+      tolerance (individual failures do not abort session creation), and
+      registers their tools.
+- [ ] All new unit tests pass. All pre-existing tests pass.
+
+#### Task 2.5: Success Criteria
+
+- `cargo fmt --all` produces no diff.
+- `cargo check --all-targets --all-features` exits with code 0.
+- `cargo clippy --all-targets --all-features -- -D warnings` exits with code 0.
+- `cargo test --all-features` exits with code 0.
+- Manual verification: add a stdio MCP server to a Zed project's `settings.json`
+  under `"context_servers"`, open a new XZatoma chat session, and confirm the
+  server's tools appear in the agent's available tool set.
+
+---
+
+### Phase 3: Runtime Execution Mode Enforcement on Mode Change
+
+This phase ensures that when `set_session_mode` is called, the `TerminalTool`
+inside the agent's tool registry actually enforces the new `ExecutionMode`. The
+current implementation updates `runtime_state.terminal_mode` and rebuilds system
+messages, but the `CommandValidator.mode` field inside the registered
+`TerminalTool` is never updated.
+
+#### Task 3.1: Add `tools_mut` Accessor to `XzatomaAgent`
+
+**File**: `src/agent/core.rs`
+
+**Location**: Inside `impl Agent`, near the existing
+`pub fn tools(&self) -> &ToolRegistry` accessor.
+
+**Add the following public method**:
+
+````rust
+/// Returns a mutable reference to the agent's tool registry.
+///
+/// This accessor is used by the ACP stdio layer to replace individual tools
+/// (such as the terminal tool) when the session mode changes at runtime.
+///
+/// # Returns
+///
+/// Returns a mutable reference to the agent's [`ToolRegistry`].
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::agent::core::Agent;
+/// use xzatoma::tools::ToolRegistry;
+///
+/// // The registry can be updated to reflect runtime mode changes.
+/// // let mut agent = ...;
+/// // let registry = agent.tools_mut();
+/// ```
+pub fn tools_mut(&mut self) -> &mut ToolRegistry {
+    &mut self.tools
+}
+````
+
+**Testing**: Add `test_agent_tools_mut_returns_mutable_registry` in the
+`mod tests` block of `src/agent/core.rs` that creates an agent, calls
+`tools_mut()`, registers a new tool, and asserts `agent.num_tools()` reflects
+the change.
+
+#### Task 3.2: Update `set_session_mode` to Replace the `TerminalTool`
+
+**File**: `src/acp/stdio.rs`
+
+**Location**: `async fn set_session_mode()`, after the block that rebuilds
+transient system messages (currently the final block in the function, ending
+around line 628).
+
+**Required imports** to add at the top of `src/acp/stdio.rs` if not already
+present:
+
+```rust
+use crate::tools::terminal::{CommandValidator, TerminalTool};
+use crate::chat_mode::SafetyMode;
+```
+
+**Implementation**: After
+`agent_lock.set_transient_system_messages(vec![system_prompt])`, add the
+following block:
+
+```rust
+// Replace the terminal tool so the new ExecutionMode is enforced immediately.
+{
+    let session_read = session.lock().await;
+    let workspace_root = session_read.workspace_root.clone();
+    drop(session_read);
+
+    let new_validator = CommandValidator::new(
+        effect.terminal_mode,
+        workspace_root,
+    );
+    let new_terminal_tool = TerminalTool::new(
+        new_validator,
+        self.config.agent.terminal.clone(),
+    )
+    .with_safety_mode(safety_mode);
+    agent_lock
+        .tools_mut()
+        .register("terminal", Arc::new(new_terminal_tool));
+}
+```
+
+Where `safety_mode` is the `SafetyMode` value already computed earlier in the
+same function body for building the system prompt.
+
+**Note**: The `session` variable in `set_session_mode` is an
+`Arc<Mutex<ActiveSessionState>>` retrieved from `self.sessions.get(...)`. At the
+point where the new block executes, `session_lock` (the `MutexGuard`) has
+already been dropped via `drop(session_lock)` in the existing code. Acquire a
+new short-lived read lock only to copy `workspace_root`.
+
+#### Task 3.3: Testing Requirements
+
+Tests are placed in `mod tests` inside `src/acp/stdio.rs`.
+
+- **test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous**:
+  Using `run_client_server_test`, create a session (default mode should be
+  `write` or `planning`), send a `SetSessionModeRequest` with
+  `mode_id: "full_autonomous"`, then send a `PromptRequest` asking the agent to
+  execute a command that is blocked in `RestrictedAutonomous` mode but allowed
+  in `FullAutonomous` mode. Use a mock provider that returns a tool call for
+  that command. Assert the tool executes without a `CommandRequiresConfirmation`
+  error. (Alternatively, assert via unit test that the terminal tool in the
+  agent's registry has `validator.mode == ExecutionMode::FullAutonomous` after
+  the mode change, without going through the full protocol stack.)
+
+- **test_set_session_mode_full_autonomous_to_planning_restricts_terminal**: Same
+  setup but switch from `full_autonomous` to `planning`. Assert that the
+  terminal tool's validator mode is updated to `ExecutionMode::Interactive`.
+
+- **test_set_session_mode_does_not_change_terminal_for_unknown_mode**: Send a
+  `SetSessionModeRequest` with an unknown `mode_id` (e.g., `"turbo"`). Assert
+  the request returns a JSON-RPC error and the terminal tool's execution mode in
+  the registry is unchanged.
+
+- **test_agent_tools_mut_returns_mutable_registry** (in `src/agent/core.rs`): As
+  described in Task 3.1.
+
+#### Task 3.4: Deliverables
+
+- [ ] `src/agent/core.rs`: `Agent` exposes
+      `pub fn tools_mut(&mut self) -> &mut ToolRegistry` with doc comment and
+      unit test.
+- [ ] `src/acp/stdio.rs`: `set_session_mode()` replaces the `terminal` tool in
+      the agent's tool registry with a new `TerminalTool` whose
+      `CommandValidator` holds the new `ExecutionMode`.
+- [ ] Mode changes take effect on the very next prompt turn within the session.
+- [ ] All new unit tests pass. All pre-existing tests pass.
+
+#### Task 3.5: Success Criteria
+
+- `cargo fmt --all` produces no diff.
+- `cargo check --all-targets --all-features` exits with code 0.
+- `cargo clippy --all-targets --all-features -- -D warnings` exits with code 0.
+- `cargo test --all-features` exits with code 0.
+- Manual verification: switch to `Full Autonomous` mode in the Zed mode selector
+  and confirm XZatoma executes a terminal command that would be blocked in
+  restricted mode. Switch back to `Safe` mode and confirm the same command is
+  blocked.
+
+---
+
+### Phase 4: Documentation
+
+This phase creates the mandatory implementation documentation required by
+`AGENTS.md` Rule 5 and updates the existing documentation index.
+
+#### Task 4.1: Create Implementation Summary Document
+
+**File**: `docs/explanation/zed_session_mode_selector_implementation.md`
+
+The document must cover the following sections with prose descriptions (not code
+blocks):
+
+1. **Overview**: One paragraph summarizing the four gaps addressed by phases 1
+   through 3 of this plan and the files changed.
+
+2. **Phase 1: Embedded Context and Rich Content Block Handling**:
+
+   - Which field was added to `PromptCapabilities` and why.
+   - How `ContentBlock::Resource(TextResourceContents)` is now converted to a
+     text part with a URI header.
+   - How non-image `ContentBlock::ResourceLink` produces a placeholder instead
+     of an error.
+   - The impact on Zed's mention completion menu.
+
+3. **Phase 2: Zed-Forwarded MCP Server Integration**:
+
+   - How `NewSessionRequest.mcp_servers` is read and converted.
+   - The `convert_acp_mcp_server` helper and its ID sanitization rules.
+   - The deduplication strategy against config-file servers.
+   - The error tolerance policy (individual failures do not abort session
+     creation).
+
+4. **Phase 3: Runtime Execution Mode Enforcement**:
+
+   - Why `CommandValidator.mode` must be updated when a session mode changes.
+   - The approach taken: replacing the registered `terminal` tool via
+     `tools_mut()` rather than introducing interior mutability.
+   - The `tools_mut()` accessor added to `Agent`.
+
+5. **Files Changed**: A bullet list of every file modified by this plan with a
+   one-sentence description of each change.
+
+6. **Testing**: A single paragraph summarizing the test coverage added.
+
+#### Task 4.2: Update `docs/explanation/implementations.md`
+
+**File**: `docs/explanation/implementations.md`
+
+Add a new entry at the bottom of the file following the existing entry format:
+
+- **Title**: Zed Session Mode Selector: Embedded Context, MCP Integration, and
+  Runtime Mode Enforcement
+- **Date**: Use the RFC 3339 timestamp format for the date of completion.
+- **Summary**: Two to three sentences covering what was implemented.
+- **Files changed**: Same bullet list as in Task 4.1.
+
+#### Task 4.3: Testing Requirements
+
+- Run
+  `markdownlint --fix --config .markdownlint.json docs/explanation/zed_session_mode_selector_implementation.md`
+  and confirm it exits with code 0.
+- Run
+  `prettier --write --parser markdown --prose-wrap always docs/explanation/zed_session_mode_selector_implementation.md`
+  and confirm it exits with code 0.
+- Apply the same two commands to `docs/explanation/implementations.md` and
+  confirm both exit with code 0.
+
+#### Task 4.4: Deliverables
+
+- [ ] `docs/explanation/zed_session_mode_selector_implementation.md` is created
+      with all sections listed in Task 4.1.
+- [ ] `docs/explanation/implementations.md` is updated with a new entry
+      following the existing format.
+- [ ] Both markdown files pass `markdownlint` and `prettier` without errors.
+
+#### Task 4.5: Success Criteria
+
+- `markdownlint --fix --config .markdownlint.json` exits with code 0 on both
   modified markdown files.
-- All five quality gates pass: `cargo fmt --all`, `cargo check --all-targets
---all-features`, `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo nextest run --all-features`, `cargo test`.
+- `prettier --write --parser markdown --prose-wrap always` exits with code 0 on
+  both modified markdown files.
+- All five quality gates pass in sequence without error:
+  1. `cargo fmt --all`
+  2. `cargo check --all-targets --all-features`
+  3. `cargo clippy --all-targets --all-features -- -D warnings`
+  4. `cargo test --all-features`
+
+---
+
+## Implementation Order Summary
+
+Execute the phases in the order listed. Each phase must fully pass all quality
+gates before beginning the next phase.
+
+| Phase | Files Modified                                                                                        | Depends On |
+| ----- | ----------------------------------------------------------------------------------------------------- | ---------- |
+| 1     | `src/acp/stdio.rs`, `src/acp/prompt_input.rs`                                                         | None       |
+| 2     | `src/acp/stdio.rs`                                                                                    | None       |
+| 3     | `src/agent/core.rs`, `src/acp/stdio.rs`                                                               | None       |
+| 4     | `docs/explanation/zed_session_mode_selector_implementation.md`, `docs/explanation/implementations.md` | 1, 2, 3    |
+
+Phases 1, 2, and 3 have disjoint or nearly disjoint write sets and may be
+implemented in parallel by separate agents if desired, provided each agent runs
+the full quality gate sequence before declaring its phase complete.
+
+---
+
+## Reference: Already-Implemented Features
+
+The following items are complete and must NOT be re-implemented:
+
+| Feature                                                                           | Location                                              |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Four session modes with `ModeRuntimeEffect` mapping                               | `src/acp/session_mode.rs`                             |
+| `NewSessionResponse` includes `modes` and `config_options`                        | `src/acp/stdio.rs` `create_session()`                 |
+| `SetSessionModeRequest` handler and `CurrentModeUpdate`                           | `src/acp/stdio.rs` `run_stdio_agent_with_transport()` |
+| `SetSessionConfigOptionRequest` handler                                           | `src/acp/stdio.rs`                                    |
+| `SetSessionModelRequest` handler                                                  | `src/acp/stdio.rs`                                    |
+| Structured tool-call UI cards via `AcpSessionObserver`                            | `src/acp/stdio.rs`, `src/acp/tool_notifications.rs`   |
+| IDE bridge with `ide_read_text_file`, `ide_write_text_file`, `ide_terminal` tools | `src/acp/ide_bridge.rs`, `src/tools/ide_tools.rs`     |
+| Image and vision support in prompt input                                          | `src/acp/prompt_input.rs`                             |
+| MCP from config file via `build_agent_environment`                                | `src/commands/environment.rs`                         |
+| `AvailableCommandsUpdate` notification after session start                        | `src/acp/stdio.rs`                                    |
+| `CancelNotification` handler                                                      | `src/acp/stdio.rs`                                    |
+| Session persistence and conversation resume                                       | `src/acp/stdio.rs`, `src/storage/`                    |
