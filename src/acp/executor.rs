@@ -480,7 +480,7 @@ mod tests {
     async fn test_spawn_background_returns_accepted_for_existing_run() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor = AcpExecutor::new_mock_success(
             config,
             runtime.clone(),
@@ -502,7 +502,7 @@ mod tests {
     async fn test_execute_async_returns_accepted() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor = AcpExecutor::new_mock_success(
             config,
             runtime.clone(),
@@ -524,7 +524,7 @@ mod tests {
     async fn test_execute_with_missing_run_returns_error() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor =
             AcpExecutor::new_mock_success(config, runtime, "mock missing response".to_string());
 
@@ -540,7 +540,7 @@ mod tests {
     fn test_executor_runtime_returns_clone() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor =
             AcpExecutor::new_mock_success(config, runtime.clone(), "mock runtime".to_string());
 
@@ -551,7 +551,7 @@ mod tests {
     async fn test_execute_sync_with_mock_success_returns_completed_run() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor = AcpExecutor::new_mock_success(
             config,
             runtime.clone(),
@@ -577,7 +577,7 @@ mod tests {
     async fn test_create_and_execute_sync_with_mock_success_returns_completed_run() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
-        let runtime = AcpRuntime::new(config.clone());
+        let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor = AcpExecutor::new_mock_success(
             config,
             runtime,

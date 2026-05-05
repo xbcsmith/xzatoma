@@ -1,0 +1,15 @@
+# Zed ACP demo configuration for GitHub Copilot
+# Requires: xzatoma auth --provider copilot
+provider:
+  provider_type: copilot
+
+agent:
+  max_turns: 20
+  timeout_seconds: 120
+
+acp:
+  stdio:
+    persist_sessions: true
+    resume_by_workspace: true
+    vision_enabled: true
+    prompt_queue_capacity: 8

@@ -13,6 +13,7 @@ pub mod file_metadata;
 pub mod file_utils;
 pub mod find_path;
 pub mod grep;
+pub mod ide_tools;
 pub mod list_directory;
 pub mod move_path;
 pub mod parallel_subagent;

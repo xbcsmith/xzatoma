@@ -6,6 +6,7 @@
 //! - Enforces iteration limits and timeouts
 //! - Handles errors and stops conditions gracefully
 
+use crate::agent::events::{AgentExecutionEvent, AgentObserver, NoOpObserver};
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::AgentConfig;
 use crate::error::{Result, XzatomaError};
@@ -14,6 +15,7 @@ use crate::providers::{Message, Provider, TokenUsage, ToolCall};
 use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::{ContextInfo, Conversation};
@@ -482,38 +484,109 @@ impl Agent {
     /// # }
     /// ```
     pub async fn execute(&mut self, user_prompt: impl Into<String>) -> Result<String> {
+        let token = CancellationToken::new();
+        let mut observer = NoOpObserver;
+        self.execute_with_observer(user_prompt, &token, &mut observer)
+            .await
+    }
+
+    /// Executes the agent with an observer and a cancellation token.
+    ///
+    /// This is the evented core execution path. The legacy [`Agent::execute`]
+    /// delegates here using a [`NoOpObserver`] and a non-cancelled token.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_prompt` - The user's input prompt.
+    /// * `cancellation_token` - Token checked at safe boundaries; cancel it to
+    ///   abort execution at the next opportunity.
+    /// * `observer` - Receives [`AgentExecutionEvent`] values as execution proceeds.
+    ///
+    /// # Returns
+    ///
+    /// Returns the final assistant response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XzatomaError::Cancelled`] if the cancellation token fires.
+    /// Returns the same errors as [`Agent::execute`] for all other failures.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::agent::events::NoOpObserver;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # use tokio_util::sync::CancellationToken;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let tools = ToolRegistry::new();
+    /// # let config = AgentConfig::default();
+    /// # let mut agent = Agent::new(provider, tools, config)?;
+    /// let token = CancellationToken::new();
+    /// let mut observer = NoOpObserver;
+    /// let result = agent
+    ///     .execute_with_observer("Do the task", &token, &mut observer)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_with_observer(
+        &mut self,
+        user_prompt: impl Into<String>,
+        cancellation_token: &CancellationToken,
+        observer: &mut dyn AgentObserver,
+    ) -> Result<String> {
+        if cancellation_token.is_cancelled() {
+            observer.on_event(AgentExecutionEvent::CancellationRequested);
+            return Err(XzatomaError::Cancelled);
+        }
+
+        observer.on_event(AgentExecutionEvent::PromptStarted);
+
         let start_time = Instant::now();
         let timeout = Duration::from_secs(self.config.timeout_seconds);
 
-        info!("Starting agent execution");
-
-        // Add initial user prompt
         self.conversation.add_user_message(user_prompt.into());
 
         let mut iteration = 0;
 
         loop {
+            if cancellation_token.is_cancelled() {
+                observer.on_event(AgentExecutionEvent::CancellationRequested);
+                return Err(XzatomaError::Cancelled);
+            }
+
             iteration += 1;
 
-            // Check iteration limit
             if iteration > self.config.max_turns {
                 warn!("Maximum iterations ({}) exceeded", self.config.max_turns);
-                return Err(XzatomaError::MaxIterationsExceeded {
+                let error = XzatomaError::MaxIterationsExceeded {
                     limit: self.config.max_turns,
                     message: format!(
                         "Agent exceeded maximum iteration limit of {}",
                         self.config.max_turns
                     ),
+                };
+                observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                    error: error.to_string(),
                 });
+                return Err(error);
             }
 
-            // Check timeout
             if start_time.elapsed() > timeout {
                 warn!("Agent execution timeout after {:?}", start_time.elapsed());
-                return Err(XzatomaError::Config(format!(
+                let error = XzatomaError::Config(format!(
                     "Agent execution timeout after {} seconds",
                     self.config.timeout_seconds
-                )));
+                ));
+                observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                    error: error.to_string(),
+                });
+                return Err(error);
             }
 
             debug!(
@@ -524,22 +597,24 @@ impl Agent {
                 self.conversation.max_tokens()
             );
 
-            // Get completion from provider
             let tool_definitions = self.tools.all_definitions();
             let prompt_messages = self.messages_with_transient_system_messages();
-            let completion_response = self
-                .provider
-                .complete(&prompt_messages, &tool_definitions)
-                .await?;
+
+            observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
+
+            let completion_response = tokio::select! {
+                result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
+                _ = cancellation_token.cancelled() => {
+                    observer.on_event(AgentExecutionEvent::CancellationRequested);
+                    return Err(XzatomaError::Cancelled);
+                }
+            };
 
             let message = completion_response.message;
             debug!("Provider response: {:?}", message);
 
-            // Track token usage if provider reported it
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
-
-                // Accumulate token usage at agent level
                 let mut accumulated = self.accumulated_usage.lock().unwrap();
                 if let Some(existing) = *accumulated {
                     *accumulated = Some(TokenUsage::new(
@@ -552,15 +627,24 @@ impl Agent {
                 drop(accumulated);
             }
 
-            // Add assistant message to conversation (preserving tool_calls if present)
-            // We must add the complete message including tool_calls so that when
-            // validate_message_sequence runs, it can find the tool_call IDs
+            let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+
+            observer.on_event(AgentExecutionEvent::ProviderResponseReceived {
+                text: message.content.clone(),
+                has_tool_calls,
+            });
+
+            if let Some(text) = &message.content {
+                if !text.is_empty() {
+                    observer
+                        .on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
+                }
+            }
+
             self.conversation.add_message(message.clone());
 
-            // Handle tool calls if present
             if let Some(tool_calls) = &message.tool_calls {
                 if tool_calls.is_empty() {
-                    // Provider returned empty tool calls, treat as completion
                     debug!("Provider returned empty tool calls, stopping");
                     break;
                 }
@@ -568,55 +652,84 @@ impl Agent {
                 debug!("Executing {} tool calls", tool_calls.len());
 
                 for tool_call in tool_calls {
-                    let result = self.execute_tool_call(tool_call).await?;
+                    if cancellation_token.is_cancelled() {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
 
-                    // Add tool result to conversation
-                    self.conversation
-                        .add_tool_result(&tool_call.id, result.to_message());
+                    observer.on_event(AgentExecutionEvent::ToolCallStarted {
+                        id: tool_call.id.clone(),
+                        name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                    });
+
+                    let result = tokio::select! {
+                        result = self.execute_tool_call(tool_call) => result,
+                        _ = cancellation_token.cancelled() => {
+                            observer.on_event(AgentExecutionEvent::CancellationRequested);
+                            return Err(XzatomaError::Cancelled);
+                        }
+                    };
+
+                    match result {
+                        Ok(tool_result) => {
+                            observer.on_event(AgentExecutionEvent::ToolCallCompleted {
+                                id: tool_call.id.clone(),
+                                name: tool_call.function.name.clone(),
+                                output: tool_result.output.clone(),
+                            });
+                            self.conversation
+                                .add_tool_result(&tool_call.id, tool_result.to_message());
+                        }
+                        Err(error) => {
+                            observer.on_event(AgentExecutionEvent::ToolCallFailed {
+                                id: tool_call.id.clone(),
+                                name: tool_call.function.name.clone(),
+                                error: error.to_string(),
+                            });
+                            return Err(error);
+                        }
+                    }
                 }
 
-                // Check if auto-summarization is needed after tool execution
                 let auto_threshold = self.config.conversation.auto_summary_threshold as f64;
                 if self.conversation.should_auto_summarize(auto_threshold) {
                     warn!(
                         "Context window critical (>{}%), triggering automatic summarization",
                         (auto_threshold * 100.0) as u8
                     );
-
-                    // Attempt summarization
                     match self.perform_auto_summarization().await {
                         Ok(_) => {
                             info!("Automatic summarization complete, conversation pruned");
                         }
-                        Err(e) => {
+                        Err(error) => {
                             warn!(
                                 "Automatic summarization failed: {}. Continuing with pruning.",
-                                e
+                                error
                             );
-                            // Fall back to existing prune logic
                             self.conversation.prune_if_needed();
                         }
                     }
                 }
 
-                // Continue loop to get next response after tool execution
                 continue;
             }
 
-            // No tool calls, check if we have a final response
             if message.content.is_some() {
                 debug!("Provider returned final response, stopping");
                 break;
             }
 
-            // Neither content nor tool calls - unexpected
             warn!("Provider returned neither content nor tool calls");
-            return Err(XzatomaError::Provider(
+            let error = XzatomaError::Provider(
                 "Provider returned invalid response (no content or tool calls)".to_string(),
-            ));
+            );
+            observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                error: error.to_string(),
+            });
+            return Err(error);
         }
 
-        // Get the final response
         let final_message = self
             .conversation
             .messages()
@@ -626,6 +739,342 @@ impl Agent {
             .and_then(|m| m.content.as_ref())
             .cloned()
             .unwrap_or_else(|| "No response from assistant".to_string());
+
+        observer.on_event(AgentExecutionEvent::ExecutionCompleted {
+            response: final_message.clone(),
+        });
+
+        info!(
+            "Agent execution completed in {} iterations, {} seconds",
+            iteration,
+            start_time.elapsed().as_secs()
+        );
+
+        Ok(final_message)
+    }
+
+    /// Executes the agent with already-constructed provider messages.
+    ///
+    /// This entry point is used by transports that need to preserve richer
+    /// provider-layer message data, such as ACP stdio multimodal prompts with
+    /// ordered text and image content parts. The messages are appended to the
+    /// current conversation before the normal autonomous execution loop runs.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Provider-layer messages to append before execution
+    ///
+    /// # Returns
+    ///
+    /// Returns the final assistant response text or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if `messages` is empty. Returns the same
+    /// errors as [`Self::execute`] for provider calls, tool execution, iteration
+    /// limits, and timeouts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::providers::Message;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let tools = ToolRegistry::new();
+    /// # let config = AgentConfig::default();
+    /// # let mut agent = Agent::new(provider, tools, config)?;
+    /// let messages = vec![Message::user("Describe this task")];
+    /// let result = agent.execute_provider_messages(messages).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_provider_messages(&mut self, messages: Vec<Message>) -> Result<String> {
+        let token = CancellationToken::new();
+        let mut observer = NoOpObserver;
+        self.execute_provider_messages_with_observer(messages, &token, &mut observer)
+            .await
+    }
+
+    /// Executes the agent from already-constructed provider messages with an
+    /// observer and cancellation token.
+    ///
+    /// This variant is used by ACP stdio transports that need to preserve rich
+    /// provider-layer message data such as multimodal image parts. The messages
+    /// are appended to the current conversation before the execution loop runs.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Provider-layer messages to append before execution.
+    /// * `cancellation_token` - Token checked at safe boundaries.
+    /// * `observer` - Receives [`AgentExecutionEvent`] values as execution proceeds.
+    ///
+    /// # Returns
+    ///
+    /// Returns the final assistant response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XzatomaError::Provider`] if `messages` is empty.
+    /// Returns [`XzatomaError::Cancelled`] if the cancellation token fires.
+    /// Returns the same errors as [`Agent::execute_provider_messages`] otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::agent::events::NoOpObserver;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::providers::Message;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # use tokio_util::sync::CancellationToken;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let tools = ToolRegistry::new();
+    /// # let config = AgentConfig::default();
+    /// # let mut agent = Agent::new(provider, tools, config)?;
+    /// let messages = vec![Message::user("Describe this task")];
+    /// let token = CancellationToken::new();
+    /// let mut observer = NoOpObserver;
+    /// let result = agent
+    ///     .execute_provider_messages_with_observer(messages, &token, &mut observer)
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_provider_messages_with_observer(
+        &mut self,
+        messages: Vec<Message>,
+        cancellation_token: &CancellationToken,
+        observer: &mut dyn AgentObserver,
+    ) -> Result<String> {
+        if messages.is_empty() {
+            return Err(XzatomaError::Provider(
+                "provider message execution requires at least one message".to_string(),
+            ));
+        }
+
+        if cancellation_token.is_cancelled() {
+            observer.on_event(AgentExecutionEvent::CancellationRequested);
+            return Err(XzatomaError::Cancelled);
+        }
+
+        observer.on_event(AgentExecutionEvent::PromptStarted);
+
+        let vision_count = messages.iter().filter(|m| m.has_image_content()).count();
+        if vision_count > 0 {
+            observer.on_event(AgentExecutionEvent::VisionInputAttached {
+                count: vision_count,
+            });
+        }
+
+        let start_time = Instant::now();
+        let timeout = Duration::from_secs(self.config.timeout_seconds);
+
+        info!("Starting agent execution from provider messages");
+
+        for message in messages {
+            self.conversation.add_message(message);
+        }
+
+        let mut iteration = 0;
+
+        loop {
+            if cancellation_token.is_cancelled() {
+                observer.on_event(AgentExecutionEvent::CancellationRequested);
+                return Err(XzatomaError::Cancelled);
+            }
+
+            iteration += 1;
+
+            if iteration > self.config.max_turns {
+                warn!("Maximum iterations ({}) exceeded", self.config.max_turns);
+                let error = XzatomaError::MaxIterationsExceeded {
+                    limit: self.config.max_turns,
+                    message: format!(
+                        "Agent exceeded maximum iteration limit of {}",
+                        self.config.max_turns
+                    ),
+                };
+                observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                    error: error.to_string(),
+                });
+                return Err(error);
+            }
+
+            if start_time.elapsed() > timeout {
+                warn!("Agent execution timeout after {:?}", start_time.elapsed());
+                let error = XzatomaError::Config(format!(
+                    "Agent execution timeout after {} seconds",
+                    self.config.timeout_seconds
+                ));
+                observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                    error: error.to_string(),
+                });
+                return Err(error);
+            }
+
+            debug!(
+                "Iteration {}/{}, tokens: {}/{}",
+                iteration,
+                self.config.max_turns,
+                self.conversation.token_count(),
+                self.conversation.max_tokens()
+            );
+
+            let tool_definitions = self.tools.all_definitions();
+            let prompt_messages = self.messages_with_transient_system_messages();
+
+            observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
+
+            let completion_response = tokio::select! {
+                result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
+                _ = cancellation_token.cancelled() => {
+                    observer.on_event(AgentExecutionEvent::CancellationRequested);
+                    return Err(XzatomaError::Cancelled);
+                }
+            };
+
+            let message = completion_response.message;
+            debug!("Provider response: {:?}", message);
+
+            if let Some(usage) = completion_response.usage {
+                self.conversation.update_from_provider_usage(&usage);
+
+                let mut accumulated_usage = self.accumulated_usage.lock().unwrap();
+                if let Some(existing) = *accumulated_usage {
+                    *accumulated_usage = Some(TokenUsage::new(
+                        existing.prompt_tokens + usage.prompt_tokens,
+                        existing.completion_tokens + usage.completion_tokens,
+                    ));
+                } else {
+                    *accumulated_usage = Some(usage);
+                }
+                drop(accumulated_usage);
+            }
+
+            let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+
+            observer.on_event(AgentExecutionEvent::ProviderResponseReceived {
+                text: message.content.clone(),
+                has_tool_calls,
+            });
+
+            if let Some(text) = &message.content {
+                if !text.is_empty() {
+                    observer
+                        .on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
+                }
+            }
+
+            self.conversation.add_message(message.clone());
+
+            if let Some(tool_calls) = &message.tool_calls {
+                if tool_calls.is_empty() {
+                    debug!("Provider returned empty tool calls, stopping");
+                    break;
+                }
+
+                debug!("Executing {} tool calls", tool_calls.len());
+
+                for tool_call in tool_calls {
+                    if cancellation_token.is_cancelled() {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
+
+                    observer.on_event(AgentExecutionEvent::ToolCallStarted {
+                        id: tool_call.id.clone(),
+                        name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                    });
+
+                    let result = tokio::select! {
+                        result = self.execute_tool_call(tool_call) => result,
+                        _ = cancellation_token.cancelled() => {
+                            observer.on_event(AgentExecutionEvent::CancellationRequested);
+                            return Err(XzatomaError::Cancelled);
+                        }
+                    };
+
+                    match result {
+                        Ok(tool_result) => {
+                            observer.on_event(AgentExecutionEvent::ToolCallCompleted {
+                                id: tool_call.id.clone(),
+                                name: tool_call.function.name.clone(),
+                                output: tool_result.output.clone(),
+                            });
+                            self.conversation
+                                .add_tool_result(&tool_call.id, tool_result.to_message());
+                        }
+                        Err(error) => {
+                            observer.on_event(AgentExecutionEvent::ToolCallFailed {
+                                id: tool_call.id.clone(),
+                                name: tool_call.function.name.clone(),
+                                error: error.to_string(),
+                            });
+                            return Err(error);
+                        }
+                    }
+                }
+
+                let auto_threshold = self.config.conversation.auto_summary_threshold as f64;
+                if self.conversation.should_auto_summarize(auto_threshold) {
+                    warn!(
+                        "Context window critical (>{}%), triggering automatic summarization",
+                        (auto_threshold * 100.0) as u8
+                    );
+                    match self.perform_auto_summarization().await {
+                        Ok(_) => {
+                            info!("Automatic summarization complete, conversation pruned");
+                        }
+                        Err(error) => {
+                            warn!(
+                                "Automatic summarization failed: {}. Continuing with pruning.",
+                                error
+                            );
+                            self.conversation.prune_if_needed();
+                        }
+                    }
+                }
+
+                continue;
+            }
+
+            if message.content.is_some() {
+                debug!("Provider returned final response, stopping");
+                break;
+            }
+
+            warn!("Provider returned neither content nor tool calls");
+            let error = XzatomaError::Provider(
+                "Provider returned invalid response (no content or tool calls)".to_string(),
+            );
+            observer.on_event(AgentExecutionEvent::ExecutionFailed {
+                error: error.to_string(),
+            });
+            return Err(error);
+        }
+
+        let final_message = self
+            .conversation
+            .messages()
+            .iter()
+            .rev()
+            .find(|message| message.role == "assistant")
+            .and_then(|message| message.content.as_ref())
+            .cloned()
+            .unwrap_or_else(|| "No response from assistant".to_string());
+
+        observer.on_event(AgentExecutionEvent::ExecutionCompleted {
+            response: final_message.clone(),
+        });
 
         info!(
             "Agent execution completed in {} iterations, {} seconds",
@@ -1035,6 +1484,7 @@ mod tests {
             responses.push(Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: format!("call_{}", i),
                     function: FunctionCall {
@@ -1066,6 +1516,7 @@ mod tests {
         let provider = MockProvider::new(vec![Message {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         }]);
@@ -1084,6 +1535,7 @@ mod tests {
             Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: "call_1".to_string(),
                     function: FunctionCall {
@@ -1139,6 +1591,7 @@ mod tests {
             responses.push(Message {
                 role: "assistant".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: Some(vec![ToolCall {
                     id: format!("call_{}", i),
                     function: FunctionCall {
@@ -1307,5 +1760,77 @@ mod tests {
         // Usage should be cleared
         assert!(conversation.get_provider_token_usage().is_none());
         assert_eq!(conversation.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_prompt_started() {
+        let provider = MockProvider::new(vec![Message::assistant("Hello!")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<String>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: crate::agent::events::AgentExecutionEvent) {
+                self.events.push(format!("{:?}", event));
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("Hello", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+        assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
+        assert!(collector
+            .events
+            .iter()
+            .any(|e| e.contains("ExecutionCompleted")));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_respects_cancellation() {
+        let provider = MockProvider::new(vec![Message::assistant("Hello!")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+
+        let mut observer = crate::agent::events::NoOpObserver;
+        let result = agent
+            .execute_with_observer("Hello", &token, &mut observer)
+            .await;
+        assert!(matches!(result, Err(crate::error::XzatomaError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_messages_with_observer_emits_prompt_started() {
+        let provider = MockProvider::new(vec![Message::assistant("Hello!")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<String>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: crate::agent::events::AgentExecutionEvent) {
+                self.events.push(format!("{:?}", event));
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let messages = vec![crate::providers::Message::user("Hello")];
+        let result = agent
+            .execute_provider_messages_with_observer(messages, &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+        assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
     }
 }

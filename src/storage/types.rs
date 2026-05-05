@@ -91,6 +91,55 @@ pub struct StoredAcpSession {
     pub metadata: BTreeMap<String, String>,
 }
 
+/// Persisted ACP stdio session mapping.
+///
+/// This structure stores workspace-scoped ACP stdio session metadata for
+/// subprocess integrations such as Zed. It is intentionally separate from the
+/// HTTP ACP session tables because stdio sessions have different lifecycle and
+/// resume semantics.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::Utc;
+/// use xzatoma::storage::types::StoredAcpStdioSession;
+///
+/// let now = Utc::now();
+/// let session = StoredAcpStdioSession {
+///     session_id: "xzatoma-session".to_string(),
+///     workspace_root: "/workspace/project".to_string(),
+///     conversation_id: "conversation-123".to_string(),
+///     provider_type: "ollama".to_string(),
+///     model: Some("llama3.2:latest".to_string()),
+///     created_at: now,
+///     updated_at: now,
+///     metadata: Default::default(),
+/// };
+///
+/// assert_eq!(session.workspace_root, "/workspace/project");
+/// assert_eq!(session.provider_type, "ollama");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoredAcpStdioSession {
+    /// ACP stdio session identifier.
+    pub session_id: String,
+    /// Normalized workspace root used for resume lookup.
+    pub workspace_root: String,
+    /// Mapped conversation identifier in the existing conversation store.
+    pub conversation_id: String,
+    /// Provider type used by the session, such as `copilot`, `ollama`, or
+    /// `openai`.
+    pub provider_type: String,
+    /// Optional model selected for the session.
+    pub model: Option<String>,
+    /// When the ACP stdio session mapping was created.
+    pub created_at: DateTime<Utc>,
+    /// When the ACP stdio session mapping was last updated.
+    pub updated_at: DateTime<Utc>,
+    /// Arbitrary session metadata preserved for stdio resume continuity.
+    pub metadata: BTreeMap<String, String>,
+}
+
 /// Persisted ACP run summary.
 ///
 /// This structure stores durable run-level metadata so completed or interrupted

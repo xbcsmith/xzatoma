@@ -68,6 +68,25 @@ pub enum Commands {
         allow_dangerous: bool,
     },
 
+    /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
+    Agent {
+        /// Override the provider from config (copilot, ollama, openai)
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Override the model within the selected provider
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Allow dangerous terminal commands without confirmation
+        #[arg(long)]
+        allow_dangerous: bool,
+
+        /// Fallback workspace root when the ACP client does not provide one
+        #[arg(long)]
+        working_dir: Option<PathBuf>,
+    },
+
     /// Watch Kafka topic for events and execute plans
     Watch {
         /// Kafka topic to watch (overrides config)
@@ -443,6 +462,121 @@ mod tests {
             assert_eq!(provider, Some("copilot".to_string()));
         } else {
             panic!("Expected default command to be Auth");
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_agent_defaults() {
+        let cli = Cli::try_parse_from(["xzatoma", "agent"]);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Agent {
+                provider,
+                model,
+                allow_dangerous,
+                working_dir,
+            } => {
+                assert!(provider.is_none());
+                assert!(model.is_none());
+                assert!(!allow_dangerous);
+                assert!(working_dir.is_none());
+            }
+            other => panic!("expected agent command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_agent_with_provider() {
+        let cli = Cli::try_parse_from(["xzatoma", "agent", "--provider", "ollama"]);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Agent { provider, .. } => {
+                assert_eq!(provider.as_deref(), Some("ollama"));
+            }
+            other => panic!("expected agent command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_agent_with_copilot_provider_and_model() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "agent",
+            "--provider",
+            "copilot",
+            "--model",
+            "gpt-4o",
+        ]);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Agent {
+                provider,
+                model,
+                allow_dangerous,
+                ..
+            } => {
+                assert_eq!(provider.as_deref(), Some("copilot"));
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
+                assert!(!allow_dangerous);
+            }
+            other => panic!("expected agent command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_agent_with_provider_model_and_allow_dangerous() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "agent",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-4o",
+            "--allow-dangerous",
+        ]);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Agent {
+                provider,
+                model,
+                allow_dangerous,
+                ..
+            } => {
+                assert_eq!(provider.as_deref(), Some("openai"));
+                assert_eq!(model.as_deref(), Some("gpt-4o"));
+                assert!(allow_dangerous);
+            }
+            other => panic!("expected agent command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cli_parses_agent_with_working_dir() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "agent",
+            "--working-dir",
+            "/tmp/xzatoma-zed-workspace",
+        ]);
+        assert!(cli.is_ok());
+
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::Agent { working_dir, .. } => {
+                assert_eq!(
+                    working_dir,
+                    Some(PathBuf::from("/tmp/xzatoma-zed-workspace"))
+                );
+            }
+            other => panic!("expected agent command, got {:?}", other),
         }
     }
 

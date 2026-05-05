@@ -1,0 +1,16 @@
+# Zed ACP demo configuration for OpenAI-compatible provider
+# Set OPENAI_API_KEY environment variable before use
+provider:
+  provider_type: openai
+  openai_model: "gpt-4o"
+
+agent:
+  max_turns: 20
+  timeout_seconds: 120
+
+acp:
+  stdio:
+    persist_sessions: true
+    resume_by_workspace: true
+    vision_enabled: true
+    prompt_queue_capacity: 8

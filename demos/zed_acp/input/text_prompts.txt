@@ -1,0 +1,14 @@
+# Text-only example prompts for xzatoma agent in Zed
+#
+# Use these in the Zed agent panel to test XZatoma's basic capabilities.
+# Each prompt is on its own line. Lines starting with # are comments.
+
+List the files in the input/fixture/ directory of this workspace.
+
+Read the file input/fixture/hello.txt and summarize its contents in one sentence.
+
+Read input/fixture/sample.rs and describe what the Rust code does.
+
+Search for any TODO comments in input/fixture/sample.rs and list them.
+
+Create a brief report of the fixture workspace in tmp/output/report.txt.

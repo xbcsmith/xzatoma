@@ -7,9 +7,9 @@
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    convert_tools_from_json, CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo,
-    Provider, ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest,
-    ProviderToolCall, TokenUsage, ToolCall,
+    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FunctionCall,
+    Message, ModelCapability, ModelInfo, Provider, ProviderCapabilities, ProviderFunctionCall,
+    ProviderMessage, ProviderRequest, ProviderToolCall, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -241,8 +241,8 @@ impl OllamaProvider {
         validated_messages
             .iter()
             .filter_map(|m| {
-                // Skip messages without content (unless they have tool calls)
-                if m.content.is_none() && m.tool_calls.is_none() {
+                // Skip messages without content, images, or tool calls.
+                if m.content.is_none() && !m.has_multimodal_content() && m.tool_calls.is_none() {
                     return None;
                 }
 
@@ -261,13 +261,12 @@ impl OllamaProvider {
                         .collect()
                 });
 
-                Some(OllamaMessage {
-                    role: m.role.clone(),
-                    content: m.content.clone().unwrap_or_default(),
-                    tool_calls,
-                    // Ollama does not use tool_call_id in messages.
-                    tool_call_id: None,
-                })
+                let mut message = ProviderMessage::from_message_for_ollama(m);
+                message.tool_calls = tool_calls;
+                // Ollama does not use tool_call_id in messages.
+                message.tool_call_id = None;
+
+                Some(message)
             })
             .collect()
     }
@@ -506,7 +505,7 @@ fn get_context_window_for_model(model_name: &str) -> usize {
     }
 }
 
-/// Add model capabilities based on model family
+/// Add model capabilities based on model family and model name.
 fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
     // Only specific Ollama models support function calling (tool use)
     // Based on Ollama documentation and testing
@@ -528,6 +527,9 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
             model.add_capability(ModelCapability::LongContext);
         }
         "llava" => {
+            model.add_capability(ModelCapability::Vision);
+        }
+        _ if ollama_model_supports_vision(&model.name) => {
             model.add_capability(ModelCapability::Vision);
         }
         "codellama" | "codegemma" | "deepseek-coder" | "starcoder" | "starcoder2" | "codestral"
@@ -651,6 +653,16 @@ fn format_size(bytes: u64) -> String {
     format!("{:.1}{}", size, UNITS[unit_idx])
 }
 
+fn ollama_model_supports_vision(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("llava")
+        || model.contains("bakllava")
+        || model.contains("moondream")
+        || model.contains("minicpm-v")
+        || model.contains("gemma3")
+        || model.contains("vision")
+}
+
 #[async_trait]
 impl Provider for OllamaProvider {
     async fn complete(
@@ -664,6 +676,13 @@ impl Provider for OllamaProvider {
             })?;
             (format!("{}/api/chat", config.host), config.model.clone())
         };
+
+        if messages_contain_image_content(messages) && !ollama_model_supports_vision(&model) {
+            return Err(XzatomaError::Provider(format!(
+                "Ollama model '{}' does not support image input",
+                model
+            )));
+        }
 
         let ollama_request = OllamaRequest {
             model,
@@ -814,6 +833,7 @@ impl Provider for OllamaProvider {
             supports_model_switching: true,
             supports_token_counts: true,
             supports_streaming: false,
+            supports_vision: true,
         }
     }
 
@@ -937,6 +957,67 @@ mod tests {
     }
 
     #[test]
+    fn test_convert_messages_with_multimodal_image_sets_native_images() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "llava:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        let message = Message::try_user_from_multimodal_input(
+            crate::providers::MultimodalPromptInput::new(vec![
+                crate::providers::PromptInputPart::text("describe"),
+                crate::providers::PromptInputPart::image(
+                    crate::providers::ImagePromptPart::inline_base64("image/png", "AAAA"),
+                ),
+                crate::providers::PromptInputPart::text("briefly"),
+            ]),
+        )
+        .unwrap();
+
+        let converted = provider.convert_messages(&[message]);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "user");
+        assert_eq!(converted[0].content, "describe\n\nbriefly");
+        assert_eq!(converted[0].images, vec!["AAAA".to_string()]);
+        assert!(converted[0].content_parts.is_some());
+        assert!(converted[0].tool_calls.is_none());
+    }
+
+    #[test]
+    fn test_convert_messages_with_text_only_multimodal_omits_native_images() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        let message = Message::try_user_from_multimodal_input(
+            crate::providers::MultimodalPromptInput::new(vec![
+                crate::providers::PromptInputPart::text("first"),
+                crate::providers::PromptInputPart::text("second"),
+            ]),
+        )
+        .unwrap();
+
+        let converted = provider.convert_messages(&[message]);
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].role, "user");
+        assert_eq!(converted[0].content, "first\n\nsecond");
+        assert!(converted[0].images.is_empty());
+        assert!(converted[0].content_parts.is_some());
+    }
+
+    #[test]
+    fn test_ollama_model_supports_vision_allowlist() {
+        assert!(ollama_model_supports_vision("llava:latest"));
+        assert!(ollama_model_supports_vision("gemma3:12b"));
+        assert!(!ollama_model_supports_vision("llama3.2:latest"));
+    }
+
+    #[test]
     fn test_convert_response_message_text() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
@@ -948,6 +1029,8 @@ mod tests {
         let ollama_msg = OllamaMessage {
             role: "assistant".to_string(),
             content: "Hello!".to_string(),
+            content_parts: None,
+            images: vec![],
             tool_calls: None,
             tool_call_id: None,
         };
@@ -970,12 +1053,14 @@ mod tests {
         let ollama_msg = OllamaMessage {
             role: "assistant".to_string(),
             content: String::new(),
+            content_parts: None,
+            images: vec![],
             tool_calls: Some(vec![OllamaToolCall {
                 id: "call_123".to_string(),
                 r#type: "function".to_string(),
                 function: OllamaFunctionCall {
-                    name: "read_file".to_string(),
-                    arguments: serde_json::json!({"path": "test.txt"}),
+                    name: "test_tool".to_string(),
+                    arguments: serde_json::json!({"key": "value"}),
                 },
             }]),
             tool_call_id: None,
@@ -1001,6 +1086,7 @@ mod tests {
             Message {
                 role: "user".to_string(),
                 content: None,
+                content_parts: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -1113,6 +1199,7 @@ mod tests {
         assert!(capabilities.supports_model_switching);
         assert!(capabilities.supports_token_counts);
         assert!(!capabilities.supports_streaming);
+        assert!(capabilities.supports_vision);
     }
 
     #[test]

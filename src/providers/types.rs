@@ -4,8 +4,658 @@
 //! structures, model metadata, capability flags, request/response types,
 //! and wire-format structs used when communicating with provider APIs.
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Ordered multimodal prompt input for providers that support text and vision.
+///
+/// This type is intentionally small: it stores only the prompt content parts
+/// needed by ACP stdio conversion and provider request builders. Text-only
+/// prompts can continue to use [`Message::user`], while vision-capable paths can
+/// validate and route this structure explicitly.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{MultimodalPromptInput, PromptInputPart};
+///
+/// let input = MultimodalPromptInput::new(vec![PromptInputPart::text("Describe this image")]);
+/// assert!(input.validate().is_ok());
+/// assert!(!input.has_images());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MultimodalPromptInput {
+    /// Ordered text and image parts in the prompt.
+    pub parts: Vec<PromptInputPart>,
+}
+
+impl MultimodalPromptInput {
+    /// Creates a new multimodal prompt input.
+    ///
+    /// # Arguments
+    ///
+    /// * `parts` - Ordered prompt content parts.
+    ///
+    /// # Returns
+    ///
+    /// Returns a prompt input containing the provided parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let input = MultimodalPromptInput::new(vec![PromptInputPart::text("hello")]);
+    /// assert_eq!(input.parts.len(), 1);
+    /// ```
+    pub fn new(parts: Vec<PromptInputPart>) -> Self {
+        Self { parts }
+    }
+
+    /// Creates a text-only multimodal prompt input.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 prompt text.
+    ///
+    /// # Returns
+    ///
+    /// Returns a prompt input with one text part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::MultimodalPromptInput;
+    ///
+    /// let input = MultimodalPromptInput::text("hello");
+    /// assert_eq!(input.as_legacy_text(), "hello");
+    /// ```
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            parts: vec![PromptInputPart::text(text)],
+        }
+    }
+
+    /// Returns `true` when any part contains image input.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether the prompt contains at least one image part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let input = MultimodalPromptInput::new(vec![PromptInputPart::image(
+    ///     ImagePromptPart::inline_base64("image/png", "AAAA"),
+    /// )]);
+    /// assert!(input.has_images());
+    /// ```
+    pub fn has_images(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|part| matches!(part, PromptInputPart::Image(_)))
+    }
+
+    /// Converts text parts into a legacy text prompt.
+    ///
+    /// Image parts are intentionally not converted into descriptions here.
+    /// Callers must use [`Self::has_images`] and provider vision validation to
+    /// reject unsupported image input before using this fallback.
+    ///
+    /// # Returns
+    ///
+    /// Returns all text parts joined with blank lines.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let input = MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("first"),
+    ///     PromptInputPart::text("second"),
+    /// ]);
+    /// assert_eq!(input.as_legacy_text(), "first\n\nsecond");
+    /// ```
+    pub fn as_legacy_text(&self) -> String {
+        self.parts
+            .iter()
+            .filter_map(|part| match part {
+                PromptInputPart::Text(text) => Some(text.text.as_str()),
+                PromptInputPart::Image(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// Validates that the prompt is non-empty and all image parts are usable.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` when the prompt contains usable text or image input.
+    ///
+    /// # Errors
+    ///
+    /// Returns a descriptive string if the prompt is empty or an image part is
+    /// malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::MultimodalPromptInput;
+    ///
+    /// assert!(MultimodalPromptInput::text("hello").validate().is_ok());
+    /// assert!(MultimodalPromptInput::new(vec![]).validate().is_err());
+    /// ```
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.parts.is_empty() {
+            return Err("prompt input must contain at least one content part".to_string());
+        }
+
+        let mut has_usable_content = false;
+        for part in &self.parts {
+            match part {
+                PromptInputPart::Text(text) => {
+                    if !text.text.trim().is_empty() {
+                        has_usable_content = true;
+                    }
+                }
+                PromptInputPart::Image(image) => {
+                    image.validate()?;
+                    has_usable_content = true;
+                }
+            }
+        }
+
+        if has_usable_content {
+            Ok(())
+        } else {
+            Err("prompt input must contain non-empty text or image content".to_string())
+        }
+    }
+}
+
+/// One ordered part of a multimodal prompt input.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::PromptInputPart;
+///
+/// let part = PromptInputPart::text("hello");
+/// assert!(matches!(part, PromptInputPart::Text(_)));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PromptInputPart {
+    /// UTF-8 text input.
+    Text(TextPromptPart),
+    /// Image input for vision-capable providers.
+    Image(ImagePromptPart),
+}
+
+impl PromptInputPart {
+    /// Creates a text prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 prompt text.
+    ///
+    /// # Returns
+    ///
+    /// Returns a text prompt part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::PromptInputPart;
+    ///
+    /// let part = PromptInputPart::text("hello");
+    /// assert!(matches!(part, PromptInputPart::Text(_)));
+    /// ```
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text(TextPromptPart { text: text.into() })
+    }
+
+    /// Creates an image prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `image` - Image prompt content.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image prompt part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, PromptInputPart};
+    ///
+    /// let part = PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA"));
+    /// assert!(matches!(part, PromptInputPart::Image(_)));
+    /// ```
+    pub fn image(image: ImagePromptPart) -> Self {
+        Self::Image(image)
+    }
+}
+
+/// UTF-8 text content in a multimodal prompt.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::TextPromptPart;
+///
+/// let text = TextPromptPart {
+///     text: "hello".to_string(),
+/// };
+/// assert_eq!(text.text, "hello");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextPromptPart {
+    /// Prompt text.
+    pub text: String,
+}
+
+/// Image content in a multimodal prompt.
+///
+/// Image data can be inline base64, inline bytes, a local file reference, or a
+/// remote URL reference. Conversion code must validate the selected source
+/// against ACP stdio policy before provider execution.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ImagePromptPart;
+///
+/// let image = ImagePromptPart::inline_base64("image/png", "AAAA");
+/// assert_eq!(image.mime_type, "image/png");
+/// assert!(image.validate().is_ok());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImagePromptPart {
+    /// Image MIME type such as `image/png`.
+    pub mime_type: String,
+    /// Optional filename or path for display and provider metadata.
+    pub name: Option<String>,
+    /// Image source data or reference.
+    pub source: ImagePromptSource,
+}
+
+impl ImagePromptPart {
+    /// Creates an inline base64 image prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_type` - Image MIME type.
+    /// * `data` - Base64-encoded image data.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image prompt part backed by base64 data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ImagePromptPart;
+    ///
+    /// let image = ImagePromptPart::inline_base64("image/png", "AAAA");
+    /// assert!(image.validate().is_ok());
+    /// ```
+    pub fn inline_base64(mime_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            mime_type: mime_type.into(),
+            name: None,
+            source: ImagePromptSource::InlineBase64(data.into()),
+        }
+    }
+
+    /// Creates an inline byte image prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_type` - Image MIME type.
+    /// * `bytes` - Decoded image bytes.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image prompt part backed by decoded bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ImagePromptPart;
+    ///
+    /// let image = ImagePromptPart::inline_bytes("image/png", vec![0, 1, 2]);
+    /// assert!(image.validate().is_ok());
+    /// ```
+    pub fn inline_bytes(mime_type: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            mime_type: mime_type.into(),
+            name: None,
+            source: ImagePromptSource::InlineBytes(bytes),
+        }
+    }
+
+    /// Creates a local file image prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_type` - Image MIME type.
+    /// * `path` - Local image path.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image prompt part backed by a local file reference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use xzatoma::providers::ImagePromptPart;
+    ///
+    /// let image = ImagePromptPart::file_reference("image/png", PathBuf::from("/tmp/a.png"));
+    /// assert!(image.validate().is_ok());
+    /// ```
+    pub fn file_reference(mime_type: impl Into<String>, path: std::path::PathBuf) -> Self {
+        Self {
+            mime_type: mime_type.into(),
+            name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string()),
+            source: ImagePromptSource::FilePath(path),
+        }
+    }
+
+    /// Creates a remote URL image prompt part.
+    ///
+    /// # Arguments
+    ///
+    /// * `mime_type` - Image MIME type.
+    /// * `url` - Remote image URL.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image prompt part backed by a remote URL reference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ImagePromptPart;
+    ///
+    /// let image = ImagePromptPart::remote_url("image/png", "https://example.com/a.png");
+    /// assert!(image.validate().is_ok());
+    /// ```
+    pub fn remote_url(mime_type: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            mime_type: mime_type.into(),
+            name: None,
+            source: ImagePromptSource::RemoteUrl(url.into()),
+        }
+    }
+
+    /// Validates that the image has a MIME type and usable source.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` when the image source is usable.
+    ///
+    /// # Errors
+    ///
+    /// Returns a descriptive string when the image is malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ImagePromptPart;
+    ///
+    /// assert!(ImagePromptPart::inline_base64("image/png", "AAAA").validate().is_ok());
+    /// assert!(ImagePromptPart::inline_base64("", "AAAA").validate().is_err());
+    /// ```
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.mime_type.trim().is_empty() {
+            return Err("image content is missing a MIME type".to_string());
+        }
+
+        if !self.mime_type.starts_with("image/") {
+            return Err(format!(
+                "image MIME type '{}' must start with 'image/'",
+                self.mime_type
+            ));
+        }
+
+        match &self.source {
+            ImagePromptSource::InlineBase64(data) => {
+                if data.trim().is_empty() {
+                    Err("image content is missing inline base64 data".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            ImagePromptSource::InlineBytes(bytes) => {
+                if bytes.is_empty() {
+                    Err("image content is missing inline bytes".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            ImagePromptSource::FilePath(path) => {
+                if path.as_os_str().is_empty() {
+                    Err("image file reference is empty".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            ImagePromptSource::RemoteUrl(url) => {
+                if url.trim().is_empty() {
+                    Err("image remote URL is empty".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+/// Source for image content in a multimodal prompt.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ImagePromptSource;
+///
+/// let source = ImagePromptSource::InlineBase64("AAAA".to_string());
+/// assert!(matches!(source, ImagePromptSource::InlineBase64(_)));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "source", content = "value", rename_all = "snake_case")]
+pub enum ImagePromptSource {
+    /// Base64-encoded image data.
+    InlineBase64(String),
+    /// Decoded image bytes.
+    InlineBytes(Vec<u8>),
+    /// Local image file path.
+    FilePath(std::path::PathBuf),
+    /// Remote image URL.
+    RemoteUrl(String),
+}
+
+/// Provider-facing multimodal message content part.
+///
+/// Providers that support vision can convert [`MultimodalPromptInput`] into
+/// these ordered parts and then serialize them into their native request shape.
+/// Text-only providers should reject inputs containing image parts before
+/// execution begins.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ProviderMessageContentPart;
+///
+/// let part = ProviderMessageContentPart::text("hello");
+/// assert!(matches!(part, ProviderMessageContentPart::Text { .. }));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderMessageContentPart {
+    /// UTF-8 text content.
+    Text {
+        /// Text sent to the provider.
+        text: String,
+    },
+    /// Image content sent to a vision-capable provider.
+    Image {
+        /// Image MIME type such as `image/png`.
+        mime_type: String,
+        /// Optional filename or source label.
+        name: Option<String>,
+        /// Image source data or reference.
+        source: ImagePromptSource,
+    },
+}
+
+impl ProviderMessageContentPart {
+    /// Creates a text provider message content part.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 text content.
+    ///
+    /// # Returns
+    ///
+    /// Returns a text content part.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ProviderMessageContentPart;
+    ///
+    /// let part = ProviderMessageContentPart::text("hello");
+    /// assert!(matches!(part, ProviderMessageContentPart::Text { .. }));
+    /// ```
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    /// Creates an image provider message content part.
+    ///
+    /// # Arguments
+    ///
+    /// * `image` - Image prompt part to expose to the provider layer.
+    ///
+    /// # Returns
+    ///
+    /// Returns an image content part with the same MIME type, name, and source.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, ProviderMessageContentPart};
+    ///
+    /// let part = ProviderMessageContentPart::image(
+    ///     ImagePromptPart::inline_base64("image/png", "AAAA"),
+    /// );
+    /// assert!(matches!(part, ProviderMessageContentPart::Image { .. }));
+    /// ```
+    pub fn image(image: ImagePromptPart) -> Self {
+        Self::Image {
+            mime_type: image.mime_type,
+            name: image.name,
+            source: image.source,
+        }
+    }
+
+    /// Returns `true` when this content part contains text.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether this content part is text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::ProviderMessageContentPart;
+    ///
+    /// let part = ProviderMessageContentPart::text("hello");
+    /// assert!(part.is_text());
+    /// assert!(!part.is_image());
+    /// ```
+    pub fn is_text(&self) -> bool {
+        matches!(self, Self::Text { .. })
+    }
+
+    /// Returns `true` when this content part contains image input.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether this content part is an image.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, ProviderMessageContentPart};
+    ///
+    /// let part = ProviderMessageContentPart::image(
+    ///     ImagePromptPart::inline_base64("image/png", "AAAA"),
+    /// );
+    /// assert!(part.is_image());
+    /// assert!(!part.is_text());
+    /// ```
+    pub fn is_image(&self) -> bool {
+        matches!(self, Self::Image { .. })
+    }
+
+    /// Returns a display-safe label for this content part.
+    ///
+    /// The label identifies the broad content category without exposing inline
+    /// image bytes or base64 data.
+    ///
+    /// # Returns
+    ///
+    /// Returns `"text"` for text parts and the image MIME type for image parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, ProviderMessageContentPart};
+    ///
+    /// let text = ProviderMessageContentPart::text("hello");
+    /// let image = ProviderMessageContentPart::image(
+    ///     ImagePromptPart::inline_base64("image/png", "AAAA"),
+    /// );
+    ///
+    /// assert_eq!(text.kind_label(), "text");
+    /// assert_eq!(image.kind_label(), "image/png");
+    /// ```
+    pub fn kind_label(&self) -> &str {
+        match self {
+            Self::Text { .. } => "text",
+            Self::Image { mime_type, .. } => mime_type.as_str(),
+        }
+    }
+}
+
+/// Provider-facing ordered multimodal message content.
+pub type ProviderMessageContentParts = Vec<ProviderMessageContentPart>;
+
+/// Backward-compatible alias for provider-facing prompt input.
+pub type ProviderPromptInput = MultimodalPromptInput;
+
+/// Backward-compatible alias for provider-facing prompt input parts.
+pub type ProviderPromptInputPart = PromptInputPart;
+
+/// Backward-compatible alias for provider-facing text prompt parts.
+pub type ProviderTextPromptPart = TextPromptPart;
+
+/// Backward-compatible alias for provider-facing image prompt parts.
+pub type ProviderImagePromptPart = ImagePromptPart;
+
+/// Backward-compatible alias for provider-facing image prompt sources.
+pub type ProviderImagePromptSource = ImagePromptSource;
 
 /// Message structure for conversation
 ///
@@ -15,9 +665,12 @@ use std::collections::HashMap;
 pub struct Message {
     /// Role of the message sender (user, assistant, system, tool)
     pub role: String,
-    /// Content of the message
+    /// Text content of the message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Optional ordered multimodal content parts for vision-capable providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_parts: Option<ProviderMessageContentParts>,
     /// Optional tool calls in the message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
@@ -45,6 +698,7 @@ impl Message {
         Self {
             role: "user".to_string(),
             content: Some(content.into()),
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -68,6 +722,7 @@ impl Message {
         Self {
             role: "assistant".to_string(),
             content: Some(content.into()),
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -91,6 +746,7 @@ impl Message {
         Self {
             role: "system".to_string(),
             content: Some(content.into()),
+            content_parts: None,
             tool_calls: None,
             tool_call_id: None,
         }
@@ -116,6 +772,7 @@ impl Message {
         Self {
             role: "tool".to_string(),
             content: Some(content.into()),
+            content_parts: None,
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
@@ -147,10 +804,289 @@ impl Message {
         Self {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
             tool_calls: Some(tool_calls),
             tool_call_id: None,
         }
     }
+
+    /// Creates a new user message with ordered multimodal content parts.
+    ///
+    /// Text-only callers should continue to use [`Self::user`]. Vision-capable
+    /// callers can use this constructor after validating provider/model support
+    /// for image input.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Validated multimodal prompt input.
+    ///
+    /// # Returns
+    ///
+    /// Returns a user message with legacy text content populated for text parts
+    /// and provider-facing content parts populated for all parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the prompt input is empty or malformed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("Describe this"),
+    /// ]))
+    /// .unwrap();
+    /// assert!(message.content_parts.is_some());
+    /// ```
+    pub fn try_user_from_multimodal_input(
+        input: MultimodalPromptInput,
+    ) -> std::result::Result<Self, String> {
+        input.validate()?;
+        let content = input.as_legacy_text();
+        let content_parts = input
+            .parts
+            .into_iter()
+            .map(|part| match part {
+                PromptInputPart::Text(text) => ProviderMessageContentPart::text(text.text),
+                PromptInputPart::Image(image) => ProviderMessageContentPart::image(image),
+            })
+            .collect();
+
+        Ok(Self {
+            role: "user".to_string(),
+            content: if content.trim().is_empty() {
+                None
+            } else {
+                Some(content)
+            },
+            content_parts: Some(content_parts),
+            tool_calls: None,
+            tool_call_id: None,
+        })
+    }
+
+    /// Returns `true` when this message has ordered multimodal content parts.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether `content_parts` is present and non-empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("hello"),
+    /// ]))
+    /// .unwrap();
+    /// assert!(message.has_multimodal_content());
+    /// ```
+    pub fn has_multimodal_content(&self) -> bool {
+        self.content_parts
+            .as_ref()
+            .map(|parts| !parts.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` when this message contains image content.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether any multimodal content part is an image.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
+    /// ]))
+    /// .unwrap();
+    /// assert!(message.has_image_content());
+    /// ```
+    pub fn has_image_content(&self) -> bool {
+        self.content_parts
+            .as_ref()
+            .map(|parts| parts.iter().any(ProviderMessageContentPart::is_image))
+            .unwrap_or(false)
+    }
+
+    /// Returns `true` when this message has only text multimodal content parts.
+    ///
+    /// Messages without `content_parts` return `false`; use `content` directly
+    /// for legacy text-only messages.
+    ///
+    /// # Returns
+    ///
+    /// Returns whether all present multimodal parts are text parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("hello"),
+    /// ]))
+    /// .unwrap();
+    /// assert!(message.has_text_only_multimodal_content());
+    /// ```
+    pub fn has_text_only_multimodal_content(&self) -> bool {
+        self.content_parts
+            .as_ref()
+            .map(|parts| !parts.is_empty() && parts.iter().all(ProviderMessageContentPart::is_text))
+            .unwrap_or(false)
+    }
+
+    /// Returns the number of ordered multimodal content parts.
+    ///
+    /// # Returns
+    ///
+    /// Returns `0` when the message has no multimodal content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("hello"),
+    /// ]))
+    /// .unwrap();
+    /// assert_eq!(message.multimodal_part_count(), 1);
+    /// ```
+    pub fn multimodal_part_count(&self) -> usize {
+        self.content_parts
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default()
+    }
+
+    /// Returns the number of image parts in this message.
+    ///
+    /// # Returns
+    ///
+    /// Returns `0` when the message contains no image content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("describe"),
+    ///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
+    /// ]))
+    /// .unwrap();
+    /// assert_eq!(message.image_part_count(), 1);
+    /// ```
+    pub fn image_part_count(&self) -> usize {
+        self.content_parts
+            .as_ref()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter(|part| ProviderMessageContentPart::is_image(part))
+                    .count()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Returns a borrowed slice of multimodal content parts.
+    ///
+    /// # Returns
+    ///
+    /// Returns an empty slice when the message has no multimodal content.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput, PromptInputPart};
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::text("hello"),
+    /// ]))
+    /// .unwrap();
+    /// assert_eq!(message.multimodal_parts().len(), 1);
+    /// ```
+    pub fn multimodal_parts(&self) -> &[ProviderMessageContentPart] {
+        self.content_parts.as_deref().unwrap_or(&[])
+    }
+
+    /// Creates a new user message from text-only multimodal input.
+    ///
+    /// This constructor preserves compatibility with the existing provider
+    /// message flow by accepting only multimodal input without images. Callers
+    /// that need to send images must route the [`MultimodalPromptInput`] through
+    /// a provider path that supports vision.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Multimodal prompt input to convert.
+    ///
+    /// # Returns
+    ///
+    /// Returns a user message containing the joined text parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string when the input is empty or contains image parts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{Message, MultimodalPromptInput};
+    ///
+    /// let message = Message::try_user_from_text_input(MultimodalPromptInput::text("hello")).unwrap();
+    /// assert_eq!(message.content.as_deref(), Some("hello"));
+    /// ```
+    pub fn try_user_from_text_input(
+        input: MultimodalPromptInput,
+    ) -> std::result::Result<Self, String> {
+        input.validate()?;
+
+        if input.has_images() {
+            return Err(
+                "multimodal input contains images and cannot be converted to a text-only message"
+                    .to_string(),
+            );
+        }
+
+        Ok(Self::user(input.as_legacy_text()))
+    }
+}
+
+/// Returns whether any message in a collection contains image content.
+///
+/// # Arguments
+///
+/// * `messages` - Provider messages to inspect.
+///
+/// # Returns
+///
+/// Returns `true` when at least one message has an image content part.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{
+///     ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart,
+///     messages_contain_image_content,
+/// };
+///
+/// let messages = vec![Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
+/// ]))
+/// .unwrap()];
+///
+/// assert!(messages_contain_image_content(&messages));
+/// ```
+pub fn messages_contain_image_content(messages: &[Message]) -> bool {
+    messages.iter().any(Message::has_image_content)
 }
 
 /// Function call information
@@ -618,6 +1554,8 @@ pub struct ProviderCapabilities {
     pub supports_token_counts: bool,
     /// Provider supports streaming responses
     pub supports_streaming: bool,
+    /// Provider supports image input in user prompts.
+    pub supports_vision: bool,
 }
 
 /// Completion response with message and optional token usage
@@ -948,6 +1886,8 @@ fn provider_tool_call_type() -> String {
 /// let msg = ProviderMessage {
 ///     role: "user".to_string(),
 ///     content: "Hello!".to_string(),
+///     content_parts: None,
+///     images: vec![],
 ///     tool_calls: None,
 ///     tool_call_id: None,
 /// };
@@ -957,9 +1897,29 @@ fn provider_tool_call_type() -> String {
 pub struct ProviderMessage {
     /// Sender role: `"user"`, `"assistant"`, `"system"`, or `"tool"`.
     pub role: String,
-    /// Message text content.
+    /// Legacy plain-text message content.
+    ///
+    /// Vision-capable providers should prefer `content_parts` for user messages
+    /// when it is present. Text-only providers can continue to serialize this
+    /// field directly after image input has been rejected by provider
+    /// capability validation.
     #[serde(default)]
     pub content: String,
+    /// Optional ordered multimodal content parts for provider request builders.
+    ///
+    /// This is populated for ACP stdio prompts that contain images and preserves
+    /// the original ordering of text and image parts. Providers that do not
+    /// support vision must reject messages with image content before execution.
+    #[serde(default, skip_serializing)]
+    pub content_parts: Option<ProviderMessageContentParts>,
+    /// Native image payloads for providers such as Ollama that expect base64
+    /// image data in a separate `images` field on user messages.
+    ///
+    /// This is derived from `content_parts` by provider conversion code. It is
+    /// omitted for text-only messages and for providers that serialize image
+    /// content inline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
     /// Tool calls requested by the assistant.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ProviderToolCall>>,
@@ -972,6 +1932,80 @@ pub struct ProviderMessage {
     pub tool_call_id: Option<String>,
 }
 
+impl ProviderMessage {
+    /// Builds native Ollama image payloads from multimodal content parts.
+    ///
+    /// Ollama expects user images as base64 strings in an `images` field rather
+    /// than as inline structured message content. This helper extracts inline
+    /// base64 data and encodes inline byte data. File references and remote URLs
+    /// are ignored because ACP conversion should resolve local files before the
+    /// provider request is built, and Ollama does not accept remote image URLs in
+    /// the native `images` field.
+    ///
+    /// # Returns
+    ///
+    /// Returns base64 image payloads suitable for Ollama's native `images`
+    /// message field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::{
+    ///     ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart,
+    /// };
+    ///
+    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+    ///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
+    /// ]))
+    /// .unwrap();
+    ///
+    /// let provider_message = xzatoma::providers::ProviderMessage::from_message_for_ollama(&message);
+    /// assert_eq!(provider_message.images, vec!["AAAA".to_string()]);
+    /// ```
+    pub fn ollama_native_images(&self) -> Vec<String> {
+        content_parts_to_ollama_images(self.content_parts.as_deref())
+    }
+
+    /// Converts a high-level provider message into the shared wire message shape
+    /// with Ollama's native image field populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - Message to convert.
+    ///
+    /// # Returns
+    ///
+    /// Returns a provider message containing text, optional multimodal parts,
+    /// native Ollama image payloads, tool calls, and tool call ID.
+    pub fn from_message_for_ollama(message: &Message) -> Self {
+        Self {
+            role: message.role.clone(),
+            content: message.content.clone().unwrap_or_default(),
+            content_parts: message.content_parts.clone(),
+            images: content_parts_to_ollama_images(message.content_parts.as_deref()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+}
+
+fn content_parts_to_ollama_images(parts: Option<&[ProviderMessageContentPart]>) -> Vec<String> {
+    parts
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|part| match part {
+            ProviderMessageContentPart::Image { source, .. } => match source {
+                ImagePromptSource::InlineBase64(data) => Some(data.clone()),
+                ImagePromptSource::InlineBytes(bytes) => {
+                    Some(base64::engine::general_purpose::STANDARD.encode(bytes))
+                }
+                ImagePromptSource::FilePath(_) | ImagePromptSource::RemoteUrl(_) => None,
+            },
+            ProviderMessageContentPart::Text { .. } => None,
+        })
+        .collect()
+}
+
 /// Unified request body sent to provider completions endpoints.
 ///
 /// Both Copilot (`/chat/completions`) and Ollama (`/api/chat`) accept a
@@ -982,13 +2016,15 @@ pub struct ProviderMessage {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::{ProviderRequest, ProviderMessage};
+/// use xzatoma::providers::base::{ProviderMessage, ProviderRequest};
 ///
 /// let req = ProviderRequest {
 ///     model: "gpt-4o".to_string(),
 ///     messages: vec![ProviderMessage {
 ///         role: "user".to_string(),
 ///         content: "Hi".to_string(),
+///         content_parts: None,
+///         images: vec![],
 ///         tool_calls: None,
 ///         tool_call_id: None,
 ///     }],
@@ -1365,6 +2401,7 @@ mod tests {
         assert!(!caps.supports_model_switching);
         assert!(!caps.supports_token_counts);
         assert!(!caps.supports_streaming);
+        assert!(!caps.supports_vision);
     }
 
     #[test]
@@ -1399,6 +2436,7 @@ mod tests {
             supports_model_switching: false,
             supports_token_counts: true,
             supports_streaming: true,
+            supports_vision: true,
         };
 
         assert!(caps.supports_model_listing);
@@ -1546,6 +2584,7 @@ mod tests {
             Message {
                 role: "tool".to_string(),
                 content: Some("Result".to_string()),
+                content_parts: None,
                 tool_calls: None,
                 tool_call_id: None,
             },
@@ -1747,13 +2786,16 @@ mod tests {
     fn test_provider_message_omits_tool_call_id_when_none() {
         let msg = ProviderMessage {
             role: "user".to_string(),
-            content: "Hello".to_string(),
+            content: "Hello!".to_string(),
+            content_parts: None,
+            images: vec![],
             tool_calls: None,
             tool_call_id: None,
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert!(!json.as_object().unwrap().contains_key("tool_call_id"));
         assert!(!json.as_object().unwrap().contains_key("tool_calls"));
+        assert!(!json.as_object().unwrap().contains_key("images"));
     }
 
     #[test]
@@ -1761,11 +2803,27 @@ mod tests {
         let msg = ProviderMessage {
             role: "tool".to_string(),
             content: "result".to_string(),
+            content_parts: None,
+            images: vec![],
             tool_calls: None,
             tool_call_id: Some("call_xyz".to_string()),
         };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["tool_call_id"], "call_xyz");
+    }
+
+    #[test]
+    fn test_provider_message_from_message_for_ollama_sets_native_images() {
+        let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
+            PromptInputPart::text("describe"),
+            PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
+        ]))
+        .unwrap();
+
+        let provider_message = ProviderMessage::from_message_for_ollama(&message);
+
+        assert_eq!(provider_message.content, "describe");
+        assert_eq!(provider_message.images, vec!["AAAA".to_string()]);
     }
 
     #[test]

@@ -33,7 +33,9 @@ use crate::watcher::generic::consumer::{
 use crate::watcher::generic::event_handler::{GenericEventHandler, GenericTask};
 use crate::watcher::generic::matcher::GenericMatcher;
 use crate::watcher::generic::result_event::GenericPlanResult;
-use crate::watcher::generic::result_producer::{GenericResultProducer, ResultProducerTrait};
+use crate::watcher::generic::result_producer::{
+    FakeResultProducer, GenericResultProducer, ResultProducerTrait,
+};
 
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -186,10 +188,14 @@ impl GenericWatcher {
 
         let event_handler = GenericEventHandler::new(Some(matcher), None);
 
-        let producer: Arc<dyn ResultProducerTrait> = Arc::new(
-            GenericResultProducer::new(&kafka_config)
-                .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
-        );
+        let producer: Arc<dyn ResultProducerTrait> = if dry_run {
+            Arc::new(FakeResultProducer::new())
+        } else {
+            Arc::new(
+                GenericResultProducer::new(&kafka_config)
+                    .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
+            )
+        };
 
         let execution_semaphore = Arc::new(Semaphore::new(
             watcher_config.execution.max_concurrent_executions,

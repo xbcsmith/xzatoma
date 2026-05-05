@@ -338,6 +338,7 @@ fn test_provider_message_conversion_rejects_unknown_role() {
     let provider_message = Message {
         role: "unknown".to_string(),
         content: Some("mystery".to_string()),
+        content_parts: None,
         tool_calls: None,
         tool_call_id: None,
     };
@@ -354,6 +355,7 @@ fn test_provider_message_conversion_preserves_empty_content_as_validation_error(
     let provider_message = Message {
         role: "assistant".to_string(),
         content: Some(String::new()),
+        content_parts: None,
         tool_calls: None,
         tool_call_id: None,
     };

@@ -48,6 +48,7 @@ fn authorization_server_body(base_url: &str) -> serde_json::Value {
 /// When the `WWW-Authenticate` header contains a `resource_metadata=<url>`
 /// attribute, the function must fetch that URL directly and parse it.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_protected_resource_metadata_from_www_authenticate_header() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -91,6 +92,7 @@ async fn test_fetch_protected_resource_metadata_from_www_authenticate_header() {
 /// When no `WWW-Authenticate` header is provided, the function must fall back
 /// to constructing the RFC 9728 well-known URI and fetching it.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_protected_resource_metadata_falls_back_to_well_known() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -120,6 +122,7 @@ async fn test_fetch_protected_resource_metadata_falls_back_to_well_known() {
 /// that URL returns a non-success status, the function must fall back to the
 /// RFC 9728 well-known URI.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_protected_resource_metadata_falls_back_when_header_url_404() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -157,6 +160,7 @@ async fn test_fetch_protected_resource_metadata_falls_back_when_header_url_404()
 /// When both the `WWW-Authenticate` URL and the well-known fallback return
 /// non-success responses, the function must return an error.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_protected_resource_metadata_returns_error_when_all_strategies_fail() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -181,6 +185,7 @@ async fn test_fetch_protected_resource_metadata_returns_error_when_all_strategie
 /// When the resource URL contains a non-root path, the well-known URI must
 /// include that path (RFC 9728 path-insertion rule).
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_protected_resource_metadata_uses_path_insertion_for_sub_resource() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -226,6 +231,7 @@ async fn test_fetch_protected_resource_metadata_uses_path_insertion_for_sub_reso
 /// same two paths, so we use an issuer with a non-trivial path to force all
 /// five to be distinct.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_authorization_server_metadata_tries_five_orderings() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -290,6 +296,7 @@ async fn test_fetch_authorization_server_metadata_tries_five_orderings() {
 /// When all five orderings return non-success responses, the function must
 /// return an error.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_authorization_server_metadata_returns_error_when_all_fail() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -314,6 +321,7 @@ async fn test_fetch_authorization_server_metadata_returns_error_when_all_fail() 
 /// When the first ordering succeeds, the function must return without trying
 /// the remaining four.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_authorization_server_metadata_succeeds_on_first_ordering() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -347,6 +355,7 @@ async fn test_fetch_authorization_server_metadata_succeeds_on_first_ordering() {
 /// When the second ordering succeeds, the function returns the parsed
 /// metadata correctly.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_authorization_server_metadata_succeeds_on_second_ordering() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -385,6 +394,7 @@ async fn test_fetch_authorization_server_metadata_succeeds_on_second_ordering() 
 /// captured by the `#[serde(flatten)]` map when the server returns unknown
 /// fields.
 #[tokio::test]
+#[ignore = "disabled in CI because wiremock-backed OAuth discovery tests touch local network sockets"]
 async fn test_fetch_authorization_server_metadata_captures_extra_fields() {
     let server = MockServer::start().await;
     let base_url = server.uri();

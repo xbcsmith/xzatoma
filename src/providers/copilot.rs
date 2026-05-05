@@ -6,9 +6,9 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::{
-    convert_tools_from_json, CompletionResponse, FinishReason, FunctionCall, Message,
-    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
-    ProviderTool, TokenUsage, ToolCall,
+    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FinishReason,
+    FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary, Provider,
+    ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -799,6 +799,7 @@ pub(crate) fn convert_response_input_to_messages(
                         result.push(Message {
                             role: "user".to_string(),
                             content: Some(text),
+                            content_parts: None,
                             tool_calls: None,
                             tool_call_id: None,
                         });
@@ -807,6 +808,7 @@ pub(crate) fn convert_response_input_to_messages(
                         result.push(Message {
                             role: "assistant".to_string(),
                             content: Some(text),
+                            content_parts: None,
                             tool_calls: None,
                             tool_call_id: None,
                         });
@@ -815,6 +817,7 @@ pub(crate) fn convert_response_input_to_messages(
                         result.push(Message {
                             role: "system".to_string(),
                             content: Some(text),
+                            content_parts: None,
                             tool_calls: None,
                             tool_call_id: None,
                         });
@@ -835,6 +838,7 @@ pub(crate) fn convert_response_input_to_messages(
                 result.push(Message {
                     role: "assistant".to_string(),
                     content: None,
+                    content_parts: None,
                     tool_calls: Some(vec![ToolCall {
                         id: call_id.clone(),
                         function: FunctionCall {
@@ -849,6 +853,7 @@ pub(crate) fn convert_response_input_to_messages(
                 result.push(Message {
                     role: "tool".to_string(),
                     content: Some(output.clone()),
+                    content_parts: None,
                     tool_calls: None,
                     tool_call_id: Some(call_id.clone()),
                 });
@@ -925,18 +930,21 @@ pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Mes
                 "user" => Some(Message {
                     role: "user".to_string(),
                     content: Some(text),
+                    content_parts: None,
                     tool_calls: None,
                     tool_call_id: None,
                 }),
                 "assistant" => Some(Message {
                     role: "assistant".to_string(),
                     content: Some(text),
+                    content_parts: None,
                     tool_calls: None,
                     tool_call_id: None,
                 }),
                 "system" => Some(Message {
                     role: "system".to_string(),
                     content: Some(text),
+                    content_parts: None,
                     tool_calls: None,
                     tool_call_id: None,
                 }),
@@ -950,6 +958,7 @@ pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Mes
         } => Some(Message {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
             tool_calls: Some(vec![ToolCall {
                 id: call_id.clone(),
                 function: FunctionCall {
@@ -1650,13 +1659,42 @@ impl CopilotProvider {
         Ok(())
     }
 
-    /// Convert XZatoma messages to Copilot format
+    /// Convert XZatoma messages to Copilot format.
+    ///
+    /// Copilot does not yet serialize image content, so callers must reject
+    /// image-bearing messages before invoking this conversion. Text-only
+    /// multimodal content is folded into the legacy text field.
     fn convert_messages(&self, messages: &[Message]) -> Vec<CopilotMessage> {
         let validated_messages = crate::providers::validate_message_sequence(messages);
         validated_messages
             .iter()
             .filter_map(|m| {
-                if m.content.is_none() && m.tool_calls.is_none() {
+                if m.has_image_content() {
+                    tracing::warn!(
+                        role = %m.role,
+                        "Dropping Copilot message with image content after validation should have rejected it"
+                    );
+                    return None;
+                }
+
+                let content = if m.has_text_only_multimodal_content() {
+                    Some(
+                        m.multimodal_parts()
+                            .iter()
+                            .filter_map(|part| match part {
+                                crate::providers::ProviderMessageContentPart::Text { text } => {
+                                    Some(text.as_str())
+                                }
+                                crate::providers::ProviderMessageContentPart::Image { .. } => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n"),
+                    )
+                } else {
+                    m.content.clone()
+                };
+
+                if content.is_none() && m.tool_calls.is_none() {
                     return None;
                 }
 
@@ -1676,7 +1714,7 @@ impl CopilotProvider {
 
                 Some(CopilotMessage {
                     role: m.role.clone(),
-                    content: m.content.clone().unwrap_or_default(),
+                    content: content.unwrap_or_default(),
                     tool_calls,
                     tool_call_id: m.tool_call_id.clone(),
                 })
@@ -2886,6 +2924,13 @@ impl Provider for CopilotProvider {
             (config.model.clone(), config.enable_streaming)
         }; // Drop the read guard before awaits
 
+        if messages_contain_image_content(messages) {
+            return Err(XzatomaError::Provider(format!(
+                "Copilot model '{}' cannot receive image input because native Copilot image serialization is not implemented",
+                model
+            )));
+        }
+
         // Determine which endpoint to use
         let endpoint = self.select_endpoint(&model).await?;
 
@@ -3000,6 +3045,7 @@ impl Provider for CopilotProvider {
             supports_model_switching: true,
             supports_token_counts: true,
             supports_streaming: true,
+            supports_vision: false,
         }
     }
 
@@ -4131,6 +4177,7 @@ mod tests {
         let messages = vec![Message {
             role: "assistant".to_string(),
             content: Some("Let me search for that".to_string()),
+            content_parts: None,
             tool_calls: Some(vec![tool_call]),
             tool_call_id: None,
         }];

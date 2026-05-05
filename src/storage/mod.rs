@@ -7,7 +7,7 @@ use crate::error::{Result, XzatomaError};
 use crate::providers::Message;
 use crate::storage::types::{
     StoredAcpAwaitState, StoredAcpCancellation, StoredAcpRun, StoredAcpRunEvent, StoredAcpSession,
-    StoredSession,
+    StoredAcpStdioSession, StoredSession,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -22,7 +22,7 @@ pub use types::{
     StoredAcpAwaitState as PublicStoredAcpAwaitState,
     StoredAcpCancellation as PublicStoredAcpCancellation, StoredAcpRun as PublicStoredAcpRun,
     StoredAcpRunEvent as PublicStoredAcpRunEvent, StoredAcpSession as PublicStoredAcpSession,
-    StoredSession as PublicStoredSession,
+    StoredAcpStdioSession as PublicStoredAcpStdioSession, StoredSession as PublicStoredSession,
 };
 
 /// Alias for a deserialized conversation record: (title, model, messages).
@@ -43,6 +43,7 @@ type LoadedConversation = (String, Option<String>, Vec<Message>);
 /// assert!(storage.database_path().ends_with("xzatoma_storage_example.db"));
 /// # Ok::<(), anyhow::Error>(())
 /// ```
+#[derive(Clone)]
 pub struct SqliteStorage {
     db_path: PathBuf,
 }
@@ -174,6 +175,18 @@ impl SqliteStorage {
                 last_run_id TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS acp_stdio_sessions (
+                session_id TEXT PRIMARY KEY,
+                workspace_root TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                provider_type TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+            );
+
             CREATE TABLE IF NOT EXISTS acp_runs (
                 run_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
@@ -244,6 +257,12 @@ impl SqliteStorage {
 
             CREATE INDEX IF NOT EXISTS idx_acp_await_states_session_id
                 ON acp_await_states(session_id);
+
+            CREATE INDEX IF NOT EXISTS idx_acp_stdio_sessions_workspace_root
+                ON acp_stdio_sessions(workspace_root);
+
+            CREATE INDEX IF NOT EXISTS idx_acp_stdio_sessions_updated_at
+                ON acp_stdio_sessions(updated_at DESC);
             ",
         )
         .context("Failed to create tables")
@@ -473,6 +492,216 @@ impl SqliteStorage {
             .map_err(|e| XzatomaError::Storage(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Save or update an ACP stdio session mapping.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - ACP stdio session mapping to persist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the mapping cannot be serialized or saved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use chrono::Utc;
+    /// use xzatoma::storage::{PublicStoredAcpStdioSession, SqliteStorage};
+    ///
+    /// let storage = SqliteStorage::new_with_path("/tmp/acp_stdio_session_save.db")?;
+    /// let now = Utc::now();
+    /// storage.save_conversation(
+    ///     "conversation-1",
+    ///     "New Conversation",
+    ///     Some("llama3.2:latest"),
+    ///     &[xzatoma::providers::Message::user("hello")],
+    /// )?;
+    ///
+    /// storage.save_acp_stdio_session(&PublicStoredAcpStdioSession {
+    ///     session_id: "xzatoma-session-1".to_string(),
+    ///     workspace_root: "/tmp/workspace".to_string(),
+    ///     conversation_id: "conversation-1".to_string(),
+    ///     provider_type: "ollama".to_string(),
+    ///     model: Some("llama3.2:latest".to_string()),
+    ///     created_at: now,
+    ///     updated_at: now,
+    ///     metadata: Default::default(),
+    /// })?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn save_acp_stdio_session(&self, session: &StoredAcpStdioSession) -> Result<()> {
+        let conn = Connection::open(&self.db_path)
+            .context("Failed to open database")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        let metadata_json = serde_json::to_string(&session.metadata)
+            .context("Failed to serialize ACP stdio session metadata")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO acp_stdio_sessions (
+                session_id,
+                workspace_root,
+                conversation_id,
+                provider_type,
+                model,
+                created_at,
+                updated_at,
+                metadata_json
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(session_id) DO UPDATE SET
+                workspace_root = excluded.workspace_root,
+                conversation_id = excluded.conversation_id,
+                provider_type = excluded.provider_type,
+                model = excluded.model,
+                updated_at = excluded.updated_at,
+                metadata_json = excluded.metadata_json",
+            params![
+                session.session_id,
+                session.workspace_root,
+                session.conversation_id,
+                session.provider_type,
+                session.model,
+                session.created_at.to_rfc3339(),
+                session.updated_at.to_rfc3339(),
+                metadata_json,
+            ],
+        )
+        .context("Failed to save ACP stdio session")
+        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Load the most recently updated ACP stdio session for a workspace root.
+    ///
+    /// # Arguments
+    ///
+    /// * `workspace_root` - Normalized workspace root to search for
+    ///
+    /// # Returns
+    ///
+    /// Returns the newest matching ACP stdio session mapping, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if querying or deserializing the mapping fails.
+    pub fn load_latest_acp_stdio_session_by_workspace_root(
+        &self,
+        workspace_root: &str,
+    ) -> Result<Option<StoredAcpStdioSession>> {
+        let conn = Connection::open(&self.db_path)
+            .context("Failed to open database")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        let row = conn
+            .query_row(
+                "SELECT session_id, workspace_root, conversation_id, provider_type, model, created_at, updated_at, metadata_json
+                 FROM acp_stdio_sessions
+                 WHERE workspace_root = ?
+                 ORDER BY updated_at DESC
+                 LIMIT 1",
+                params![workspace_root],
+                stored_acp_stdio_session_from_row,
+            )
+            .optional()
+            .context("Failed to query ACP stdio session by workspace root")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        row.transpose()
+    }
+
+    /// Load an ACP stdio session mapping by ACP session ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - ACP stdio session identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns the matching ACP stdio session mapping, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if querying or deserializing the mapping fails.
+    pub fn load_acp_stdio_session_by_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<StoredAcpStdioSession>> {
+        let conn = Connection::open(&self.db_path)
+            .context("Failed to open database")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        let row = conn
+            .query_row(
+                "SELECT session_id, workspace_root, conversation_id, provider_type, model, created_at, updated_at, metadata_json
+                 FROM acp_stdio_sessions
+                 WHERE session_id = ?",
+                params![session_id],
+                stored_acp_stdio_session_from_row,
+            )
+            .optional()
+            .context("Failed to query ACP stdio session by session ID")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        row.transpose()
+    }
+
+    /// Update the last activity timestamp for an ACP stdio session.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - ACP stdio session identifier
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the update fails.
+    pub fn touch_acp_stdio_session(&self, session_id: &str) -> Result<()> {
+        let conn = Connection::open(&self.db_path)
+            .context("Failed to open database")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        conn.execute(
+            "UPDATE acp_stdio_sessions SET updated_at = ? WHERE session_id = ?",
+            params![Utc::now().to_rfc3339(), session_id],
+        )
+        .context("Failed to update ACP stdio session activity")
+        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Prune ACP stdio session mappings older than a cutoff timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `older_than` - Delete mappings whose `updated_at` value is older than
+    ///   this timestamp
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of deleted mappings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if pruning fails.
+    pub fn prune_acp_stdio_sessions_older_than(&self, older_than: DateTime<Utc>) -> Result<usize> {
+        let conn = Connection::open(&self.db_path)
+            .context("Failed to open database")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        let deleted = conn
+            .execute(
+                "DELETE FROM acp_stdio_sessions WHERE updated_at < ?",
+                params![older_than.to_rfc3339()],
+            )
+            .context("Failed to prune ACP stdio sessions")
+            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+
+        Ok(deleted)
     }
 
     /// Save or update an ACP session summary.
@@ -1554,6 +1783,40 @@ fn parse_event_kind(value: &str) -> Result<AcpEventKind> {
     }
 }
 
+fn stored_acp_stdio_session_from_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<Result<StoredAcpStdioSession>> {
+    let session_id: String = row.get(0)?;
+    let workspace_root: String = row.get(1)?;
+    let conversation_id: String = row.get(2)?;
+    let provider_type: String = row.get(3)?;
+    let model: Option<String> = row.get(4)?;
+    let created_at_str: String = row.get(5)?;
+    let updated_at_str: String = row.get(6)?;
+    let metadata_json: String = row.get(7)?;
+
+    let created_at = parse_rfc3339_to_utc(&created_at_str);
+    let updated_at = parse_rfc3339_to_utc(&updated_at_str);
+    let metadata = serde_json::from_str::<BTreeMap<String, String>>(&metadata_json)
+        .context("Failed to deserialize ACP stdio session metadata")
+        .map_err(|e| XzatomaError::Storage(e.to_string()));
+
+    Ok(created_at.and_then(|created_at| {
+        updated_at.and_then(|updated_at| {
+            metadata.map(|metadata| StoredAcpStdioSession {
+                session_id,
+                workspace_root,
+                conversation_id,
+                provider_type,
+                model,
+                created_at,
+                updated_at,
+                metadata,
+            })
+        })
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1602,6 +1865,7 @@ mod tests {
         let tables = [
             "conversations",
             "acp_sessions",
+            "acp_stdio_sessions",
             "acp_runs",
             "acp_run_events",
             "acp_await_states",
@@ -1618,6 +1882,213 @@ mod tests {
                 .expect("query row");
             assert_eq!(count, 1, "missing table {}", table);
         }
+    }
+
+    #[test]
+    fn test_sqlite_storage_init_creates_acp_stdio_session_indexes() {
+        let (storage, _dir) = create_test_storage();
+        let conn = Connection::open(storage.database_path()).expect("open connection");
+
+        for index in [
+            "idx_acp_stdio_sessions_workspace_root",
+            "idx_acp_stdio_sessions_updated_at",
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?",
+                    params![index],
+                    |row| row.get(0),
+                )
+                .expect("query row");
+            assert_eq!(count, 1, "missing index {}", index);
+        }
+    }
+
+    fn save_test_conversation(storage: &SqliteStorage, id: &str) {
+        storage
+            .save_conversation(
+                id,
+                "New Conversation",
+                Some("llama3.2:latest"),
+                &[crate::providers::Message::user("hello")],
+            )
+            .expect("conversation save failed");
+    }
+
+    fn sample_stdio_session(
+        session_id: &str,
+        workspace_root: &str,
+        conversation_id: &str,
+    ) -> StoredAcpStdioSession {
+        let now = Utc::now();
+        StoredAcpStdioSession {
+            session_id: session_id.to_string(),
+            workspace_root: workspace_root.to_string(),
+            conversation_id: conversation_id.to_string(),
+            provider_type: "ollama".to_string(),
+            model: Some("llama3.2:latest".to_string()),
+            created_at: now,
+            updated_at: now,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_save_and_load_acp_stdio_session_by_workspace_root() {
+        let (storage, _dir) = create_test_storage();
+        save_test_conversation(&storage, "conversation-stdio-1");
+
+        let mut session = sample_stdio_session(
+            "xzatoma-session-1",
+            "/tmp/xzatoma-workspace",
+            "conversation-stdio-1",
+        );
+        session
+            .metadata
+            .insert("source".to_string(), "zed".to_string());
+
+        storage
+            .save_acp_stdio_session(&session)
+            .expect("stdio session save failed");
+
+        let loaded = storage
+            .load_latest_acp_stdio_session_by_workspace_root("/tmp/xzatoma-workspace")
+            .expect("stdio session load failed")
+            .expect("stdio session should exist");
+
+        assert_eq!(loaded.session_id, "xzatoma-session-1");
+        assert_eq!(loaded.workspace_root, "/tmp/xzatoma-workspace");
+        assert_eq!(loaded.conversation_id, "conversation-stdio-1");
+        assert_eq!(
+            loaded.metadata.get("source").map(String::as_str),
+            Some("zed")
+        );
+    }
+
+    #[test]
+    fn test_save_acp_stdio_session_updates_existing_mapping() {
+        let (storage, _dir) = create_test_storage();
+        save_test_conversation(&storage, "conversation-stdio-2");
+        save_test_conversation(&storage, "conversation-stdio-3");
+
+        let original = sample_stdio_session(
+            "xzatoma-session-2",
+            "/tmp/xzatoma-original",
+            "conversation-stdio-2",
+        );
+        storage
+            .save_acp_stdio_session(&original)
+            .expect("initial stdio session save failed");
+
+        let mut updated = sample_stdio_session(
+            "xzatoma-session-2",
+            "/tmp/xzatoma-updated",
+            "conversation-stdio-3",
+        );
+        updated.model = Some("gpt-5-mini".to_string());
+        updated.provider_type = "copilot".to_string();
+
+        storage
+            .save_acp_stdio_session(&updated)
+            .expect("updated stdio session save failed");
+
+        let loaded = storage
+            .load_acp_stdio_session_by_session_id("xzatoma-session-2")
+            .expect("stdio session lookup failed")
+            .expect("stdio session should exist");
+
+        assert_eq!(loaded.workspace_root, "/tmp/xzatoma-updated");
+        assert_eq!(loaded.conversation_id, "conversation-stdio-3");
+        assert_eq!(loaded.provider_type, "copilot");
+        assert_eq!(loaded.model.as_deref(), Some("gpt-5-mini"));
+    }
+
+    #[test]
+    fn test_touch_acp_stdio_session_updates_last_activity() {
+        let (storage, _dir) = create_test_storage();
+        save_test_conversation(&storage, "conversation-stdio-4");
+
+        let session = sample_stdio_session(
+            "xzatoma-session-4",
+            "/tmp/xzatoma-touch",
+            "conversation-stdio-4",
+        );
+        storage
+            .save_acp_stdio_session(&session)
+            .expect("stdio session save failed");
+
+        sleep(Duration::from_millis(5));
+
+        storage
+            .touch_acp_stdio_session("xzatoma-session-4")
+            .expect("touch should succeed");
+
+        let loaded = storage
+            .load_acp_stdio_session_by_session_id("xzatoma-session-4")
+            .expect("stdio session lookup failed")
+            .expect("stdio session should exist");
+
+        assert!(loaded.updated_at > session.updated_at);
+    }
+
+    #[test]
+    fn test_load_latest_acp_stdio_session_by_workspace_returns_newest_mapping() {
+        let (storage, _dir) = create_test_storage();
+        save_test_conversation(&storage, "conversation-stdio-5");
+        save_test_conversation(&storage, "conversation-stdio-6");
+
+        let older = sample_stdio_session(
+            "xzatoma-session-5",
+            "/tmp/xzatoma-shared",
+            "conversation-stdio-5",
+        );
+        storage
+            .save_acp_stdio_session(&older)
+            .expect("older stdio session save failed");
+
+        sleep(Duration::from_millis(5));
+
+        let newer = sample_stdio_session(
+            "xzatoma-session-6",
+            "/tmp/xzatoma-shared",
+            "conversation-stdio-6",
+        );
+        storage
+            .save_acp_stdio_session(&newer)
+            .expect("newer stdio session save failed");
+
+        let loaded = storage
+            .load_latest_acp_stdio_session_by_workspace_root("/tmp/xzatoma-shared")
+            .expect("stdio session lookup failed")
+            .expect("stdio session should exist");
+
+        assert_eq!(loaded.session_id, "xzatoma-session-6");
+        assert_eq!(loaded.conversation_id, "conversation-stdio-6");
+    }
+
+    #[test]
+    fn test_prune_acp_stdio_sessions_older_than_removes_stale_mappings() {
+        let (storage, _dir) = create_test_storage();
+        save_test_conversation(&storage, "conversation-stdio-7");
+
+        let session = sample_stdio_session(
+            "xzatoma-session-7",
+            "/tmp/xzatoma-prune",
+            "conversation-stdio-7",
+        );
+        storage
+            .save_acp_stdio_session(&session)
+            .expect("stdio session save failed");
+
+        let deleted = storage
+            .prune_acp_stdio_sessions_older_than(Utc::now() + chrono::Duration::seconds(1))
+            .expect("prune should succeed");
+
+        assert_eq!(deleted, 1);
+        assert!(storage
+            .load_acp_stdio_session_by_session_id("xzatoma-session-7")
+            .expect("stdio session lookup failed")
+            .is_none());
     }
 
     #[test]

@@ -1,0 +1,5 @@
+Hello from the XZatoma Zed ACP demo fixture workspace.
+
+This file exists to give the agent something safe to read and summarize.
+The fixture workspace is read-only by convention. All agent output goes to
+tmp/output/ to keep this directory clean.

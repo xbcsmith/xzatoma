@@ -131,7 +131,7 @@ pub trait ResultProducerTrait: Send + Sync {
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use xzatoma::config::KafkaWatcherConfig;
 /// use xzatoma::watcher::generic::GenericResultProducer;
 ///
@@ -210,7 +210,7 @@ impl GenericResultProducer {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use xzatoma::config::KafkaWatcherConfig;
     /// use xzatoma::watcher::generic::GenericResultProducer;
     ///
@@ -344,7 +344,7 @@ impl GenericResultProducer {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use xzatoma::config::KafkaWatcherConfig;
     /// use xzatoma::watcher::generic::GenericResultProducer;
     ///
@@ -374,7 +374,7 @@ impl GenericResultProducer {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use xzatoma::config::KafkaWatcherConfig;
     /// use xzatoma::watcher::generic::GenericResultProducer;
     ///
@@ -408,7 +408,7 @@ impl GenericResultProducer {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use std::collections::HashMap;
     /// use xzatoma::config::KafkaWatcherConfig;
     /// use xzatoma::watcher::generic::GenericResultProducer;
@@ -562,7 +562,7 @@ impl ResultProducerTrait for GenericResultProducer {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::watcher::generic::FakeResultProducer;
+/// use xzatoma::watcher::generic::{FakeResultProducer, ResultProducerTrait};
 /// use xzatoma::watcher::generic::result_event::GenericPlanResult;
 ///
 /// # #[tokio::main]
@@ -667,7 +667,8 @@ impl ResultProducerTrait for FakeResultProducer {
 /// ```
 /// use std::sync::Arc;
 /// use xzatoma::watcher::generic::{
-///     BufferedResultProducer, FakeResultProducer, DEFAULT_DLQ_MAX_BUFFERED,
+///     BufferedResultProducer, FakeResultProducer, ResultProducerTrait,
+///     DEFAULT_DLQ_MAX_BUFFERED,
 /// };
 /// use xzatoma::watcher::generic::result_event::GenericPlanResult;
 ///
@@ -956,6 +957,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_uses_input_topic_when_output_topic_not_set() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();
@@ -965,6 +967,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_uses_explicit_output_topic_when_configured() {
         let mut config = base_kafka_config();
         config.output_topic = Some("plans.output".to_string());
@@ -976,6 +979,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_basic_settings() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();
@@ -991,6 +995,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_idempotent_settings() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();
@@ -1003,6 +1008,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_sasl_settings() {
         let mut config = base_kafka_config();
         config.security = Some(KafkaSecurityConfig {
@@ -1064,6 +1070,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_debug_impl() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();

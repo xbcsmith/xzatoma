@@ -1,6 +1,6 @@
 # XZatoma
 
-**Experimental Autonomous AI Agent**
+Experimental Autonomous AI Agent
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
@@ -10,17 +10,33 @@
 
 ## Overview
 
-XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks through conversation with AI providers (GitHub Copilot or Ollama). Think of it as a command-line version of Zed's agent chat - you give it a goal (via interactive prompt or structured plan), and it uses basic file and terminal tools to accomplish it.
+XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks
+through conversation with AI providers (GitHub Copilot or Ollama). Think of it
+as a command-line version of Zed's agent chat - you give it a goal (via
+interactive prompt or structured plan), and it uses basic file and terminal
+tools to accomplish it.
 
 ### Key Features
 
 - **Multi-Provider AI Integration**: GitHub Copilot and Ollama support
-- **Autonomous Agent**: Conversation-based execution with multi-turn tool calling
-- **Context Mentions**: Include files, search results, and web content with `@mention` syntax
-- **Basic Tools**: File operations (list, read, write, delete, diff) and terminal execution
-- **Flexible Input**: Interactive chat mode, structured plan files, or one-shot prompts
-- **Conversation History**: Persist chat sessions locally; use `xzatoma history list` to view sessions, `xzatoma chat --resume <ID>` to resume, and `xzatoma history delete --id <ID>` to delete a session (see `docs/how-to/manage_conversation_history.md`). You can override the history database path with `--storage-path <PATH>` (CLI) or by setting the environment variable `XZATOMA_HISTORY_DB` to point to an alternate `history.db` file.
-- **Generic Design**: No specialized features - agent uses basic tools creatively
+- **Autonomous Agent**: Conversation-based execution with multi-turn tool
+  calling
+- **Context Mentions**: Include files, search results, and web content with
+  `@mention` syntax
+- **Basic Tools**: File operations (list, read, write, delete, diff) and
+  terminal execution
+- **Flexible Input**: Interactive chat mode, structured plan files, or one-shot
+  prompts
+- **Conversation History**: Persist chat sessions locally; use
+  `xzatoma history list` to view sessions, `xzatoma chat --resume <ID>` to
+  resume, and `xzatoma history delete --id <ID>` to delete a session (see
+  `docs/how-to/manage_conversation_history.md`). You can override the history
+  database path with `--storage-path <PATH>` (CLI) or by setting the environment
+  variable `XZATOMA_HISTORY_DB` to point to an alternate `history.db` file.
+- **Zed IDE Integration**: Run as an ACP stdio subprocess for
+  [Zed](https://zed.dev) agent panel integration
+- **Generic Design**: No specialized features - agent uses basic tools
+  creatively
 
 ## Quick Start
 
@@ -51,6 +67,13 @@ xzatoma run --plan task.yaml
 
 # One-shot prompt
 xzatoma run --prompt "Find all TODO comments and create tasks.md"
+
+# Run as an ACP stdio agent subprocess for Zed IDE
+# (configure xzatoma as an agent server in Zed settings)
+xzatoma agent
+
+# Use a specific provider in agent mode
+xzatoma agent --provider ollama --model granite4:3b
 ```
 
 ### Example Plan File
@@ -122,17 +145,48 @@ Running cargo fmt...
 Done! Refactored 12 functions across 5 files.
 ```
 
+## Zed Integration
+
+XZatoma can run as an ACP stdio agent subprocess for the [Zed](https://zed.dev)
+editor. Add it to your Zed `agent_servers` settings to access it in the agent
+panel:
+
+```json
+{
+  "agent_servers": [
+    {
+      "name": "xzatoma",
+      "command": "xzatoma",
+      "args": ["agent"],
+      "env": {}
+    }
+  ]
+}
+```
+
+The `xzatoma agent` command:
+
+- communicates over stdin/stdout using the Agent Client Protocol (ACP)
+- supports text and vision prompts (vision requires a multimodal model)
+- runs as a stateful subprocess with per-workspace conversation history
+- forces all tracing and diagnostic output to stderr so stdout stays clean
+
+See `docs/how-to/zed_acp_agent_setup.md` for full setup instructions including
+provider-specific configuration and troubleshooting.
+
 ## How It Works
 
 XZatoma is intentionally simple:
 
 1. **You provide a goal** - via interactive chat or plan file
 2. **Agent talks to AI provider** - sends conversation with available tools
-3. **AI decides what to do** - calls tools (list files, read file, write file, run command)
+3. **AI decides what to do** - calls tools (list files, read file, write file,
+   run command)
 4. **Agent executes tools** - runs the requested operations
 5. **Repeat until done** - agent adds results to conversation, AI continues
 
-The agent has no specialized features - it accomplishes complex tasks by using basic file and terminal tools creatively.
+The agent has no specialized features - it accomplishes complex tasks by using
+basic file and terminal tools creatively.
 
 ### Chat Modes for Fine-Grained Control
 
@@ -157,17 +211,21 @@ Both modes support **Safety Mode** for additional protection:
 - **Safe** - Agent must confirm before dangerous operations
 - **YOLO** - Execute without confirmations (faster, riskier)
 
-Switch between modes at any time during your chat session - conversation history is preserved!
+Switch between modes at any time during your chat session - conversation history
+is preserved!
 
-Note: The interactive prompt now shows provider and model when available (for example: [PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>). Provider labels are shown in white and model names in green on terminals that support ANSI colors.
+Note: The interactive prompt now shows provider and model when available (for
+example: `[PLANNING][SAFE][Copilot: gpt-5.3-codex] >>>`). Provider labels are
+shown in white and model names in green on terminals that support ANSI colors.
 
 For detailed usage guide, see [Using Chat Modes](docs/how-to/use_chat_modes.md).
 
 ## Context Mentions
 
-XZatoma supports context mentions - a powerful way to inject relevant content directly into your prompts:
+XZatoma supports context mentions - a powerful way to inject relevant content
+directly into your prompts:
 
-```
+```text
 Include a file:        @config.yaml
 Specific lines:        @src/main.rs#L10-25
 Search your code:      @search:"error handling"
@@ -175,18 +233,23 @@ Regex patterns:        @grep:"^pub fn.*Result"
 Web content:           @url:https://docs.example.com
 ```
 
-Instead of having the agent discover content through tool calls, mentions pre-load context, making interactions faster and more efficient. The agent sees full context without needing to explore.
+Instead of having the agent discover content through tool calls, mentions
+pre-load context, making interactions faster and more efficient. The agent sees
+full context without needing to explore.
 
-For complete guide, see [Using Context Mentions](docs/how-to/use_context_mentions.md).
+For complete guide, see
+[Using Context Mentions](docs/how-to/use_context_mentions.md).
 
 ## File Editing Safety
 
-XZatoma includes intelligent file editing with multiple safety mechanisms to prevent accidental data loss:
+XZatoma includes intelligent file editing with multiple safety mechanisms to
+prevent accidental data loss:
 
 ### Editing Modes
 
 - **create**: Create new files (fails if file exists)
-- **edit**: Targeted replacement using unique anchor text (SAFEST for modifications)
+- **edit**: Targeted replacement using unique anchor text (SAFEST for
+  modifications)
 - **append**: Add content to end of file (SAFEST for additions)
 - **overwrite**: Replace entire file (USE WITH CAUTION)
 
@@ -194,7 +257,8 @@ XZatoma includes intelligent file editing with multiple safety mechanisms to pre
 
 1. **Required anchor text**: Edit mode requires `old_text` parameter
 2. **Uniqueness validation**: Anchor text must match exactly once
-3. **Change magnitude detection**: Blocks edits that dramatically reduce file size
+3. **Change magnitude detection**: Blocks edits that dramatically reduce file
+   size
 4. **Diff preview**: All changes shown before being applied
 5. **Clear error messages**: Guidance on correct usage when errors occur
 
@@ -222,18 +286,24 @@ This safely adds to the file without touching existing content.
 
 ### For Users
 
-- [How to Use Chat Modes](docs/how-to/use_chat_modes.md) - Interactive chat mode guide
-- [Using Context Mentions](docs/how-to/use_context_mentions.md) - Include files, searches, and URLs in prompts
-- [How to Manage Conversation History](docs/how-to/manage_conversation_history.md) - List, resume, and delete saved sessions
+- [How to Use Chat Modes](docs/how-to/use_chat_modes.md) - Interactive chat mode
+  guide
+- [Using Context Mentions](docs/how-to/use_context_mentions.md) - Include files,
+  searches, and URLs in prompts
+- [How to Manage Conversation History](docs/how-to/manage_conversation_history.md) -
+  List, resume, and delete saved sessions
 - [Quick Start Tutorial](docs/tutorials/quickstart.md) _(coming soon)_
 - [Configuration Guide](docs/how-to/configure_providers.md) _(coming soon)_
 - [CLI Reference](docs/reference/cli.md) _(coming soon)_
 
 ### For Developers
 
-- [Chat Modes Architecture](docs/explanation/chat_modes_architecture.md) - Design and implementation
-- [Context Mention Architecture](docs/explanation/context_mention_architecture.md) - Multi-source context injection
-- [Context Mention Implementation](docs/explanation/context_mention_implementation_summary.md) - Complete implementation details
+- [Chat Modes Architecture](docs/explanation/chat_modes_architecture.md) -
+  Design and implementation
+- [Context Mention Architecture](docs/explanation/context_mention_architecture.md) -
+  Multi-source context injection
+- [Context Mention Implementation](docs/explanation/context_mention_implementation_summary.md) -
+  Complete implementation details
 - [Architecture Overview](docs/reference/architecture.md)
 - [Implementation Plan](docs/explanation/implementation_plan.md)
 - [Project Overview](docs/explanation/overview.md)
@@ -246,15 +316,15 @@ This safely adds to the file without touching existing content.
 
 ## Project Status
 
-**Current Phase**: Planning Complete
-**Next Milestone**: Phase 1 - Foundation
+**Current Phase**: Planning Complete **Next Milestone**: Phase 1 - Foundation
 **Target Release**: v1.0.0 (14-19 weeks)
 
 See [Implementation Plan](docs/explanation/implementation_plan.md) for details.
 
 ## Implementation Phases
 
-1. **Phase 1: Foundation** (2-3 weeks) - Core infrastructure, config, error handling
+1. **Phase 1: Foundation** (2-3 weeks) - Core infrastructure, config, error
+   handling
 2. **Phase 2: AI Providers** (2-3 weeks) - GitHub Copilot and Ollama integration
 3. **Phase 3: Agent Core** (2-3 weeks) - Agent execution loop and basic tools
 4. **Phase 4: Plans & CLI** (2-3 weeks) - Plan parsing and CLI commands
@@ -264,18 +334,20 @@ See [Implementation Plan](docs/explanation/implementation_plan.md) for details.
 
 XZatoma follows a modular architecture with clear separation of concerns:
 
-```
+```text
 User Input → CLI → Agent Core → AI Provider
                       ↓              ↓
                    Tools ← ─ ─ ─ ─ ─ ┘
                    (File ops, Terminal)
 ```
 
-See [Architecture Document](docs/reference/architecture.md) for complete details.
+See [Architecture Document](docs/reference/architecture.md) for complete
+details.
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) _(coming soon)_ and follow the guidelines in [AGENTS.md](AGENTS.md).
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md)
+_(coming soon)_ and follow the guidelines in [AGENTS.md](AGENTS.md).
 
 ### Development Setup
 
@@ -312,15 +384,19 @@ Apache License 2.0 - See [LICENSE](LICENSE) for details.
 
 This project draws inspiration from:
 
-- [Zed](https://github.com/zed-industries/zed) - Agent chat and tool integration patterns
-- [Goose](https://github.com/block/goose) - Agent architecture and provider abstraction
+- [Zed](https://github.com/zed-industries/zed) - Agent chat and tool integration
+  patterns
+- [Goose](https://github.com/block/goose) - Agent architecture and provider
+  abstraction
 - [Diataxis](https://diataxis.fr/) - Documentation organization
 
 ## Contact
 
 - **Issues**: [GitHub Issues](https://github.com/xbcsmith/xzatoma/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/xbcsmith/xzatoma/discussions)
+- **Discussions**:
+  [GitHub Discussions](https://github.com/xbcsmith/xzatoma/discussions)
 
 ---
 
-**Status**: Planning Complete | **Version**: 0.1.0-planning | **Last Updated**: 2025-01-07
+**Status**: Planning Complete | **Version**: 0.1.0-planning | **Last Updated**:
+2025-01-07
