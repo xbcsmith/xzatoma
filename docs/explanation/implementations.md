@@ -298,6 +298,33 @@ and resolved four gaps:
 - Five additional unit tests for `CompletionResponse` model/reasoning fields
 - Total tests increased from 956 to 965, zero warnings
 
+**Zed Session Mode Phase 1: Embedded Context Capability and Rich Content Block
+Handling** - Complete
+
+- Advertised `embedded_context: true` in `PromptCapabilities` within
+  `handle_initialize()` so Zed enables `ContentBlock::Resource` blocks and shows
+  `#diagnostics`, `#git-diff`, `#rules`, `#thread`, and `#fetch` in the mention
+  completion menu.
+- Replaced the unconditional `ContentBlock::Resource` image path with an
+  explicit three-way dispatch on the inner `EmbeddedResourceResource` variant:
+  `TextResourceContents` (non-image) produces a formatted text part with a URI
+  context header; `TextResourceContents` (image MIME) falls back to URI
+  conversion; `BlobResourceContents` continues on the image path.
+- Replaced the hard `Provider` error for non-image `ContentBlock::ResourceLink`
+  blocks with a `[Reference: <name> (<uri>)]` text placeholder so directory
+  mentions and file stubs no longer terminate prompt conversion.
+- Added 8 new unit tests in `src/acp/prompt_input.rs` covering all new dispatch
+  paths and edge cases (diagnostics MIME type, absent MIME type, blob stays on
+  image path, placeholder format, order preservation).
+- Updated
+  `test_handle_initialize_advertises_text_and_vision_prompt_capabilities` to
+  assert `embedded_context == true`.
+- Added
+  `test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol`
+  to verify the capability is advertised over the full protocol stack.
+- Documentation: `docs/explanation/zed_session_mode_phase1_implementation.md`
+- All 2076 unit tests pass, zero warnings, `cargo fmt` clean.
+
 ### MCP Support Implementation
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
@@ -1557,6 +1584,8 @@ README.
 
 ## Version History
 
+- **2025-07-XX** - Zed Session Mode Phase 1: Embedded Context Capability and
+  Rich Content Block Handling completed
 - **2025-07-XX** - Demo Scaffolding Initiative completed (7 demos, 5 phases, all
   validation checks passing)
 - **2025-07-XX** - MCP Phase 4: Client Lifecycle and Server Manager completed

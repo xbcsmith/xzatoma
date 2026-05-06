@@ -1192,7 +1192,11 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
         .agent_capabilities(
             acp::AgentCapabilities::new()
                 .load_session(false)
-                .prompt_capabilities(acp::PromptCapabilities::new().image(true))
+                .prompt_capabilities(
+                    acp::PromptCapabilities::new()
+                        .image(true)
+                        .embedded_context(true),
+                )
                 .mcp_capabilities(acp::McpCapabilities::new())
                 // Advertise session mode, config, and model capabilities so Zed
                 // knows to show the mode selector, config controls, and model
@@ -1983,6 +1987,12 @@ mod tests {
         let response = handle_initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1));
 
         assert!(response.agent_capabilities.prompt_capabilities.image);
+        assert!(
+            response
+                .agent_capabilities
+                .prompt_capabilities
+                .embedded_context
+        );
         assert!(!response.agent_capabilities.prompt_capabilities.audio);
         assert!(!response.agent_capabilities.load_session);
     }
@@ -2064,6 +2074,29 @@ mod tests {
 
             assert!(response.agent_capabilities.prompt_capabilities.image);
             assert!(!response.agent_capabilities.prompt_capabilities.audio);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol() {
+        run_client_server_test(|connection| async move {
+            let response = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
+            )
+            .await;
+
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => panic!("initialize should succeed: {}", error),
+            };
+
+            assert!(
+                response
+                    .agent_capabilities
+                    .prompt_capabilities
+                    .embedded_context
+            );
         })
         .await;
     }
