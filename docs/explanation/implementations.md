@@ -325,6 +325,28 @@ Handling** - Complete
 - Documentation: `docs/explanation/zed_session_mode_phase1_implementation.md`
 - All 2076 unit tests pass, zero warnings, `cargo fmt` clean.
 
+**Zed Session Mode Phase 2: Zed-Forwarded MCP Server Integration** - Complete
+
+- Added private `sanitize_mcp_server_id` helper that lowercases a Zed server
+  name and replaces every character outside `[a-z0-9_-]` with an underscore,
+  truncated to 64 characters, with an error on empty result.
+- Added private `convert_acp_mcp_server` helper that converts all three
+  `acp::McpServer` variants (`Stdio`, `Http`, `Sse`) to `McpServerConfig`:
+  `Stdio` maps to `McpServerTransportConfig::Stdio`; `Http` and `Sse` both map
+  to `McpServerTransportConfig::Http`. A wildcard arm handles future
+  `#[non_exhaustive]` variants gracefully.
+- Extended `create_session` to iterate `request.mcp_servers`, convert each
+  server, deduplicate by id against already-connected servers, connect via
+  `McpClientManager::connect`, and register tools via `register_mcp_tools`.
+  Individual failures are logged and skipped; they do not abort session
+  creation. The entire block is skipped when `env.mcp_manager` is `None` (MCP
+  disabled in config) to preserve global MCP policy.
+- Added 6 new unit tests in `src/acp/stdio.rs` covering Stdio config production,
+  Http config production, name sanitization, empty name rejection, invalid URL
+  rejection, and session creation with an empty `mcp_servers` list.
+- Documentation: `docs/explanation/zed_session_mode_phase2_implementation.md`
+- All 2082 unit tests pass, zero warnings, `cargo fmt` clean.
+
 ### MCP Support Implementation
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
@@ -1584,6 +1606,8 @@ README.
 
 ## Version History
 
+- **2025-07-XX** - Zed Session Mode Phase 2: Zed-Forwarded MCP Server
+  Integration completed
 - **2025-07-XX** - Zed Session Mode Phase 1: Embedded Context Capability and
   Rich Content Block Handling completed
 - **2025-07-XX** - Demo Scaffolding Initiative completed (7 demos, 5 phases, all

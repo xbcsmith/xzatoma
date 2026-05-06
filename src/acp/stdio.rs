@@ -54,6 +54,8 @@ use crate::commands::build_agent_environment;
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
+use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::prompts;
 use crate::providers::{
     create_provider_with_override, Message, ModelCapability, ModelInfo as XzatomaModelInfo,
@@ -438,6 +440,77 @@ impl AcpStdioServerState {
 
         let env = build_agent_environment(&self.config, &workspace_root, true).await?;
         let mut tools = env.tool_registry;
+
+        // Connect MCP servers forwarded by Zed in NewSessionRequest.mcp_servers.
+        // These are per-project servers from the user's Zed settings, not from
+        // XZatoma's own config.yaml. Individual connection failures are logged
+        // and skipped so they do not abort session creation.
+        if !request.mcp_servers.is_empty() {
+            if let Some(ref manager_arc) = env.mcp_manager {
+                for acp_server in &request.mcp_servers {
+                    let cfg = match convert_acp_mcp_server(acp_server) {
+                        Ok(cfg) => cfg,
+                        Err(error) => {
+                            tracing::warn!(
+                                workspace = %workspace_root.display(),
+                                error = %error,
+                                "Skipping Zed-forwarded MCP server: failed to convert config"
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Skip duplicates: check against already-connected servers.
+                    {
+                        let manager_guard = manager_arc.read().await;
+                        if manager_guard
+                            .connected_servers()
+                            .iter()
+                            .any(|e| e.config.id == cfg.id)
+                        {
+                            tracing::debug!(
+                                server_id = %cfg.id,
+                                "Skipping Zed-forwarded MCP server: already connected"
+                            );
+                            continue;
+                        }
+                    }
+
+                    let server_id = cfg.id.clone();
+                    {
+                        let mut manager_guard = manager_arc.write().await;
+                        if let Err(error) = manager_guard.connect(cfg).await {
+                            tracing::warn!(
+                                server_id = %server_id,
+                                workspace = %workspace_root.display(),
+                                error = %error,
+                                "Failed to connect Zed-forwarded MCP server; skipping"
+                            );
+                            continue;
+                        }
+                    }
+
+                    tracing::info!(
+                        server_id = %server_id,
+                        workspace = %workspace_root.display(),
+                        "Connected Zed-forwarded MCP server"
+                    );
+                }
+
+                // Register tools from any newly connected Zed-forwarded servers.
+                let execution_mode = self.config.agent.terminal.default_mode;
+                if let Err(error) =
+                    register_mcp_tools(&mut tools, Arc::clone(manager_arc), execution_mode, true)
+                        .await
+                {
+                    tracing::warn!(
+                        workspace = %workspace_root.display(),
+                        error = %error,
+                        "Failed to register tools from Zed-forwarded MCP servers"
+                    );
+                }
+            }
+        }
 
         let provider_box = create_provider_with_override(
             &self.config.provider,
@@ -1244,6 +1317,155 @@ fn initial_mode_id_from_config(config: &Config) -> String {
     }
 }
 
+/// Converts a Zed-forwarded ACP MCP server descriptor to an XZatoma `McpServerConfig`.
+///
+/// The `name` field of each ACP variant is sanitized into a valid server ID by
+/// lower-casing and replacing every character that does not match `[a-z0-9_-]`
+/// with an underscore. The result is truncated to 64 characters. An empty ID
+/// after sanitization is rejected.
+///
+/// `Http` and `Sse` ACP variants are both mapped to
+/// `McpServerTransportConfig::Http` because XZatoma's internal transport layer
+/// handles both protocols through the same HTTP/SSE path.
+///
+/// # Arguments
+///
+/// * `server` - ACP MCP server descriptor received in `NewSessionRequest.mcp_servers`.
+///
+/// # Returns
+///
+/// A validated `McpServerConfig` ready for connection.
+///
+/// # Errors
+///
+/// Returns `XzatomaError::Config` when:
+///
+/// - The sanitized server name is empty.
+/// - An HTTP or SSE server has a malformed URL.
+/// - The built config fails `McpServerConfig::validate()`.
+fn convert_acp_mcp_server(server: &acp::McpServer) -> Result<McpServerConfig> {
+    match server {
+        acp::McpServer::Stdio(s) => {
+            let id = sanitize_mcp_server_id(&s.name)?;
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Stdio {
+                    executable: s.command.to_string_lossy().into_owned(),
+                    args: s.args.clone(),
+                    env: s
+                        .env
+                        .iter()
+                        .map(|e| (e.name.clone(), e.value.clone()))
+                        .collect(),
+                    working_dir: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        acp::McpServer::Http(h) => {
+            let id = sanitize_mcp_server_id(&h.name)?;
+            let endpoint = h.url.parse::<url::Url>().map_err(|e| {
+                XzatomaError::Config(format!(
+                    "Zed-forwarded MCP server '{}' has invalid URL '{}': {}",
+                    h.name, h.url, e
+                ))
+            })?;
+            let headers = h
+                .headers
+                .iter()
+                .map(|hdr| (hdr.name.clone(), hdr.value.clone()))
+                .collect();
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Http {
+                    endpoint,
+                    headers,
+                    timeout_seconds: None,
+                    oauth: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        acp::McpServer::Sse(s) => {
+            let id = sanitize_mcp_server_id(&s.name)?;
+            let endpoint = s.url.parse::<url::Url>().map_err(|e| {
+                XzatomaError::Config(format!(
+                    "Zed-forwarded MCP server '{}' has invalid URL '{}': {}",
+                    s.name, s.url, e
+                ))
+            })?;
+            let headers = s
+                .headers
+                .iter()
+                .map(|hdr| (hdr.name.clone(), hdr.value.clone()))
+                .collect();
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Http {
+                    endpoint,
+                    headers,
+                    timeout_seconds: None,
+                    oauth: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        &_ => Err(XzatomaError::Config(
+            "Zed-forwarded MCP server uses an unsupported transport type".to_string(),
+        )),
+    }
+}
+
+/// Sanitizes a Zed MCP server name into a valid `McpServerConfig` ID.
+///
+/// Lowercases the input, replaces every character that does not match
+/// `[a-z0-9_-]` with `_`, and truncates to 64 characters. Returns
+/// `XzatomaError::Config` when the result is empty.
+fn sanitize_mcp_server_id(name: &str) -> Result<String> {
+    let sanitized: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect();
+    if sanitized.is_empty() {
+        return Err(XzatomaError::Config(
+            "Zed-forwarded MCP server has an empty name after sanitization".to_string(),
+        ));
+    }
+    Ok(sanitized)
+}
+
 fn open_stdio_storage(config: &Config) -> Option<SqliteStorage> {
     if !config.acp.stdio.persist_sessions {
         return None;
@@ -1837,6 +2059,9 @@ fn map_error_to_stop_reason(error: &crate::error::XzatomaError) -> acp::StopReas
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp::McpServerHttp;
+
+    use acp::McpServerStdio;
     use agent_client_protocol::{
         Channel, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, SentRequest, UntypedMessage,
     };
@@ -3121,5 +3346,101 @@ mod tests {
         ) -> std::result::Result<Self, acp_sdk::Error> {
             acp_sdk::util::json_cast(&value)
         }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_stdio_produces_valid_config() {
+        let server = acp::McpServer::Stdio(
+            McpServerStdio::new("my-server", "/usr/bin/mcp-tool").args(vec!["--flag".to_string()]),
+        );
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "my-server");
+        assert!(cfg.enabled);
+        assert!(cfg.tools_enabled);
+        match &cfg.transport {
+            McpServerTransportConfig::Stdio {
+                executable, args, ..
+            } => {
+                assert_eq!(executable, "/usr/bin/mcp-tool");
+                assert_eq!(args, &["--flag"]);
+            }
+            _ => panic!("expected Stdio transport"),
+        }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_http_produces_valid_config() {
+        let server = acp::McpServer::Http(McpServerHttp::new(
+            "http-server",
+            "http://localhost:8080/mcp",
+        ));
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "http-server");
+        assert!(cfg.enabled);
+        match &cfg.transport {
+            McpServerTransportConfig::Http { endpoint, .. } => {
+                assert_eq!(endpoint.as_str(), "http://localhost:8080/mcp");
+            }
+            _ => panic!("expected Http transport"),
+        }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_sanitizes_name_with_spaces() {
+        let server =
+            acp::McpServer::Stdio(McpServerStdio::new("My MCP Server!", "/usr/bin/server"));
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "my_mcp_server_");
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_rejects_empty_name() {
+        let server = acp::McpServer::Stdio(McpServerStdio::new("", "/usr/bin/server"));
+
+        let result = convert_acp_mcp_server(&server);
+
+        assert!(result.is_err(), "empty server name should produce an error");
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_rejects_invalid_http_url() {
+        let server = acp::McpServer::Http(McpServerHttp::new("bad-server", "not a url"));
+
+        let result = convert_acp_mcp_server(&server);
+
+        assert!(result.is_err(), "invalid URL should produce an error");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_empty_mcp_servers_list_does_not_error() {
+        run_client_server_test(|connection| async move {
+            let initialize_resp = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+            assert!(initialize_resp.is_ok(), "initialize should succeed");
+
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(error) => panic!("current dir should be available: {}", error),
+            };
+
+            // NewSessionRequest with no MCP servers (default empty vec).
+            let response =
+                receive_response(connection.send_request(acp::NewSessionRequest::new(cwd))).await;
+
+            assert!(
+                response.is_ok(),
+                "session creation with empty mcp_servers should succeed: {:?}",
+                response.err()
+            );
+        })
+        .await;
     }
 }
