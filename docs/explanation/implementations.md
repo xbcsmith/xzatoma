@@ -347,6 +347,28 @@ Handling** - Complete
 - Documentation: `docs/explanation/zed_session_mode_phase2_implementation.md`
 - All 2082 unit tests pass, zero warnings, `cargo fmt` clean.
 
+**Zed Session Mode Phase 3: Runtime Execution Mode Enforcement on Mode
+Change** - Complete
+
+- Added `pub fn tools_mut(&mut self) -> &mut ToolRegistry` accessor to `Agent`
+  in `src/agent/core.rs` so the ACP stdio layer can replace individual tools in
+  the registry without bypassing the agent abstraction.
+- Extended `set_session_mode` in `src/acp/stdio.rs` to construct a new
+  `TerminalTool` carrying the updated `ExecutionMode` and `SafetyMode` and
+  register it under the `"terminal"` key in the agent's tool registry
+  immediately after rebuilding transient system messages. The replacement takes
+  effect on the next prompt turn within the session.
+- Added `use crate::tools::terminal::{CommandValidator, TerminalTool};` import
+  to `src/acp/stdio.rs`.
+- Added 4 new unit tests: `test_agent_tools_mut_returns_mutable_registry` in
+  `src/agent/core.rs` verifies the accessor registers tools correctly;
+  `test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous`,
+  `test_set_session_mode_full_autonomous_to_planning_restricts_terminal`, and
+  `test_set_session_mode_does_not_change_terminal_for_unknown_mode` in
+  `src/acp/stdio.rs` verify correct behavior over the full protocol stack.
+- Documentation: `docs/explanation/zed_session_mode_phase3_implementation.md`
+- All 2086 unit tests pass, zero warnings, `cargo fmt` clean.
+
 ### MCP Support Implementation
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete

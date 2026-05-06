@@ -63,6 +63,7 @@ use crate::providers::{
 };
 use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
 use crate::tools::ide_tools::register_ide_tools;
+use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::SubagentTool;
 
 use acp_sdk::schema as acp;
@@ -690,6 +691,21 @@ impl AcpStdioServerState {
             drop(session_lock);
             let mut agent_lock = agent.lock().await;
             agent_lock.set_transient_system_messages(vec![system_prompt]);
+
+            // Replace the terminal tool so the new ExecutionMode is enforced immediately.
+            {
+                let session_read = session.lock().await;
+                let workspace_root = session_read.workspace_root.clone();
+                drop(session_read);
+
+                let new_validator = CommandValidator::new(effect.terminal_mode, workspace_root);
+                let new_terminal_tool =
+                    TerminalTool::new(new_validator, self.config.agent.terminal.clone())
+                        .with_safety_mode(safety_mode);
+                agent_lock
+                    .tools_mut()
+                    .register("terminal", Arc::new(new_terminal_tool));
+            }
         }
 
         tracing::info!(
@@ -3222,6 +3238,114 @@ mod tests {
                     mode
                 );
             }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "full_autonomous"),
+            ))
+            .await;
+
+            assert!(
+                set_mode_resp.is_ok(),
+                "set_session_mode to full_autonomous should succeed \
+                 and replace the terminal tool with FullAutonomous execution mode"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_full_autonomous_to_planning_restricts_terminal() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let full_auto_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "full_autonomous"),
+            ))
+            .await;
+            assert!(
+                full_auto_resp.is_ok(),
+                "set_session_mode to full_autonomous should succeed"
+            );
+
+            let planning_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "planning"),
+            ))
+            .await;
+            assert!(
+                planning_resp.is_ok(),
+                "set_session_mode from full_autonomous to planning should succeed \
+                 and update terminal tool to Interactive execution mode"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_does_not_change_terminal_for_unknown_mode() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let write_resp = receive_response(
+                connection
+                    .send_request(acp::SetSessionModeRequest::new(session_id.clone(), "write")),
+            )
+            .await;
+            assert!(
+                write_resp.is_ok(),
+                "initial set_session_mode to write should succeed"
+            );
+
+            let unknown_resp = receive_response(
+                connection
+                    .send_request(acp::SetSessionModeRequest::new(session_id.clone(), "turbo")),
+            )
+            .await;
+            assert!(
+                unknown_resp.is_err(),
+                "set_session_mode with unknown mode id 'turbo' should return an error \
+                 and leave the terminal tool's execution mode unchanged"
+            );
         })
         .await;
     }

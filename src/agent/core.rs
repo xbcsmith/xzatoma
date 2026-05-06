@@ -1256,6 +1256,29 @@ impl Agent {
         &self.tools
     }
 
+    /// Returns a mutable reference to the agent's tool registry.
+    ///
+    /// This accessor is used by the ACP stdio layer to replace individual tools
+    /// (such as the terminal tool) when the session mode changes at runtime.
+    ///
+    /// # Returns
+    ///
+    /// Returns a mutable reference to the agent's [`ToolRegistry`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// // The registry can be updated to reflect runtime mode changes.
+    /// // let mut agent = ...;
+    /// // let registry = agent.tools_mut();
+    /// ```
+    pub fn tools_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tools
+    }
+
     /// Returns the number of registered tools
     ///
     /// Useful for testing and debugging
@@ -1832,5 +1855,40 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
+    }
+
+    #[tokio::test]
+    async fn test_agent_tools_mut_returns_mutable_registry() {
+        struct MockTool;
+
+        #[async_trait]
+        impl crate::tools::ToolExecutor for MockTool {
+            fn tool_definition(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "name": "mock_extra",
+                    "description": "extra mock tool for tools_mut test",
+                    "parameters": {"type": "object"}
+                })
+            }
+
+            async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+                Ok(ToolResult::success("mock output".to_string()))
+            }
+        }
+
+        let provider = MockProvider::new(vec![]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        assert_eq!(agent.num_tools(), 0, "registry should start empty");
+
+        agent.tools_mut().register("mock_extra", Arc::new(MockTool));
+
+        assert_eq!(
+            agent.num_tools(),
+            1,
+            "registry should reflect the new tool after tools_mut registration"
+        );
     }
 }
