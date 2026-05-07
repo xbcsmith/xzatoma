@@ -1728,3 +1728,34 @@ README.
 **Status**: Phase 4 complete (Provider Integration), Phase 5 complete
 (Documentation and Examples). Model Management Documentation complete. Phases
 1-3 implemented. Security validation completed and tested.
+
+---
+
+## Zed Session Mode Selector: Embedded Context, MCP Integration, and Runtime Mode Enforcement (2026-05-07T22:07:39Z)
+
+**Summary**: Three implementation phases closed the remaining gaps between
+XZatoma and the Zed session mode selector. Phase 1 extended the ACP prompt input
+layer to accept embedded text resources and produce text placeholders for
+non-image resource links instead of hard errors. Phase 2 connected per-project
+MCP servers forwarded by Zed on session creation, making project-scoped tools
+available to the agent without changes to the global configuration file. Phase 3
+propagated mode changes from the Zed mode selector into the live `TerminalTool`
+in the agent's registry so that terminal command validation reflects the current
+mode on every subsequent tool execution.
+
+**Files changed**:
+
+- `src/acp/prompt_input.rs` - Added three-way dispatch on
+  `ContentBlock::Resource` inner variant to handle `TextResourceContents` as
+  inline text parts; replaced the hard error for non-image
+  `ContentBlock::ResourceLink` with a text reference placeholder.
+- `src/acp/stdio.rs` - Added `embedded_context: true` to `PromptCapabilities` in
+  `handle_initialize`; added `sanitize_mcp_server_id` and
+  `convert_acp_mcp_server` private helpers; added Zed-forwarded MCP server
+  connection block in `create_session`; added terminal tool replacement block in
+  `set_session_mode`; added imports for `CommandValidator` and `TerminalTool`.
+- `src/agent/core.rs` - Added `pub fn tools_mut` accessor returning a mutable
+  reference to the agent's `ToolRegistry`.
+
+**Documentation**:
+[zed_session_mode_selector_implementation.md](zed_session_mode_selector_implementation.md)
