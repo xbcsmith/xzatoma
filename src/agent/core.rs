@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use super::thinking::extract_thinking;
 use super::{ContextInfo, Conversation};
 
 /// The main agent that executes autonomous tasks
@@ -56,6 +57,24 @@ pub struct Agent {
     config: AgentConfig,
     accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
     transient_system_messages: Vec<String>,
+}
+
+/// Combines reasoning text from two independent sources.
+///
+/// `raw` is the structured `CompletionResponse.reasoning` field populated by the
+/// provider accumulator. `tags` is the reasoning extracted from inline thinking
+/// blocks by `extract_thinking`. When both are present they are joined with a
+/// single newline so the observer receives all available chain-of-thought content.
+///
+/// Returns `None` when both inputs are `None` so callers can skip emitting a
+/// `ReasoningEmitted` event entirely.
+fn combine_reasoning(raw: Option<String>, tags: Option<String>) -> Option<String> {
+    match (raw, tags) {
+        (Some(r), Some(t)) => Some(format!("{}\n{}", r, t)),
+        (Some(r), None) => Some(r),
+        (None, Some(t)) => Some(t),
+        (None, None) => None,
+    }
 }
 
 impl Agent {
@@ -610,8 +629,26 @@ impl Agent {
                 }
             };
 
-            let message = completion_response.message;
+            let raw_reasoning = completion_response.reasoning;
+            let mut message = completion_response.message;
             debug!("Provider response: {:?}", message);
+
+            // Strip inline thinking tags from the assistant text. Any text enclosed in
+            // thinking tag blocks is removed from the message content before it enters
+            // conversation history, and the extracted content is collected as tag_reasoning.
+            let tag_reasoning = if let Some(text) = message.content.take() {
+                let (clean, tag_r) = extract_thinking(&text);
+                message.content = Some(clean);
+                tag_r
+            } else {
+                None
+            };
+
+            // Emit a ReasoningEmitted event when reasoning is available from either the
+            // structured CompletionResponse.reasoning field or extracted thinking tags.
+            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+            }
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
@@ -941,8 +978,23 @@ impl Agent {
                 }
             };
 
-            let message = completion_response.message;
+            let raw_reasoning = completion_response.reasoning;
+            let mut message = completion_response.message;
             debug!("Provider response: {:?}", message);
+
+            // Strip inline thinking tags from the assistant text.
+            let tag_reasoning = if let Some(text) = message.content.take() {
+                let (clean, tag_r) = extract_thinking(&text);
+                message.content = Some(clean);
+                tag_r
+            } else {
+                None
+            };
+
+            // Emit a ReasoningEmitted event when reasoning is available.
+            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+            }
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
@@ -1890,5 +1942,312 @@ mod tests {
             1,
             "registry should reflect the new tool after tools_mut registration"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // combine_reasoning unit tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_combine_reasoning_both_some_concatenates() {
+        let result = combine_reasoning(
+            Some("raw reasoning".to_string()),
+            Some("tag reasoning".to_string()),
+        );
+        assert_eq!(result, Some("raw reasoning\ntag reasoning".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_only_raw_returns_raw() {
+        let result = combine_reasoning(Some("raw only".to_string()), None);
+        assert_eq!(result, Some("raw only".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_only_tags_returns_tags() {
+        let result = combine_reasoning(None, Some("tags only".to_string()));
+        assert_eq!(result, Some("tags only".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_both_none_returns_none() {
+        let result = combine_reasoning(None, None);
+        assert!(result.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Reasoning event plumbing tests (execute_with_observer)
+    // -------------------------------------------------------------------------
+
+    /// A mock provider that returns a single response with an optional reasoning field.
+    struct MockProviderWithReasoning {
+        message: Message,
+        reasoning: Option<String>,
+        call_count: Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl MockProviderWithReasoning {
+        fn new(message: Message, reasoning: Option<String>) -> Self {
+            Self {
+                message,
+                reasoning,
+                call_count: Arc::new(std::sync::Mutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockProviderWithReasoning {
+        fn is_authenticated(&self) -> bool {
+            false
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            None
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+            Err(crate::error::XzatomaError::Provider(
+                "not supported".to_string(),
+            ))
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let mut count = self.call_count.lock().unwrap();
+            let idx = *count;
+            *count += 1;
+            drop(count);
+
+            if idx == 0 {
+                let mut response = CompletionResponse::new(self.message.clone());
+                if let Some(r) = &self.reasoning {
+                    response = response.set_reasoning(r.clone());
+                }
+                Ok(response)
+            } else {
+                Ok(CompletionResponse::new(Message::assistant("Done")))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_reasoning_from_completion_response_field() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("final answer"),
+            Some("structured chain-of-thought".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "structured chain-of-thought");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_reasoning_from_think_tags_in_content() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>chain of thought</think>final answer"),
+            None,
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "final answer");
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "chain of thought");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+
+        // The AssistantTextEmitted event must carry the clean text, not the raw tagged text.
+        let text_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::AssistantTextEmitted { .. }))
+            .collect();
+        assert_eq!(text_events.len(), 1);
+        if let AgentExecutionEvent::AssistantTextEmitted { text } = &text_events[0] {
+            assert_eq!(text, "final answer");
+        } else {
+            panic!("expected AssistantTextEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_does_not_store_tags_in_conversation() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>hidden reasoning</think>clean response"),
+            None,
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut observer = crate::agent::events::NoOpObserver;
+        let result = agent
+            .execute_with_observer("test", &token, &mut observer)
+            .await;
+        assert!(result.is_ok());
+
+        // No message in conversation history may contain a raw thinking tag.
+        for msg in agent.conversation().messages() {
+            if let Some(content) = &msg.content {
+                assert!(
+                    !content.contains("<think>"),
+                    "conversation must not store raw thinking tags; found: {content}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_combines_raw_and_tag_reasoning() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>from_tags</think>answer"),
+            Some("raw_reasoning".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "raw_reasoning\nfrom_tags");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_messages_with_observer_emits_reasoning() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("provider messages answer"),
+            Some("provider messages reasoning".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let messages = vec![crate::providers::Message::user("test")];
+        let result = agent
+            .execute_provider_messages_with_observer(messages, &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "provider messages reasoning");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
     }
 }
