@@ -50,6 +50,10 @@ type ModelCache = Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>;
 // ---------------------------------------------------------------------------
 
 /// OpenAI Chat Completions request body (`POST /v1/chat/completions`).
+///
+/// The `reasoning_effort` field is included only when set; it controls chain-
+/// of-thought depth on o-series models (`o1`, `o3`, etc.) and is silently
+/// ignored by all other models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct OpenAIRequest {
     model: String,
@@ -57,6 +61,12 @@ struct OpenAIRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<ProviderTool>,
     stream: bool,
+    /// Reasoning effort for o-series reasoning models.
+    ///
+    /// Accepted values: `"low"`, `"medium"`, `"high"`. Omitted from the
+    /// request body when `None` so non-reasoning models are unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 /// Single message in an OpenAI request or response body.
@@ -1144,11 +1154,15 @@ impl Provider for OpenAIProvider {
         messages: &[Message],
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
-        let (model, enable_streaming) = {
+        let (model, enable_streaming, reasoning_effort) = {
             let config = self.config.read().map_err(|_| {
                 XzatomaError::Provider("Failed to acquire read lock on config".to_string())
             })?;
-            (config.model.clone(), config.enable_streaming)
+            (
+                config.model.clone(),
+                config.enable_streaming,
+                config.reasoning_effort.clone(),
+            )
         };
 
         if messages_contain_image_content(messages)
@@ -1168,6 +1182,7 @@ impl Provider for OpenAIProvider {
             messages: self.convert_messages(messages)?,
             tools: openai_tools,
             stream: use_streaming,
+            reasoning_effort,
         };
 
         if use_streaming {
@@ -2890,6 +2905,42 @@ mod tests {
         assert!(
             stored.is_none(),
             "reasoning_effort must be None after set_thinking_effort(None)"
+        );
+    }
+
+    #[test]
+    fn test_openai_request_reasoning_effort_omitted_when_none() {
+        // When reasoning_effort is None the field must be absent from the
+        // serialized JSON so non-reasoning models are not affected.
+        let request = OpenAIRequest {
+            model: "gpt-4o-mini".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            reasoning_effort: None,
+        };
+        let json = serde_json::to_string(&request).expect("serialize failed");
+        assert!(
+            !json.contains("reasoning_effort"),
+            "reasoning_effort must be absent from serialized JSON when None; got: {json}"
+        );
+    }
+
+    #[test]
+    fn test_openai_request_reasoning_effort_included_when_set() {
+        // When reasoning_effort is Some(...) the field must appear in the
+        // serialized JSON so o-series models receive the parameter.
+        let request = OpenAIRequest {
+            model: "o3".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            reasoning_effort: Some("high".to_string()),
+        };
+        let json = serde_json::to_string(&request).expect("serialize failed");
+        assert!(
+            json.contains("\"reasoning_effort\":\"high\""),
+            "reasoning_effort must appear in serialized JSON when set; got: {json}"
         );
     }
 }

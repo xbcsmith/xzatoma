@@ -1441,6 +1441,14 @@ impl Config {
             }
         }
 
+        if let Ok(val) = std::env::var("XZATOMA_OPENAI_REASONING_EFFORT") {
+            if val == "none" {
+                self.provider.openai.reasoning_effort = None;
+            } else {
+                self.provider.openai.reasoning_effort = Some(val);
+            }
+        }
+
         // Agent overrides
         if let Ok(max_turns) = std::env::var("XZATOMA_MAX_TURNS") {
             if let Ok(value) = max_turns.parse() {
@@ -2670,6 +2678,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     struct EnvVarGuard {
         key: &'static str,
@@ -3772,6 +3781,52 @@ agent: {}
         let mut config = Config::default();
         config.apply_env_vars();
         assert_eq!(config.provider.openai.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_openai_config_reasoning_effort_defaults_none() {
+        let config = OpenAIConfig::default();
+        assert!(
+            config.reasoning_effort.is_none(),
+            "reasoning_effort must default to None"
+        );
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_reasoning_effort() {
+        let yaml = "model: o3\nreasoning_effort: high\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(
+            config.reasoning_effort,
+            Some("high".to_string()),
+            "reasoning_effort must deserialize from YAML"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_openai_reasoning_effort() {
+        let _effort = EnvVarGuard::set("XZATOMA_OPENAI_REASONING_EFFORT", "medium");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(
+            config.provider.openai.reasoning_effort,
+            Some("medium".to_string()),
+            "XZATOMA_OPENAI_REASONING_EFFORT must set reasoning_effort"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_openai_reasoning_effort_none_clears_field() {
+        let mut config = Config::default();
+        config.provider.openai.reasoning_effort = Some("high".to_string());
+        let _effort = EnvVarGuard::set("XZATOMA_OPENAI_REASONING_EFFORT", "none");
+        config.apply_env_vars();
+        assert!(
+            config.provider.openai.reasoning_effort.is_none(),
+            "XZATOMA_OPENAI_REASONING_EFFORT=none must clear the field"
+        );
     }
 
     #[test]
