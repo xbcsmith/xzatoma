@@ -219,6 +219,56 @@ pub trait Provider: Send + Sync {
         ProviderCapabilities::default()
     }
 
+    /// Set the active thinking effort level for subsequent completions.
+    ///
+    /// Providers that support configurable reasoning (Copilot adaptive thinking,
+    /// OpenAI o-series reasoning parameter) must override this method to apply
+    /// the effort level. The default no-op implementation is used by providers
+    /// that do not support thinking effort control, such as Ollama.
+    ///
+    /// # Arguments
+    ///
+    /// * `effort` - One of `"none"`, `"low"`, `"medium"`, `"high"`, or
+    ///   `"extra_high"`. Pass `None` to clear any previously configured effort
+    ///   and revert to the provider default.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the effort string is not recognised
+    /// or if the internal configuration lock cannot be acquired.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::Provider;
+    /// use xzatoma::providers::{CompletionResponse, Message, ModelInfo};
+    /// use xzatoma::error::Result;
+    /// use async_trait::async_trait;
+    ///
+    /// struct NoOpProvider;
+    ///
+    /// #[async_trait]
+    /// impl Provider for NoOpProvider {
+    ///     fn is_authenticated(&self) -> bool { false }
+    ///     fn current_model(&self) -> Option<&str> { None }
+    ///     fn set_model(&mut self, _model: &str) {}
+    ///     async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+    ///         Err(xzatoma::error::XzatomaError::Provider("not supported".to_string()))
+    ///     }
+    ///     async fn complete(&self, _messages: &[Message], _tools: &[serde_json::Value]) -> Result<CompletionResponse> {
+    ///         Ok(CompletionResponse::new(Message::assistant("hi")))
+    ///     }
+    /// }
+    ///
+    /// let provider = NoOpProvider;
+    /// // Default no-op returns Ok(()) without modifying any state.
+    /// assert!(provider.set_thinking_effort(Some("high")).is_ok());
+    /// assert!(provider.set_thinking_effort(None).is_ok());
+    /// ```
+    fn set_thinking_effort(&self, _effort: Option<&str>) -> crate::error::Result<()> {
+        Ok(())
+    }
+
     /// List models with full summary data.
     ///
     /// # Returns
@@ -663,5 +713,47 @@ mod tests {
                 Some("stream-delegate-response".to_string())
             );
         });
+    }
+
+    #[test]
+    fn test_set_thinking_effort_default_impl_returns_ok() {
+        struct MockProvider;
+
+        #[async_trait]
+        impl Provider for MockProvider {
+            fn is_authenticated(&self) -> bool {
+                false
+            }
+
+            fn current_model(&self) -> Option<&str> {
+                None
+            }
+
+            fn set_model(&mut self, _model: &str) {}
+
+            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+                Err(crate::error::XzatomaError::Provider(
+                    "not supported".to_string(),
+                ))
+            }
+
+            async fn complete(
+                &self,
+                _messages: &[Message],
+                _tools: &[serde_json::Value],
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("test")))
+            }
+        }
+
+        let provider = MockProvider;
+        assert!(
+            provider.set_thinking_effort(Some("high")).is_ok(),
+            "default no-op must return Ok for a non-None effort"
+        );
+        assert!(
+            provider.set_thinking_effort(None).is_ok(),
+            "default no-op must return Ok for None effort"
+        );
     }
 }

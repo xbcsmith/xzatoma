@@ -205,6 +205,7 @@ impl Default for OllamaConfig {
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
+///     reasoning_effort: None,
 /// };
 /// assert_eq!(config.model, "gpt-4o-mini");
 /// assert_eq!(config.base_url, "https://api.openai.com/v1");
@@ -268,6 +269,16 @@ pub struct OpenAIConfig {
     /// Set via the `XZATOMA_OPENAI_REQUEST_TIMEOUT` environment variable.
     #[serde(default = "default_openai_request_timeout")]
     pub request_timeout_seconds: u64,
+
+    /// Reasoning effort level for OpenAI o-series reasoning models.
+    ///
+    /// Accepted values: `"low"`, `"medium"`, `"high"`. Set to `None` to use
+    /// the model default. Has no effect on non-reasoning models.
+    ///
+    /// Set at runtime via `Provider::set_thinking_effort` or the
+    /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable (Phase 4).
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 fn default_openai_api_key() -> String {
@@ -299,6 +310,7 @@ impl Default for OpenAIConfig {
             organization_id: None,
             enable_streaming: default_openai_streaming(),
             request_timeout_seconds: default_openai_request_timeout(),
+            reasoning_effort: None,
         }
     }
 }

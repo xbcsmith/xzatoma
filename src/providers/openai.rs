@@ -515,6 +515,7 @@ impl StreamAccumulator {
 ///     organization_id: None,
 ///     enable_streaming: false,
 ///     request_timeout_seconds: 600,
+///     reasoning_effort: None,
 /// };
 /// let provider = OpenAIProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -1364,6 +1365,20 @@ impl Provider for OpenAIProvider {
             supports_vision: true,
         }
     }
+
+    fn set_thinking_effort(&self, effort: Option<&str>) -> crate::error::Result<()> {
+        let mut config = self.config.write().map_err(|_| {
+            crate::error::XzatomaError::Provider(
+                "Failed to acquire write lock on OpenAIConfig".to_string(),
+            )
+        })?;
+        config.reasoning_effort = effort.map(str::to_string);
+        tracing::debug!(
+            "OpenAI thinking effort set to: {:?}",
+            config.reasoning_effort
+        );
+        Ok(())
+    }
 }
 
 fn openai_model_supports_vision(model: &str) -> bool {
@@ -1398,6 +1413,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         }
     }
 
@@ -2223,6 +2239,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2272,6 +2289,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2314,6 +2332,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2514,6 +2533,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true, // streaming enabled but tools force non-streaming
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2570,6 +2590,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2606,6 +2627,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         assert!(
@@ -2623,6 +2645,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         assert!(
@@ -2654,6 +2677,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2694,6 +2718,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2722,6 +2747,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2768,6 +2794,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2802,6 +2829,7 @@ mod tests {
             organization_id: Some("myorg".to_string()),
             enable_streaming: false,
             request_timeout_seconds: 600,
+            reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2830,5 +2858,38 @@ mod tests {
 
         assert_eq!(first.len(), second.len());
         assert_eq!(first[0].name, second[0].name);
+    }
+
+    #[test]
+    fn test_set_thinking_effort_stores_effort_in_openai_config() {
+        let config = OpenAIConfig::default();
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.set_thinking_effort(Some("high"));
+        assert!(
+            result.is_ok(),
+            "set_thinking_effort must return Ok for valid effort"
+        );
+
+        let stored = provider.config.read().unwrap().reasoning_effort.clone();
+        assert_eq!(stored, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_set_thinking_effort_none_clears_openai_reasoning_effort() {
+        let config = OpenAIConfig {
+            reasoning_effort: Some("medium".to_string()),
+            ..Default::default()
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+
+        let result = provider.set_thinking_effort(None);
+        assert!(result.is_ok(), "set_thinking_effort(None) must return Ok");
+
+        let stored = provider.config.read().unwrap().reasoning_effort.clone();
+        assert!(
+            stored.is_none(),
+            "reasoning_effort must be None after set_thinking_effort(None)"
+        );
     }
 }

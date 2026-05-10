@@ -3049,6 +3049,20 @@ impl Provider for CopilotProvider {
         }
     }
 
+    fn set_thinking_effort(&self, effort: Option<&str>) -> crate::error::Result<()> {
+        let mut config = self.config.write().map_err(|_| {
+            crate::error::XzatomaError::Provider(
+                "Failed to acquire write lock on CopilotConfig".to_string(),
+            )
+        })?;
+        config.reasoning_effort = effort.map(str::to_string);
+        tracing::debug!(
+            "Copilot thinking effort set to: {:?}",
+            config.reasoning_effort
+        );
+        Ok(())
+    }
+
     async fn list_models_summary(&self) -> Result<Vec<ModelInfoSummary>> {
         let models_data = self.fetch_copilot_models_raw().await?;
         Ok(models_data
@@ -5309,5 +5323,53 @@ include_reasoning: true
             summary.max_completion_tokens.is_none(),
             "max_completion_tokens must be None when API field is absent"
         );
+    }
+
+    #[test]
+    fn test_set_thinking_effort_stores_effort_in_config() {
+        let config = crate::config::CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let result = provider.set_thinking_effort(Some("high"));
+        assert!(
+            result.is_ok(),
+            "set_thinking_effort must return Ok for valid effort"
+        );
+
+        let stored = provider.config.read().unwrap().reasoning_effort.clone();
+        assert_eq!(stored, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_set_thinking_effort_none_clears_reasoning_effort() {
+        let config = crate::config::CopilotConfig {
+            reasoning_effort: Some("medium".to_string()),
+            ..Default::default()
+        };
+        let provider = CopilotProvider::new(config).unwrap();
+
+        let result = provider.set_thinking_effort(None);
+        assert!(result.is_ok(), "set_thinking_effort(None) must return Ok");
+
+        let stored = provider.config.read().unwrap().reasoning_effort.clone();
+        assert!(
+            stored.is_none(),
+            "reasoning_effort must be None after set_thinking_effort(None)"
+        );
+    }
+
+    #[test]
+    fn test_set_thinking_effort_returns_ok_for_valid_effort() {
+        let config = crate::config::CopilotConfig::default();
+        let provider = CopilotProvider::new(config).unwrap();
+
+        for effort in &["low", "medium", "high"] {
+            let result = provider.set_thinking_effort(Some(effort));
+            assert!(
+                result.is_ok(),
+                "set_thinking_effort must return Ok for effort '{}'",
+                effort
+            );
+        }
     }
 }
