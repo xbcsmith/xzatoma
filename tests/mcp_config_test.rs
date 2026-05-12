@@ -35,6 +35,7 @@ fn make_cli() -> xzatoma::cli::Cli {
             plan: None,
             prompt: None,
             allow_dangerous: false,
+            thinking_effort: None,
         },
     }
 }

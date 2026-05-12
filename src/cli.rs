@@ -51,6 +51,15 @@ pub enum Commands {
         /// Resume a specific conversation by ID
         #[arg(long)]
         resume: Option<String>,
+
+        /// Thinking effort level for models that support extended reasoning.
+        ///
+        /// Accepted values: none, low, medium, high, extra_high.
+        /// When omitted, the value from the configuration file is used.
+        /// When set to "none", reasoning parameters are cleared even if the
+        /// configuration file specifies a level.
+        #[arg(long)]
+        thinking_effort: Option<String>,
     },
 
     /// Execute a plan or prompt
@@ -66,6 +75,13 @@ pub enum Commands {
         /// Allow dangerous commands without confirmation
         #[arg(long)]
         allow_dangerous: bool,
+
+        /// Thinking effort level for models that support extended reasoning.
+        ///
+        /// Accepted values: none, low, medium, high, extra_high.
+        /// When omitted, the value from the configuration file is used.
+        #[arg(long)]
+        thinking_effort: Option<String>,
     },
 
     /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
@@ -716,6 +732,7 @@ mod tests {
             mode: _,
             safe: _,
             resume: _,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));
@@ -833,6 +850,7 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(plan, Some(PathBuf::from("test.yaml")));
@@ -852,6 +870,7 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(plan, None);
@@ -871,6 +890,7 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(plan, None);
@@ -1051,6 +1071,7 @@ mod tests {
             mode,
             safe,
             resume: _,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(provider, None);
@@ -1071,6 +1092,7 @@ mod tests {
             mode,
             safe: _,
             resume: _,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(mode, Some("write".to_string()));
@@ -1089,6 +1111,7 @@ mod tests {
             mode,
             safe,
             resume: _,
+            thinking_effort: _,
         } = cli.command
         {
             assert!(safe);
@@ -1141,6 +1164,7 @@ mod tests {
             mode,
             safe,
             resume: _,
+            thinking_effort: _,
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));
@@ -1552,5 +1576,78 @@ mod tests {
             help.to_lowercase().contains("summary"),
             "info help missing summary description"
         );
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_thinking_effort_high() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--thinking-effort", "high"]).unwrap();
+        if let Commands::Chat {
+            thinking_effort, ..
+        } = cli.command
+        {
+            assert_eq!(thinking_effort, Some("high".to_string()));
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_thinking_effort_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--thinking-effort", "none"]).unwrap();
+        if let Commands::Chat {
+            thinking_effort, ..
+        } = cli.command
+        {
+            assert_eq!(thinking_effort, Some("none".to_string()));
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_thinking_effort_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        if let Commands::Chat {
+            thinking_effort, ..
+        } = cli.command
+        {
+            assert_eq!(thinking_effort, None);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_with_thinking_effort_medium() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--prompt",
+            "hello",
+            "--thinking-effort",
+            "medium",
+        ])
+        .unwrap();
+        if let Commands::Run {
+            thinking_effort, ..
+        } = cli.command
+        {
+            assert_eq!(thinking_effort, Some("medium".to_string()));
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_thinking_effort_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "run", "--prompt", "hello"]).unwrap();
+        if let Commands::Run {
+            thinking_effort, ..
+        } = cli.command
+        {
+            assert_eq!(thinking_effort, None);
+        } else {
+            panic!("Expected Run command");
+        }
     }
 }
