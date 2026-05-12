@@ -97,6 +97,19 @@ pub enum AgentExecutionEvent {
         count: usize,
     },
 
+    /// Context window state was updated after a provider response.
+    ///
+    /// Emitted immediately after provider token usage is stored in the
+    /// conversation. `used_tokens` reflects the most accurate available count:
+    /// provider-reported if present, heuristic otherwise. `max_tokens` is the
+    /// configured context window size from `Conversation.max_tokens()`.
+    ContextWindowUpdated {
+        /// Tokens currently occupying the context window.
+        used_tokens: u64,
+        /// Maximum tokens available in the context window.
+        max_tokens: u64,
+    },
+
     /// Cancellation was detected at a safe execution boundary.
     CancellationRequested,
 
@@ -201,6 +214,10 @@ mod tests {
             error: "not found".to_string(),
         });
         observer.on_event(AgentExecutionEvent::VisionInputAttached { count: 2 });
+        observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens: 1024,
+            max_tokens: 8192,
+        });
         observer.on_event(AgentExecutionEvent::CancellationRequested);
         observer.on_event(AgentExecutionEvent::ExecutionCompleted {
             response: "done".to_string(),
@@ -217,6 +234,16 @@ mod tests {
             text: "chain-of-thought content".to_string(),
         });
         // NoOpObserver must silently discard the event without panicking.
+    }
+
+    #[test]
+    fn test_context_window_updated_event_is_debug_clone() {
+        let event = AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens: 1024,
+            max_tokens: 8192,
+        };
+        let cloned = event.clone();
+        let _ = format!("{:?}", cloned);
     }
 
     #[test]

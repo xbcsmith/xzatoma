@@ -664,6 +664,14 @@ impl Agent {
                 drop(accumulated);
             }
 
+            // Emit context window state regardless of whether provider usage was returned.
+            // get_context_info() prefers provider usage over the heuristic when available.
+            let ctx = self.get_context_info(self.conversation.max_tokens());
+            observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens: ctx.used_tokens as u64,
+                max_tokens: ctx.max_tokens as u64,
+            });
+
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
 
             observer.on_event(AgentExecutionEvent::ProviderResponseReceived {
@@ -1010,6 +1018,14 @@ impl Agent {
                 }
                 drop(accumulated_usage);
             }
+
+            // Emit context window state regardless of whether provider usage was returned.
+            // get_context_info() prefers provider usage over the heuristic when available.
+            let ctx = self.get_context_info(self.conversation.max_tokens());
+            observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens: ctx.used_tokens as u64,
+                max_tokens: ctx.max_tokens as u64,
+            });
 
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
 
@@ -2248,6 +2264,161 @@ mod tests {
             assert_eq!(text, "provider messages reasoning");
         } else {
             panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ContextWindowUpdated event plumbing tests
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_context_window_updated_on_provider_response() {
+        let usage = TokenUsage::new(100, 50);
+        let provider = MockProvider::with_token_usage(vec![Message::assistant("done")], usage);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test context window", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "expected exactly one ContextWindowUpdated event"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            // Provider reported 100 prompt + 50 completion = 150 total
+            assert!(
+                *used_tokens >= 150,
+                "expected used_tokens >= 150, got {used_tokens}"
+            );
+            // Default AgentConfig uses ConversationConfig::default() max_tokens = 100_000
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_messages_with_observer_emits_context_window_updated() {
+        let usage = TokenUsage::new(200, 100);
+        let provider = MockProvider::with_token_usage(vec![Message::assistant("done")], usage);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let messages = vec![crate::providers::Message::user("test")];
+        let result = agent
+            .execute_provider_messages_with_observer(messages, &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "expected exactly one ContextWindowUpdated event"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            // Provider reported 200 prompt + 100 completion = 300 total
+            assert!(
+                *used_tokens >= 300,
+                "expected used_tokens >= 300, got {used_tokens}"
+            );
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_window_updated_uses_heuristic_when_no_provider_usage() {
+        // Provider returns no usage data; heuristic token count must still fire.
+        let provider = MockProvider::new(vec![Message::assistant("done")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test heuristic fallback", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "ContextWindowUpdated must fire even when provider reports no usage"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            assert!(
+                *used_tokens > 0,
+                "expected used_tokens > 0 from heuristic, got {used_tokens}"
+            );
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
         }
     }
 }
