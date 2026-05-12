@@ -772,6 +772,17 @@ impl AcpStdioServerState {
         if let Some(turns) = effect.max_turns {
             session_lock.runtime_state.max_turns = turns;
         }
+        if let Some(ref effort_str) = effect.thinking_effort {
+            session_lock.runtime_state.thinking_effort = effort_str.clone();
+        }
+
+        // Clone what is needed for the deferred provider call before releasing
+        // the session lock. The agent lock must not be acquired while the
+        // session lock is held to avoid a lock-ordering inversion with the
+        // prompt worker.
+        let agent_handle = session_lock.xzatoma_agent.clone();
+        let thinking_effort_to_apply = effect.thinking_effort.clone();
+
         session_lock.last_activity = chrono::Utc::now().to_rfc3339();
 
         tracing::info!(
@@ -780,6 +791,26 @@ impl AcpStdioServerState {
             value_id = %value_id,
             "ACP session config option changed"
         );
+
+        // Release session lock before acquiring agent lock.
+        drop(session_lock);
+
+        // Apply thinking effort to the live provider (outside session lock).
+        if let Some(ref effort_str) = thinking_effort_to_apply {
+            let effort_opt = if effort_str == "none" {
+                None
+            } else {
+                Some(effort_str.as_str())
+            };
+            let agent_lock = agent_handle.lock().await;
+            if let Err(e) = agent_lock.provider().set_thinking_effort(effort_opt) {
+                tracing::warn!(
+                    session_id = %request.session_id,
+                    error = %e,
+                    "Failed to apply thinking effort change"
+                );
+            }
+        }
 
         Ok(updated_options)
     }
@@ -1857,6 +1888,10 @@ impl AgentObserver for AcpSessionObserver {
                 let tool_call_id = acp::ToolCallId::new(id);
                 let update = build_tool_call_failure(&tool_call_id, &error);
                 self.send_update(acp::SessionUpdate::ToolCallUpdate(update));
+            }
+            AgentExecutionEvent::ReasoningEmitted { text } => {
+                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(text));
+                self.send_update(acp::SessionUpdate::AgentThoughtChunk(chunk));
             }
             AgentExecutionEvent::ExecutionCompleted { response } => {
                 // Only emit final text if no streaming text was already sent.
