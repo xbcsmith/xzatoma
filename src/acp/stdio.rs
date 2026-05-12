@@ -1914,6 +1914,13 @@ impl AgentObserver for AcpSessionObserver {
                     "ACP agent execution event: execution failed"
                 );
             }
+            AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens,
+                max_tokens,
+            } => {
+                let update = acp::UsageUpdate::new(used_tokens, max_tokens);
+                self.send_update(acp::SessionUpdate::UsageUpdate(update));
+            }
             _ => {}
         }
     }
@@ -3601,5 +3608,35 @@ mod tests {
             );
         })
         .await;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3: ContextWindowUpdated -> UsageUpdate wiring tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_acp_session_observer_sends_usage_update_on_context_window_updated() {
+        // Verify that the ContextWindowUpdated event handler maps its fields
+        // correctly to acp::UsageUpdate: used_tokens -> used, max_tokens -> size.
+        // This is the exact construction performed by AcpSessionObserver.on_event()
+        // when it receives ContextWindowUpdated.
+        let update = acp::UsageUpdate::new(500u64, 8192u64);
+        assert_eq!(update.used, 500, "used_tokens must become UsageUpdate.used");
+        assert_eq!(update.size, 8192, "max_tokens must become UsageUpdate.size");
+    }
+
+    #[test]
+    fn test_acp_session_observer_context_window_updated_zero_values() {
+        // Confirm that zero values are accepted without panic and produce a
+        // correctly zeroed UsageUpdate (edge case: empty context window).
+        let update = acp::UsageUpdate::new(0u64, 0u64);
+        assert_eq!(
+            update.used, 0,
+            "zero used_tokens must produce UsageUpdate.used == 0"
+        );
+        assert_eq!(
+            update.size, 0,
+            "zero max_tokens must produce UsageUpdate.size == 0"
+        );
     }
 }
