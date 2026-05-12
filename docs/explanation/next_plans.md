@@ -74,7 +74,7 @@ This includes support for setting thinking mode from Zed's Chat window in ACP mo
 
 Write a plan with a phased approach to add Thinking Mode support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-[Thinking Mode Implementation Plan](./thinking_mode_implementation_plan.md)
+✅ COMPLETED - [Thinking Mode Implementation Plan](./thinking_mode_implementation_plan.md)
 
 ### Add Context Window Support to ACP Mode
 
