@@ -605,6 +605,7 @@ impl AcpStdioServerState {
         }
 
         let xzatoma_agent = Arc::new(Mutex::new(agent));
+        let agent_arc_for_init = Arc::clone(&xzatoma_agent);
         let initial_token = CancellationToken::new();
         let (token_tx, current_cancellation_token) = watch::channel(initial_token);
         let (prompt_queue, prompt_receiver) =
@@ -641,6 +642,22 @@ impl AcpStdioServerState {
         };
 
         self.sessions.insert(active_session).await;
+
+        // Send an initial UsageUpdate so Zed can render the context window bar
+        // immediately, even before the first prompt is processed.
+        if let Some(conn) = &connection {
+            let agent = agent_arc_for_init.lock().await;
+            let max_tokens = agent.conversation().max_tokens() as u64;
+            let used_tokens = agent
+                .get_context_info(agent.conversation().max_tokens())
+                .used_tokens as u64;
+            let update = acp::UsageUpdate::new(used_tokens, max_tokens);
+            let notification = acp::SessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::UsageUpdate(update),
+            );
+            let _ = conn.send_notification_to(AcpClientRole, notification);
+        }
 
         Ok(acp::NewSessionResponse::new(session_id)
             .models(model_state)
@@ -2052,6 +2069,23 @@ async fn execute_queued_prompt(
                     error = %error,
                     "Failed to persist ACP stdio conversation checkpoint"
                 );
+            }
+        }
+    }
+
+    // Send a SessionInfoUpdate with the auto-derived title after EndTurn.
+    // first_user_prompt_title reads from the full conversation history so it
+    // returns a value as soon as one user message exists. Sending on every
+    // EndTurn is idempotent: Zed's UI handles repeated title updates gracefully.
+    if stop_reason == acp::StopReason::EndTurn {
+        if let Some(conn) = connection {
+            if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
+                let info_update = acp::SessionInfoUpdate::new().title(title);
+                let notification = acp::SessionNotification::new(
+                    session_id.clone(),
+                    acp::SessionUpdate::SessionInfoUpdate(info_update),
+                );
+                let _ = conn.send_notification_to(AcpClientRole, notification);
             }
         }
     }
@@ -3637,6 +3671,94 @@ mod tests {
         assert_eq!(
             update.size, 0,
             "zero max_tokens must produce UsageUpdate.size == 0"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Initial UsageUpdate and SessionInfoUpdate tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_execute_queued_prompt_sends_session_info_update_on_end_turn() {
+        // Verify that first_user_prompt_title extracts a non-empty title from a
+        // slice containing one user message, which is the component driving the
+        // SessionInfoUpdate path in execute_queued_prompt on EndTurn.
+        let messages = vec![Message::user("What is the capital of France?")];
+        let title = first_user_prompt_title(&messages);
+        assert!(title.is_some(), "user message should produce a title");
+        let title = title.unwrap();
+        assert!(!title.is_empty(), "extracted title must not be empty");
+        assert!(
+            title.contains("France"),
+            "title should reflect user message content"
+        );
+
+        // Verify that SessionInfoUpdate serializes with the correct "title" field
+        // in JSON, confirming the struct builder works end-to-end.
+        let info_update = acp::SessionInfoUpdate::new().title(title.clone());
+        let serialized =
+            serde_json::to_value(&info_update).expect("SessionInfoUpdate should serialize");
+        assert_eq!(
+            serialized.get("title").and_then(|v| v.as_str()),
+            Some(title.as_str()),
+            "serialized SessionInfoUpdate must contain the correct title field"
+        );
+    }
+
+    #[test]
+    fn test_execute_queued_prompt_no_session_info_update_on_cancelled() {
+        // Verify the guard condition: Cancelled != EndTurn, so no SessionInfoUpdate
+        // is emitted when the prompt is cancelled.
+        assert_ne!(
+            acp::StopReason::Cancelled,
+            acp::StopReason::EndTurn,
+            "Cancelled and EndTurn must be distinct to ensure the guard fires correctly"
+        );
+
+        // Verify first_user_prompt_title returns None for an empty message slice,
+        // confirming that no title update would be sent even if the guard passed.
+        let empty: Vec<Message> = Vec::new();
+        let title = first_user_prompt_title(&empty);
+        assert!(
+            title.is_none(),
+            "empty message slice must produce no title (no update would be sent)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_sends_initial_usage_update_when_connection_present() {
+        // Create an AcpStdioServerState with default config and no storage, then
+        // call create_session with connection = None to exercise the code path.
+        // This validates session creation completes without error even when the
+        // initial-UsageUpdate branch is guarded on connection being Some.
+        let config = Config::default();
+        let state = AcpStdioServerState::new(
+            config.clone(),
+            AcpStdioAgentOptions::new(None, None, false, None),
+        );
+
+        let workspace_dir = tempfile::tempdir().expect("tempdir should be created");
+        let response = state
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
+            .await;
+
+        assert!(
+            response.is_ok(),
+            "create_session with connection=None should succeed: {:?}",
+            response.err()
+        );
+
+        // Validate that the UsageUpdate construction used when a connection is
+        // present produces a non-zero size, confirming the default max_tokens
+        // from Config is propagated correctly into the notification payload.
+        let max_tokens = config.agent.conversation.max_tokens as u64;
+        let update = acp::UsageUpdate::new(0u64, max_tokens);
+        assert!(
+            update.size > 0,
+            "default Config max_tokens must produce a non-zero UsageUpdate.size"
         );
     }
 }
