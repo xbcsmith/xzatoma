@@ -335,8 +335,12 @@ pub fn load_manifest(path: &Path) -> Result<AcpAgentManifest> {
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 pub fn load_all_runs(storage: &SqliteStorage) -> Result<Vec<crate::storage::PublicStoredAcpRun>> {
-    let connection = rusqlite::Connection::open(storage.database_path())
-        .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+    let connection = rusqlite::Connection::open(storage.database_path()).map_err(|source| {
+        XzatomaError::StorageDatabaseOpen {
+            path: storage.database_path().display().to_string(),
+            source: source.into(),
+        }
+    })?;
 
     let mut statement = connection
         .prepare(
@@ -344,7 +348,10 @@ pub fn load_all_runs(storage: &SqliteStorage) -> Result<Vec<crate::storage::Publ
              FROM acp_runs
              ORDER BY created_at ASC",
         )
-        .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        .map_err(|source| XzatomaError::StorageQuery {
+            operation: "prepare ACP run listing".to_string(),
+            source: source.into(),
+        })?;
 
     let rows = statement
         .query_map([], |row| {
@@ -405,11 +412,17 @@ pub fn load_all_runs(storage: &SqliteStorage) -> Result<Vec<crate::storage::Publ
                 metadata: std::collections::BTreeMap::new(),
             })
         })
-        .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        .map_err(|source| XzatomaError::StorageQuery {
+            operation: "query ACP run listing".to_string(),
+            source: source.into(),
+        })?;
 
     let mut runs = Vec::new();
     for row in rows {
-        runs.push(row.map_err(|error| XzatomaError::Storage(error.to_string()))?);
+        runs.push(row.map_err(|source| XzatomaError::StorageRowDecode {
+            operation: "decode ACP run listing row".to_string(),
+            source: source.into(),
+        })?);
     }
 
     Ok(runs)

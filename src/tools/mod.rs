@@ -106,8 +106,15 @@ impl Tool {
 
 /// Tool result structure
 ///
-/// Represents the result of a tool execution with metadata
-/// and truncation support.
+/// Represents the result of a tool execution with metadata and truncation
+/// support.
+///
+/// Error policy: `Ok(ToolResult::error(...))` means the tool infrastructure ran
+/// successfully but the requested operation failed in a way the model can see
+/// and potentially correct, such as a missing file or rejected approval.
+/// `Err(XzatomaError)` is reserved for infrastructure failures outside the
+/// model-visible operation, such as invalid tool arguments, protocol manager
+/// failures, serialization failures, or transport failures.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     /// Whether the tool execution succeeded
@@ -118,7 +125,7 @@ pub struct ToolResult {
     pub error: Option<String>,
     /// Whether the output was truncated
     pub truncated: bool,
-    /// Additional metadata about the execution
+    /// Additional metadata about the execution.
     pub metadata: HashMap<String, String>,
 }
 
@@ -142,7 +149,11 @@ impl ToolResult {
         }
     }
 
-    /// Create a failed tool result
+    /// Create a failed, model-visible tool result.
+    ///
+    /// Use this when the tool ran but the requested operation failed in a way
+    /// the model can see and potentially correct. Use `Err(XzatomaError)` from
+    /// [`ToolExecutor::execute`] for infrastructure failures.
     ///
     /// # Arguments
     ///
@@ -174,6 +185,51 @@ impl ToolResult {
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
         self
+    }
+
+    /// Mark a failed tool result as retryable or not retryable.
+    ///
+    /// # Arguments
+    ///
+    /// * `retryable` - Whether retrying may succeed without changing inputs.
+    ///
+    /// # Returns
+    ///
+    /// Returns self with retry metadata attached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::ToolResult;
+    ///
+    /// let result = ToolResult::error("temporary failure").with_retryable(true);
+    /// assert_eq!(result.metadata.get("retryable").map(String::as_str), Some("true"));
+    /// ```
+    pub fn with_retryable(self, retryable: bool) -> Self {
+        self.with_metadata("retryable".to_string(), retryable.to_string())
+    }
+
+    /// Mark whether a failed tool result is recoverable by changing inputs.
+    ///
+    /// # Arguments
+    ///
+    /// * `recoverable` - Whether the model can likely recover by changing the
+    ///   next request.
+    ///
+    /// # Returns
+    ///
+    /// Returns self with recoverability metadata attached.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::ToolResult;
+    ///
+    /// let result = ToolResult::error("file not found").with_recoverable(true);
+    /// assert_eq!(result.metadata.get("recoverable").map(String::as_str), Some("true"));
+    /// ```
+    pub fn with_recoverable(self, recoverable: bool) -> Self {
+        self.with_metadata("recoverable".to_string(), recoverable.to_string())
     }
 
     /// Truncate output if it exceeds the maximum size
@@ -260,8 +316,15 @@ pub use crate::error::parse_tool_args;
 
 /// Tool executor trait for implementing tool execution logic
 ///
-/// Each tool must implement this trait to provide execution logic
-/// that can be called by the agent.
+/// Each tool must implement this trait to provide execution logic that can be
+/// called by the agent.
+///
+/// Error policy: return `Err(XzatomaError)` only when tool infrastructure fails
+/// before or around the operation, such as argument deserialization, bridge
+/// transport/protocol failures, or serialization of tool output metadata.
+/// Return `Ok(ToolResult::error(...))` when the tool operation ran and produced
+/// a model-visible operational failure, such as a missing path, rejected
+/// approval, non-zero command exit, or validation failure the model can correct.
 ///
 /// # Examples
 ///
@@ -319,11 +382,12 @@ pub trait ToolExecutor: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Returns a ToolResult with the execution outcome
+    /// Returns a ToolResult with the execution outcome.
     ///
     /// # Errors
     ///
-    /// Returns error if execution fails
+    /// Returns [`crate::error::XzatomaError`] for infrastructure failures. Use
+    /// [`ToolResult::error`] inside `Ok` for model-visible operational failures.
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult>;
 }
 
@@ -544,6 +608,19 @@ mod tests {
         let result = ToolResult::success("output".to_string())
             .with_metadata("key".to_string(), "value".to_string());
         assert_eq!(result.metadata.get("key"), Some(&"value".to_string()));
+    }
+
+    #[test]
+    fn test_tool_result_error_metadata_helpers() {
+        let result = ToolResult::error("temporary")
+            .with_retryable(true)
+            .with_recoverable(false);
+
+        assert_eq!(result.metadata.get("retryable"), Some(&"true".to_string()));
+        assert_eq!(
+            result.metadata.get("recoverable"),
+            Some(&"false".to_string())
+        );
     }
 
     #[test]

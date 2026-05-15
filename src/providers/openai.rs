@@ -892,17 +892,27 @@ impl OpenAIProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("OpenAI request failed: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "chat/completions".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("chat/completions", status, body));
         }
 
-        let openai_response: OpenAIResponse = response.json().await.map_err(|e| {
-            XzatomaError::Provider(format!("Failed to parse OpenAI response: {}", e))
-        })?;
+        let openai_response: OpenAIResponse =
+            response
+                .json()
+                .await
+                .map_err(|source| XzatomaError::ProviderResponseParse {
+                    provider: "openai".to_string(),
+                    endpoint: "chat/completions".to_string(),
+                    source: source.into(),
+                })?;
 
         let choice = openai_response
             .choices
@@ -976,14 +986,16 @@ impl OpenAIProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| {
-                XzatomaError::Provider(format!("OpenAI streaming request failed: {}", e))
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "chat/completions:stream".to_string(),
+                source: source.into(),
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("chat/completions:stream", status, body));
         }
 
         let mut stream = response.bytes_stream();
@@ -1074,8 +1086,13 @@ impl OpenAIProvider {
     /// # Returns
     ///
     /// An `XzatomaError::Provider` with a contextual error message.
-    fn http_error(&self, status: reqwest::StatusCode, body: String) -> XzatomaError {
-        let body = crate::security::redact_sensitive_text(&body);
+    fn http_error(
+        &self,
+        endpoint: &str,
+        status: reqwest::StatusCode,
+        body: String,
+    ) -> XzatomaError {
+        let mut response = crate::security::redact_sensitive_text(&body);
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let api_key_empty = self
                 .config
@@ -1083,15 +1100,17 @@ impl OpenAIProvider {
                 .map(|c| c.api_key.is_empty())
                 .unwrap_or(true);
             if api_key_empty {
-                return XzatomaError::Provider(format!(
-                    "HTTP {}: {} -- server requires authentication; \
-                     set api_key in the OpenAI provider configuration \
-                     or start the server without requiring authentication",
-                    status, body
-                ));
+                response.push_str(
+                    " -- server requires authentication; set api_key in the OpenAI provider configuration or start the server without requiring authentication",
+                );
             }
         }
-        XzatomaError::Provider(format!("HTTP {}: {}", status, body))
+        XzatomaError::ProviderHttpStatus {
+            provider: "openai".to_string(),
+            endpoint: endpoint.to_string(),
+            status,
+            response,
+        }
     }
 }
 
@@ -1236,7 +1255,11 @@ impl Provider for OpenAIProvider {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Failed to fetch models: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "models".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -1265,12 +1288,18 @@ impl Provider for OpenAIProvider {
                     return Ok(vec![info]);
                 }
             }
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("models", status, body));
         }
 
-        let models_response: OpenAIModelsResponse = response.json().await.map_err(|e| {
-            XzatomaError::Provider(format!("Failed to parse models response: {}", e))
-        })?;
+        let models_response: OpenAIModelsResponse =
+            response
+                .json()
+                .await
+                .map_err(|source| XzatomaError::ProviderResponseParse {
+                    provider: "openai".to_string(),
+                    endpoint: "models".to_string(),
+                    source: source.into(),
+                })?;
 
         let mut models: Vec<ModelInfo> = models_response
             .data
@@ -1319,7 +1348,11 @@ impl Provider for OpenAIProvider {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Failed to fetch model info: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "models/{id}".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
 
@@ -1333,7 +1366,7 @@ impl Provider for OpenAIProvider {
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("models/{id}", status, body));
         }
 
         match response.json::<OpenAIModelEntry>().await {

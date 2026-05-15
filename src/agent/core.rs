@@ -480,7 +480,7 @@ impl Agent {
     /// # Errors
     ///
     /// - `XzatomaError::MaxIterationsExceeded` if iteration limit is reached
-    /// - `XzatomaError::Config` if timeout is exceeded
+    /// - `XzatomaError::RuntimeTimeout` if timeout is exceeded
     /// - `XzatomaError::Provider` if provider calls fail
     /// - `XzatomaError::Tool` if tool execution fails
     ///
@@ -597,11 +597,13 @@ impl Agent {
             }
 
             if start_time.elapsed() > timeout {
-                warn!("Agent execution timeout after {:?}", start_time.elapsed());
-                let error = XzatomaError::Config(format!(
-                    "Agent execution timeout after {} seconds",
-                    self.config.timeout_seconds
-                ));
+                let elapsed = start_time.elapsed();
+                warn!("Agent execution timeout after {:?}", elapsed);
+                let error = XzatomaError::RuntimeTimeout {
+                    operation: "agent execution".to_string(),
+                    timeout_seconds: self.config.timeout_seconds,
+                    elapsed_seconds: elapsed.as_secs(),
+                };
                 observer.on_event(AgentExecutionEvent::ExecutionFailed {
                     error: error.to_string(),
                 });
@@ -954,11 +956,13 @@ impl Agent {
             }
 
             if start_time.elapsed() > timeout {
-                warn!("Agent execution timeout after {:?}", start_time.elapsed());
-                let error = XzatomaError::Config(format!(
-                    "Agent execution timeout after {} seconds",
-                    self.config.timeout_seconds
-                ));
+                let elapsed = start_time.elapsed();
+                warn!("Agent execution timeout after {:?}", elapsed);
+                let error = XzatomaError::RuntimeTimeout {
+                    operation: "agent provider-message execution".to_string(),
+                    timeout_seconds: self.config.timeout_seconds,
+                    elapsed_seconds: elapsed.as_secs(),
+                };
                 observer.on_event(AgentExecutionEvent::ExecutionFailed {
                     error: error.to_string(),
                 });
@@ -1675,8 +1679,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_timeout_enforcement() {
-        // For timeout to trigger, we need multiple iterations
-        // Use tool calls to force iterations
+        let responses: Vec<Message> = Vec::new();
+        let provider = MockProvider::new(responses);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig {
+            timeout_seconds: 0,
+            max_turns: 10000,
+            ..Default::default()
+        };
+
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+        let result = agent.execute("Timeout test").await;
+
+        assert!(matches!(result, Err(XzatomaError::RuntimeTimeout { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_agent_tool_error_still_precedes_nonzero_timeout() {
         let mut responses: Vec<Message> = Vec::new();
         for i in 0..1000 {
             responses.push(Message {
@@ -1697,15 +1716,14 @@ mod tests {
         let provider = MockProvider::new(responses);
         let tools = ToolRegistry::new();
         let config = AgentConfig {
-            timeout_seconds: 1, // 1 second timeout
-            max_turns: 10000,   // High limit so timeout triggers first
+            timeout_seconds: 1,
+            max_turns: 10000,
             ..Default::default()
         };
 
         let mut agent = Agent::new(provider, tools, config).unwrap();
-        let result = agent.execute("Timeout test").await;
+        let result = agent.execute("Tool error test").await;
 
-        // Should fail (either timeout or tool not found)
         assert!(result.is_err());
     }
 

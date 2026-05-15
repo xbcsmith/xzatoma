@@ -552,7 +552,13 @@ impl AcpRuntime {
     /// let _ = runtime.run_count();
     /// ```
     pub fn new(config: Config) -> Self {
-        let storage = SqliteStorage::new().ok();
+        let storage = match SqliteStorage::new() {
+            Ok(storage) => Some(storage),
+            Err(error) => {
+                tracing::warn!(error = %error, "ACP runtime storage initialization failed");
+                None
+            }
+        };
         let runtime = Self {
             config,
             state: Arc::new(Mutex::new(AcpRuntimeState::default())),
@@ -623,7 +629,17 @@ impl AcpRuntime {
     /// assert_eq!(runtime.run_count(), 0);
     /// ```
     pub fn new_with_storage_path<P: AsRef<std::path::Path>>(config: Config, db_path: P) -> Self {
-        let storage = SqliteStorage::new_with_path(db_path.as_ref()).ok();
+        let storage = match SqliteStorage::new_with_path(db_path.as_ref()) {
+            Ok(storage) => Some(storage),
+            Err(error) => {
+                tracing::warn!(
+                    path = %db_path.as_ref().display(),
+                    error = %error,
+                    "ACP runtime explicit storage initialization failed"
+                );
+                None
+            }
+        };
         let runtime = Self {
             config,
             state: Arc::new(Mutex::new(AcpRuntimeState::default())),
@@ -1538,13 +1554,12 @@ impl AcpRuntime {
 
         if let Some(await_state) = storage.load_acp_await_state(run_id)? {
             if let Some(resume_payload_json) = await_state.resume_payload_json {
-                record.resume_payload =
-                    Some(serde_json::from_str(&resume_payload_json).map_err(|error| {
-                        XzatomaError::Storage(format!(
-                            "Failed to deserialize stored ACP resume payload: {}",
-                            error
-                        ))
-                    })?);
+                record.resume_payload = Some(serde_json::from_str(&resume_payload_json).map_err(
+                    |source| XzatomaError::StorageSerialization {
+                        operation: "deserialize stored ACP resume payload".to_string(),
+                        source: source.into(),
+                    },
+                )?);
             }
         }
 
@@ -1604,12 +1619,12 @@ impl AcpRuntime {
                     sequence: event.sequence,
                     kind: event.event.kind.to_string(),
                     created_at: parse_runtime_timestamp(&event.event.created_at)?,
-                    payload_json: serde_json::to_string(&event.event.payload).map_err(|error| {
-                        XzatomaError::Storage(format!(
-                            "Failed to serialize ACP event payload: {}",
-                            error
-                        ))
-                    })?,
+                    payload_json: serde_json::to_string(&event.event.payload).map_err(
+                        |source| XzatomaError::StorageSerialization {
+                            operation: "serialize ACP event payload".to_string(),
+                            source: source.into(),
+                        },
+                    )?,
                     terminal: event.terminal,
                 })
             })
@@ -1669,18 +1684,31 @@ impl AcpRuntime {
             return Ok(());
         };
 
-        let conn = rusqlite::Connection::open(storage.database_path())
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        let conn = rusqlite::Connection::open(storage.database_path()).map_err(|source| {
+            XzatomaError::StorageDatabaseOpen {
+                path: storage.database_path().display().to_string(),
+                source: source.into(),
+            }
+        })?;
         let mut stmt = conn
             .prepare("SELECT run_id FROM acp_runs ORDER BY created_at ASC")
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "prepare ACP runtime restore query".to_string(),
+                source: source.into(),
+            })?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "query ACP runtime restore run IDs".to_string(),
+                source: source.into(),
+            })?;
 
         let mut run_ids = Vec::new();
         for run_id in rows {
-            run_ids.push(run_id.map_err(|error| XzatomaError::Storage(error.to_string()))?);
+            run_ids.push(run_id.map_err(|source| XzatomaError::StorageRowDecode {
+                operation: "decode ACP runtime restore run ID".to_string(),
+                source: source.into(),
+            })?);
         }
 
         for run_id in run_ids {
@@ -1694,11 +1722,9 @@ impl AcpRuntime {
 fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&chrono::Utc))
-        .map_err(|error| {
-            XzatomaError::Storage(format!(
-                "Failed to parse persisted ACP runtime timestamp '{}': {}",
-                value, error
-            ))
+        .map_err(|source| XzatomaError::StorageRowDecode {
+            operation: format!("parse persisted ACP runtime timestamp '{value}'"),
+            source: source.into(),
         })
 }
 

@@ -334,7 +334,13 @@ impl ToolExecutor for IdeOpenTerminalTool {
         let exit_code = match self.bridge.wait_for_terminal_exit(&terminal_id).await {
             Ok(code) => code,
             Err(error) => {
-                let _ = self.bridge.release_terminal(&terminal_id).await;
+                if let Err(cleanup_error) = self.bridge.release_terminal(&terminal_id).await {
+                    tracing::warn!(
+                        terminal_id = %terminal_id.0.as_ref(),
+                        error = %cleanup_error,
+                        "Failed to release IDE terminal after wait failure"
+                    );
+                }
                 return Ok(ToolResult::error(format!(
                     "IDE wait_for_terminal_exit failed: {}",
                     error
@@ -345,7 +351,13 @@ impl ToolExecutor for IdeOpenTerminalTool {
         let output = match self.bridge.terminal_output(&terminal_id).await {
             Ok(out) => out,
             Err(error) => {
-                let _ = self.bridge.release_terminal(&terminal_id).await;
+                if let Err(cleanup_error) = self.bridge.release_terminal(&terminal_id).await {
+                    tracing::warn!(
+                        terminal_id = %terminal_id.0.as_ref(),
+                        error = %cleanup_error,
+                        "Failed to release IDE terminal after output failure"
+                    );
+                }
                 return Ok(ToolResult::error(format!(
                     "IDE terminal_output failed: {}",
                     error
@@ -353,7 +365,13 @@ impl ToolExecutor for IdeOpenTerminalTool {
             }
         };
 
-        let _ = self.bridge.release_terminal(&terminal_id).await;
+        if let Err(error) = self.bridge.release_terminal(&terminal_id).await {
+            tracing::warn!(
+                terminal_id = %terminal_id.0.as_ref(),
+                error = %error,
+                "Failed to release IDE terminal after command completion"
+            );
+        }
 
         let exit_summary = match exit_code {
             Some(code) => format!("Exit code: {}", code),

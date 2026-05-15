@@ -9,13 +9,13 @@ use crate::storage::types::{
     StoredAcpAwaitState, StoredAcpCancellation, StoredAcpRun, StoredAcpRunEvent, StoredAcpSession,
     StoredAcpStdioSession, StoredSession,
 };
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub mod types;
 pub use types::{
@@ -27,6 +27,63 @@ pub use types::{
 
 /// Alias for a deserialized conversation record: (title, model, messages).
 type LoadedConversation = (String, Option<String>, Vec<Message>);
+
+fn storage_database_open_error(path: &Path, source: impl Into<anyhow::Error>) -> XzatomaError {
+    XzatomaError::StorageDatabaseOpen {
+        path: path.display().to_string(),
+        source: source.into(),
+    }
+}
+
+fn storage_migration_error(
+    operation: impl Into<String>,
+    source: impl Into<anyhow::Error>,
+) -> XzatomaError {
+    XzatomaError::StorageMigration {
+        operation: operation.into(),
+        source: source.into(),
+    }
+}
+
+fn storage_query_error(
+    operation: impl Into<String>,
+    source: impl Into<anyhow::Error>,
+) -> XzatomaError {
+    XzatomaError::StorageQuery {
+        operation: operation.into(),
+        source: source.into(),
+    }
+}
+
+fn storage_row_decode_error(
+    operation: impl Into<String>,
+    source: impl Into<anyhow::Error>,
+) -> XzatomaError {
+    XzatomaError::StorageRowDecode {
+        operation: operation.into(),
+        source: source.into(),
+    }
+}
+
+fn storage_serialization_error(
+    operation: impl Into<String>,
+    source: impl Into<anyhow::Error>,
+) -> XzatomaError {
+    XzatomaError::StorageSerialization {
+        operation: operation.into(),
+        source: source.into(),
+    }
+}
+
+fn storage_persistence_path_error(
+    path: impl Into<String>,
+    source: impl Into<anyhow::Error>,
+) -> XzatomaError {
+    XzatomaError::StoragePersistencePath {
+        path: path.into(),
+        source: source.into(),
+    }
+}
 
 /// Storage backend for conversation history and ACP persistence.
 ///
@@ -72,13 +129,17 @@ impl SqliteStorage {
             return Self::new_with_path(override_path);
         }
 
-        let proj_dirs = ProjectDirs::from("com", "xbcsmith", "xzatoma")
-            .ok_or_else(|| XzatomaError::Storage("Could not determine data directory".into()))?;
+        let proj_dirs = ProjectDirs::from("com", "xbcsmith", "xzatoma").ok_or_else(|| {
+            storage_persistence_path_error(
+                "application data directory",
+                anyhow!("could not determine project data directory"),
+            )
+        })?;
 
         let data_dir = proj_dirs.data_dir();
-        std::fs::create_dir_all(data_dir)
-            .context("Failed to create data directory")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        std::fs::create_dir_all(data_dir).map_err(|source| {
+            storage_persistence_path_error(data_dir.display().to_string(), source)
+        })?;
 
         let db_path = data_dir.join("history.db");
         let storage = Self { db_path };
@@ -113,9 +174,9 @@ impl SqliteStorage {
         let db_path = db_path.into();
 
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("Failed to create parent directory for database")
-                .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|source| {
+                storage_persistence_path_error(parent.display().to_string(), source)
+            })?;
         }
 
         let storage = Self { db_path };
@@ -149,8 +210,7 @@ impl SqliteStorage {
     /// Returns an error if any table or index creation fails.
     fn init(&self) -> Result<()> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         conn.execute_batch(
             "
@@ -265,8 +325,7 @@ impl SqliteStorage {
                 ON acp_stdio_sessions(updated_at DESC);
             ",
         )
-        .context("Failed to create tables")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_migration_error("create storage schema", source))?;
 
         Ok(())
     }
@@ -290,20 +349,17 @@ impl SqliteStorage {
         model: Option<&str>,
         messages: &[Message],
     ) -> Result<()> {
-        let mut conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        let mut conn = self.open_connection()?;
 
-        let messages_json = serde_json::to_string(messages)
-            .context("Failed to serialize messages")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        let messages_json = serde_json::to_string(messages).map_err(|source| {
+            storage_serialization_error("serialize conversation messages", source)
+        })?;
 
         let now = Utc::now().to_rfc3339();
 
         let tx = conn
             .transaction()
-            .context("Failed to start transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("start conversation transaction", source))?;
 
         let exists: bool = tx
             .query_row(
@@ -312,7 +368,7 @@ impl SqliteStorage {
                 |_| Ok(true),
             )
             .optional()
-            .unwrap_or(Some(false))
+            .map_err(|source| storage_query_error("check conversation existence", source))?
             .unwrap_or(false);
 
         if exists {
@@ -325,21 +381,18 @@ impl SqliteStorage {
                  WHERE id = ?",
                 params![title, now, model, messages_json, id],
             )
-            .context("Failed to update conversation")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("update conversation", source))?;
         } else {
             tx.execute(
                 "INSERT INTO conversations (id, title, created_at, updated_at, model, messages)
                  VALUES (?, ?, ?, ?, ?, ?)",
                 params![id, title, now, now, model, messages_json],
             )
-            .context("Failed to insert conversation")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("insert conversation", source))?;
         }
 
         tx.commit()
-            .context("Failed to commit transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("commit conversation transaction", source))?;
 
         Ok(())
     }
@@ -360,9 +413,7 @@ impl SqliteStorage {
     ///
     /// Returns an error if the conversation lookup or deserialization fails.
     pub fn load_conversation(&self, id: &str) -> Result<Option<LoadedConversation>> {
-        let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        let conn = self.open_connection()?;
 
         let query = if id.len() == 36 {
             "SELECT title, model, messages FROM conversations WHERE id = ?"
@@ -384,14 +435,14 @@ impl SqliteStorage {
                 Ok((title, model, messages_json))
             })
             .optional()
-            .context("Failed to query conversation")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("query conversation", source))?;
 
         match result {
             Some((title, model, messages_json)) => {
-                let messages: Vec<Message> = serde_json::from_str(&messages_json)
-                    .context("Failed to deserialize messages")
-                    .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+                let messages: Vec<Message> =
+                    serde_json::from_str(&messages_json).map_err(|source| {
+                        storage_serialization_error("deserialize conversation messages", source)
+                    })?;
                 Ok(Some((title, model, messages)))
             }
             None => Ok(None),
@@ -1703,28 +1754,26 @@ impl SqliteStorage {
 
     fn open_connection(&self) -> Result<Connection> {
         Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))
+            .map_err(|source| storage_database_open_error(&self.db_path, source))
     }
 }
 
 fn serialize_metadata(metadata: &BTreeMap<String, String>) -> Result<String> {
     serde_json::to_string(metadata)
-        .context("Failed to serialize metadata")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))
+        .map_err(|source| storage_serialization_error("serialize metadata", source))
 }
 
 fn deserialize_metadata(json_str: &str) -> Result<BTreeMap<String, String>> {
     serde_json::from_str(json_str)
-        .context("Failed to deserialize metadata")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))
+        .map_err(|source| storage_serialization_error("deserialize metadata", source))
 }
 
 fn parse_rfc3339_to_utc(value: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&Utc))
-        .context("Failed to parse RFC 3339 timestamp")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))
+        .map_err(|source| {
+            storage_row_decode_error(format!("parse RFC 3339 timestamp '{value}'"), source)
+        })
 }
 
 fn bool_to_sqlite(value: bool) -> i64 {

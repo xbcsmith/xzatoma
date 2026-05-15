@@ -7,6 +7,68 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use thiserror::Error;
+
+/// Error returned when multimodal prompt input is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{MultimodalPromptInput, PromptInputError};
+///
+/// let error = MultimodalPromptInput::new(vec![]).validate().unwrap_err();
+/// assert!(matches!(error, PromptInputError::Empty));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum PromptInputError {
+    /// The prompt contained no content parts.
+    #[error("prompt input must contain at least one content part")]
+    Empty,
+    /// The prompt contained only empty text parts.
+    #[error("prompt input must contain non-empty text or image content")]
+    NoUsableContent,
+    /// An image content part was malformed.
+    #[error("invalid image prompt input: {0}")]
+    Image(#[from] ImagePromptError),
+    /// A caller attempted to convert image input through a text-only path.
+    #[error("multimodal input contains images and cannot be converted to a text-only message")]
+    ImageInputInTextOnlyMessage,
+}
+
+/// Error returned when an image prompt part is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{ImagePromptError, ImagePromptPart};
+///
+/// let error = ImagePromptPart::inline_base64("", "AAAA").validate().unwrap_err();
+/// assert!(matches!(error, ImagePromptError::MissingMimeType));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ImagePromptError {
+    /// The image part did not include a MIME type.
+    #[error("image content is missing a MIME type")]
+    MissingMimeType,
+    /// The MIME type was not an image MIME type.
+    #[error("image MIME type '{mime_type}' must start with 'image/'")]
+    NonImageMimeType {
+        /// Invalid MIME type.
+        mime_type: String,
+    },
+    /// The inline base64 source was empty.
+    #[error("image content is missing inline base64 data")]
+    MissingInlineBase64,
+    /// The inline bytes source was empty.
+    #[error("image content is missing inline bytes")]
+    MissingInlineBytes,
+    /// The file reference source was empty.
+    #[error("image file reference is empty")]
+    EmptyFileReference,
+    /// The remote URL source was empty.
+    #[error("image remote URL is empty")]
+    EmptyRemoteUrl,
+}
 
 /// Ordered multimodal prompt input for providers that support text and vision.
 ///
@@ -150,9 +212,9 @@ impl MultimodalPromptInput {
     /// assert!(MultimodalPromptInput::text("hello").validate().is_ok());
     /// assert!(MultimodalPromptInput::new(vec![]).validate().is_err());
     /// ```
-    pub fn validate(&self) -> std::result::Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), PromptInputError> {
         if self.parts.is_empty() {
-            return Err("prompt input must contain at least one content part".to_string());
+            return Err(PromptInputError::Empty);
         }
 
         let mut has_usable_content = false;
@@ -173,7 +235,7 @@ impl MultimodalPromptInput {
         if has_usable_content {
             Ok(())
         } else {
-            Err("prompt input must contain non-empty text or image content".to_string())
+            Err(PromptInputError::NoUsableContent)
         }
     }
 }
@@ -416,43 +478,42 @@ impl ImagePromptPart {
     /// assert!(ImagePromptPart::inline_base64("image/png", "AAAA").validate().is_ok());
     /// assert!(ImagePromptPart::inline_base64("", "AAAA").validate().is_err());
     /// ```
-    pub fn validate(&self) -> std::result::Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), ImagePromptError> {
         if self.mime_type.trim().is_empty() {
-            return Err("image content is missing a MIME type".to_string());
+            return Err(ImagePromptError::MissingMimeType);
         }
 
         if !self.mime_type.starts_with("image/") {
-            return Err(format!(
-                "image MIME type '{}' must start with 'image/'",
-                self.mime_type
-            ));
+            return Err(ImagePromptError::NonImageMimeType {
+                mime_type: self.mime_type.clone(),
+            });
         }
 
         match &self.source {
             ImagePromptSource::InlineBase64(data) => {
                 if data.trim().is_empty() {
-                    Err("image content is missing inline base64 data".to_string())
+                    Err(ImagePromptError::MissingInlineBase64)
                 } else {
                     Ok(())
                 }
             }
             ImagePromptSource::InlineBytes(bytes) => {
                 if bytes.is_empty() {
-                    Err("image content is missing inline bytes".to_string())
+                    Err(ImagePromptError::MissingInlineBytes)
                 } else {
                     Ok(())
                 }
             }
             ImagePromptSource::FilePath(path) => {
                 if path.as_os_str().is_empty() {
-                    Err("image file reference is empty".to_string())
+                    Err(ImagePromptError::EmptyFileReference)
                 } else {
                     Ok(())
                 }
             }
             ImagePromptSource::RemoteUrl(url) => {
                 if url.trim().is_empty() {
-                    Err("image remote URL is empty".to_string())
+                    Err(ImagePromptError::EmptyRemoteUrl)
                 } else {
                     Ok(())
                 }
@@ -842,7 +903,7 @@ impl Message {
     /// ```
     pub fn try_user_from_multimodal_input(
         input: MultimodalPromptInput,
-    ) -> std::result::Result<Self, String> {
+    ) -> std::result::Result<Self, PromptInputError> {
         input.validate()?;
         let content = input.as_legacy_text();
         let content_parts = input
@@ -1046,14 +1107,11 @@ impl Message {
     /// ```
     pub fn try_user_from_text_input(
         input: MultimodalPromptInput,
-    ) -> std::result::Result<Self, String> {
+    ) -> std::result::Result<Self, PromptInputError> {
         input.validate()?;
 
         if input.has_images() {
-            return Err(
-                "multimodal input contains images and cannot be converted to a text-only message"
-                    .to_string(),
-            );
+            return Err(PromptInputError::ImageInputInTextOnlyMessage);
         }
 
         Ok(Self::user(input.as_legacy_text()))
@@ -2176,6 +2234,39 @@ pub fn validate_message_sequence(messages: &[Message]) -> Vec<Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_multimodal_prompt_input_validate_empty_returns_typed_error() {
+        let error = MultimodalPromptInput::new(vec![]).validate().unwrap_err();
+        assert!(matches!(error, PromptInputError::Empty));
+        assert_eq!(
+            error.to_string(),
+            "prompt input must contain at least one content part"
+        );
+    }
+
+    #[test]
+    fn test_image_prompt_part_validate_missing_mime_returns_typed_error() {
+        let error = ImagePromptPart::inline_base64("", "AAAA")
+            .validate()
+            .unwrap_err();
+        assert!(matches!(error, ImagePromptError::MissingMimeType));
+        assert_eq!(error.to_string(), "image content is missing a MIME type");
+    }
+
+    #[test]
+    fn test_try_user_from_text_input_with_image_returns_typed_error() {
+        let input = MultimodalPromptInput::new(vec![PromptInputPart::image(
+            ImagePromptPart::inline_base64("image/png", "AAAA"),
+        )]);
+
+        let error = Message::try_user_from_text_input(input).unwrap_err();
+
+        assert!(matches!(
+            error,
+            PromptInputError::ImageInputInTextOnlyMessage
+        ));
+    }
 
     #[test]
     fn test_message_user() {

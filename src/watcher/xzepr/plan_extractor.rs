@@ -7,8 +7,55 @@
 //! `src/watcher/xzepr/` as part of the generic watcher architecture (Phase 1).
 
 use crate::watcher::xzepr::consumer::CloudEventMessage;
-use anyhow::{anyhow, Result};
 use serde_json::Value as JsonValue;
+use thiserror::Error;
+
+/// Result type for XZepr plan extraction operations.
+pub type PlanExtractionResult<T> = std::result::Result<T, PlanExtractionError>;
+
+/// Errors that can occur while extracting a plan from an XZepr event.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::watcher::xzepr::plan_extractor::PlanExtractionError;
+///
+/// let error = PlanExtractionError::NoEvents;
+/// assert!(error.to_string().contains("no events"));
+/// ```
+#[derive(Debug, Error)]
+pub enum PlanExtractionError {
+    /// Event data did not contain any events.
+    #[error("no events in data")]
+    NoEvents,
+    /// The selected payload did not contain a plan field.
+    #[error("missing plan field at {location}")]
+    MissingPlanField {
+        /// Location inspected for the plan field.
+        location: &'static str,
+    },
+    /// JSON serialization failed while turning structured data into plan text.
+    #[error("failed to serialize plan value from {location}: {source}")]
+    Serialization {
+        /// Location being serialized.
+        location: &'static str,
+        /// Underlying JSON serialization error.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A candidate value had an unsupported JSON type.
+    #[error("plan value at {location} is not a string, object, or array")]
+    UnsupportedValueType {
+        /// Location that contained the unsupported value.
+        location: &'static str,
+    },
+    /// No extraction strategy produced a plan.
+    #[error("failed to extract plan from event {event_id} using any strategy")]
+    NoStrategyMatched {
+        /// Event identifier.
+        event_id: String,
+    },
+}
 
 /// Strategies for extracting plans from event data.
 ///
@@ -126,7 +173,7 @@ impl PlanExtractor {
     /// let plan = extractor.extract(&event).unwrap();
     /// assert!(plan.contains("setup"));
     /// ```
-    pub fn extract(&self, event: &CloudEventMessage) -> Result<String> {
+    pub fn extract(&self, event: &CloudEventMessage) -> PlanExtractionResult<String> {
         for strategy in &self.strategies {
             if let Ok(plan) = self.try_extract(event, strategy) {
                 tracing::debug!(
@@ -138,23 +185,22 @@ impl PlanExtractor {
             }
         }
 
-        Err(anyhow!(
-            "Failed to extract plan from event {} using any strategy",
-            event.id
-        ))
+        Err(PlanExtractionError::NoStrategyMatched {
+            event_id: event.id.clone(),
+        })
     }
 
     fn try_extract(
         &self,
         event: &CloudEventMessage,
         strategy: &PlanExtractionStrategy,
-    ) -> Result<String> {
+    ) -> PlanExtractionResult<String> {
         let json_value = match strategy {
             PlanExtractionStrategy::EventPayload => event
                 .data
                 .events
                 .first()
-                .ok_or_else(|| anyhow!("No events in data"))?
+                .ok_or(PlanExtractionError::NoEvents)?
                 .payload
                 .clone(),
             PlanExtractionStrategy::EventPayloadPlan => {
@@ -162,29 +208,58 @@ impl PlanExtractor {
                     .data
                     .events
                     .first()
-                    .ok_or_else(|| anyhow!("No events in data"))?;
+                    .ok_or(PlanExtractionError::NoEvents)?;
 
                 event_entity
                     .payload
                     .get("plan")
-                    .ok_or_else(|| anyhow!("No plan field in event payload"))?
+                    .ok_or(PlanExtractionError::MissingPlanField {
+                        location: "data.events[0].payload",
+                    })?
                     .clone()
             }
-            PlanExtractionStrategy::DataRoot => serde_json::to_value(&event.data)?,
-            PlanExtractionStrategy::DataPlan => serde_json::to_value(&event.data)?
+            PlanExtractionStrategy::DataRoot => {
+                serde_json::to_value(&event.data).map_err(|source| {
+                    PlanExtractionError::Serialization {
+                        location: "data",
+                        source,
+                    }
+                })?
+            }
+            PlanExtractionStrategy::DataPlan => serde_json::to_value(&event.data)
+                .map_err(|source| PlanExtractionError::Serialization {
+                    location: "data",
+                    source,
+                })?
                 .get("plan")
-                .ok_or_else(|| anyhow!("No plan field in data"))?
+                .ok_or(PlanExtractionError::MissingPlanField { location: "data" })?
                 .clone(),
         };
 
-        self.parse_plan_from_json(&json_value)
+        self.parse_plan_from_json(&json_value, strategy.location())
     }
 
-    fn parse_plan_from_json(&self, value: &JsonValue) -> Result<String> {
+    fn parse_plan_from_json(
+        &self,
+        value: &JsonValue,
+        location: &'static str,
+    ) -> PlanExtractionResult<String> {
         match value {
             JsonValue::String(s) => Ok(s.clone()),
-            JsonValue::Object(_) | JsonValue::Array(_) => Ok(serde_json::to_string(value)?),
-            _ => Err(anyhow!("Plan value is not a string, object, or array")),
+            JsonValue::Object(_) | JsonValue::Array(_) => serde_json::to_string(value)
+                .map_err(|source| PlanExtractionError::Serialization { location, source }),
+            _ => Err(PlanExtractionError::UnsupportedValueType { location }),
+        }
+    }
+}
+
+impl PlanExtractionStrategy {
+    fn location(&self) -> &'static str {
+        match self {
+            Self::EventPayloadPlan => "data.events[0].payload.plan",
+            Self::EventPayload => "data.events[0].payload",
+            Self::DataPlan => "data.plan",
+            Self::DataRoot => "data",
         }
     }
 }
@@ -463,5 +538,40 @@ mod tests {
         // Empty string is a valid plan string
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "");
+    }
+
+    #[test]
+    fn test_try_extract_numeric_payload_reports_unsupported_value_type() {
+        let payload = json!(42);
+        let event = create_test_event_with_payload(payload);
+        let extractor = PlanExtractor::new();
+
+        let error = extractor
+            .try_extract(&event, &PlanExtractionStrategy::EventPayload)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            PlanExtractionError::UnsupportedValueType {
+                location: "data.events[0].payload"
+            }
+        ));
+    }
+
+    #[test]
+    fn test_extract_missing_plan_with_limited_strategy_reports_failure() {
+        let payload = json!({ "not_plan": "missing" });
+        let event = create_test_event_with_payload(payload);
+        let extractor = PlanExtractor {
+            strategies: vec![PlanExtractionStrategy::EventPayloadPlan],
+        };
+
+        let error = extractor.extract(&event).unwrap_err();
+
+        assert!(matches!(
+            error,
+            PlanExtractionError::NoStrategyMatched { event_id }
+                if event_id == "test-id-123"
+        ));
     }
 }

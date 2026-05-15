@@ -49,7 +49,7 @@ pub mod xzepr;
 
 // Re-export commonly used types
 pub use agent::Agent;
-pub use chat_mode::{ChatMode, SafetyMode};
+pub use chat_mode::{ChatMode, ChatModeParseError, SafetyMode, SafetyModeParseError};
 pub use config::Config;
 pub use error::{Result, XzatomaError};
 pub use mention_parser::{

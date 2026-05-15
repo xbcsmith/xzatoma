@@ -399,10 +399,8 @@ impl ToolExecutor for McpResourceToolExecutor {
                 )));
             }
         };
-        match guard.read_resource(&server_id, &uri).await {
-            Ok(content) => Ok(ToolResult::success(content)),
-            Err(e) => Ok(ToolResult::error(e.to_string())),
-        }
+        let content = guard.read_resource(&server_id, &uri).await?;
+        Ok(ToolResult::success(content))
     }
 }
 
@@ -574,13 +572,11 @@ impl ToolExecutor for McpPromptToolExecutor {
                 )));
             }
         };
-        match guard.get_prompt(&server_id, &prompt_name, arguments).await {
-            Ok(response) => {
-                let formatted = format_prompt_messages(&response.messages);
-                Ok(ToolResult::success(formatted))
-            }
-            Err(e) => Ok(ToolResult::error(e.to_string())),
-        }
+        let response = guard
+            .get_prompt(&server_id, &prompt_name, arguments)
+            .await?;
+        let formatted = format_prompt_messages(&response.messages);
+        Ok(ToolResult::success(formatted))
     }
 }
 

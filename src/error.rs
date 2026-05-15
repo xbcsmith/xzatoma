@@ -33,6 +33,43 @@ pub enum XzatomaError {
     #[error("Provider error: {0}")]
     Provider(String),
 
+    /// Provider HTTP request failed before a response was received.
+    #[error("Provider HTTP request failed: provider={provider}, endpoint={endpoint}: {source}")]
+    ProviderHttpRequest {
+        /// Provider name such as `openai`, `ollama`, or `copilot`.
+        provider: String,
+        /// Endpoint category such as `models` or `chat/completions`.
+        endpoint: String,
+        /// Underlying HTTP client error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Provider returned a non-success HTTP status.
+    #[error("Provider HTTP status error: provider={provider}, endpoint={endpoint}, status={status}, response={response}")]
+    ProviderHttpStatus {
+        /// Provider name such as `openai`, `ollama`, or `copilot`.
+        provider: String,
+        /// Endpoint category such as `models` or `chat/completions`.
+        endpoint: String,
+        /// HTTP response status code.
+        status: reqwest::StatusCode,
+        /// Redacted and bounded response body or context.
+        response: String,
+    },
+
+    /// Provider response body could not be decoded.
+    #[error("Provider response parse failed: provider={provider}, endpoint={endpoint}: {source}")]
+    ProviderResponseParse {
+        /// Provider name such as `openai`, `ollama`, or `copilot`.
+        provider: String,
+        /// Endpoint category such as `models` or `chat/completions`.
+        endpoint: String,
+        /// Underlying decode error.
+        #[source]
+        source: anyhow::Error,
+    },
+
     /// Tool execution errors
     #[error("Tool execution error: {0}")]
     Tool(String),
@@ -40,6 +77,16 @@ pub enum XzatomaError {
     /// Watcher-related errors
     #[error("Watcher error: {0}")]
     Watcher(String),
+
+    /// Watcher failure with operation context and source chain.
+    #[error("Watcher error during {operation}: {source}")]
+    WatcherFailure {
+        /// Watcher operation being performed.
+        operation: String,
+        /// Underlying watcher error.
+        #[source]
+        source: anyhow::Error,
+    },
 
     /// Command execution errors
     #[error("Command error: {0}")]
@@ -135,6 +182,66 @@ pub enum XzatomaError {
     #[error("Storage error: {0}")]
     Storage(String),
 
+    /// Storage database open failure.
+    #[error("Storage database open failed at {path}: {source}")]
+    StorageDatabaseOpen {
+        /// Database path that failed to open.
+        path: String,
+        /// Underlying open error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Storage migration or schema initialization failure.
+    #[error("Storage migration failed during {operation}: {source}")]
+    StorageMigration {
+        /// Migration or schema operation being performed.
+        operation: String,
+        /// Underlying migration error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Storage query or statement execution failure.
+    #[error("Storage query failed during {operation}: {source}")]
+    StorageQuery {
+        /// Query operation being performed.
+        operation: String,
+        /// Underlying query error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Storage row decoding failure.
+    #[error("Storage row decode failed during {operation}: {source}")]
+    StorageRowDecode {
+        /// Row decoding operation being performed.
+        operation: String,
+        /// Underlying row decoding error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Storage serialization or deserialization failure.
+    #[error("Storage serialization failed during {operation}: {source}")]
+    StorageSerialization {
+        /// Serialization operation being performed.
+        operation: String,
+        /// Underlying serialization error.
+        #[source]
+        source: anyhow::Error,
+    },
+
+    /// Storage persistence path failure.
+    #[error("Storage persistence path failed at {path}: {source}")]
+    StoragePersistencePath {
+        /// Filesystem path or directory purpose that failed.
+        path: String,
+        /// Underlying path error.
+        #[source]
+        source: anyhow::Error,
+    },
+
     /// Resource quota exceeded
     #[error("Resource quota exceeded: {0}")]
     QuotaExceeded(String),
@@ -142,6 +249,17 @@ pub enum XzatomaError {
     /// Internal runtime error
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Runtime operation exceeded its configured timeout.
+    #[error("Runtime timeout during {operation}: elapsed {elapsed_seconds}s exceeded limit {timeout_seconds}s")]
+    RuntimeTimeout {
+        /// Runtime operation that timed out.
+        operation: String,
+        /// Configured timeout in seconds.
+        timeout_seconds: u64,
+        /// Observed elapsed time in seconds.
+        elapsed_seconds: u64,
+    },
 
     /// Model does not support the requested endpoint
     #[error("Model {0} does not support endpoint {1}")]
@@ -302,6 +420,34 @@ where
 
 // From implementations for module-local error types
 
+/// Converts `ChatModeParseError` to `XzatomaError::Config`
+impl From<crate::chat_mode::ChatModeParseError> for XzatomaError {
+    fn from(err: crate::chat_mode::ChatModeParseError) -> Self {
+        XzatomaError::Config(err.to_string())
+    }
+}
+
+/// Converts `SafetyModeParseError` to `XzatomaError::Config`
+impl From<crate::chat_mode::SafetyModeParseError> for XzatomaError {
+    fn from(err: crate::chat_mode::SafetyModeParseError) -> Self {
+        XzatomaError::Config(err.to_string())
+    }
+}
+
+/// Converts `PromptInputError` to `XzatomaError::Provider`
+impl From<crate::providers::PromptInputError> for XzatomaError {
+    fn from(err: crate::providers::PromptInputError) -> Self {
+        XzatomaError::Provider(err.to_string())
+    }
+}
+
+/// Converts `ImagePromptError` to `XzatomaError::Provider`
+impl From<crate::providers::ImagePromptError> for XzatomaError {
+    fn from(err: crate::providers::ImagePromptError) -> Self {
+        XzatomaError::Provider(err.to_string())
+    }
+}
+
 /// Converts `AcpValidationError` to `XzatomaError::Acp`
 impl From<crate::acp::error::AcpValidationError> for XzatomaError {
     fn from(err: crate::acp::error::AcpValidationError) -> Self {
@@ -344,10 +490,23 @@ impl From<crate::watcher::generic::watcher::GenericWatcherError> for XzatomaErro
     }
 }
 
-/// Converts `WatcherError` to `XzatomaError::Watcher`
+/// Converts `WatcherError` to `XzatomaError::WatcherFailure`
 impl From<crate::watcher::xzepr::watcher::WatcherError> for XzatomaError {
     fn from(err: crate::watcher::xzepr::watcher::WatcherError) -> Self {
-        XzatomaError::Watcher(err.to_string())
+        XzatomaError::WatcherFailure {
+            operation: err.operation().to_string(),
+            source: err.into(),
+        }
+    }
+}
+
+/// Converts `PlanExtractionError` to `XzatomaError::WatcherFailure`
+impl From<crate::watcher::xzepr::plan_extractor::PlanExtractionError> for XzatomaError {
+    fn from(err: crate::watcher::xzepr::plan_extractor::PlanExtractionError) -> Self {
+        XzatomaError::WatcherFailure {
+            operation: "plan extraction".to_string(),
+            source: err.into(),
+        }
     }
 }
 
@@ -426,6 +585,46 @@ mod tests {
             error,
             XzatomaError::Acp(crate::acp::error::AcpError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn test_from_chat_mode_parse_error_converts_to_config() {
+        let error =
+            XzatomaError::from(crate::chat_mode::ChatMode::parse_str("review").unwrap_err());
+        assert!(matches!(error, XzatomaError::Config(_)));
+        assert!(error.to_string().contains("unknown chat mode 'review'"));
+    }
+
+    #[test]
+    fn test_from_prompt_input_error_converts_to_provider() {
+        let error = XzatomaError::from(crate::providers::PromptInputError::Empty);
+        assert!(matches!(error, XzatomaError::Provider(_)));
+        assert!(error.to_string().contains("prompt input must contain"));
+    }
+
+    #[test]
+    fn test_runtime_timeout_display() {
+        let error = XzatomaError::RuntimeTimeout {
+            operation: "agent execution".to_string(),
+            timeout_seconds: 1,
+            elapsed_seconds: 2,
+        };
+        assert!(error.to_string().contains("Runtime timeout"));
+        assert!(error.to_string().contains("agent execution"));
+    }
+
+    #[test]
+    fn test_provider_http_status_display_includes_endpoint() {
+        let error = XzatomaError::ProviderHttpStatus {
+            provider: "openai".to_string(),
+            endpoint: "models".to_string(),
+            status: reqwest::StatusCode::BAD_REQUEST,
+            response: "bad request".to_string(),
+        };
+        let message = error.to_string();
+        assert!(message.contains("provider=openai"));
+        assert!(message.contains("endpoint=models"));
+        assert!(message.contains("400 Bad Request"));
     }
 
     #[test]

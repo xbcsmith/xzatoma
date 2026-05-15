@@ -2359,8 +2359,7 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)
-                    .map_err(|error| XzatomaError::Watcher(error.to_string()))?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2384,7 +2383,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
+                        result.map_err(XzatomaError::from)
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");

@@ -119,8 +119,9 @@ impl SamplingHandler for XzatomaSamplingHandler {
                      Max tokens: {}. Allow? [y/N] ",
                     params.system_prompt, params.max_tokens
                 );
-                // Flush stderr so the prompt appears before blocking on stdin.
-                let _ = std::io::stderr().flush();
+                if let Err(error) = std::io::stderr().flush() {
+                    tracing::warn!(%error, "Failed to flush MCP sampling approval prompt");
+                }
 
                 let mut line = String::new();
                 std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).map_err(

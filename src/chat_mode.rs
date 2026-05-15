@@ -8,6 +8,127 @@
 
 use colored::Colorize;
 use std::fmt;
+use thiserror::Error;
+
+/// Error returned when a chat mode string cannot be parsed.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::chat_mode::{ChatMode, ChatModeParseError};
+///
+/// let error = ChatMode::parse_str("review").unwrap_err();
+/// assert_eq!(error.value(), "review");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("unknown chat mode '{value}'; expected 'planning' or 'write'")]
+pub struct ChatModeParseError {
+    value: String,
+}
+
+impl ChatModeParseError {
+    /// Creates a chat mode parse error for an invalid value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Invalid chat mode string.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new parse error retaining the original input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::ChatModeParseError;
+    ///
+    /// let error = ChatModeParseError::new("review");
+    /// assert_eq!(error.value(), "review");
+    /// ```
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
+    /// Returns the invalid input value.
+    ///
+    /// # Returns
+    ///
+    /// Returns the value that failed parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::ChatModeParseError;
+    ///
+    /// let error = ChatModeParseError::new("review");
+    /// assert_eq!(error.value(), "review");
+    /// ```
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+/// Error returned when a safety mode string cannot be parsed.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::chat_mode::{SafetyMode, SafetyModeParseError};
+///
+/// let error = SafetyMode::parse_str("reckless").unwrap_err();
+/// assert_eq!(error.value(), "reckless");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("unknown safety mode '{value}'; expected one of 'confirm', 'always', 'safe', 'on', 'yolo', 'never', or 'off'")]
+pub struct SafetyModeParseError {
+    value: String,
+}
+
+impl SafetyModeParseError {
+    /// Creates a safety mode parse error for an invalid value.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Invalid safety mode string.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new parse error retaining the original input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::SafetyModeParseError;
+    ///
+    /// let error = SafetyModeParseError::new("reckless");
+    /// assert_eq!(error.value(), "reckless");
+    /// ```
+    pub fn new(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+        }
+    }
+
+    /// Returns the invalid input value.
+    ///
+    /// # Returns
+    ///
+    /// Returns the value that failed parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::SafetyModeParseError;
+    ///
+    /// let error = SafetyModeParseError::new("reckless");
+    /// assert_eq!(error.value(), "reckless");
+    /// ```
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
 
 /// Chat mode for interactive sessions
 ///
@@ -55,11 +176,11 @@ impl ChatMode {
     /// let mode = ChatMode::parse_str("planning").unwrap();
     /// assert_eq!(mode, ChatMode::Planning);
     /// ```
-    pub fn parse_str(s: &str) -> Result<Self, String> {
+    pub fn parse_str(s: &str) -> std::result::Result<Self, ChatModeParseError> {
         match s.to_lowercase().as_str() {
             "planning" => Ok(Self::Planning),
             "write" => Ok(Self::Write),
-            other => Err(format!("Unknown chat mode: {}", other)),
+            _ => Err(ChatModeParseError::new(s)),
         }
     }
 
@@ -144,11 +265,11 @@ impl SafetyMode {
     /// let mode = SafetyMode::parse_str("yolo").unwrap();
     /// assert_eq!(mode, SafetyMode::NeverConfirm);
     /// ```
-    pub fn parse_str(s: &str) -> Result<Self, String> {
+    pub fn parse_str(s: &str) -> std::result::Result<Self, SafetyModeParseError> {
         match s.to_lowercase().as_str() {
             "confirm" | "always" | "safe" | "on" => Ok(Self::AlwaysConfirm),
             "yolo" | "never" | "off" => Ok(Self::NeverConfirm),
-            other => Err(format!("Unknown safety mode: {}", other)),
+            _ => Err(SafetyModeParseError::new(s)),
         }
     }
 
@@ -458,7 +579,12 @@ mod tests {
 
     #[test]
     fn test_chat_mode_from_str_invalid() {
-        assert!(ChatMode::parse_str("invalid").is_err());
+        let error = ChatMode::parse_str("invalid").unwrap_err();
+        assert_eq!(error.value(), "invalid");
+        assert_eq!(
+            error.to_string(),
+            "unknown chat mode 'invalid'; expected 'planning' or 'write'"
+        );
     }
 
     #[test]
@@ -529,7 +655,9 @@ mod tests {
 
     #[test]
     fn test_safety_mode_from_str_invalid() {
-        assert!(SafetyMode::parse_str("invalid").is_err());
+        let error = SafetyMode::parse_str("invalid").unwrap_err();
+        assert_eq!(error.value(), "invalid");
+        assert!(error.to_string().contains("unknown safety mode 'invalid'"));
     }
 
     #[test]

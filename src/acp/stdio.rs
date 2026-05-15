@@ -59,7 +59,7 @@ use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::prompts;
 use crate::providers::{
     create_provider_with_override, Message, ModelCapability, ModelInfo as XzatomaModelInfo,
-    MultimodalPromptInput, Provider,
+    MultimodalPromptInput, PromptInputError, Provider,
 };
 use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
 use crate::tools::ide_tools::register_ide_tools;
@@ -652,11 +652,12 @@ impl AcpStdioServerState {
                 .get_context_info(agent.conversation().max_tokens())
                 .used_tokens as u64;
             let update = acp::UsageUpdate::new(used_tokens, max_tokens);
-            let notification = acp::SessionNotification::new(
+            send_session_update_best_effort(
+                conn,
                 session_id.clone(),
                 acp::SessionUpdate::UsageUpdate(update),
+                "initial usage update",
             );
-            let _ = conn.send_notification_to(AcpClientRole, notification);
         }
 
         Ok(acp::NewSessionResponse::new(session_id)
@@ -911,12 +912,13 @@ impl AcpStdioServerState {
             &self.config.acp.stdio,
             &workspace_root,
         )
-        .map_err(|error| acp_internal_error(error.to_string()))?;
+        .map_err(|error| acp_validation_error("prompt", error))?;
 
         validate_provider_supports_prompt_input(&provider_name, &model_name, &prompt_input)
-            .map_err(|error| acp_internal_error(error.to_string()))?;
+            .map_err(|error| acp_validation_error("prompt", error))?;
 
-        let message = prompt_input_to_user_message(prompt_input).map_err(acp_internal_error)?;
+        let message = prompt_input_to_user_message(prompt_input)
+            .map_err(|error| acp_validation_error("prompt", error))?;
 
         prompt_queue
             .try_send(QueuedPrompt {
@@ -1052,23 +1054,22 @@ where
                     match state.create_session(new_session, Some(cx.clone())).await {
                         Ok(response) => {
                             session_id_for_notify = response.session_id.clone();
-                            let _ = responder.respond(response);
+                            responder.respond(response)?;
                         }
                         Err(error) => {
-                            let _ = responder.respond_with_error(acp_internal_error(error));
+                            responder.respond_with_error(acp_internal_error(error))?;
                             return Ok(());
                         }
                     }
                     // Send available commands notification after session is established.
                     let commands = build_available_commands();
-                    let _ = cx.send_notification_to(
-                        AcpClientRole,
-                        acp::SessionNotification::new(
-                            session_id_for_notify,
-                            acp::SessionUpdate::AvailableCommandsUpdate(
-                                acp::AvailableCommandsUpdate::new(commands),
-                            ),
+                    send_session_update_best_effort(
+                        &cx,
+                        session_id_for_notify,
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate::new(commands),
                         ),
+                        "available commands update",
                     );
                     Ok(())
                 }
@@ -1084,10 +1085,10 @@ where
                             -> acp_sdk::Result<()> {
                     match state.enqueue_prompt(prompt, Some(connection)).await {
                         Ok(response) => {
-                            let _ = responder.respond(response);
+                            responder.respond(response)?;
                         }
                         Err(error) => {
-                            let _ = responder.respond_with_error(error);
+                            responder.respond_with_error(error)?;
                         }
                     }
                     Ok(())
@@ -1105,19 +1106,18 @@ where
                     let session_id = request.session_id.clone();
                     match state.set_session_mode(request).await {
                         Ok(new_mode_id) => {
-                            let _ = responder.respond(acp::SetSessionModeResponse::new());
-                            let _ = cx.send_notification_to(
-                                AcpClientRole,
-                                acp::SessionNotification::new(
-                                    session_id,
-                                    acp::SessionUpdate::CurrentModeUpdate(
-                                        acp::CurrentModeUpdate::new(new_mode_id),
-                                    ),
-                                ),
+                            responder.respond(acp::SetSessionModeResponse::new())?;
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate::new(
+                                    new_mode_id,
+                                )),
+                                "current mode update",
                             );
                         }
                         Err(error) => {
-                            let _ = responder.respond_with_error(acp_internal_error(error));
+                            responder.respond_with_error(acp_internal_error(error))?;
                         }
                     }
                     Ok(())
@@ -1137,19 +1137,18 @@ where
                         Ok(updated_options) => {
                             let response =
                                 acp::SetSessionConfigOptionResponse::new(updated_options.clone());
-                            let _ = responder.respond(response);
-                            let _ = cx.send_notification_to(
-                                AcpClientRole,
-                                acp::SessionNotification::new(
-                                    session_id,
-                                    acp::SessionUpdate::ConfigOptionUpdate(
-                                        acp::ConfigOptionUpdate::new(updated_options),
-                                    ),
+                            responder.respond(response)?;
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::ConfigOptionUpdate(
+                                    acp::ConfigOptionUpdate::new(updated_options),
                                 ),
+                                "config option update",
                             );
                         }
                         Err(error) => {
-                            let _ = responder.respond_with_error(acp_internal_error(error));
+                            responder.respond_with_error(acp_internal_error(error))?;
                         }
                     }
                     Ok(())
@@ -1166,10 +1165,10 @@ where
                             -> acp_sdk::Result<()> {
                     match state.set_session_model(request).await {
                         Ok(()) => {
-                            let _ = responder.respond(acp::SetSessionModelResponse::new());
+                            responder.respond(acp::SetSessionModelResponse::new())?;
                         }
                         Err(error) => {
-                            let _ = responder.respond_with_error(acp_internal_error(error));
+                            responder.respond_with_error(acp_internal_error(error))?;
                         }
                     }
                     Ok(())
@@ -1872,10 +1871,12 @@ impl AcpSessionObserver {
     }
 
     fn send_update(&self, update: acp::SessionUpdate) {
-        let notification = acp::SessionNotification::new(self.session_id.clone(), update);
-        let _ = self
-            .connection
-            .send_notification_to(AcpClientRole, notification);
+        send_session_update_best_effort(
+            &self.connection,
+            self.session_id.clone(),
+            update,
+            "agent observer session update",
+        );
     }
 }
 
@@ -1968,9 +1969,13 @@ async fn run_prompt_worker(
         // Replace the session cancellation token for this prompt so that a
         // CancelNotification targets only the current prompt.
         let prompt_token = CancellationToken::new();
-        // Ignore send errors — the receiver may have been dropped during
-        // shutdown but we still want to complete (or cancel) this prompt.
-        let _ = token_tx.send(prompt_token.clone());
+        if let Err(error) = token_tx.send(prompt_token.clone()) {
+            tracing::debug!(
+                session_id = %session_id,
+                error = %error,
+                "ACP prompt cancellation token watcher dropped"
+            );
+        }
 
         let response = execute_queued_prompt(
             &session_id,
@@ -2084,11 +2089,12 @@ async fn execute_queued_prompt(
         if let Some(conn) = connection {
             if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
                 let info_update = acp::SessionInfoUpdate::new().title(title);
-                let notification = acp::SessionNotification::new(
+                send_session_update_best_effort(
+                    conn,
                     session_id.clone(),
                     acp::SessionUpdate::SessionInfoUpdate(info_update),
+                    "session info update",
                 );
-                let _ = conn.send_notification_to(AcpClientRole, notification);
             }
         }
     }
@@ -2098,7 +2104,7 @@ async fn execute_queued_prompt(
 
 fn prompt_input_to_user_message(
     input: MultimodalPromptInput,
-) -> std::result::Result<Message, String> {
+) -> std::result::Result<Message, PromptInputError> {
     if input.has_images() {
         Message::try_user_from_multimodal_input(input)
     } else {
@@ -2123,6 +2129,30 @@ fn prompt_queue_send_error(
 
 fn acp_internal_error(error: impl ToString) -> acp_sdk::Error {
     acp_sdk::util::internal_error(error.to_string())
+}
+
+fn send_session_update_best_effort(
+    connection: &ConnectionTo<AcpClientRole>,
+    session_id: acp::SessionId,
+    update: acp::SessionUpdate,
+    context: &'static str,
+) {
+    let notification = acp::SessionNotification::new(session_id.clone(), update);
+    if let Err(error) = connection.send_notification_to(AcpClientRole, notification) {
+        tracing::warn!(
+            session_id = %session_id,
+            error = %error,
+            context = context,
+            "Best-effort ACP session notification failed"
+        );
+    }
+}
+
+fn acp_validation_error(field: &str, error: impl ToString) -> acp_sdk::Error {
+    acp_sdk::Error::invalid_params().data(serde_json::json!({
+        "field": field,
+        "error": error.to_string()
+    }))
 }
 
 /// Maps an XZatoma execution outcome to the appropriate ACP stop reason.

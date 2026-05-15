@@ -519,8 +519,8 @@ fn ollama_model_supports_vision(model: &str) -> bool {
         || model.contains("vision")
 }
 
-fn provider_error(message: impl Into<String>) -> XzatomaError {
-    XzatomaError::Provider(message.into())
+fn provider_error(message: impl ToString) -> XzatomaError {
+    XzatomaError::Provider(message.to_string())
 }
 
 #[cfg(test)]

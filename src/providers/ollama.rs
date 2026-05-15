@@ -335,24 +335,35 @@ impl OllamaProvider {
         let url = format!("{}/api/tags", host);
         tracing::debug!("Fetching models from Ollama: {}", url);
 
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            tracing::warn!("Failed to fetch Ollama models: {}", e);
-            XzatomaError::Provider(format!("Failed to connect to Ollama server: {}", e))
+        let response = self.client.get(&url).send().await.map_err(|source| {
+            tracing::warn!("Failed to fetch Ollama models: {}", source);
+            XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                source: source.into(),
+            }
         })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::Provider(format!(
-                "Ollama returned error {}: {}",
-                status, error_text
-            )));
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                status,
+                response: error_text,
+            });
         }
 
-        let ollama_response: OllamaTagsResponse = response.json().await.map_err(|e| {
-            tracing::error!("Failed to parse Ollama tags response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e))
+        let ollama_response: OllamaTagsResponse = response.json().await.map_err(|source| {
+            tracing::error!("Failed to parse Ollama tags response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                source: source.into(),
+            }
         })?;
 
         // Try to fetch richer model details for each tag via /api/show where possible.
@@ -417,33 +428,48 @@ impl OllamaProvider {
             })
             .send()
             .await
-            .map_err(|e| {
-                tracing::warn!("Failed to fetch Ollama model details: {}", e);
-                XzatomaError::Provider(format!("Failed to fetch model details: {}", e))
+            .map_err(|source| {
+                tracing::warn!("Failed to fetch Ollama model details: {}", source);
+                XzatomaError::ProviderHttpRequest {
+                    provider: "ollama".to_string(),
+                    endpoint: "api/show".to_string(),
+                    source: source.into(),
+                }
             })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::Provider(format!(
-                "Model not found: {}",
-                model_name
-            )));
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/show".to_string(),
+                status,
+                response: format!("model={}: {}", model_name, error_text),
+            });
         }
 
         // Read the response body as text first so we can handle varying response shapes
-        let body = response.text().await.map_err(|e| {
-            tracing::error!("Failed to read Ollama show response body: {}", e);
-            XzatomaError::Provider(format!("Failed to read model details: {}", e))
+        let body = response.text().await.map_err(|source| {
+            tracing::error!("Failed to read Ollama show response body: {}", source);
+            XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/show:body".to_string(),
+                source: source.into(),
+            }
         })?;
 
         let raw_json: serde_json::Value =
             serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
 
-        let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|e| {
-            tracing::error!("Failed to parse Ollama show response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse model details: {}", e))
+        let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|source| {
+            tracing::error!("Failed to parse Ollama show response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/show".to_string(),
+                source: source.into(),
+            }
         })?;
 
         // Use the name from the response when present; otherwise fall back to the requested model name
@@ -709,20 +735,31 @@ impl Provider for OllamaProvider {
             .json(&ollama_request)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Ollama request failed: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!(
-                "Ollama returned error {}: {}",
-                status, error_text
-            )));
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                status,
+                response: error_text,
+            });
         }
 
-        let ollama_response: OllamaResponse = response.json().await.map_err(|e| {
-            tracing::error!("Failed to parse Ollama response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e))
+        let ollama_response: OllamaResponse = response.json().await.map_err(|source| {
+            tracing::error!("Failed to parse Ollama response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                source: source.into(),
+            }
         })?;
 
         tracing::debug!(

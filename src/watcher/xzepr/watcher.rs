@@ -12,41 +12,105 @@
 
 use super::consumer::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, XzeprConsumer};
 use super::filter::EventFilter;
-use super::plan_extractor::PlanExtractor;
+use super::plan_extractor::{PlanExtractionError, PlanExtractor};
 use crate::config::{Config, WatcherConfig};
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
+/// Result type for XZepr watcher operations.
+pub type WatcherResult<T> = std::result::Result<T, WatcherError>;
+
 /// Errors that can occur in the XZepr watcher service.
-// Variants are defined for completeness and future use; the XZepr watcher
-// is actively developed and these error types will be surfaced once real
-// Kafka execution is wired in (Phase 4).
 #[derive(Error, Debug)]
-#[allow(dead_code)]
 pub enum WatcherError {
-    /// Configuration error
+    /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),
 
-    /// Kafka consumer error
-    #[error("Consumer error: {0}")]
-    Consumer(String),
+    /// Invalid Kafka security protocol.
+    #[error("Invalid security protocol: {protocol}")]
+    InvalidSecurityProtocol {
+        /// Invalid protocol value.
+        protocol: String,
+    },
 
-    /// Event filtering error
+    /// SASL mechanism was configured without a username.
+    #[error("SASL username is required when mechanism is set")]
+    MissingSaslUsername,
+
+    /// SASL mechanism was configured without a password.
+    #[error("SASL password required (set via config or KAFKA_SASL_PASSWORD env var)")]
+    MissingSaslPassword,
+
+    /// Invalid SASL mechanism.
+    #[error("Invalid SASL mechanism: {mechanism}")]
+    InvalidSaslMechanism {
+        /// Invalid mechanism value.
+        mechanism: String,
+    },
+
+    /// Kafka consumer error.
+    #[error("Consumer error: {source}")]
+    Consumer {
+        /// Underlying consumer error.
+        #[source]
+        source: super::consumer::ConsumerError,
+    },
+
+    /// Event filtering error.
     #[error("Filter error: {0}")]
     Filter(String),
 
-    /// Plan extraction error
-    #[error("Plan extraction error: {0}")]
-    PlanExtraction(String),
+    /// Plan extraction error.
+    #[error("Plan extraction error: {source}")]
+    PlanExtraction {
+        /// Underlying extraction error.
+        #[source]
+        source: PlanExtractionError,
+    },
 
-    /// Plan execution error
+    /// Plan execution error.
     #[error("Execution error: {0}")]
     Execution(String),
+}
+
+impl WatcherError {
+    /// Returns the watcher operation associated with this error.
+    ///
+    /// # Returns
+    ///
+    /// Returns a stable operation label for crate-level error conversion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::xzepr::watcher::WatcherError;
+    ///
+    /// let error = WatcherError::MissingSaslUsername;
+    /// assert_eq!(error.operation(), "security configuration");
+    /// ```
+    pub fn operation(&self) -> &'static str {
+        match self {
+            Self::Config(_) => "configuration",
+            Self::InvalidSecurityProtocol { .. }
+            | Self::MissingSaslUsername
+            | Self::MissingSaslPassword
+            | Self::InvalidSaslMechanism { .. } => "security configuration",
+            Self::Consumer { .. } => "consumer",
+            Self::Filter(_) => "filter",
+            Self::PlanExtraction { .. } => "plan extraction",
+            Self::Execution(_) => "execution",
+        }
+    }
+}
+
+impl From<PlanExtractionError> for WatcherError {
+    fn from(source: PlanExtractionError) -> Self {
+        Self::PlanExtraction { source }
+    }
 }
 
 /// Main XZepr watcher service for processing CloudEvents from Kafka.
@@ -105,13 +169,13 @@ impl Watcher {
     /// use xzatoma::config::Config;
     /// use xzatoma::watcher::XzeprWatcher;
     ///
-    /// # async fn example() -> anyhow::Result<()> {
+    /// # async fn example() -> xzatoma::error::Result<()> {
     /// let config = Config::default();
     /// let watcher = XzeprWatcher::new(config, false)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(config: Config, dry_run: bool) -> Result<Self> {
+    pub fn new(config: Config, dry_run: bool) -> WatcherResult<Self> {
         let watcher_config = config.watcher.clone();
 
         // Validate Kafka configuration exists
@@ -139,7 +203,7 @@ impl Watcher {
 
         // Create Kafka consumer
         let consumer = XzeprConsumer::new(consumer_config)
-            .map_err(|e| WatcherError::Consumer(e.to_string()))?;
+            .map_err(|source| WatcherError::Consumer { source })?;
 
         debug!("Kafka consumer created successfully");
 
@@ -196,14 +260,14 @@ impl Watcher {
     /// use xzatoma::config::Config;
     /// use xzatoma::watcher::XzeprWatcher;
     ///
-    /// # async fn example() -> anyhow::Result<()> {
+    /// # async fn example() -> xzatoma::error::Result<()> {
     /// let config = Config::default();
     /// let mut watcher = XzeprWatcher::new(config, false)?;
     /// watcher.start().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> WatcherResult<()> {
         info!(
             filters = %self.filter.summary(),
             dry_run = self.dry_run,
@@ -225,7 +289,7 @@ impl Watcher {
         self.consumer
             .run(Arc::new(handler))
             .await
-            .map_err(|e| WatcherError::Consumer(e.to_string()))?;
+            .map_err(|source| WatcherError::Consumer { source })?;
 
         Ok(())
     }
@@ -248,7 +312,7 @@ impl Watcher {
     fn apply_security_config(
         mut config: KafkaConsumerConfig,
         security: &crate::config::KafkaSecurityConfig,
-    ) -> Result<KafkaConsumerConfig> {
+    ) -> WatcherResult<KafkaConsumerConfig> {
         use super::consumer::config::{SaslConfig, SaslMechanism, SecurityProtocol};
 
         debug!(
@@ -262,7 +326,11 @@ impl Watcher {
             "SSL" => SecurityProtocol::Ssl,
             "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
             "SASL_SSL" => SecurityProtocol::SaslSsl,
-            _ => return Err(anyhow!("Invalid security protocol: {}", security.protocol)),
+            _ => {
+                return Err(WatcherError::InvalidSecurityProtocol {
+                    protocol: security.protocol.clone(),
+                });
+            }
         };
 
         // Apply SASL settings if present
@@ -270,18 +338,14 @@ impl Watcher {
             let username = security
                 .sasl_username
                 .as_ref()
-                .ok_or_else(|| anyhow!("SASL username is required when mechanism is set"))?;
+                .ok_or(WatcherError::MissingSaslUsername)?;
 
             let password = security
                 .sasl_password
                 .as_ref()
                 .map(|p| p.to_string())
                 .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
-                    )
-                })?;
+                .ok_or(WatcherError::MissingSaslPassword)?;
 
             debug!(mechanism = %mechanism, "Applying SASL configuration");
 
@@ -289,7 +353,11 @@ impl Watcher {
                 "PLAIN" => SaslMechanism::Plain,
                 "SCRAM-SHA-256" => SaslMechanism::ScramSha256,
                 "SCRAM-SHA-512" => SaslMechanism::ScramSha512,
-                _ => return Err(anyhow!("Invalid SASL mechanism: {}", mechanism)),
+                _ => {
+                    return Err(WatcherError::InvalidSaslMechanism {
+                        mechanism: mechanism.clone(),
+                    });
+                }
             };
 
             config.sasl_config = Some(SaslConfig {
@@ -393,7 +461,10 @@ impl MessageHandler for WatcherMessageHandler {
                     error = %e,
                     "Failed to acquire execution permit"
                 );
-                return Err(format!("Failed to acquire execution permit: {}", e).into());
+                return Err(Box::new(WatcherError::Execution(format!(
+                    "failed to acquire execution permit: {}",
+                    e
+                ))));
             }
         };
 
@@ -454,14 +525,25 @@ mod tests {
         let err = WatcherError::Config("test error".to_string());
         assert_eq!(err.to_string(), "Configuration error: test error");
 
-        let err = WatcherError::Consumer("kafka failed".to_string());
-        assert_eq!(err.to_string(), "Consumer error: kafka failed");
+        let err = WatcherError::Consumer {
+            source: crate::watcher::xzepr::consumer::ConsumerError::Config(
+                "kafka failed".to_string(),
+            ),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Consumer error: Configuration error: kafka failed"
+        );
 
         let err = WatcherError::Filter("invalid filter".to_string());
         assert_eq!(err.to_string(), "Filter error: invalid filter");
 
-        let err = WatcherError::PlanExtraction("no plan found".to_string());
-        assert_eq!(err.to_string(), "Plan extraction error: no plan found");
+        let err = WatcherError::PlanExtraction {
+            source: PlanExtractionError::NoStrategyMatched {
+                event_id: "event-1".to_string(),
+            },
+        };
+        assert!(err.to_string().contains("Plan extraction error"));
 
         let err = WatcherError::Execution("execution timeout".to_string());
         assert_eq!(err.to_string(), "Execution error: execution timeout");
@@ -542,6 +624,66 @@ mod tests {
         assert!(result.is_ok());
         let watcher = result.unwrap();
         assert!(watcher.dry_run);
+    }
+
+    #[test]
+    fn test_apply_security_config_rejects_invalid_protocol() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "NOPE".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+        };
+
+        let error = Watcher::apply_security_config(config, &security).unwrap_err();
+        assert!(matches!(
+            error,
+            WatcherError::InvalidSecurityProtocol { .. }
+        ));
+        assert_eq!(error.operation(), "security configuration");
+    }
+
+    #[test]
+    fn test_apply_security_config_rejects_missing_sasl_username() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SASL_SSL".to_string(),
+            sasl_mechanism: Some("PLAIN".to_string()),
+            sasl_username: None,
+            sasl_password: Some("secret".to_string()),
+        };
+
+        let error = Watcher::apply_security_config(config, &security).unwrap_err();
+        assert!(matches!(error, WatcherError::MissingSaslUsername));
+    }
+
+    #[test]
+    fn test_apply_security_config_rejects_missing_sasl_password() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SASL_SSL".to_string(),
+            sasl_mechanism: Some("PLAIN".to_string()),
+            sasl_username: Some("user".to_string()),
+            sasl_password: None,
+        };
+
+        let error = Watcher::apply_security_config(config, &security).unwrap_err();
+        assert!(matches!(error, WatcherError::MissingSaslPassword));
+    }
+
+    #[test]
+    fn test_apply_security_config_rejects_invalid_sasl_mechanism() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SASL_SSL".to_string(),
+            sasl_mechanism: Some("INVALID".to_string()),
+            sasl_username: Some("user".to_string()),
+            sasl_password: Some("secret".to_string()),
+        };
+
+        let error = Watcher::apply_security_config(config, &security).unwrap_err();
+        assert!(matches!(error, WatcherError::InvalidSaslMechanism { .. }));
     }
 
     #[test]
