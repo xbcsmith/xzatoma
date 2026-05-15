@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
             mode,
             safe,
             resume,
+            thinking_effort,
         } => {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
@@ -59,16 +60,20 @@ async fn main() -> Result<()> {
             if let Some(r) = &resume {
                 tracing::debug!("Resuming conversation: {}", r);
             }
+            if let Some(ref e) = thinking_effort {
+                tracing::debug!("Using thinking effort: {}", e);
+            }
 
             // Delegate to the chat command handler
             // Moves `config` into the handler (match arms are exclusive)
-            commands::chat::run_chat(config, provider, mode, safe, resume).await?;
+            commands::chat::run_chat(config, provider, mode, safe, resume, thinking_effort).await?;
             Ok(())
         }
         Commands::Run {
             plan,
             prompt,
             allow_dangerous,
+            thinking_effort,
         } => {
             tracing::info!("Starting plan execution mode");
             if let Some(plan_path) = &plan {
@@ -80,10 +85,20 @@ async fn main() -> Result<()> {
             if allow_dangerous {
                 tracing::warn!("Dangerous commands are allowed!");
             }
+            if let Some(ref e) = thinking_effort {
+                tracing::debug!("Using thinking effort: {}", e);
+            }
 
             // Convert plan PathBuf to String before passing it to the command handler.
             let plan_str = plan.map(|p| p.to_string_lossy().to_string());
-            commands::run::run_plan_with_options(config, plan_str, prompt, allow_dangerous).await?;
+            commands::run::run_plan_with_options(
+                config,
+                plan_str,
+                prompt,
+                allow_dangerous,
+                thinking_effort,
+            )
+            .await?;
             Ok(())
         }
         Commands::Watch {

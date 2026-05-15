@@ -2348,17 +2348,24 @@ mod tests {
 
     #[test]
     fn test_save_acp_await_state_and_load_round_trip() {
+        // Persist the run while it is still in the Running state and has no
+        // await_payload. This guarantees persist_acp_run does NOT pre-insert a
+        // row into acp_await_states, so the subsequent save_acp_await_state
+        // call below takes the clean INSERT path (not ON CONFLICT DO UPDATE).
+        //
+        // If set_await_payload were called before persist_acp_run, a row would
+        // be inserted with created_at = run.status.updated_at. The later
+        // save_acp_await_state ON CONFLICT path intentionally preserves
+        // created_at (creation time is immutable), so the loaded created_at
+        // would not match the test-constructed timestamp, causing a spurious
+        // failure under load when more than one second elapses between the
+        // two calls.
         let (storage, _dir) = create_test_storage();
         let mut run = sample_run();
         run.transition_to(AcpRunState::Queued)
             .expect("transition to queued");
         run.transition_to(AcpRunState::Running)
             .expect("transition to running");
-        run.set_await_payload(
-            "approval_required".to_string(),
-            "Need confirmation".to_string(),
-        )
-        .expect("set await payload");
         storage
             .persist_acp_run(&run, AcpRuntimeExecuteMode::Async, None)
             .expect("persist run failed");

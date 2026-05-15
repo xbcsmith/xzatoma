@@ -15,6 +15,7 @@
 //! | `subagent_delegation`  | enabled, disabled                                   |
 //! | `mcp_tools`            | enabled, disabled                                   |
 //! | `max_turns`            | 10, 25, 50, 100, 200                                |
+//! | `thinking_effort`      | none, low, medium, high, extra_high                 |
 //!
 //! # Examples
 //!
@@ -60,6 +61,14 @@ pub const CONFIG_MCP_TOOLS: &str = "mcp_tools";
 
 /// Config option ID for the maximum number of agent turns per run.
 pub const CONFIG_MAX_TURNS: &str = "max_turns";
+
+/// Config option ID for the provider thinking effort level.
+///
+/// Controls chain-of-thought depth on o-series and extended-thinking models.
+/// The sentinel value `"none"` disables explicit effort control (uses the
+/// model default). Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`,
+/// `"extra_high"`.
+pub const CONFIG_THINKING_EFFORT: &str = "thinking_effort";
 
 // ---------------------------------------------------------------------------
 // ToolRouting
@@ -194,6 +203,12 @@ pub struct ConfigChangeEffect {
     pub mcp_enabled: Option<bool>,
     /// New maximum turns value if the setting was changed.
     pub max_turns: Option<u32>,
+    /// New thinking effort value if the setting was changed.
+    ///
+    /// The string is one of `"none"`, `"low"`, `"medium"`, `"high"`, or
+    /// `"extra_high"`. When `Some("none")`, callers must pass `None` to
+    /// `Provider::set_thinking_effort` to disable reasoning parameters.
+    pub thinking_effort: Option<String>,
 }
 
 impl ConfigChangeEffect {
@@ -206,6 +221,7 @@ impl ConfigChangeEffect {
             subagents_enabled: None,
             mcp_enabled: None,
             max_turns: None,
+            thinking_effort: None,
         }
     }
 }
@@ -247,6 +263,12 @@ pub struct SessionRuntimeState {
     pub mcp_enabled: bool,
     /// Maximum number of agent turns per run.
     pub max_turns: u32,
+    /// Active thinking effort level for extended-thinking models.
+    ///
+    /// The sentinel value `"none"` means no explicit effort level is configured
+    /// and the model uses its own default. Other accepted values: `"low"`,
+    /// `"medium"`, `"high"`, `"extra_high"`.
+    pub thinking_effort: String,
 }
 
 impl SessionRuntimeState {
@@ -292,6 +314,7 @@ impl SessionRuntimeState {
             subagents_enabled,
             mcp_enabled,
             max_turns,
+            thinking_effort: "none".to_string(),
         }
     }
 }
@@ -322,7 +345,7 @@ impl SessionRuntimeState {
 ///
 /// let runtime = SessionRuntimeState::from_config(&Config::default());
 /// let options = build_session_config_options(&runtime);
-/// assert_eq!(options.len(), 7);
+/// assert_eq!(options.len(), 8);
 /// ```
 pub fn build_session_config_options(
     runtime: &SessionRuntimeState,
@@ -335,6 +358,7 @@ pub fn build_session_config_options(
         build_subagent_delegation_option(runtime),
         build_mcp_tools_option(runtime),
         build_max_turns_option(runtime),
+        build_thinking_effort_option(runtime),
     ]
 }
 
@@ -376,7 +400,7 @@ pub fn build_session_config_options(
 /// let (effect, options) =
 ///     apply_config_option_change(CONFIG_MAX_TURNS, "100", &runtime).unwrap();
 /// assert_eq!(effect.max_turns, Some(100));
-/// assert_eq!(options.len(), 7);
+/// assert_eq!(options.len(), 8);
 /// ```
 pub fn apply_config_option_change(
     config_id: &str,
@@ -422,12 +446,18 @@ pub fn apply_config_option_change(
             effect.max_turns = Some(turns);
             updated.max_turns = turns;
         }
+        CONFIG_THINKING_EFFORT => {
+            let effort = parse_thinking_effort_value(value_id)?;
+            effect.thinking_effort = Some(effort.clone());
+            updated.thinking_effort = effort;
+        }
         other => {
             return Err(XzatomaError::Config(format!(
                 "unknown session config option id: '{other}'; expected one of: \
                  '{CONFIG_SAFETY_POLICY}', '{CONFIG_TERMINAL_EXECUTION}', \
                  '{CONFIG_TOOL_ROUTING}', '{CONFIG_VISION_INPUT}', \
-                 '{CONFIG_SUBAGENT_DELEGATION}', '{CONFIG_MCP_TOOLS}', '{CONFIG_MAX_TURNS}'"
+                 '{CONFIG_SUBAGENT_DELEGATION}', '{CONFIG_MCP_TOOLS}', \
+                 '{CONFIG_MAX_TURNS}', '{CONFIG_THINKING_EFFORT}'"
             )));
         }
     }
@@ -530,6 +560,23 @@ fn build_max_turns_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOp
     )
 }
 
+fn build_thinking_effort_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
+    let current = runtime.thinking_effort.clone();
+    let options = vec![
+        acp::SessionConfigSelectOption::new("none", "None"),
+        acp::SessionConfigSelectOption::new("low", "Low"),
+        acp::SessionConfigSelectOption::new("medium", "Medium"),
+        acp::SessionConfigSelectOption::new("high", "High"),
+        acp::SessionConfigSelectOption::new("extra_high", "Extra High"),
+    ];
+    acp::SessionConfigOption::select(CONFIG_THINKING_EFFORT, "Thinking Effort", current, options)
+        .description(Some(
+        "Reasoning effort level for extended-thinking models (o1, o3, Claude extended thinking). \
+             Has no effect on non-reasoning models."
+            .to_string(),
+    ))
+}
+
 // ---------------------------------------------------------------------------
 // Private value helpers
 // ---------------------------------------------------------------------------
@@ -613,6 +660,16 @@ fn parse_max_turns_value(value_id: &str) -> Result<u32> {
     }
 }
 
+fn parse_thinking_effort_value(value_id: &str) -> Result<String> {
+    match value_id {
+        "none" | "low" | "medium" | "high" | "extra_high" => Ok(value_id.to_string()),
+        other => Err(XzatomaError::Config(format!(
+            "unknown thinking_effort value: '{other}'; \
+             expected one of: 'none', 'low', 'medium', 'high', 'extra_high'"
+        ))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -662,9 +719,9 @@ mod tests {
     // --- build_session_config_options ---
 
     #[test]
-    fn test_build_session_config_options_returns_seven_options() {
+    fn test_build_session_config_options_returns_eight_options() {
         let options = build_session_config_options(&default_runtime());
-        assert_eq!(options.len(), 7);
+        assert_eq!(options.len(), 8);
     }
 
     #[test]
@@ -678,6 +735,7 @@ mod tests {
         assert!(ids.contains(&CONFIG_SUBAGENT_DELEGATION));
         assert!(ids.contains(&CONFIG_MCP_TOOLS));
         assert!(ids.contains(&CONFIG_MAX_TURNS));
+        assert!(ids.contains(&CONFIG_THINKING_EFFORT));
     }
 
     #[test]
@@ -711,7 +769,7 @@ mod tests {
         let (effect, options) =
             apply_config_option_change(CONFIG_SAFETY_POLICY, "never_confirm", &runtime).unwrap();
         assert_eq!(effect.safety_mode_str.as_deref(), Some("yolo"));
-        assert_eq!(options.len(), 7);
+        assert_eq!(options.len(), 8);
     }
 
     #[test]
@@ -816,7 +874,7 @@ mod tests {
         let runtime = default_runtime();
         let (_effect, options) =
             apply_config_option_change(CONFIG_TERMINAL_EXECUTION, "interactive", &runtime).unwrap();
-        assert_eq!(options.len(), 7);
+        assert_eq!(options.len(), 8);
     }
 
     // --- apply_config_option_change: invalid inputs ---
@@ -867,6 +925,90 @@ mod tests {
         assert!(result.is_err());
         let message = result.unwrap_err().to_string();
         assert!(message.contains("999"));
+    }
+
+    // --- ToolRouting ---
+
+    #[test]
+    fn test_session_runtime_state_thinking_effort_defaults_none() {
+        let state = default_runtime();
+        assert_eq!(
+            state.thinking_effort, "none",
+            "thinking_effort must default to 'none'"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_ids_include_thinking_effort() {
+        let options = build_session_config_options(&default_runtime());
+        let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
+        assert!(
+            ids.contains(&CONFIG_THINKING_EFFORT),
+            "thinking_effort option must be present in config options list"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_thinking_effort_high() {
+        let runtime = default_runtime();
+        let (effect, options) =
+            apply_config_option_change(CONFIG_THINKING_EFFORT, "high", &runtime).unwrap();
+        assert_eq!(
+            effect.thinking_effort.as_deref(),
+            Some("high"),
+            "thinking_effort effect must be Some('high')"
+        );
+        assert_eq!(options.len(), 8);
+    }
+
+    #[test]
+    fn test_apply_config_option_change_thinking_effort_none() {
+        let runtime = default_runtime();
+        let (effect, _) =
+            apply_config_option_change(CONFIG_THINKING_EFFORT, "none", &runtime).unwrap();
+        assert_eq!(
+            effect.thinking_effort.as_deref(),
+            Some("none"),
+            "thinking_effort effect must be Some('none') for the 'none' sentinel"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_thinking_effort_extra_high() {
+        let runtime = default_runtime();
+        let (effect, _) =
+            apply_config_option_change(CONFIG_THINKING_EFFORT, "extra_high", &runtime).unwrap();
+        assert_eq!(
+            effect.thinking_effort.as_deref(),
+            Some("extra_high"),
+            "thinking_effort effect must be Some('extra_high')"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_invalid_thinking_effort_returns_error() {
+        let runtime = default_runtime();
+        let result = apply_config_option_change(CONFIG_THINKING_EFFORT, "turbo", &runtime);
+        assert!(
+            result.is_err(),
+            "unknown thinking_effort value must return an error"
+        );
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("turbo"),
+            "error message must include the rejected value; got: {message}"
+        );
+    }
+
+    #[test]
+    fn test_parse_thinking_effort_value_rejects_unknown() {
+        let result = parse_thinking_effort_value("ultra");
+        assert!(result.is_err(), "unknown value must return an error");
+        let message = result.unwrap_err().to_string();
+        assert!(
+            message.contains("ultra"),
+            "error message must include the rejected value; got: {message}"
+        );
     }
 
     // --- ToolRouting ---

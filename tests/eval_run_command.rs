@@ -180,7 +180,7 @@ async fn run_full_scenario(scenario: &Scenario) -> Result<(), String> {
     let prompt = scenario.input.prompt.clone();
     let allow_dangerous = scenario.input.allow_dangerous;
 
-    let result = run_plan_with_options(cfg, plan_path, prompt, allow_dangerous).await;
+    let result = run_plan_with_options(cfg, plan_path, prompt, allow_dangerous, None).await;
     check_result(result.map_err(anyhow::Error::from), &scenario.expect)
 }
 

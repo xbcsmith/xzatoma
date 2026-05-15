@@ -298,6 +298,77 @@ and resolved four gaps:
 - Five additional unit tests for `CompletionResponse` model/reasoning fields
 - Total tests increased from 956 to 965, zero warnings
 
+**Zed Session Mode Phase 1: Embedded Context Capability and Rich Content Block
+Handling** - Complete
+
+- Advertised `embedded_context: true` in `PromptCapabilities` within
+  `handle_initialize()` so Zed enables `ContentBlock::Resource` blocks and shows
+  `#diagnostics`, `#git-diff`, `#rules`, `#thread`, and `#fetch` in the mention
+  completion menu.
+- Replaced the unconditional `ContentBlock::Resource` image path with an
+  explicit three-way dispatch on the inner `EmbeddedResourceResource` variant:
+  `TextResourceContents` (non-image) produces a formatted text part with a URI
+  context header; `TextResourceContents` (image MIME) falls back to URI
+  conversion; `BlobResourceContents` continues on the image path.
+- Replaced the hard `Provider` error for non-image `ContentBlock::ResourceLink`
+  blocks with a `[Reference: <name> (<uri>)]` text placeholder so directory
+  mentions and file stubs no longer terminate prompt conversion.
+- Added 8 new unit tests in `src/acp/prompt_input.rs` covering all new dispatch
+  paths and edge cases (diagnostics MIME type, absent MIME type, blob stays on
+  image path, placeholder format, order preservation).
+- Updated
+  `test_handle_initialize_advertises_text_and_vision_prompt_capabilities` to
+  assert `embedded_context == true`.
+- Added
+  `test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol`
+  to verify the capability is advertised over the full protocol stack.
+- Documentation: `docs/explanation/zed_session_mode_phase1_implementation.md`
+- All 2076 unit tests pass, zero warnings, `cargo fmt` clean.
+
+**Zed Session Mode Phase 2: Zed-Forwarded MCP Server Integration** - Complete
+
+- Added private `sanitize_mcp_server_id` helper that lowercases a Zed server
+  name and replaces every character outside `[a-z0-9_-]` with an underscore,
+  truncated to 64 characters, with an error on empty result.
+- Added private `convert_acp_mcp_server` helper that converts all three
+  `acp::McpServer` variants (`Stdio`, `Http`, `Sse`) to `McpServerConfig`:
+  `Stdio` maps to `McpServerTransportConfig::Stdio`; `Http` and `Sse` both map
+  to `McpServerTransportConfig::Http`. A wildcard arm handles future
+  `#[non_exhaustive]` variants gracefully.
+- Extended `create_session` to iterate `request.mcp_servers`, convert each
+  server, deduplicate by id against already-connected servers, connect via
+  `McpClientManager::connect`, and register tools via `register_mcp_tools`.
+  Individual failures are logged and skipped; they do not abort session
+  creation. The entire block is skipped when `env.mcp_manager` is `None` (MCP
+  disabled in config) to preserve global MCP policy.
+- Added 6 new unit tests in `src/acp/stdio.rs` covering Stdio config production,
+  Http config production, name sanitization, empty name rejection, invalid URL
+  rejection, and session creation with an empty `mcp_servers` list.
+- Documentation: `docs/explanation/zed_session_mode_phase2_implementation.md`
+- All 2082 unit tests pass, zero warnings, `cargo fmt` clean.
+
+**Zed Session Mode Phase 3: Runtime Execution Mode Enforcement on Mode
+Change** - Complete
+
+- Added `pub fn tools_mut(&mut self) -> &mut ToolRegistry` accessor to `Agent`
+  in `src/agent/core.rs` so the ACP stdio layer can replace individual tools in
+  the registry without bypassing the agent abstraction.
+- Extended `set_session_mode` in `src/acp/stdio.rs` to construct a new
+  `TerminalTool` carrying the updated `ExecutionMode` and `SafetyMode` and
+  register it under the `"terminal"` key in the agent's tool registry
+  immediately after rebuilding transient system messages. The replacement takes
+  effect on the next prompt turn within the session.
+- Added `use crate::tools::terminal::{CommandValidator, TerminalTool};` import
+  to `src/acp/stdio.rs`.
+- Added 4 new unit tests: `test_agent_tools_mut_returns_mutable_registry` in
+  `src/agent/core.rs` verifies the accessor registers tools correctly;
+  `test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous`,
+  `test_set_session_mode_full_autonomous_to_planning_restricts_terminal`, and
+  `test_set_session_mode_does_not_change_terminal_for_unknown_mode` in
+  `src/acp/stdio.rs` verify correct behavior over the full protocol stack.
+- Documentation: `docs/explanation/zed_session_mode_phase3_implementation.md`
+- All 2086 unit tests pass, zero warnings, `cargo fmt` clean.
+
 ### MCP Support Implementation
 
 - Phase 3: OAuth 2.1 / OIDC Authorization -- Complete
@@ -1557,6 +1628,10 @@ README.
 
 ## Version History
 
+- **2025-07-XX** - Zed Session Mode Phase 2: Zed-Forwarded MCP Server
+  Integration completed
+- **2025-07-XX** - Zed Session Mode Phase 1: Embedded Context Capability and
+  Rich Content Block Handling completed
 - **2025-07-XX** - Demo Scaffolding Initiative completed (7 demos, 5 phases, all
   validation checks passing)
 - **2025-07-XX** - MCP Phase 4: Client Lifecycle and Server Manager completed
@@ -1653,3 +1728,34 @@ README.
 **Status**: Phase 4 complete (Provider Integration), Phase 5 complete
 (Documentation and Examples). Model Management Documentation complete. Phases
 1-3 implemented. Security validation completed and tested.
+
+---
+
+## Zed Session Mode Selector: Embedded Context, MCP Integration, and Runtime Mode Enforcement (2026-05-07T22:07:39Z)
+
+**Summary**: Three implementation phases closed the remaining gaps between
+XZatoma and the Zed session mode selector. Phase 1 extended the ACP prompt input
+layer to accept embedded text resources and produce text placeholders for
+non-image resource links instead of hard errors. Phase 2 connected per-project
+MCP servers forwarded by Zed on session creation, making project-scoped tools
+available to the agent without changes to the global configuration file. Phase 3
+propagated mode changes from the Zed mode selector into the live `TerminalTool`
+in the agent's registry so that terminal command validation reflects the current
+mode on every subsequent tool execution.
+
+**Files changed**:
+
+- `src/acp/prompt_input.rs` - Added three-way dispatch on
+  `ContentBlock::Resource` inner variant to handle `TextResourceContents` as
+  inline text parts; replaced the hard error for non-image
+  `ContentBlock::ResourceLink` with a text reference placeholder.
+- `src/acp/stdio.rs` - Added `embedded_context: true` to `PromptCapabilities` in
+  `handle_initialize`; added `sanitize_mcp_server_id` and
+  `convert_acp_mcp_server` private helpers; added Zed-forwarded MCP server
+  connection block in `create_session`; added terminal tool replacement block in
+  `set_session_mode`; added imports for `CommandValidator` and `TerminalTool`.
+- `src/agent/core.rs` - Added `pub fn tools_mut` accessor returning a mutable
+  reference to the agent's `ToolRegistry`.
+
+**Documentation**:
+[zed_session_mode_selector_implementation.md](zed_session_mode_selector_implementation.md)

@@ -392,6 +392,10 @@ pub mod chat {
     /// * `mode` - Optional override for the chat mode ("planning" or "write")
     /// * `safe` - If true, enable safety mode (always confirm dangerous operations)
     /// * `resume` - Optional conversation ID to resume
+    /// * `thinking_effort` - Optional thinking effort level for models that support
+    ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
+    ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
+    ///   When `None`, the provider default is used.
     ///
     /// # Examples
     ///
@@ -400,7 +404,7 @@ pub mod chat {
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None).await?;
+    /// // chat::run_chat(Config::default(), None, None, false, None, None).await?;
     /// ```
     pub async fn run_chat(
         config: Config,
@@ -408,6 +412,7 @@ pub mod chat {
         mode: Option<String>,
         _safe: bool,
         resume: Option<String>,
+        thinking_effort: Option<String>,
     ) -> Result<()> {
         use crate::storage::SqliteStorage;
 
@@ -475,6 +480,25 @@ pub mod chat {
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
+
+        // Apply thinking effort from CLI flag if provided.
+        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
+        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
+        // Unrecognised values cause a warning but do not abort execution.
+        if let Some(ref effort_str) = thinking_effort {
+            let param = if effort_str == "none" {
+                None
+            } else {
+                Some(effort_str.as_str())
+            };
+            if let Err(e) = provider.set_thinking_effort(param) {
+                tracing::warn!(
+                    thinking_effort = %effort_str,
+                    error = %e,
+                    "Unsupported thinking effort value; proceeding with provider default"
+                );
+            }
+        }
 
         // Register subagent tool for task delegation
         // Use new_with_config to support provider/model overrides
@@ -1636,7 +1660,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None).await;
+            let res = run_chat(cfg, None, None, false, None, None).await;
             assert!(res.is_err());
         }
 
@@ -1921,7 +1945,7 @@ pub mod r#run {
 
     /// Run a plan or a prompt via the agent
     ///
-    /// Wrapper that uses `allow_dangerous = false`.
+    /// Wrapper that uses `allow_dangerous = false` and no explicit `thinking_effort`.
     ///
     /// # Arguments
     ///
@@ -1933,7 +1957,7 @@ pub mod r#run {
         plan_path: Option<String>,
         prompt: Option<String>,
     ) -> Result<()> {
-        run_plan_with_options(config, plan_path, prompt, false).await
+        run_plan_with_options(config, plan_path, prompt, false, None).await
     }
 
     /// Run a plan or a prompt via the agent with extra options.
@@ -1944,11 +1968,16 @@ pub mod r#run {
     /// * `plan_path` - Optional path to a plan file
     /// * `prompt` - Optional direct prompt
     /// * `allow_dangerous` - If true, the execution mode is escalated to FullAutonomous
+    /// * `thinking_effort` - Optional thinking effort level for models that support
+    ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
+    ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
+    ///   When `None`, the provider default is used.
     pub async fn run_plan_with_options(
         config: Config,
         plan_path: Option<String>,
         prompt: Option<String>,
         allow_dangerous: bool,
+        thinking_effort: Option<String>,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
 
@@ -1978,6 +2007,26 @@ pub mod r#run {
         // Create agent using the shared provider factory.
         let provider_box = create_provider(&config.provider.provider_type, &config.provider)?;
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
+
+        // Apply thinking effort from CLI flag if provided.
+        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
+        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
+        // Unrecognised values cause a warning but do not abort execution.
+        if let Some(ref effort_str) = thinking_effort {
+            let param = if effort_str == "none" {
+                None
+            } else {
+                Some(effort_str.as_str())
+            };
+            if let Err(e) = provider.set_thinking_effort(param) {
+                tracing::warn!(
+                    thinking_effort = %effort_str,
+                    error = %e,
+                    "Unsupported thinking effort value; proceeding with provider default"
+                );
+            }
+        }
+
         let mut agent = Agent::new_from_shared_provider(provider, tools, config.agent.clone())?;
 
         if let Some(disclosure) = &skill_disclosure {

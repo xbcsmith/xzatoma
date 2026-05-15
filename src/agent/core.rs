@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use super::thinking::extract_thinking;
 use super::{ContextInfo, Conversation};
 
 /// The main agent that executes autonomous tasks
@@ -56,6 +57,24 @@ pub struct Agent {
     config: AgentConfig,
     accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
     transient_system_messages: Vec<String>,
+}
+
+/// Combines reasoning text from two independent sources.
+///
+/// `raw` is the structured `CompletionResponse.reasoning` field populated by the
+/// provider accumulator. `tags` is the reasoning extracted from inline thinking
+/// blocks by `extract_thinking`. When both are present they are joined with a
+/// single newline so the observer receives all available chain-of-thought content.
+///
+/// Returns `None` when both inputs are `None` so callers can skip emitting a
+/// `ReasoningEmitted` event entirely.
+fn combine_reasoning(raw: Option<String>, tags: Option<String>) -> Option<String> {
+    match (raw, tags) {
+        (Some(r), Some(t)) => Some(format!("{}\n{}", r, t)),
+        (Some(r), None) => Some(r),
+        (None, Some(t)) => Some(t),
+        (None, None) => None,
+    }
 }
 
 impl Agent {
@@ -610,8 +629,26 @@ impl Agent {
                 }
             };
 
-            let message = completion_response.message;
+            let raw_reasoning = completion_response.reasoning;
+            let mut message = completion_response.message;
             debug!("Provider response: {:?}", message);
+
+            // Strip inline thinking tags from the assistant text. Any text enclosed in
+            // thinking tag blocks is removed from the message content before it enters
+            // conversation history, and the extracted content is collected as tag_reasoning.
+            let tag_reasoning = if let Some(text) = message.content.take() {
+                let (clean, tag_r) = extract_thinking(&text);
+                message.content = Some(clean);
+                tag_r
+            } else {
+                None
+            };
+
+            // Emit a ReasoningEmitted event when reasoning is available from either the
+            // structured CompletionResponse.reasoning field or extracted thinking tags.
+            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+            }
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
@@ -626,6 +663,14 @@ impl Agent {
                 }
                 drop(accumulated);
             }
+
+            // Emit context window state regardless of whether provider usage was returned.
+            // get_context_info() prefers provider usage over the heuristic when available.
+            let ctx = self.get_context_info(self.conversation.max_tokens());
+            observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens: ctx.used_tokens as u64,
+                max_tokens: ctx.max_tokens as u64,
+            });
 
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
 
@@ -941,8 +986,23 @@ impl Agent {
                 }
             };
 
-            let message = completion_response.message;
+            let raw_reasoning = completion_response.reasoning;
+            let mut message = completion_response.message;
             debug!("Provider response: {:?}", message);
+
+            // Strip inline thinking tags from the assistant text.
+            let tag_reasoning = if let Some(text) = message.content.take() {
+                let (clean, tag_r) = extract_thinking(&text);
+                message.content = Some(clean);
+                tag_r
+            } else {
+                None
+            };
+
+            // Emit a ReasoningEmitted event when reasoning is available.
+            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+            }
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
@@ -958,6 +1018,14 @@ impl Agent {
                 }
                 drop(accumulated_usage);
             }
+
+            // Emit context window state regardless of whether provider usage was returned.
+            // get_context_info() prefers provider usage over the heuristic when available.
+            let ctx = self.get_context_info(self.conversation.max_tokens());
+            observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens: ctx.used_tokens as u64,
+                max_tokens: ctx.max_tokens as u64,
+            });
 
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
 
@@ -1254,6 +1322,29 @@ impl Agent {
     /// Useful for accessing and managing available tools
     pub fn tools(&self) -> &ToolRegistry {
         &self.tools
+    }
+
+    /// Returns a mutable reference to the agent's tool registry.
+    ///
+    /// This accessor is used by the ACP stdio layer to replace individual tools
+    /// (such as the terminal tool) when the session mode changes at runtime.
+    ///
+    /// # Returns
+    ///
+    /// Returns a mutable reference to the agent's [`ToolRegistry`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Agent;
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// // The registry can be updated to reflect runtime mode changes.
+    /// // let mut agent = ...;
+    /// // let registry = agent.tools_mut();
+    /// ```
+    pub fn tools_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tools
     }
 
     /// Returns the number of registered tools
@@ -1832,5 +1923,502 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
+    }
+
+    #[tokio::test]
+    async fn test_agent_tools_mut_returns_mutable_registry() {
+        struct MockTool;
+
+        #[async_trait]
+        impl crate::tools::ToolExecutor for MockTool {
+            fn tool_definition(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "name": "mock_extra",
+                    "description": "extra mock tool for tools_mut test",
+                    "parameters": {"type": "object"}
+                })
+            }
+
+            async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+                Ok(ToolResult::success("mock output".to_string()))
+            }
+        }
+
+        let provider = MockProvider::new(vec![]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        assert_eq!(agent.num_tools(), 0, "registry should start empty");
+
+        agent.tools_mut().register("mock_extra", Arc::new(MockTool));
+
+        assert_eq!(
+            agent.num_tools(),
+            1,
+            "registry should reflect the new tool after tools_mut registration"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // combine_reasoning unit tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_combine_reasoning_both_some_concatenates() {
+        let result = combine_reasoning(
+            Some("raw reasoning".to_string()),
+            Some("tag reasoning".to_string()),
+        );
+        assert_eq!(result, Some("raw reasoning\ntag reasoning".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_only_raw_returns_raw() {
+        let result = combine_reasoning(Some("raw only".to_string()), None);
+        assert_eq!(result, Some("raw only".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_only_tags_returns_tags() {
+        let result = combine_reasoning(None, Some("tags only".to_string()));
+        assert_eq!(result, Some("tags only".to_string()));
+    }
+
+    #[test]
+    fn test_combine_reasoning_both_none_returns_none() {
+        let result = combine_reasoning(None, None);
+        assert!(result.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Reasoning event plumbing tests (execute_with_observer)
+    // -------------------------------------------------------------------------
+
+    /// A mock provider that returns a single response with an optional reasoning field.
+    struct MockProviderWithReasoning {
+        message: Message,
+        reasoning: Option<String>,
+        call_count: Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl MockProviderWithReasoning {
+        fn new(message: Message, reasoning: Option<String>) -> Self {
+            Self {
+                message,
+                reasoning,
+                call_count: Arc::new(std::sync::Mutex::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MockProviderWithReasoning {
+        fn is_authenticated(&self) -> bool {
+            false
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            None
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+            Err(crate::error::XzatomaError::Provider(
+                "not supported".to_string(),
+            ))
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            let mut count = self.call_count.lock().unwrap();
+            let idx = *count;
+            *count += 1;
+            drop(count);
+
+            if idx == 0 {
+                let mut response = CompletionResponse::new(self.message.clone());
+                if let Some(r) = &self.reasoning {
+                    response = response.set_reasoning(r.clone());
+                }
+                Ok(response)
+            } else {
+                Ok(CompletionResponse::new(Message::assistant("Done")))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_reasoning_from_completion_response_field() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("final answer"),
+            Some("structured chain-of-thought".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "structured chain-of-thought");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_reasoning_from_think_tags_in_content() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>chain of thought</think>final answer"),
+            None,
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "final answer");
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "chain of thought");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+
+        // The AssistantTextEmitted event must carry the clean text, not the raw tagged text.
+        let text_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::AssistantTextEmitted { .. }))
+            .collect();
+        assert_eq!(text_events.len(), 1);
+        if let AgentExecutionEvent::AssistantTextEmitted { text } = &text_events[0] {
+            assert_eq!(text, "final answer");
+        } else {
+            panic!("expected AssistantTextEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_does_not_store_tags_in_conversation() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>hidden reasoning</think>clean response"),
+            None,
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut observer = crate::agent::events::NoOpObserver;
+        let result = agent
+            .execute_with_observer("test", &token, &mut observer)
+            .await;
+        assert!(result.is_ok());
+
+        // No message in conversation history may contain a raw thinking tag.
+        for msg in agent.conversation().messages() {
+            if let Some(content) = &msg.content {
+                assert!(
+                    !content.contains("<think>"),
+                    "conversation must not store raw thinking tags; found: {content}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_combines_raw_and_tag_reasoning() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("<think>from_tags</think>answer"),
+            Some("raw_reasoning".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "raw_reasoning\nfrom_tags");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_messages_with_observer_emits_reasoning() {
+        let provider = MockProviderWithReasoning::new(
+            Message::assistant("provider messages answer"),
+            Some("provider messages reasoning".to_string()),
+        );
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let messages = vec![crate::providers::Message::user("test")];
+        let result = agent
+            .execute_provider_messages_with_observer(messages, &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let reasoning_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningEmitted { .. }))
+            .collect();
+        assert_eq!(
+            reasoning_events.len(),
+            1,
+            "expected exactly one ReasoningEmitted event"
+        );
+        if let AgentExecutionEvent::ReasoningEmitted { text } = &reasoning_events[0] {
+            assert_eq!(text, "provider messages reasoning");
+        } else {
+            panic!("expected ReasoningEmitted variant");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ContextWindowUpdated event plumbing tests
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_context_window_updated_on_provider_response() {
+        let usage = TokenUsage::new(100, 50);
+        let provider = MockProvider::with_token_usage(vec![Message::assistant("done")], usage);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test context window", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "expected exactly one ContextWindowUpdated event"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            // Provider reported 100 prompt + 50 completion = 150 total
+            assert!(
+                *used_tokens >= 150,
+                "expected used_tokens >= 150, got {used_tokens}"
+            );
+            // Default AgentConfig uses ConversationConfig::default() max_tokens = 100_000
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_provider_messages_with_observer_emits_context_window_updated() {
+        let usage = TokenUsage::new(200, 100);
+        let provider = MockProvider::with_token_usage(vec![Message::assistant("done")], usage);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let messages = vec![crate::providers::Message::user("test")];
+        let result = agent
+            .execute_provider_messages_with_observer(messages, &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "expected exactly one ContextWindowUpdated event"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            // Provider reported 200 prompt + 100 completion = 300 total
+            assert!(
+                *used_tokens >= 300,
+                "expected used_tokens >= 300, got {used_tokens}"
+            );
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_window_updated_uses_heuristic_when_no_provider_usage() {
+        // Provider returns no usage data; heuristic token count must still fire.
+        let provider = MockProvider::new(vec![Message::assistant("done")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl crate::agent::events::AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let token = tokio_util::sync::CancellationToken::new();
+        let mut collector = EventCollector { events: Vec::new() };
+        let result = agent
+            .execute_with_observer("test heuristic fallback", &token, &mut collector)
+            .await;
+        assert!(result.is_ok());
+
+        let cw_events: Vec<_> = collector
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ContextWindowUpdated { .. }))
+            .collect();
+        assert_eq!(
+            cw_events.len(),
+            1,
+            "ContextWindowUpdated must fire even when provider reports no usage"
+        );
+        if let AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens,
+            max_tokens,
+        } = &cw_events[0]
+        {
+            assert!(
+                *used_tokens > 0,
+                "expected used_tokens > 0 from heuristic, got {used_tokens}"
+            );
+            assert_eq!(*max_tokens, 100_000u64);
+        } else {
+            panic!("expected ContextWindowUpdated variant");
+        }
     }
 }

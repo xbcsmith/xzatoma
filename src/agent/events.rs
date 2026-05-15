@@ -50,6 +50,17 @@ pub enum AgentExecutionEvent {
         text: String,
     },
 
+    /// The provider returned reasoning or chain-of-thought content.
+    ///
+    /// Reasoning content is extracted from either `CompletionResponse.reasoning`
+    /// or from inline thinking tags stripped from the assistant text before it
+    /// is stored in conversation history. Observers that do not need reasoning
+    /// can ignore this event; the `NoOpObserver` discards it.
+    ReasoningEmitted {
+        /// The reasoning or chain-of-thought text.
+        text: String,
+    },
+
     /// A tool call is about to begin executing.
     ToolCallStarted {
         /// Unique tool call identifier assigned by the provider.
@@ -84,6 +95,19 @@ pub enum AgentExecutionEvent {
     VisionInputAttached {
         /// Number of image parts detected in the input.
         count: usize,
+    },
+
+    /// Context window state was updated after a provider response.
+    ///
+    /// Emitted immediately after provider token usage is stored in the
+    /// conversation. `used_tokens` reflects the most accurate available count:
+    /// provider-reported if present, heuristic otherwise. `max_tokens` is the
+    /// configured context window size from `Conversation.max_tokens()`.
+    ContextWindowUpdated {
+        /// Tokens currently occupying the context window.
+        used_tokens: u64,
+        /// Maximum tokens available in the context window.
+        max_tokens: u64,
     },
 
     /// Cancellation was detected at a safe execution boundary.
@@ -171,6 +195,9 @@ mod tests {
         observer.on_event(AgentExecutionEvent::AssistantTextEmitted {
             text: "hello".to_string(),
         });
+        observer.on_event(AgentExecutionEvent::ReasoningEmitted {
+            text: "thinking...".to_string(),
+        });
         observer.on_event(AgentExecutionEvent::ToolCallStarted {
             id: "tc-1".to_string(),
             name: "read_file".to_string(),
@@ -187,6 +214,10 @@ mod tests {
             error: "not found".to_string(),
         });
         observer.on_event(AgentExecutionEvent::VisionInputAttached { count: 2 });
+        observer.on_event(AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens: 1024,
+            max_tokens: 8192,
+        });
         observer.on_event(AgentExecutionEvent::CancellationRequested);
         observer.on_event(AgentExecutionEvent::ExecutionCompleted {
             response: "done".to_string(),
@@ -194,6 +225,25 @@ mod tests {
         observer.on_event(AgentExecutionEvent::ExecutionFailed {
             error: "boom".to_string(),
         });
+    }
+
+    #[test]
+    fn test_no_op_observer_accepts_reasoning_emitted_event() {
+        let mut observer = NoOpObserver;
+        observer.on_event(AgentExecutionEvent::ReasoningEmitted {
+            text: "chain-of-thought content".to_string(),
+        });
+        // NoOpObserver must silently discard the event without panicking.
+    }
+
+    #[test]
+    fn test_context_window_updated_event_is_debug_clone() {
+        let event = AgentExecutionEvent::ContextWindowUpdated {
+            used_tokens: 1024,
+            max_tokens: 8192,
+        };
+        let cloned = event.clone();
+        let _ = format!("{:?}", cloned);
     }
 
     #[test]

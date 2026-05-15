@@ -576,6 +576,7 @@ impl GenericWatcher {
             None,
             Some(trimmed.to_string()),
             allow_dangerous,
+            None,
         )
         .await;
 

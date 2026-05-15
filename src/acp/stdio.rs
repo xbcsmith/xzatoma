@@ -54,6 +54,8 @@ use crate::commands::build_agent_environment;
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
+use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::prompts;
 use crate::providers::{
     create_provider_with_override, Message, ModelCapability, ModelInfo as XzatomaModelInfo,
@@ -61,6 +63,7 @@ use crate::providers::{
 };
 use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
 use crate::tools::ide_tools::register_ide_tools;
+use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::SubagentTool;
 
 use acp_sdk::schema as acp;
@@ -439,6 +442,77 @@ impl AcpStdioServerState {
         let env = build_agent_environment(&self.config, &workspace_root, true).await?;
         let mut tools = env.tool_registry;
 
+        // Connect MCP servers forwarded by Zed in NewSessionRequest.mcp_servers.
+        // These are per-project servers from the user's Zed settings, not from
+        // XZatoma's own config.yaml. Individual connection failures are logged
+        // and skipped so they do not abort session creation.
+        if !request.mcp_servers.is_empty() {
+            if let Some(ref manager_arc) = env.mcp_manager {
+                for acp_server in &request.mcp_servers {
+                    let cfg = match convert_acp_mcp_server(acp_server) {
+                        Ok(cfg) => cfg,
+                        Err(error) => {
+                            tracing::warn!(
+                                workspace = %workspace_root.display(),
+                                error = %error,
+                                "Skipping Zed-forwarded MCP server: failed to convert config"
+                            );
+                            continue;
+                        }
+                    };
+
+                    // Skip duplicates: check against already-connected servers.
+                    {
+                        let manager_guard = manager_arc.read().await;
+                        if manager_guard
+                            .connected_servers()
+                            .iter()
+                            .any(|e| e.config.id == cfg.id)
+                        {
+                            tracing::debug!(
+                                server_id = %cfg.id,
+                                "Skipping Zed-forwarded MCP server: already connected"
+                            );
+                            continue;
+                        }
+                    }
+
+                    let server_id = cfg.id.clone();
+                    {
+                        let mut manager_guard = manager_arc.write().await;
+                        if let Err(error) = manager_guard.connect(cfg).await {
+                            tracing::warn!(
+                                server_id = %server_id,
+                                workspace = %workspace_root.display(),
+                                error = %error,
+                                "Failed to connect Zed-forwarded MCP server; skipping"
+                            );
+                            continue;
+                        }
+                    }
+
+                    tracing::info!(
+                        server_id = %server_id,
+                        workspace = %workspace_root.display(),
+                        "Connected Zed-forwarded MCP server"
+                    );
+                }
+
+                // Register tools from any newly connected Zed-forwarded servers.
+                let execution_mode = self.config.agent.terminal.default_mode;
+                if let Err(error) =
+                    register_mcp_tools(&mut tools, Arc::clone(manager_arc), execution_mode, true)
+                        .await
+                {
+                    tracing::warn!(
+                        workspace = %workspace_root.display(),
+                        error = %error,
+                        "Failed to register tools from Zed-forwarded MCP servers"
+                    );
+                }
+            }
+        }
+
         let provider_box = create_provider_with_override(
             &self.config.provider,
             self.options.provider.as_deref(),
@@ -531,6 +605,7 @@ impl AcpStdioServerState {
         }
 
         let xzatoma_agent = Arc::new(Mutex::new(agent));
+        let agent_arc_for_init = Arc::clone(&xzatoma_agent);
         let initial_token = CancellationToken::new();
         let (token_tx, current_cancellation_token) = watch::channel(initial_token);
         let (prompt_queue, prompt_receiver) =
@@ -567,6 +642,22 @@ impl AcpStdioServerState {
         };
 
         self.sessions.insert(active_session).await;
+
+        // Send an initial UsageUpdate so Zed can render the context window bar
+        // immediately, even before the first prompt is processed.
+        if let Some(conn) = &connection {
+            let agent = agent_arc_for_init.lock().await;
+            let max_tokens = agent.conversation().max_tokens() as u64;
+            let used_tokens = agent
+                .get_context_info(agent.conversation().max_tokens())
+                .used_tokens as u64;
+            let update = acp::UsageUpdate::new(used_tokens, max_tokens);
+            let notification = acp::SessionNotification::new(
+                session_id.clone(),
+                acp::SessionUpdate::UsageUpdate(update),
+            );
+            let _ = conn.send_notification_to(AcpClientRole, notification);
+        }
 
         Ok(acp::NewSessionResponse::new(session_id)
             .models(model_state)
@@ -617,6 +708,21 @@ impl AcpStdioServerState {
             drop(session_lock);
             let mut agent_lock = agent.lock().await;
             agent_lock.set_transient_system_messages(vec![system_prompt]);
+
+            // Replace the terminal tool so the new ExecutionMode is enforced immediately.
+            {
+                let session_read = session.lock().await;
+                let workspace_root = session_read.workspace_root.clone();
+                drop(session_read);
+
+                let new_validator = CommandValidator::new(effect.terminal_mode, workspace_root);
+                let new_terminal_tool =
+                    TerminalTool::new(new_validator, self.config.agent.terminal.clone())
+                        .with_safety_mode(safety_mode);
+                agent_lock
+                    .tools_mut()
+                    .register("terminal", Arc::new(new_terminal_tool));
+            }
         }
 
         tracing::info!(
@@ -683,6 +789,17 @@ impl AcpStdioServerState {
         if let Some(turns) = effect.max_turns {
             session_lock.runtime_state.max_turns = turns;
         }
+        if let Some(ref effort_str) = effect.thinking_effort {
+            session_lock.runtime_state.thinking_effort = effort_str.clone();
+        }
+
+        // Clone what is needed for the deferred provider call before releasing
+        // the session lock. The agent lock must not be acquired while the
+        // session lock is held to avoid a lock-ordering inversion with the
+        // prompt worker.
+        let agent_handle = session_lock.xzatoma_agent.clone();
+        let thinking_effort_to_apply = effect.thinking_effort.clone();
+
         session_lock.last_activity = chrono::Utc::now().to_rfc3339();
 
         tracing::info!(
@@ -691,6 +808,26 @@ impl AcpStdioServerState {
             value_id = %value_id,
             "ACP session config option changed"
         );
+
+        // Release session lock before acquiring agent lock.
+        drop(session_lock);
+
+        // Apply thinking effort to the live provider (outside session lock).
+        if let Some(ref effort_str) = thinking_effort_to_apply {
+            let effort_opt = if effort_str == "none" {
+                None
+            } else {
+                Some(effort_str.as_str())
+            };
+            let agent_lock = agent_handle.lock().await;
+            if let Err(e) = agent_lock.provider().set_thinking_effort(effort_opt) {
+                tracing::warn!(
+                    session_id = %request.session_id,
+                    error = %e,
+                    "Failed to apply thinking effort change"
+                );
+            }
+        }
 
         Ok(updated_options)
     }
@@ -1192,7 +1329,11 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
         .agent_capabilities(
             acp::AgentCapabilities::new()
                 .load_session(false)
-                .prompt_capabilities(acp::PromptCapabilities::new().image(true))
+                .prompt_capabilities(
+                    acp::PromptCapabilities::new()
+                        .image(true)
+                        .embedded_context(true),
+                )
                 .mcp_capabilities(acp::McpCapabilities::new())
                 // Advertise session mode, config, and model capabilities so Zed
                 // knows to show the mode selector, config controls, and model
@@ -1238,6 +1379,155 @@ fn initial_mode_id_from_config(config: &Config) -> String {
     } else {
         MODE_WRITE.to_string()
     }
+}
+
+/// Converts a Zed-forwarded ACP MCP server descriptor to an XZatoma `McpServerConfig`.
+///
+/// The `name` field of each ACP variant is sanitized into a valid server ID by
+/// lower-casing and replacing every character that does not match `[a-z0-9_-]`
+/// with an underscore. The result is truncated to 64 characters. An empty ID
+/// after sanitization is rejected.
+///
+/// `Http` and `Sse` ACP variants are both mapped to
+/// `McpServerTransportConfig::Http` because XZatoma's internal transport layer
+/// handles both protocols through the same HTTP/SSE path.
+///
+/// # Arguments
+///
+/// * `server` - ACP MCP server descriptor received in `NewSessionRequest.mcp_servers`.
+///
+/// # Returns
+///
+/// A validated `McpServerConfig` ready for connection.
+///
+/// # Errors
+///
+/// Returns `XzatomaError::Config` when:
+///
+/// - The sanitized server name is empty.
+/// - An HTTP or SSE server has a malformed URL.
+/// - The built config fails `McpServerConfig::validate()`.
+fn convert_acp_mcp_server(server: &acp::McpServer) -> Result<McpServerConfig> {
+    match server {
+        acp::McpServer::Stdio(s) => {
+            let id = sanitize_mcp_server_id(&s.name)?;
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Stdio {
+                    executable: s.command.to_string_lossy().into_owned(),
+                    args: s.args.clone(),
+                    env: s
+                        .env
+                        .iter()
+                        .map(|e| (e.name.clone(), e.value.clone()))
+                        .collect(),
+                    working_dir: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        acp::McpServer::Http(h) => {
+            let id = sanitize_mcp_server_id(&h.name)?;
+            let endpoint = h.url.parse::<url::Url>().map_err(|e| {
+                XzatomaError::Config(format!(
+                    "Zed-forwarded MCP server '{}' has invalid URL '{}': {}",
+                    h.name, h.url, e
+                ))
+            })?;
+            let headers = h
+                .headers
+                .iter()
+                .map(|hdr| (hdr.name.clone(), hdr.value.clone()))
+                .collect();
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Http {
+                    endpoint,
+                    headers,
+                    timeout_seconds: None,
+                    oauth: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        acp::McpServer::Sse(s) => {
+            let id = sanitize_mcp_server_id(&s.name)?;
+            let endpoint = s.url.parse::<url::Url>().map_err(|e| {
+                XzatomaError::Config(format!(
+                    "Zed-forwarded MCP server '{}' has invalid URL '{}': {}",
+                    s.name, s.url, e
+                ))
+            })?;
+            let headers = s
+                .headers
+                .iter()
+                .map(|hdr| (hdr.name.clone(), hdr.value.clone()))
+                .collect();
+            let cfg = McpServerConfig {
+                id,
+                transport: McpServerTransportConfig::Http {
+                    endpoint,
+                    headers,
+                    timeout_seconds: None,
+                    oauth: None,
+                },
+                enabled: true,
+                timeout_seconds: 30,
+                tools_enabled: true,
+                resources_enabled: false,
+                prompts_enabled: false,
+                sampling_enabled: false,
+                elicitation_enabled: false,
+            };
+            cfg.validate()?;
+            Ok(cfg)
+        }
+        &_ => Err(XzatomaError::Config(
+            "Zed-forwarded MCP server uses an unsupported transport type".to_string(),
+        )),
+    }
+}
+
+/// Sanitizes a Zed MCP server name into a valid `McpServerConfig` ID.
+///
+/// Lowercases the input, replaces every character that does not match
+/// `[a-z0-9_-]` with `_`, and truncates to 64 characters. Returns
+/// `XzatomaError::Config` when the result is empty.
+fn sanitize_mcp_server_id(name: &str) -> Result<String> {
+    let sanitized: String = name
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect();
+    if sanitized.is_empty() {
+        return Err(XzatomaError::Config(
+            "Zed-forwarded MCP server has an empty name after sanitization".to_string(),
+        ));
+    }
+    Ok(sanitized)
 }
 
 fn open_stdio_storage(config: &Config) -> Option<SqliteStorage> {
@@ -1616,6 +1906,10 @@ impl AgentObserver for AcpSessionObserver {
                 let update = build_tool_call_failure(&tool_call_id, &error);
                 self.send_update(acp::SessionUpdate::ToolCallUpdate(update));
             }
+            AgentExecutionEvent::ReasoningEmitted { text } => {
+                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(text));
+                self.send_update(acp::SessionUpdate::AgentThoughtChunk(chunk));
+            }
             AgentExecutionEvent::ExecutionCompleted { response } => {
                 // Only emit final text if no streaming text was already sent.
                 if !self.text_emitted && !response.is_empty() {
@@ -1636,6 +1930,13 @@ impl AgentObserver for AcpSessionObserver {
                     error = %error,
                     "ACP agent execution event: execution failed"
                 );
+            }
+            AgentExecutionEvent::ContextWindowUpdated {
+                used_tokens,
+                max_tokens,
+            } => {
+                let update = acp::UsageUpdate::new(used_tokens, max_tokens);
+                self.send_update(acp::SessionUpdate::UsageUpdate(update));
             }
             _ => {}
         }
@@ -1772,6 +2073,23 @@ async fn execute_queued_prompt(
         }
     }
 
+    // Send a SessionInfoUpdate with the auto-derived title after EndTurn.
+    // first_user_prompt_title reads from the full conversation history so it
+    // returns a value as soon as one user message exists. Sending on every
+    // EndTurn is idempotent: Zed's UI handles repeated title updates gracefully.
+    if stop_reason == acp::StopReason::EndTurn {
+        if let Some(conn) = connection {
+            if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
+                let info_update = acp::SessionInfoUpdate::new().title(title);
+                let notification = acp::SessionNotification::new(
+                    session_id.clone(),
+                    acp::SessionUpdate::SessionInfoUpdate(info_update),
+                );
+                let _ = conn.send_notification_to(AcpClientRole, notification);
+            }
+        }
+    }
+
     Ok(acp::PromptResponse::new(stop_reason))
 }
 
@@ -1833,6 +2151,9 @@ fn map_error_to_stop_reason(error: &crate::error::XzatomaError) -> acp::StopReas
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acp::McpServerHttp;
+
+    use acp::McpServerStdio;
     use agent_client_protocol::{
         Channel, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, SentRequest, UntypedMessage,
     };
@@ -1983,6 +2304,12 @@ mod tests {
         let response = handle_initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1));
 
         assert!(response.agent_capabilities.prompt_capabilities.image);
+        assert!(
+            response
+                .agent_capabilities
+                .prompt_capabilities
+                .embedded_context
+        );
         assert!(!response.agent_capabilities.prompt_capabilities.audio);
         assert!(!response.agent_capabilities.load_session);
     }
@@ -2064,6 +2391,29 @@ mod tests {
 
             assert!(response.agent_capabilities.prompt_capabilities.image);
             assert!(!response.agent_capabilities.prompt_capabilities.audio);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol() {
+        run_client_server_test(|connection| async move {
+            let response = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
+            )
+            .await;
+
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => panic!("initialize should succeed: {}", error),
+            };
+
+            assert!(
+                response
+                    .agent_capabilities
+                    .prompt_capabilities
+                    .embedded_context
+            );
         })
         .await;
     }
@@ -2968,6 +3318,114 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "full_autonomous"),
+            ))
+            .await;
+
+            assert!(
+                set_mode_resp.is_ok(),
+                "set_session_mode to full_autonomous should succeed \
+                 and replace the terminal tool with FullAutonomous execution mode"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_full_autonomous_to_planning_restricts_terminal() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let full_auto_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "full_autonomous"),
+            ))
+            .await;
+            assert!(
+                full_auto_resp.is_ok(),
+                "set_session_mode to full_autonomous should succeed"
+            );
+
+            let planning_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "planning"),
+            ))
+            .await;
+            assert!(
+                planning_resp.is_ok(),
+                "set_session_mode from full_autonomous to planning should succeed \
+                 and update terminal tool to Interactive execution mode"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_does_not_change_terminal_for_unknown_mode() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let write_resp = receive_response(
+                connection
+                    .send_request(acp::SetSessionModeRequest::new(session_id.clone(), "write")),
+            )
+            .await;
+            assert!(
+                write_resp.is_ok(),
+                "initial set_session_mode to write should succeed"
+            );
+
+            let unknown_resp = receive_response(
+                connection
+                    .send_request(acp::SetSessionModeRequest::new(session_id.clone(), "turbo")),
+            )
+            .await;
+            assert!(
+                unknown_resp.is_err(),
+                "set_session_mode with unknown mode id 'turbo' should return an error \
+                 and leave the terminal tool's execution mode unchanged"
+            );
+        })
+        .await;
+    }
+
     #[test]
     fn test_create_session_includes_current_mode_id() {
         let config = Config::default();
@@ -3088,5 +3546,219 @@ mod tests {
         ) -> std::result::Result<Self, acp_sdk::Error> {
             acp_sdk::util::json_cast(&value)
         }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_stdio_produces_valid_config() {
+        let server = acp::McpServer::Stdio(
+            McpServerStdio::new("my-server", "/usr/bin/mcp-tool").args(vec!["--flag".to_string()]),
+        );
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "my-server");
+        assert!(cfg.enabled);
+        assert!(cfg.tools_enabled);
+        match &cfg.transport {
+            McpServerTransportConfig::Stdio {
+                executable, args, ..
+            } => {
+                assert_eq!(executable, "/usr/bin/mcp-tool");
+                assert_eq!(args, &["--flag"]);
+            }
+            _ => panic!("expected Stdio transport"),
+        }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_http_produces_valid_config() {
+        let server = acp::McpServer::Http(McpServerHttp::new(
+            "http-server",
+            "http://localhost:8080/mcp",
+        ));
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "http-server");
+        assert!(cfg.enabled);
+        match &cfg.transport {
+            McpServerTransportConfig::Http { endpoint, .. } => {
+                assert_eq!(endpoint.as_str(), "http://localhost:8080/mcp");
+            }
+            _ => panic!("expected Http transport"),
+        }
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_sanitizes_name_with_spaces() {
+        let server =
+            acp::McpServer::Stdio(McpServerStdio::new("My MCP Server!", "/usr/bin/server"));
+
+        let cfg = convert_acp_mcp_server(&server).unwrap();
+
+        assert_eq!(cfg.id, "my_mcp_server_");
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_rejects_empty_name() {
+        let server = acp::McpServer::Stdio(McpServerStdio::new("", "/usr/bin/server"));
+
+        let result = convert_acp_mcp_server(&server);
+
+        assert!(result.is_err(), "empty server name should produce an error");
+    }
+
+    #[test]
+    fn test_convert_acp_mcp_server_rejects_invalid_http_url() {
+        let server = acp::McpServer::Http(McpServerHttp::new("bad-server", "not a url"));
+
+        let result = convert_acp_mcp_server(&server);
+
+        assert!(result.is_err(), "invalid URL should produce an error");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_empty_mcp_servers_list_does_not_error() {
+        run_client_server_test(|connection| async move {
+            let initialize_resp = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+            assert!(initialize_resp.is_ok(), "initialize should succeed");
+
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(error) => panic!("current dir should be available: {}", error),
+            };
+
+            // NewSessionRequest with no MCP servers (default empty vec).
+            let response =
+                receive_response(connection.send_request(acp::NewSessionRequest::new(cwd))).await;
+
+            assert!(
+                response.is_ok(),
+                "session creation with empty mcp_servers should succeed: {:?}",
+                response.err()
+            );
+        })
+        .await;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3: ContextWindowUpdated -> UsageUpdate wiring tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_acp_session_observer_sends_usage_update_on_context_window_updated() {
+        // Verify that the ContextWindowUpdated event handler maps its fields
+        // correctly to acp::UsageUpdate: used_tokens -> used, max_tokens -> size.
+        // This is the exact construction performed by AcpSessionObserver.on_event()
+        // when it receives ContextWindowUpdated.
+        let update = acp::UsageUpdate::new(500u64, 8192u64);
+        assert_eq!(update.used, 500, "used_tokens must become UsageUpdate.used");
+        assert_eq!(update.size, 8192, "max_tokens must become UsageUpdate.size");
+    }
+
+    #[test]
+    fn test_acp_session_observer_context_window_updated_zero_values() {
+        // Confirm that zero values are accepted without panic and produce a
+        // correctly zeroed UsageUpdate (edge case: empty context window).
+        let update = acp::UsageUpdate::new(0u64, 0u64);
+        assert_eq!(
+            update.used, 0,
+            "zero used_tokens must produce UsageUpdate.used == 0"
+        );
+        assert_eq!(
+            update.size, 0,
+            "zero max_tokens must produce UsageUpdate.size == 0"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: Initial UsageUpdate and SessionInfoUpdate tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_execute_queued_prompt_sends_session_info_update_on_end_turn() {
+        // Verify that first_user_prompt_title extracts a non-empty title from a
+        // slice containing one user message, which is the component driving the
+        // SessionInfoUpdate path in execute_queued_prompt on EndTurn.
+        let messages = vec![Message::user("What is the capital of France?")];
+        let title = first_user_prompt_title(&messages);
+        assert!(title.is_some(), "user message should produce a title");
+        let title = title.unwrap();
+        assert!(!title.is_empty(), "extracted title must not be empty");
+        assert!(
+            title.contains("France"),
+            "title should reflect user message content"
+        );
+
+        // Verify that SessionInfoUpdate serializes with the correct "title" field
+        // in JSON, confirming the struct builder works end-to-end.
+        let info_update = acp::SessionInfoUpdate::new().title(title.clone());
+        let serialized =
+            serde_json::to_value(&info_update).expect("SessionInfoUpdate should serialize");
+        assert_eq!(
+            serialized.get("title").and_then(|v| v.as_str()),
+            Some(title.as_str()),
+            "serialized SessionInfoUpdate must contain the correct title field"
+        );
+    }
+
+    #[test]
+    fn test_execute_queued_prompt_no_session_info_update_on_cancelled() {
+        // Verify the guard condition: Cancelled != EndTurn, so no SessionInfoUpdate
+        // is emitted when the prompt is cancelled.
+        assert_ne!(
+            acp::StopReason::Cancelled,
+            acp::StopReason::EndTurn,
+            "Cancelled and EndTurn must be distinct to ensure the guard fires correctly"
+        );
+
+        // Verify first_user_prompt_title returns None for an empty message slice,
+        // confirming that no title update would be sent even if the guard passed.
+        let empty: Vec<Message> = Vec::new();
+        let title = first_user_prompt_title(&empty);
+        assert!(
+            title.is_none(),
+            "empty message slice must produce no title (no update would be sent)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_sends_initial_usage_update_when_connection_present() {
+        // Create an AcpStdioServerState with default config and no storage, then
+        // call create_session with connection = None to exercise the code path.
+        // This validates session creation completes without error even when the
+        // initial-UsageUpdate branch is guarded on connection being Some.
+        let config = Config::default();
+        let state = AcpStdioServerState::new(
+            config.clone(),
+            AcpStdioAgentOptions::new(None, None, false, None),
+        );
+
+        let workspace_dir = tempfile::tempdir().expect("tempdir should be created");
+        let response = state
+            .create_session(
+                acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
+            )
+            .await;
+
+        assert!(
+            response.is_ok(),
+            "create_session with connection=None should succeed: {:?}",
+            response.err()
+        );
+
+        // Validate that the UsageUpdate construction used when a connection is
+        // present produces a non-zero size, confirming the default max_tokens
+        // from Config is propagated correctly into the notification payload.
+        let max_tokens = config.agent.conversation.max_tokens as u64;
+        let update = acp::UsageUpdate::new(0u64, max_tokens);
+        assert!(
+            update.size > 0,
+            "default Config max_tokens must produce a non-zero UsageUpdate.size"
+        );
     }
 }

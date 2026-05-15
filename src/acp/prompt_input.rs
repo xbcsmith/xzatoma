@@ -80,20 +80,43 @@ pub fn acp_content_blocks_to_prompt_input(
                         workspace_root,
                     )?));
                 } else {
-                    return Err(provider_error(format!(
-                        "unsupported resource link '{}' with MIME type '{}'",
-                        resource.uri,
-                        resource.mime_type.as_deref().unwrap_or("unknown")
-                    )));
+                    // Directory mentions, file stubs from older Zed clients, and any
+                    // non-image resource link: emit a text reference placeholder so the
+                    // model knows a resource was referenced without failing the prompt.
+                    let placeholder = format!("[Reference: {} ({})]", resource.name, resource.uri);
+                    parts.push(PromptInputPart::text(placeholder));
                 }
             }
-            acp::ContentBlock::Resource(resource) => {
-                parts.push(PromptInputPart::image(convert_embedded_resource(
-                    resource,
-                    config,
-                    workspace_root,
-                )?));
-            }
+            acp::ContentBlock::Resource(resource) => match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                    if is_image_mime_type(text.mime_type.as_deref()) {
+                        // Image disguised as a text resource (rare); fall back to URI conversion.
+                        parts.push(PromptInputPart::image(convert_embedded_resource(
+                            resource,
+                            config,
+                            workspace_root,
+                        )?));
+                    } else {
+                        // Inline file content, diagnostics, git diff, rules, etc.
+                        let header = format!("\n[Context: {}]\n", text.uri);
+                        let body = format!("{}{}", header, text.text);
+                        if !body.trim().is_empty() {
+                            parts.push(PromptInputPart::text(body));
+                        }
+                    }
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                    // Binary blob: always attempt image conversion.
+                    parts.push(PromptInputPart::image(convert_embedded_resource(
+                        resource,
+                        config,
+                        workspace_root,
+                    )?));
+                }
+                _ => {
+                    return Err(provider_error("unsupported embedded ACP resource variant"));
+                }
+            },
             acp::ContentBlock::Audio(audio) => {
                 return Err(provider_error(format!(
                     "unsupported ACP audio content with MIME type '{}'",
@@ -505,7 +528,7 @@ mod tests {
     use super::*;
     use agent_client_protocol::schema::{
         BlobResourceContents, ContentBlock, EmbeddedResource, EmbeddedResourceResource,
-        ImageContent, ResourceLink, TextContent,
+        ImageContent, ResourceLink, TextContent, TextResourceContents,
     };
     use tempfile::TempDir;
 
@@ -671,5 +694,186 @@ mod tests {
                 .unwrap();
 
         assert!(input.has_images());
+    }
+
+    #[test]
+    fn test_text_resource_contents_converted_to_text_part() {
+        let blocks = vec![ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(
+                TextResourceContents::new("fn main() {}", "file:///src/main.rs")
+                    .mime_type("text/plain"),
+            ),
+        ))];
+
+        let input =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."))
+                .unwrap();
+
+        assert!(!input.has_images());
+        assert_eq!(input.parts.len(), 1);
+        let text = input.as_legacy_text();
+        assert!(
+            text.contains("[Context: file:///src/main.rs]"),
+            "expected URI header in text part, got: {text}"
+        );
+        assert!(
+            text.contains("fn main() {}"),
+            "expected resource text in text part, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_text_resource_contents_with_diagnostics_mime_type() {
+        let blocks = vec![ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(
+                TextResourceContents::new("error: unused variable", "file:///src/main.rs")
+                    .mime_type("text/x-diagnostics"),
+            ),
+        ))];
+
+        let result =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."));
+
+        assert!(
+            result.is_ok(),
+            "diagnostics MIME type should produce a text part, not an error"
+        );
+        assert!(!result.unwrap().has_images());
+    }
+
+    #[test]
+    fn test_text_resource_contents_with_no_mime_type() {
+        let blocks = vec![ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::TextResourceContents(TextResourceContents::new(
+                "some content",
+                "file:///notes.txt",
+            )),
+        ))];
+
+        let result =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."));
+
+        assert!(
+            result.is_ok(),
+            "absent MIME type should be treated as non-image and produce a text part"
+        );
+        assert!(!result.unwrap().has_images());
+    }
+
+    #[test]
+    fn test_blob_resource_with_image_mime_type_remains_image_path() {
+        let blocks = vec![ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::BlobResourceContents(
+                BlobResourceContents::new(png_data(), "file:///image.png").mime_type("image/png"),
+            ),
+        ))];
+
+        // The result may succeed (image part) or fail with the existing
+        // image-validation error, but it must NOT produce an "unsupported
+        // resource" error introduced by the new dispatch.
+        let result =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."));
+
+        match result {
+            Ok(input) => assert!(input.has_images()),
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("unsupported embedded ACP resource variant"),
+                    "blob resources must not produce the new unsupported-variant error: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_non_image_resource_link_produces_placeholder() {
+        let blocks = vec![ContentBlock::ResourceLink(
+            ResourceLink::new("src/", "file:///src/").mime_type("inode/directory"),
+        )];
+
+        let input =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."))
+                .unwrap();
+
+        assert!(!input.has_images());
+        let text = input.as_legacy_text();
+        assert!(
+            text.contains("src/"),
+            "placeholder should contain the resource name, got: {text}"
+        );
+        assert!(
+            text.contains("file:///src/"),
+            "placeholder should contain the URI, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_non_image_resource_link_with_no_mime_type_produces_placeholder() {
+        let blocks = vec![ContentBlock::ResourceLink(ResourceLink::new(
+            "notes.txt",
+            "file:///notes.txt",
+        ))];
+
+        let input =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."))
+                .unwrap();
+
+        assert!(!input.has_images());
+        let text = input.as_legacy_text();
+        assert!(
+            text.contains("notes.txt"),
+            "placeholder should contain the resource name, got: {text}"
+        );
+    }
+
+    #[test]
+    fn test_image_resource_link_still_routed_to_image_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let image_path = temp_dir.path().join("image.png");
+        std::fs::write(&image_path, [137u8, 80, 78, 71]).unwrap();
+
+        let blocks = vec![ContentBlock::ResourceLink(
+            ResourceLink::new("image.png", "image.png").mime_type("image/png"),
+        )];
+
+        let input = acp_content_blocks_to_prompt_input(
+            &blocks,
+            &AcpStdioConfig::default(),
+            temp_dir.path(),
+        )
+        .unwrap();
+
+        assert!(
+            input.has_images(),
+            "image resource links must still produce image parts"
+        );
+    }
+
+    #[test]
+    fn test_mixed_prompt_with_text_resource_and_plain_text() {
+        let blocks = vec![
+            ContentBlock::Text(TextContent::new("describe this")),
+            ContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::TextResourceContents(
+                    TextResourceContents::new("fn main() {}", "file:///src/main.rs")
+                        .mime_type("text/plain"),
+                ),
+            )),
+        ];
+
+        let input =
+            acp_content_blocks_to_prompt_input(&blocks, &AcpStdioConfig::default(), Path::new("."))
+                .unwrap();
+
+        assert_eq!(input.parts.len(), 2, "both blocks should produce parts");
+        assert!(
+            matches!(input.parts[0], PromptInputPart::Text(_)),
+            "first part should be text"
+        );
+        assert!(
+            matches!(input.parts[1], PromptInputPart::Text(_)),
+            "second part should be text"
+        );
     }
 }

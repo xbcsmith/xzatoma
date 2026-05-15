@@ -9,6 +9,8 @@ pub mod events;
 pub mod metrics;
 pub mod persistence;
 pub mod quota;
+pub(crate) mod thinking;
+pub use thinking::extract_thinking;
 
 pub use conversation::{ContextInfo, ContextStatus, Conversation};
 pub use core::Agent;

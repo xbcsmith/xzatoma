@@ -205,6 +205,7 @@ impl Default for OllamaConfig {
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
+///     reasoning_effort: None,
 /// };
 /// assert_eq!(config.model, "gpt-4o-mini");
 /// assert_eq!(config.base_url, "https://api.openai.com/v1");
@@ -268,6 +269,16 @@ pub struct OpenAIConfig {
     /// Set via the `XZATOMA_OPENAI_REQUEST_TIMEOUT` environment variable.
     #[serde(default = "default_openai_request_timeout")]
     pub request_timeout_seconds: u64,
+
+    /// Reasoning effort level for OpenAI o-series reasoning models.
+    ///
+    /// Accepted values: `"low"`, `"medium"`, `"high"`. Set to `None` to use
+    /// the model default. Has no effect on non-reasoning models.
+    ///
+    /// Set at runtime via `Provider::set_thinking_effort` or the
+    /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable (Phase 4).
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 fn default_openai_api_key() -> String {
@@ -299,6 +310,7 @@ impl Default for OpenAIConfig {
             organization_id: None,
             enable_streaming: default_openai_streaming(),
             request_timeout_seconds: default_openai_request_timeout(),
+            reasoning_effort: None,
         }
     }
 }
@@ -1426,6 +1438,14 @@ impl Config {
                 self.provider.openai.request_timeout_seconds = value;
             } else {
                 tracing::warn!("Invalid XZATOMA_OPENAI_REQUEST_TIMEOUT: {}", timeout);
+            }
+        }
+
+        if let Ok(val) = std::env::var("XZATOMA_OPENAI_REASONING_EFFORT") {
+            if val == "none" {
+                self.provider.openai.reasoning_effort = None;
+            } else {
+                self.provider.openai.reasoning_effort = Some(val);
             }
         }
 
@@ -2658,6 +2678,7 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     struct EnvVarGuard {
         key: &'static str,
@@ -3760,6 +3781,52 @@ agent: {}
         let mut config = Config::default();
         config.apply_env_vars();
         assert_eq!(config.provider.openai.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_openai_config_reasoning_effort_defaults_none() {
+        let config = OpenAIConfig::default();
+        assert!(
+            config.reasoning_effort.is_none(),
+            "reasoning_effort must default to None"
+        );
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_reasoning_effort() {
+        let yaml = "model: o3\nreasoning_effort: high\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(
+            config.reasoning_effort,
+            Some("high".to_string()),
+            "reasoning_effort must deserialize from YAML"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_openai_reasoning_effort() {
+        let _effort = EnvVarGuard::set("XZATOMA_OPENAI_REASONING_EFFORT", "medium");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(
+            config.provider.openai.reasoning_effort,
+            Some("medium".to_string()),
+            "XZATOMA_OPENAI_REASONING_EFFORT must set reasoning_effort"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_openai_reasoning_effort_none_clears_field() {
+        let mut config = Config::default();
+        config.provider.openai.reasoning_effort = Some("high".to_string());
+        let _effort = EnvVarGuard::set("XZATOMA_OPENAI_REASONING_EFFORT", "none");
+        config.apply_env_vars();
+        assert!(
+            config.provider.openai.reasoning_effort.is_none(),
+            "XZATOMA_OPENAI_REASONING_EFFORT=none must clear the field"
+        );
     }
 
     #[test]

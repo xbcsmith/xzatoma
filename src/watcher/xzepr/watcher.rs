@@ -412,6 +412,7 @@ impl MessageHandler for WatcherMessageHandler {
                 None,
                 Some(plan_yaml),
                 allow_dangerous,
+                None,
             )
             .await;
 
