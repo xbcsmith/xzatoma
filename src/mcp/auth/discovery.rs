@@ -272,10 +272,17 @@ pub async fn fetch_protected_resource_metadata(
     resource_url: &Url,
     www_authenticate: Option<&str>,
 ) -> Result<ProtectedResourceMetadata> {
+    crate::security::validate_public_https_url(resource_url, "MCP resource URL").await?;
+
     // Strategy 1: use the URL embedded in the WWW-Authenticate header.
     if let Some(header) = www_authenticate {
         if let Some(meta_url_str) = parse_resource_metadata_url(header) {
             if let Ok(meta_url) = Url::parse(&meta_url_str) {
+                crate::security::validate_public_https_url(
+                    &meta_url,
+                    "protected resource metadata URL",
+                )
+                .await?;
                 let resp =
                     http.get(meta_url).send().await.map_err(|e| {
                         XzatomaError::McpAuth(format!("metadata fetch failed: {e}"))
@@ -287,6 +294,7 @@ pub async fn fetch_protected_resource_metadata(
                             "failed to parse protected resource metadata: {e}"
                         ))
                     })?;
+                    validate_protected_resource_metadata(resource_url, &meta).await?;
                     return Ok(meta);
                 }
             }
@@ -308,6 +316,8 @@ pub async fn fetch_protected_resource_metadata(
     well_known_url.set_query(None);
     well_known_url.set_fragment(None);
 
+    crate::security::validate_public_https_url(&well_known_url, "well-known PRM URL").await?;
+
     let resp = http
         .get(well_known_url.clone())
         .send()
@@ -320,6 +330,7 @@ pub async fn fetch_protected_resource_metadata(
                 "failed to parse well-known protected resource metadata: {e}"
             ))
         })?;
+        validate_protected_resource_metadata(resource_url, &meta).await?;
         return Ok(meta);
     }
 
@@ -327,6 +338,111 @@ pub async fn fetch_protected_resource_metadata(
         "protected resource metadata not found for {}",
         resource_url
     )))
+}
+
+async fn validate_protected_resource_metadata(
+    resource_url: &Url,
+    meta: &ProtectedResourceMetadata,
+) -> Result<()> {
+    let advertised_resource = Url::parse(&meta.resource).map_err(|error| {
+        XzatomaError::McpAuth(format!(
+            "protected resource metadata has invalid resource URL: {}",
+            error
+        ))
+    })?;
+    let mut expected = resource_url.clone();
+    expected.set_query(None);
+    expected.set_fragment(None);
+    let mut advertised = advertised_resource;
+    advertised.set_query(None);
+    advertised.set_fragment(None);
+
+    if expected != advertised {
+        return Err(XzatomaError::McpAuth(format!(
+            "protected resource metadata resource '{}' does not match '{}'",
+            advertised, expected
+        )));
+    }
+
+    if meta.authorization_servers.is_empty() {
+        return Err(XzatomaError::McpAuth(
+            "protected resource metadata must advertise at least one authorization server"
+                .to_string(),
+        ));
+    }
+
+    for issuer in &meta.authorization_servers {
+        let issuer_url = Url::parse(issuer).map_err(|error| {
+            XzatomaError::McpAuth(format!(
+                "protected resource metadata has invalid authorization server '{}': {}",
+                issuer, error
+            ))
+        })?;
+        crate::security::validate_public_https_url(&issuer_url, "authorization server issuer")
+            .await?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn validate_authorization_server_metadata(
+    expected_issuer: &Url,
+    meta: &AuthorizationServerMetadata,
+) -> Result<()> {
+    let issuer = Url::parse(&meta.issuer).map_err(|error| {
+        XzatomaError::McpAuth(format!(
+            "authorization server metadata issuer is invalid: {}",
+            error
+        ))
+    })?;
+    crate::security::validate_public_https_url_sync(&issuer, "authorization server issuer")?;
+    if issuer != *expected_issuer {
+        return Err(XzatomaError::McpAuth(format!(
+            "authorization server metadata issuer '{}' does not match expected '{}'",
+            issuer, expected_issuer
+        )));
+    }
+
+    if !meta
+        .response_types_supported
+        .iter()
+        .any(|value| value == "code")
+    {
+        return Err(XzatomaError::McpAuth(
+            "authorization server must support response type 'code'".to_string(),
+        ));
+    }
+
+    if let Some(grants) = &meta.grant_types_supported {
+        if !grants.iter().any(|value| value == "authorization_code") {
+            return Err(XzatomaError::McpAuth(
+                "authorization server must support authorization_code grant".to_string(),
+            ));
+        }
+    }
+
+    let authorization_endpoint = Url::parse(&meta.authorization_endpoint).map_err(|error| {
+        XzatomaError::McpAuth(format!("authorization endpoint is invalid: {}", error))
+    })?;
+    validate_authorization_endpoint(&issuer, &authorization_endpoint, "authorization endpoint")?;
+
+    let token_endpoint = Url::parse(&meta.token_endpoint)
+        .map_err(|error| XzatomaError::McpAuth(format!("token endpoint is invalid: {}", error)))?;
+    validate_authorization_endpoint(&issuer, &token_endpoint, "token endpoint")?;
+
+    if let Some(registration_endpoint) = &meta.registration_endpoint {
+        let registration_endpoint = Url::parse(registration_endpoint).map_err(|error| {
+            XzatomaError::McpAuth(format!("registration endpoint is invalid: {}", error))
+        })?;
+        validate_authorization_endpoint(&issuer, &registration_endpoint, "registration endpoint")?;
+    }
+
+    Ok(())
+}
+
+fn validate_authorization_endpoint(issuer: &Url, endpoint: &Url, field_name: &str) -> Result<()> {
+    crate::security::validate_public_https_url_sync(endpoint, field_name)?;
+    crate::security::validate_same_origin(issuer, endpoint, field_name)
 }
 
 /// Constructs a candidate well-known URL for authorization server metadata
@@ -451,9 +567,16 @@ pub async fn fetch_authorization_server_metadata(
     http: &reqwest::Client,
     issuer: &Url,
 ) -> Result<AuthorizationServerMetadata> {
+    crate::security::validate_public_https_url(issuer, "authorization server issuer").await?;
     let candidates = build_as_candidate_urls(issuer);
 
     for candidate in &candidates {
+        if crate::security::validate_public_https_url(candidate, "authorization metadata URL")
+            .await
+            .is_err()
+        {
+            continue;
+        }
         let resp = match http.get(candidate.clone()).send().await {
             Ok(r) => r,
             Err(_) => continue,
@@ -461,7 +584,11 @@ pub async fn fetch_authorization_server_metadata(
 
         if resp.status().is_success() {
             match resp.json::<AuthorizationServerMetadata>().await {
-                Ok(meta) => return Ok(meta),
+                Ok(meta) => {
+                    if validate_authorization_server_metadata(issuer, &meta).is_ok() {
+                        return Ok(meta);
+                    }
+                }
                 Err(_) => continue,
             }
         }
@@ -512,6 +639,7 @@ pub async fn fetch_client_id_metadata_document(
     http: &reqwest::Client,
     client_id_url: &Url,
 ) -> Result<ClientIdMetadataDocument> {
+    crate::security::validate_public_https_url(client_id_url, "client id metadata URL").await?;
     let resp = http
         .get(client_id_url.clone())
         .send()
@@ -736,6 +864,48 @@ mod tests {
             meta.extra["custom_field"],
             serde_json::Value::String("custom_value".to_string())
         );
+    }
+
+    #[test]
+    fn test_validate_authorization_server_metadata_rejects_issuer_mismatch() {
+        let issuer = Url::parse("https://auth.example.com").unwrap();
+        let meta = AuthorizationServerMetadata {
+            issuer: "https://evil.example.com".to_string(),
+            authorization_endpoint: "https://evil.example.com/authorize".to_string(),
+            token_endpoint: "https://evil.example.com/token".to_string(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: None,
+            extra: HashMap::new(),
+        };
+
+        let result = validate_authorization_server_metadata(&issuer, &meta);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_authorization_server_metadata_rejects_http_token_endpoint() {
+        let issuer = Url::parse("https://auth.example.com").unwrap();
+        let meta = AuthorizationServerMetadata {
+            issuer: "https://auth.example.com".to_string(),
+            authorization_endpoint: "https://auth.example.com/authorize".to_string(),
+            token_endpoint: "http://auth.example.com/token".to_string(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            response_types_supported: vec!["code".to_string()],
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: None,
+            extra: HashMap::new(),
+        };
+
+        let result = validate_authorization_server_metadata(&issuer, &meta);
+
+        assert!(result.is_err());
     }
 
     #[test]

@@ -272,6 +272,7 @@ mod tests {
                 prompts_enabled: false,
                 sampling_enabled: false,
                 elicitation_enabled: true,
+                approval: Default::default(),
             });
         // Should not attempt any connections, just list config.
         let result = handle_mcp(McpCommands::List, config).await;
@@ -299,6 +300,7 @@ mod tests {
                 prompts_enabled: false,
                 sampling_enabled: false,
                 elicitation_enabled: true,
+                approval: Default::default(),
             });
         // This should not panic; it only prints to stdout.
         print_servers_without_status(&config);

@@ -572,7 +572,11 @@ impl OpenAIProvider {
     /// let provider = OpenAIProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: OpenAIConfig) -> Result<Self> {
+    pub fn new(mut config: OpenAIConfig) -> Result<Self> {
+        config.base_url =
+            crate::security::normalize_http_base_url(&config.base_url, "provider.openai.base_url")
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
@@ -1071,6 +1075,7 @@ impl OpenAIProvider {
     ///
     /// An `XzatomaError::Provider` with a contextual error message.
     fn http_error(&self, status: reqwest::StatusCode, body: String) -> XzatomaError {
+        let body = crate::security::redact_sensitive_text(&body);
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let api_key_empty = self
                 .config
@@ -1477,6 +1482,26 @@ mod tests {
         let config = OpenAIConfig::default();
         let provider = OpenAIProvider::new(config).unwrap();
         assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_openai_provider_normalizes_trailing_slash_base_url() {
+        let config = OpenAIConfig {
+            base_url: "https://api.openai.com/v1/".to_string(),
+            ..Default::default()
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_openai_provider_rejects_base_url_with_credentials() {
+        let config = OpenAIConfig {
+            base_url: "https://user:pass@example.com/v1".to_string(),
+            ..Default::default()
+        };
+        let result = OpenAIProvider::new(config);
+        assert!(result.is_err());
     }
 
     #[test]

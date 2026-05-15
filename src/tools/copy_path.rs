@@ -99,7 +99,7 @@ impl ToolExecutor for CopyPathTool {
             Err(e) => return Ok(ToolResult::error(format!("Invalid source path: {}", e))),
         };
 
-        let destination = match self.path_validator.validate(&params.destination_path) {
+        let mut destination = match self.path_validator.validate(&params.destination_path) {
             Ok(path) => path,
             Err(e) => {
                 return Ok(ToolResult::error(format!(
@@ -142,7 +142,8 @@ impl ToolExecutor for CopyPathTool {
             }
         }
 
-        // Create destination parent directories
+        // Create destination parent directories, then revalidate the target so
+        // newly created parents cannot redirect through symlinks.
         if let Some(parent) = destination.parent() {
             if !parent.exists() {
                 if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -153,6 +154,15 @@ impl ToolExecutor for CopyPathTool {
                 }
             }
         }
+        destination = match self.path_validator.validate(&params.destination_path) {
+            Ok(path) => path,
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Invalid destination path after parent creation: {}",
+                    e
+                )))
+            }
+        };
 
         if source.is_file() {
             match tokio::fs::copy(&source, &destination).await {

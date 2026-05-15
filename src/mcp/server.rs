@@ -89,6 +89,51 @@ pub struct OAuthServerConfig {
 }
 
 // ---------------------------------------------------------------------------
+// MCP approval policy
+// ---------------------------------------------------------------------------
+
+/// Approval action for an MCP operation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum McpApprovalAction {
+    /// Allow the operation without prompting when the server is trusted.
+    Allow,
+    /// Ask the user when interaction is available.
+    Prompt,
+    /// Reject the operation before contacting the MCP server.
+    #[default]
+    Deny,
+}
+
+/// Per-server MCP approval policy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct McpServerApprovalPolicy {
+    /// Whether this server is trusted for explicit allow rules.
+    pub trusted: bool,
+    /// Default action for tool calls without a specific rule.
+    pub default_tool_action: McpApprovalAction,
+    /// Per-tool approval actions keyed by original MCP tool name.
+    pub tools: HashMap<String, McpApprovalAction>,
+    /// Approval action for resource reads.
+    pub resource_read_action: McpApprovalAction,
+    /// Approval action for prompt retrieval.
+    pub prompt_get_action: McpApprovalAction,
+}
+
+impl Default for McpServerApprovalPolicy {
+    fn default() -> Self {
+        Self {
+            trusted: false,
+            default_tool_action: McpApprovalAction::Prompt,
+            tools: HashMap::new(),
+            resource_read_action: McpApprovalAction::Prompt,
+            prompt_get_action: McpApprovalAction::Prompt,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // McpServerTransportConfig
 // ---------------------------------------------------------------------------
 
@@ -211,6 +256,7 @@ pub enum McpServerTransportConfig {
 ///     prompts_enabled: false,
 ///     sampling_enabled: false,
 ///     elicitation_enabled: true,
+///     approval: Default::default(),
 /// };
 ///
 /// assert!(cfg.validate().is_ok());
@@ -255,6 +301,10 @@ pub struct McpServerConfig {
     /// Allow the server to request structured user input via elicitation.
     #[serde(default = "default_true")]
     pub elicitation_enabled: bool,
+
+    /// Explicit approval policy for MCP tools, resources, and prompts.
+    #[serde(default)]
+    pub approval: McpServerApprovalPolicy,
 }
 
 impl McpServerConfig {
@@ -295,6 +345,7 @@ impl McpServerConfig {
     ///     prompts_enabled: false,
     ///     sampling_enabled: false,
     ///     elicitation_enabled: true,
+    ///     approval: Default::default(),
     /// };
     ///
     /// assert!(cfg.validate().is_ok());
@@ -312,6 +363,15 @@ impl McpServerConfig {
             )));
         }
 
+        for tool_name in self.approval.tools.keys() {
+            if tool_name.trim().is_empty() {
+                return Err(XzatomaError::Config(format!(
+                    "MCP server '{}': approval tool names cannot be empty",
+                    self.id
+                )));
+            }
+        }
+
         // Rule 2 / 3: transport-specific checks.
         match &self.transport {
             McpServerTransportConfig::Stdio { executable, .. } => {
@@ -322,7 +382,9 @@ impl McpServerConfig {
                     )));
                 }
             }
-            McpServerTransportConfig::Http { endpoint, .. } => {
+            McpServerTransportConfig::Http {
+                endpoint, oauth, ..
+            } => {
                 let scheme = endpoint.scheme();
                 if scheme != "http" && scheme != "https" {
                     return Err(XzatomaError::Config(format!(
@@ -330,6 +392,29 @@ impl McpServerConfig {
                          'https', got '{}'",
                         self.id, scheme
                     )));
+                }
+
+                if oauth.is_some() && scheme != "https" {
+                    return Err(XzatomaError::Config(format!(
+                        "MCP server '{}': OAuth-enabled HTTP transport must use https",
+                        self.id
+                    )));
+                }
+
+                if let Some(oauth_cfg) = oauth {
+                    if let Some(metadata_url) = &oauth_cfg.metadata_url {
+                        let parsed = url::Url::parse(metadata_url).map_err(|error| {
+                            XzatomaError::Config(format!(
+                                "MCP server '{}': oauth.metadata_url must be a valid URL: {}",
+                                self.id, error
+                            ))
+                        })?;
+                        crate::security::validate_public_https_url_sync(
+                            &parsed,
+                            "oauth.metadata_url",
+                        )
+                        .map_err(|error| XzatomaError::Config(error.to_string()))?;
+                    }
                 }
             }
         }
@@ -422,6 +507,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         };
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("non-empty executable"));
@@ -513,6 +599,7 @@ mod tests {
         assert!(!cfg.prompts_enabled);
         assert!(!cfg.sampling_enabled);
         assert!(cfg.elicitation_enabled);
+        assert!(!cfg.approval.trusted);
     }
 
     // -----------------------------------------------------------------------
@@ -535,6 +622,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }
     }
 
@@ -554,6 +642,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }
     }
 }

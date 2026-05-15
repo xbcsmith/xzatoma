@@ -39,7 +39,7 @@ use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::auth::discovery::{
     fetch_authorization_server_metadata, fetch_protected_resource_metadata,
-    AuthorizationServerMetadata,
+    validate_authorization_server_metadata, AuthorizationServerMetadata,
 };
 use crate::mcp::auth::flow::OAuthFlowConfig;
 use crate::mcp::auth::manager::AuthManager;
@@ -47,7 +47,7 @@ use crate::mcp::auth::token_store::TokenStore;
 use crate::mcp::client::{start_read_loop, JsonRpcClient};
 use crate::mcp::config::McpConfig;
 use crate::mcp::protocol::{InitializedMcpProtocol, McpProtocol};
-use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use crate::mcp::server::{McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig};
 use crate::mcp::transport::Transport;
 use crate::mcp::types::{
     CallToolResponse, ClientCapabilities, ElicitationCapability, GetPromptResponse, Implementation,
@@ -550,6 +550,21 @@ impl McpClientManager {
             .collect()
     }
 
+    /// Returns the configured approval policy for a server.
+    ///
+    /// # Arguments
+    ///
+    /// * `server_id` - MCP server identifier.
+    ///
+    /// # Returns
+    ///
+    /// The server approval policy when the server is registered.
+    pub fn approval_policy_for_server(&self, server_id: &str) -> Option<McpServerApprovalPolicy> {
+        self.servers
+            .get(server_id)
+            .map(|entry| entry.config.approval.clone())
+    }
+
     /// Invoke a tool on the named server.
     ///
     /// Looks up the server, verifies the tool is in the cached list, and
@@ -839,31 +854,78 @@ impl McpClientManager {
                 if let Some(oauth_cfg) = oauth {
                     let resource_url = endpoint.clone();
 
-                    // Discovery: fetch protected resource metadata to find the
-                    // authorization server, then fetch AS metadata.
-                    let prm =
-                        fetch_protected_resource_metadata(&self.http_client, &resource_url, None)
+                    let as_metadata = if let Some(metadata_url) = &oauth_cfg.metadata_url {
+                        let metadata_url = url::Url::parse(metadata_url).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "Invalid OAuth metadata URL '{}': {}",
+                                metadata_url, e
+                            ))
+                        })?;
+                        crate::security::validate_public_https_url(
+                            &metadata_url,
+                            "OAuth metadata URL",
+                        )
+                        .await?;
+                        let response = self
+                            .http_client
+                            .get(metadata_url.clone())
+                            .send()
                             .await
                             .map_err(|e| {
-                                XzatomaError::McpAuth(format!("PRM discovery failed: {}", e))
+                                XzatomaError::McpAuth(format!(
+                                    "OAuth metadata override fetch failed: {}",
+                                    e
+                                ))
                             })?;
-
-                    let as_url_str =
-                        prm.authorization_servers.first().cloned().ok_or_else(|| {
-                            XzatomaError::McpAuth(
-                                "No authorization servers in protected resource metadata"
-                                    .to_string(),
-                            )
+                        if !response.status().is_success() {
+                            return Err(XzatomaError::McpAuth(format!(
+                                "OAuth metadata override returned {}",
+                                response.status()
+                            )));
+                        }
+                        let metadata: AuthorizationServerMetadata =
+                            response.json().await.map_err(|e| {
+                                XzatomaError::McpAuth(format!(
+                                    "Failed to parse OAuth metadata override: {}",
+                                    e
+                                ))
+                            })?;
+                        let issuer = url::Url::parse(&metadata.issuer).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "OAuth metadata override issuer is invalid: {}",
+                                e
+                            ))
+                        })?;
+                        validate_authorization_server_metadata(&issuer, &metadata)?;
+                        metadata
+                    } else {
+                        // Discovery: fetch protected resource metadata to find the
+                        // authorization server, then fetch AS metadata.
+                        let prm = fetch_protected_resource_metadata(
+                            &self.http_client,
+                            &resource_url,
+                            None,
+                        )
+                        .await
+                        .map_err(|e| {
+                            XzatomaError::McpAuth(format!("PRM discovery failed: {}", e))
                         })?;
 
-                    let as_url = url::Url::parse(&as_url_str).map_err(|e| {
-                        XzatomaError::McpAuth(format!(
-                            "Invalid authorization server URL '{}': {}",
-                            as_url_str, e
-                        ))
-                    })?;
+                        let as_url_str =
+                            prm.authorization_servers.first().cloned().ok_or_else(|| {
+                                XzatomaError::McpAuth(
+                                    "No authorization servers in protected resource metadata"
+                                        .to_string(),
+                                )
+                            })?;
 
-                    let as_metadata =
+                        let as_url = url::Url::parse(&as_url_str).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "Invalid authorization server URL '{}': {}",
+                                as_url_str, e
+                            ))
+                        })?;
+
                         fetch_authorization_server_metadata(&self.http_client, &as_url)
                             .await
                             .map_err(|e| {
@@ -871,7 +933,8 @@ impl McpClientManager {
                                     "AS metadata discovery failed: {}",
                                     e
                                 ))
-                            })?;
+                            })?
+                    };
 
                     // Build the flow config.
                     let flow_config = OAuthFlowConfig {
@@ -1057,7 +1120,12 @@ pub async fn build_mcp_manager_from_config(
         return Ok(None);
     }
 
-    let http_client = Arc::new(reqwest::Client::new());
+    let http_client = Arc::new(
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.mcp.request_timeout_seconds))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?,
+    );
     let token_store = Arc::new(TokenStore);
     let mut manager = McpClientManager::new(http_client, token_store);
 
@@ -1145,6 +1213,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: false,
+            approval: Default::default(),
         };
 
         let entry = McpServerEntry {
@@ -1421,6 +1490,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }];
 
         let result = build_mcp_manager_from_config(&config).await;
@@ -1451,6 +1521,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }];
 
         let result = build_mcp_manager_from_config(&config).await;

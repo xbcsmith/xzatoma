@@ -168,8 +168,10 @@ impl ToolExecutor for EditFileTool {
                     )));
                 }
 
-                // Ensure parents exist (creates as necessary)
+                // Ensure parents exist (creates as necessary), then revalidate
+                // the target so newly created parents cannot traverse symlinks.
                 file_utils::ensure_parent_dirs(&full_path).await?;
+                let full_path = self.path_validator.validate(&params.path)?;
 
                 // Write new file
                 fs::write(&full_path, &params.content)

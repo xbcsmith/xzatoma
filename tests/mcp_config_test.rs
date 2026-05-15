@@ -67,6 +67,7 @@ fn make_stdio_server(id: &str) -> McpServerConfig {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: true,
+        approval: Default::default(),
     }
 }
 
@@ -435,6 +436,7 @@ fn test_mcp_config_yaml_with_invalid_http_scheme_fails_validate() {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: true,
+        approval: Default::default(),
     });
 
     assert!(cfg.validate().is_err());
@@ -459,6 +461,7 @@ fn test_mcp_config_yaml_with_empty_executable_fails_validate() {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: true,
+        approval: Default::default(),
     });
 
     assert!(cfg.validate().is_err());

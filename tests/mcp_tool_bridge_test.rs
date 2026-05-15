@@ -25,7 +25,9 @@ use xzatoma::mcp::auth::token_store::TokenStore;
 use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
 use xzatoma::mcp::manager::{McpClientManager, McpServerEntry, McpServerState};
 use xzatoma::mcp::protocol::InitializedMcpProtocol;
-use xzatoma::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use xzatoma::mcp::server::{
+    McpApprovalAction, McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig,
+};
 use xzatoma::mcp::tool_bridge::{register_mcp_tools, McpToolExecutor};
 use xzatoma::mcp::types::{
     Implementation, InitializeResponse, McpTool, ServerCapabilities, TaskSupport, ToolExecution,
@@ -43,6 +45,8 @@ fn make_manager() -> McpClientManager {
 
 /// Build a default stdio `McpServerConfig`.
 fn stdio_config(id: &str) -> McpServerConfig {
+    let mut tools = HashMap::new();
+    tools.insert("*".to_string(), McpApprovalAction::Allow);
     McpServerConfig {
         id: id.to_string(),
         transport: McpServerTransportConfig::Stdio {
@@ -58,6 +62,13 @@ fn stdio_config(id: &str) -> McpServerConfig {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: false,
+        approval: McpServerApprovalPolicy {
+            trusted: true,
+            default_tool_action: McpApprovalAction::Allow,
+            tools,
+            resource_read_action: McpApprovalAction::Allow,
+            prompt_get_action: McpApprovalAction::Allow,
+        },
     }
 }
 

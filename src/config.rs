@@ -68,12 +68,13 @@ pub struct CopilotConfig {
     #[serde(default = "default_copilot_model")]
     pub model: String,
 
-    /// Optional API base URL for Copilot endpoints (useful for tests and local mocks)
+    /// Internal API base URL override for local tests and mock servers.
     ///
-    /// When set, this base is used to build Copilot endpoints (e.g. `/models`,
-    /// `/chat/completions`, `/copilot_internal/v2/token`) which allows tests to
-    /// point the provider at a mock server.
-    #[serde(default)]
+    /// This value is intentionally skipped during serialization and
+    /// deserialization so config files cannot redirect GitHub or Copilot
+    /// credentials to an untrusted host. Tests may still set it directly in
+    /// Rust code, and the provider validates that it targets loopback only.
+    #[serde(skip)]
     pub api_base: Option<String>,
 
     /// Enable streaming mode for responses
@@ -397,6 +398,20 @@ pub struct AcpConfig {
     #[serde(default = "default_acp_base_path")]
     pub base_path: String,
 
+    /// Optional bearer token required for ACP HTTP requests.
+    ///
+    /// The token is never serialized when printing effective configuration.
+    #[serde(default, skip_serializing)]
+    pub auth_token: Option<String>,
+
+    /// Maximum accepted ACP HTTP request body size in bytes.
+    #[serde(default = "default_acp_max_request_bytes")]
+    pub max_request_bytes: usize,
+
+    /// Global ACP HTTP request rate limit per minute.
+    #[serde(default = "default_acp_rate_limit_per_minute")]
+    pub rate_limit_per_minute: usize,
+
     /// Default ACP run mode to advertise for future run lifecycle support.
     #[serde(default)]
     pub default_run_mode: AcpDefaultRunMode,
@@ -426,6 +441,14 @@ fn default_acp_base_path() -> String {
     "/api/v1/acp".to_string()
 }
 
+fn default_acp_max_request_bytes() -> usize {
+    1024 * 1024
+}
+
+fn default_acp_rate_limit_per_minute() -> usize {
+    120
+}
+
 impl Default for AcpConfig {
     fn default() -> Self {
         Self {
@@ -434,6 +457,9 @@ impl Default for AcpConfig {
             port: default_acp_port(),
             compatibility_mode: AcpCompatibilityMode::default(),
             base_path: default_acp_base_path(),
+            auth_token: None,
+            max_request_bytes: default_acp_max_request_bytes(),
+            rate_limit_per_minute: default_acp_rate_limit_per_minute(),
             default_run_mode: AcpDefaultRunMode::default(),
             persistence: AcpPersistenceConfig::default(),
             stdio: AcpStdioConfig::default(),
@@ -1971,6 +1997,41 @@ impl Config {
             tracing::debug!(base_path = %base_path, "Env override: XZATOMA_ACP_BASE_PATH");
         }
 
+        if let Ok(auth_token) = std::env::var("XZATOMA_ACP_AUTH_TOKEN") {
+            self.acp.auth_token = Some(auth_token);
+            tracing::debug!("Env override: XZATOMA_ACP_AUTH_TOKEN");
+        }
+
+        if let Ok(max_request_bytes) = std::env::var("XZATOMA_ACP_MAX_REQUEST_BYTES") {
+            if let Ok(value) = max_request_bytes.parse::<usize>() {
+                self.acp.max_request_bytes = value;
+                tracing::debug!(
+                    max_request_bytes = value,
+                    "Env override: XZATOMA_ACP_MAX_REQUEST_BYTES"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_MAX_REQUEST_BYTES: {}",
+                    max_request_bytes
+                );
+            }
+        }
+
+        if let Ok(rate_limit_per_minute) = std::env::var("XZATOMA_ACP_RATE_LIMIT_PER_MINUTE") {
+            if let Ok(value) = rate_limit_per_minute.parse::<usize>() {
+                self.acp.rate_limit_per_minute = value;
+                tracing::debug!(
+                    rate_limit_per_minute = value,
+                    "Env override: XZATOMA_ACP_RATE_LIMIT_PER_MINUTE"
+                );
+            } else {
+                tracing::warn!(
+                    "Invalid XZATOMA_ACP_RATE_LIMIT_PER_MINUTE: {}",
+                    rate_limit_per_minute
+                );
+            }
+        }
+
         if let Ok(run_mode) = std::env::var("XZATOMA_ACP_DEFAULT_RUN_MODE") {
             match run_mode.to_ascii_lowercase().as_str() {
                 "sync" => {
@@ -2462,6 +2523,21 @@ impl Config {
             }
         }
 
+        crate::security::normalize_http_base_url(
+            &self.provider.openai.base_url,
+            "provider.openai.base_url",
+        )?;
+        crate::security::normalize_http_base_url(
+            &self.provider.ollama.host,
+            "provider.ollama.host",
+        )?;
+        if let Some(api_base) = &self.provider.copilot.api_base {
+            crate::security::validate_loopback_http_base_url(
+                api_base,
+                "provider.copilot.api_base",
+            )?;
+        }
+
         // Validate MCP configuration
         self.mcp.validate()?;
         self.validate_acp_config()?;
@@ -2487,6 +2563,26 @@ impl Config {
         if self.acp.port == 0 {
             return Err(XzatomaError::Config(
                 "acp.port must be greater than 0".to_string(),
+            ));
+        }
+
+        if let Some(token) = &self.acp.auth_token {
+            if token.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.auth_token cannot be empty when set".to_string(),
+                ));
+            }
+        }
+
+        if self.acp.max_request_bytes == 0 {
+            return Err(XzatomaError::Config(
+                "acp.max_request_bytes must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.rate_limit_per_minute == 0 {
+            return Err(XzatomaError::Config(
+                "acp.rate_limit_per_minute must be greater than 0".to_string(),
             ));
         }
 
@@ -2754,6 +2850,9 @@ mod tests {
             AcpCompatibilityMode::Versioned
         );
         assert_eq!(config.acp.base_path, "/api/v1/acp");
+        assert!(config.acp.auth_token.is_none());
+        assert_eq!(config.acp.max_request_bytes, 1024 * 1024);
+        assert_eq!(config.acp.rate_limit_per_minute, 120);
         assert_eq!(config.acp.default_run_mode, AcpDefaultRunMode::Async);
         assert!(!config.acp.persistence.enabled);
         assert_eq!(config.acp.persistence.max_events_per_run, 1000);
@@ -2778,6 +2877,9 @@ mod tests {
         let _compatibility_mode =
             EnvVarGuard::set("XZATOMA_ACP_COMPATIBILITY_MODE", "root_compatible");
         let _base_path = EnvVarGuard::set("XZATOMA_ACP_BASE_PATH", "/acp");
+        let _auth_token = EnvVarGuard::set("XZATOMA_ACP_AUTH_TOKEN", "test-token");
+        let _max_request_bytes = EnvVarGuard::set("XZATOMA_ACP_MAX_REQUEST_BYTES", "4096");
+        let _rate_limit_per_minute = EnvVarGuard::set("XZATOMA_ACP_RATE_LIMIT_PER_MINUTE", "60");
         let _default_run_mode = EnvVarGuard::set("XZATOMA_ACP_DEFAULT_RUN_MODE", "streaming");
         let _persistence_enabled = EnvVarGuard::set("XZATOMA_ACP_PERSISTENCE_ENABLED", "true");
         let _max_events_per_run = EnvVarGuard::set("XZATOMA_ACP_MAX_EVENTS_PER_RUN", "500");
@@ -2794,6 +2896,9 @@ mod tests {
             AcpCompatibilityMode::RootCompatible
         );
         assert_eq!(config.acp.base_path, "/acp");
+        assert_eq!(config.acp.auth_token.as_deref(), Some("test-token"));
+        assert_eq!(config.acp.max_request_bytes, 4096);
+        assert_eq!(config.acp.rate_limit_per_minute, 60);
         assert_eq!(config.acp.default_run_mode, AcpDefaultRunMode::Streaming);
         assert!(config.acp.persistence.enabled);
         assert_eq!(config.acp.persistence.max_events_per_run, 500);
@@ -2807,6 +2912,34 @@ mod tests {
 
         let error = config.validate().expect_err("config should be invalid");
         assert!(error.to_string().contains("acp.host cannot be empty"));
+    }
+
+    #[test]
+    fn test_config_validation_rejects_blank_acp_auth_token() {
+        let mut config = Config::default();
+        config.acp.auth_token = Some("   ".to_string());
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error.to_string().contains("acp.auth_token cannot be empty"));
+    }
+
+    #[test]
+    fn test_config_validation_rejects_zero_acp_limits() {
+        let mut config = Config::default();
+        config.acp.max_request_bytes = 0;
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error
+            .to_string()
+            .contains("acp.max_request_bytes must be greater than 0"));
+
+        let mut config = Config::default();
+        config.acp.rate_limit_per_minute = 0;
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(error
+            .to_string()
+            .contains("acp.rate_limit_per_minute must be greater than 0"));
     }
 
     #[test]

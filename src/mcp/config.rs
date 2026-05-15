@@ -141,6 +141,7 @@ impl McpConfig {
     ///     prompts_enabled: false,
     ///     sampling_enabled: false,
     ///     elicitation_enabled: true,
+    ///     approval: Default::default(),
     /// });
     ///
     /// assert!(cfg.validate().is_ok());
@@ -272,6 +273,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         });
         assert!(cfg.validate().is_err());
     }
@@ -396,6 +398,7 @@ servers:
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }
     }
 
@@ -420,6 +423,7 @@ servers:
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }
     }
 }

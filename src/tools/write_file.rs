@@ -118,8 +118,11 @@ impl ToolExecutor for WriteFileTool {
             )));
         }
 
-        // Ensure parent directories exist
+        // Ensure parent directories exist, then validate the path again so a
+        // race or symlink introduced during directory creation cannot redirect
+        // the write outside the working directory.
         file_utils::ensure_parent_dirs(&path).await?;
+        let path = self.path_validator.validate(&params.path)?;
 
         // Write content to file
         tokio::fs::write(&path, &params.content)

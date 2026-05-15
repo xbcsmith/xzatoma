@@ -21,9 +21,9 @@
 //!
 //! # Approval Policy
 //!
-//! All three executors delegate to [`crate::mcp::approval::should_auto_approve`]
-//! to determine whether a confirmation prompt is required. No inline policy
-//! checks are permitted here.
+//! All three executors delegate to [`crate::mcp::approval::approval_decision`]
+//! to determine whether an operation is allowed, denied, or requires a user
+//! prompt. No inline policy checks are permitted here.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +32,9 @@ use tokio::sync::RwLock;
 
 use crate::config::ExecutionMode;
 use crate::error::{Result, XzatomaError};
-use crate::mcp::approval::{prompt_user_approval, should_auto_approve};
+use crate::mcp::approval::{
+    approval_decision, prompt_user_approval, ApprovalDecision, McpOperation,
+};
 use crate::mcp::manager::McpClientManager;
 use crate::mcp::types::{
     MessageContent, PromptMessage, ResourceContents, TaskSupport, ToolResponseContent,
@@ -174,23 +176,45 @@ impl ToolExecutor for McpToolExecutor {
     /// Returns [`XzatomaError`] if JSON serialization of `structured_content`
     /// fails, or propagates transport/protocol errors from the manager.
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        // --- Approval check ---
-        if !should_auto_approve(self.execution_mode, self.headless) {
-            let description = format!(
-                "MCP tool call: {}/{} with args: {}.",
-                self.server_id, self.tool_name, args
-            );
-            if !prompt_user_approval(&description)? {
-                return Ok(ToolResult::error(format!(
-                    "User rejected MCP tool call: {}",
-                    self.registry_name
-                )));
-            }
-        }
-
-        // --- Dispatch to manager ---
         let response = {
             let guard = self.manager.read().await;
+            let Some(policy) = guard.approval_policy_for_server(&self.server_id) else {
+                return Ok(ToolResult::error(format!(
+                    "MCP server '{}' is not registered",
+                    self.server_id
+                )));
+            };
+            match approval_decision(
+                &policy,
+                self.execution_mode,
+                self.headless,
+                McpOperation::ToolCall {
+                    server_id: &self.server_id,
+                    tool_name: &self.tool_name,
+                },
+            ) {
+                ApprovalDecision::Allow => {}
+                ApprovalDecision::Prompt => {
+                    let description = format!(
+                        "MCP tool call: {}/{} with args: {}.",
+                        self.server_id, self.tool_name, args
+                    );
+                    if !prompt_user_approval(&description)? {
+                        return Ok(ToolResult::error(format!(
+                            "User rejected MCP tool call: {}",
+                            self.registry_name
+                        )));
+                    }
+                }
+                ApprovalDecision::Deny => {
+                    return Ok(ToolResult::error(format!(
+                        "MCP tool call requires explicit approval policy: {}",
+                        self.registry_name
+                    )));
+                }
+            }
+
+            // --- Dispatch to manager ---
             if self.task_support == Some(TaskSupport::Required) {
                 guard
                     .call_tool_as_task(&self.server_id, &self.tool_name, Some(args), None)
@@ -344,16 +368,37 @@ impl ToolExecutor for McpResourceToolExecutor {
             .ok_or_else(|| XzatomaError::Tool("mcp_read_resource: missing 'uri'".into()))?
             .to_string();
 
-        if !should_auto_approve(self.execution_mode, self.headless)
-            && !prompt_user_approval(&format!("MCP resource read: {}/{}", server_id, uri))?
-        {
-            return Ok(ToolResult::error(format!(
-                "User rejected MCP resource read: {}/{}",
-                server_id, uri
-            )));
-        }
-
         let guard = self.manager.read().await;
+        let Some(policy) = guard.approval_policy_for_server(&server_id) else {
+            return Ok(ToolResult::error(format!(
+                "MCP server '{}' is not registered",
+                server_id
+            )));
+        };
+        match approval_decision(
+            &policy,
+            self.execution_mode,
+            self.headless,
+            McpOperation::ResourceRead {
+                server_id: &server_id,
+            },
+        ) {
+            ApprovalDecision::Allow => {}
+            ApprovalDecision::Prompt => {
+                if !prompt_user_approval(&format!("MCP resource read: {}/{}", server_id, uri))? {
+                    return Ok(ToolResult::error(format!(
+                        "User rejected MCP resource read: {}/{}",
+                        server_id, uri
+                    )));
+                }
+            }
+            ApprovalDecision::Deny => {
+                return Ok(ToolResult::error(format!(
+                    "MCP resource read requires explicit approval policy: {}/{}",
+                    server_id, uri
+                )));
+            }
+        };
         match guard.read_resource(&server_id, &uri).await {
             Ok(content) => Ok(ToolResult::success(content)),
             Err(e) => Ok(ToolResult::error(e.to_string())),
@@ -497,16 +542,38 @@ impl ToolExecutor for McpPromptToolExecutor {
             _ => HashMap::new(),
         };
 
-        if !should_auto_approve(self.execution_mode, self.headless)
-            && !prompt_user_approval(&format!("MCP prompt get: {}/{}", server_id, prompt_name))?
-        {
-            return Ok(ToolResult::error(format!(
-                "User rejected MCP prompt get: {}/{}",
-                server_id, prompt_name
-            )));
-        }
-
         let guard = self.manager.read().await;
+        let Some(policy) = guard.approval_policy_for_server(&server_id) else {
+            return Ok(ToolResult::error(format!(
+                "MCP server '{}' is not registered",
+                server_id
+            )));
+        };
+        match approval_decision(
+            &policy,
+            self.execution_mode,
+            self.headless,
+            McpOperation::PromptGet {
+                server_id: &server_id,
+            },
+        ) {
+            ApprovalDecision::Allow => {}
+            ApprovalDecision::Prompt => {
+                if !prompt_user_approval(&format!("MCP prompt get: {}/{}", server_id, prompt_name))?
+                {
+                    return Ok(ToolResult::error(format!(
+                        "User rejected MCP prompt get: {}/{}",
+                        server_id, prompt_name
+                    )));
+                }
+            }
+            ApprovalDecision::Deny => {
+                return Ok(ToolResult::error(format!(
+                    "MCP prompt get requires explicit approval policy: {}/{}",
+                    server_id, prompt_name
+                )));
+            }
+        };
         match guard.get_prompt(&server_id, &prompt_name, arguments).await {
             Ok(response) => {
                 let formatted = format_prompt_messages(&response.messages);
@@ -749,21 +816,31 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_should_auto_approve_false_in_full_autonomous_mode_returns_true() {
-        // FullAutonomous, headless=false => auto-approve (no prompt needed)
-        assert!(should_auto_approve(ExecutionMode::FullAutonomous, false));
+    fn test_approval_decision_headless_default_policy_denies() {
+        let decision = approval_decision(
+            &Default::default(),
+            ExecutionMode::Interactive,
+            true,
+            McpOperation::ToolCall {
+                server_id: "srv",
+                tool_name: "search",
+            },
+        );
+        assert_eq!(decision, ApprovalDecision::Deny);
     }
 
     #[test]
-    fn test_should_auto_approve_true_when_headless() {
-        // Interactive, headless=true => auto-approve
-        assert!(should_auto_approve(ExecutionMode::Interactive, true));
-    }
-
-    #[test]
-    fn test_should_auto_approve_false_in_interactive_mode() {
-        // Interactive, headless=false => requires prompt
-        assert!(!should_auto_approve(ExecutionMode::Interactive, false));
+    fn test_approval_decision_interactive_default_policy_prompts() {
+        let decision = approval_decision(
+            &Default::default(),
+            ExecutionMode::Interactive,
+            false,
+            McpOperation::ToolCall {
+                server_id: "srv",
+                tool_name: "search",
+            },
+        );
+        assert_eq!(decision, ApprovalDecision::Prompt);
     }
 
     // -----------------------------------------------------------------------

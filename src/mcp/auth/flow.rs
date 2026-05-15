@@ -86,7 +86,9 @@ use base64::Engine as _;
 use url::Url;
 
 use crate::error::{Result, XzatomaError};
-use crate::mcp::auth::discovery::AuthorizationServerMetadata;
+use crate::mcp::auth::discovery::{
+    validate_authorization_server_metadata, AuthorizationServerMetadata,
+};
 use crate::mcp::auth::pkce;
 use crate::mcp::auth::token_store::OAuthToken;
 
@@ -458,9 +460,15 @@ impl OAuthFlow {
             params.insert("scope", s);
         }
 
+        let token_endpoint = self.validated_metadata_endpoint(
+            server_metadata,
+            &server_metadata.token_endpoint,
+            "token endpoint",
+        )?;
+
         let resp = self
             .http
-            .post(&server_metadata.token_endpoint)
+            .post(token_endpoint)
             .form(&params)
             .send()
             .await
@@ -598,6 +606,9 @@ impl OAuthFlow {
             "code_challenge_methods": ["S256"],
         });
 
+        let registration_endpoint =
+            self.validated_endpoint_string(registration_endpoint, "registration endpoint")?;
+
         let resp = self
             .http
             .post(registration_endpoint)
@@ -623,6 +634,32 @@ impl OAuthFlow {
         Ok(dcr.client_id)
     }
 
+    fn validated_metadata_endpoint(
+        &self,
+        server_metadata: &AuthorizationServerMetadata,
+        endpoint: &str,
+        field_name: &str,
+    ) -> Result<Url> {
+        let issuer = Url::parse(&server_metadata.issuer).map_err(|error| {
+            XzatomaError::McpAuth(format!("authorization server issuer is invalid: {}", error))
+        })?;
+        validate_authorization_server_metadata(&issuer, server_metadata)?;
+        let endpoint = Url::parse(endpoint).map_err(|error| {
+            XzatomaError::McpAuth(format!("{} is invalid: {}", field_name, error))
+        })?;
+        crate::security::validate_public_https_url_sync(&endpoint, field_name)?;
+        crate::security::validate_same_origin(&issuer, &endpoint, field_name)?;
+        Ok(endpoint)
+    }
+
+    fn validated_endpoint_string(&self, endpoint: &str, field_name: &str) -> Result<Url> {
+        let endpoint = Url::parse(endpoint).map_err(|error| {
+            XzatomaError::McpAuth(format!("{} is invalid: {}", field_name, error))
+        })?;
+        crate::security::validate_public_https_url_sync(&endpoint, field_name)?;
+        Ok(endpoint)
+    }
+
     /// Generates a cryptographically random state nonce.
     ///
     /// 16 random bytes encoded as base64url without padding.
@@ -645,9 +682,11 @@ impl OAuthFlow {
         state: &str,
         code_challenge: &str,
     ) -> Result<String> {
-        let mut url = Url::parse(&server_metadata.authorization_endpoint).map_err(|e| {
-            XzatomaError::McpAuth(format!("invalid authorization endpoint URL: {e}"))
-        })?;
+        let mut url = self.validated_metadata_endpoint(
+            server_metadata,
+            &server_metadata.authorization_endpoint,
+            "authorization endpoint",
+        )?;
 
         {
             let mut query = url.query_pairs_mut();
@@ -783,9 +822,15 @@ impl OAuthFlow {
             params.insert("client_secret", &secret_owned);
         }
 
+        let token_endpoint = self.validated_metadata_endpoint(
+            server_metadata,
+            &server_metadata.token_endpoint,
+            "token endpoint",
+        )?;
+
         let resp = self
             .http
-            .post(&server_metadata.token_endpoint)
+            .post(token_endpoint)
             .form(&params)
             .send()
             .await

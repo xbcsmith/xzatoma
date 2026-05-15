@@ -1370,6 +1370,7 @@ impl ChatCompletionsAccumulator {
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
+    let body = crate::security::redact_sensitive_text(body);
     if status == reqwest::StatusCode::UNAUTHORIZED {
         XzatomaError::Authentication(format!(
             "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
@@ -1408,7 +1409,16 @@ impl CopilotProvider {
     /// let provider = CopilotProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: CopilotConfig) -> Result<Self> {
+    pub fn new(mut config: CopilotConfig) -> Result<Self> {
+        if let Some(api_base) = config.api_base.clone() {
+            crate::security::validate_loopback_http_base_url(
+                &api_base,
+                "provider.copilot.api_base",
+            )
+            .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+            config.api_base = Some(api_base.trim_end_matches('/').to_string());
+        }
+
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .user_agent("xzatoma/0.1.0")
@@ -1508,9 +1518,10 @@ impl CopilotProvider {
             let body = resp
                 .text()
                 .await
+                .map(|body| crate::security::redact_sensitive_text(&body))
                 .unwrap_or_else(|_| "<failed to read error body>".to_string());
             return Err(XzatomaError::Provider(format!(
-                "Device code request returned {}: {}",
+                "Device code request failed with {}: {}",
                 status, body
             )));
         }
@@ -1853,7 +1864,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "Copilot models API returned error {}: {}",
                 status,
@@ -1903,7 +1915,9 @@ impl CopilotProvider {
 
                             let status2 = retry_resp.status();
                             if !status2.is_success() {
-                                let error_text2 = retry_resp.text().await.unwrap_or_default();
+                                let error_text2 = crate::security::redact_sensitive_text(
+                                    &retry_resp.text().await.unwrap_or_default(),
+                                );
                                 tracing::error!(
                                     "Copilot models API retry returned error {}: {}",
                                     status2,
@@ -2091,7 +2105,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "Copilot models API returned error {}: {}",
                 status,
@@ -2233,7 +2248,8 @@ impl CopilotProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
@@ -2341,7 +2357,8 @@ impl CopilotProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
@@ -2575,7 +2592,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("/responses returned error {}: {}", status, error_text);
             return Err(format_copilot_api_error(status, &error_text));
         }
@@ -2710,7 +2728,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "/chat/completions returned error {}: {}",
                 status,
@@ -2750,7 +2769,9 @@ impl CopilotProvider {
 
                         let retry_status = retry_response.status();
                         if !retry_status.is_success() {
-                            let error_text = retry_response.text().await.unwrap_or_default();
+                            let error_text = crate::security::redact_sensitive_text(
+                                &retry_response.text().await.unwrap_or_default(),
+                            );
                             tracing::error!(
                                 "/chat/completions retry returned error {}: {}",
                                 retry_status,
@@ -4023,7 +4044,7 @@ mod tests {
     fn test_api_endpoint_with_custom_base() {
         let config = CopilotConfig {
             model: "gpt-5-mini".to_string(),
-            api_base: Some("https://custom.api.com".to_string()),
+            api_base: Some("http://127.0.0.1:8000".to_string()),
             enable_streaming: true,
             enable_endpoint_fallback: true,
             reasoning_effort: None,
@@ -4034,8 +4055,32 @@ mod tests {
 
         assert_eq!(
             provider.endpoint_url(ModelEndpoint::Responses),
-            "https://custom.api.com/responses"
+            "http://127.0.0.1:8000/responses"
         );
+    }
+
+    #[test]
+    fn test_copilot_provider_rejects_external_api_base() {
+        let config = CopilotConfig {
+            api_base: Some("https://attacker.example.com".to_string()),
+            ..Default::default()
+        };
+
+        let result = CopilotProvider::new(config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_copilot_provider_accepts_loopback_api_base() {
+        let config = CopilotConfig {
+            api_base: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+
+        let result = CopilotProvider::new(config);
+
+        assert!(result.is_ok());
     }
 
     // ========================================================================
@@ -4698,6 +4743,7 @@ mod tests {
         assert!(yaml.contains("enable_endpoint_fallback: false"));
         assert!(yaml.contains("reasoning_effort: high"));
         assert!(yaml.contains("include_reasoning: true"));
+        assert!(!yaml.contains("api_base"));
     }
 
     #[test]
@@ -4708,6 +4754,7 @@ enable_streaming: true
 enable_endpoint_fallback: true
 reasoning_effort: medium
 include_reasoning: true
+api_base: https://attacker.example.com
 "#;
 
         let config: CopilotConfig = serde_yaml::from_str(yaml).expect("Deserialize failed");
@@ -4716,6 +4763,7 @@ include_reasoning: true
         assert!(config.enable_endpoint_fallback);
         assert_eq!(config.reasoning_effort, Some("medium".to_string()));
         assert!(config.include_reasoning);
+        assert!(config.api_base.is_none());
     }
 
     #[test]

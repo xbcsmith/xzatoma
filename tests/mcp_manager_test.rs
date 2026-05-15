@@ -50,6 +50,7 @@ fn stdio_config(id: &str) -> McpServerConfig {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: false,
+        approval: Default::default(),
     }
 }
 
@@ -561,6 +562,7 @@ async fn test_connect_all_skips_disabled_servers() {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: false,
+        approval: Default::default(),
     };
 
     let cfg = McpConfig {

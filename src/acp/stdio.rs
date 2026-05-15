@@ -1430,6 +1430,7 @@ fn convert_acp_mcp_server(server: &acp::McpServer) -> Result<McpServerConfig> {
                 prompts_enabled: false,
                 sampling_enabled: false,
                 elicitation_enabled: false,
+                approval: Default::default(),
             };
             cfg.validate()?;
             Ok(cfg)
@@ -1462,6 +1463,7 @@ fn convert_acp_mcp_server(server: &acp::McpServer) -> Result<McpServerConfig> {
                 prompts_enabled: false,
                 sampling_enabled: false,
                 elicitation_enabled: false,
+                approval: Default::default(),
             };
             cfg.validate()?;
             Ok(cfg)
@@ -1494,6 +1496,7 @@ fn convert_acp_mcp_server(server: &acp::McpServer) -> Result<McpServerConfig> {
                 prompts_enabled: false,
                 sampling_enabled: false,
                 elicitation_enabled: false,
+                approval: Default::default(),
             };
             cfg.validate()?;
             Ok(cfg)

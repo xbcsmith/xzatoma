@@ -120,8 +120,7 @@ impl CommandValidator {
     pub fn new(mode: ExecutionMode, working_dir: PathBuf) -> Self {
         let allowlist = vec![
             "ls", "cat", "grep", "find", "echo", "pwd", "whoami", "head", "tail", "wc", "sort",
-            "uniq", "diff", "git", "cargo", "rustc", "npm", "node", "python", "python3", "go",
-            "make", "cmake", "which", "basename", "dirname", "realpath",
+            "uniq", "diff", "which", "basename", "dirname", "realpath",
         ]
         .into_iter()
         .map(String::from)
@@ -203,6 +202,7 @@ impl CommandValidator {
                     )));
                 }
 
+                self.validate_restricted_arguments(&parsed)?;
                 self.validate_paths(&parsed)?;
                 Ok(())
             }
@@ -212,6 +212,25 @@ impl CommandValidator {
                 Ok(())
             }
         }
+    }
+
+    fn validate_restricted_arguments(
+        &self,
+        parsed: &ParsedCommand,
+    ) -> std::result::Result<(), XzatomaError> {
+        if parsed.program == "find"
+            && parsed
+                .args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "-exec" | "-execdir" | "-delete"))
+        {
+            return Err(XzatomaError::CommandRequiresConfirmation(
+                "find actions that execute commands or delete files require confirmation"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Lexically normalize an absolute path (resolve '.' and '..') without following symlinks
@@ -551,6 +570,16 @@ impl ToolExecutor for TerminalTool {
 
         cmd.current_dir(self.validator.working_dir.clone());
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        #[cfg(unix)]
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setpgid(0, 0) == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            });
+        }
 
         // Spawn and obtain a child
         let child = cmd
@@ -590,16 +619,10 @@ impl ToolExecutor for TerminalTool {
                 }
             }
             _ = &mut sleep => {
-                // Timeout -> attempt kill by pid (OS command; best-effort).
+                // Timeout -> terminate the process group where supported so
+                // child processes do not survive the tool timeout.
                 if let Some(pid) = pid {
-                    #[cfg(unix)]
-                    {
-                        let _ = StdCommand::new("kill").arg("-9").arg(pid.to_string()).status();
-                    }
-                    #[cfg(windows)]
-                    {
-                        let _ = StdCommand::new("taskkill").args(&["/PID", &pid.to_string(), "/F"]).status();
-                    }
+                    terminate_process_tree(pid);
                 }
                 // Await join handle after kill to collect any output
                 match join_fut.await {
@@ -662,6 +685,62 @@ impl ToolExecutor for TerminalTool {
             .with_metadata("duration_ms".to_string(), elapsed_ms.to_string());
 
         Ok(res)
+    }
+}
+
+fn terminate_process_tree(pid: u32) {
+    #[cfg(unix)]
+    {
+        let group = format!("-{}", pid);
+        match StdCommand::new("kill").arg("-TERM").arg(&group).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => tracing::warn!(
+                pid = pid,
+                status = %status,
+                "Failed to terminate terminal process group with SIGTERM"
+            ),
+            Err(error) => tracing::warn!(
+                pid = pid,
+                error = %error,
+                "Failed to run kill for terminal process group"
+            ),
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+
+        match StdCommand::new("kill").arg("-KILL").arg(&group).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => tracing::warn!(
+                pid = pid,
+                status = %status,
+                "Failed to terminate terminal process group with SIGKILL"
+            ),
+            Err(error) => tracing::warn!(
+                pid = pid,
+                error = %error,
+                "Failed to run kill -KILL for terminal process group"
+            ),
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        match StdCommand::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => tracing::warn!(
+                pid = pid,
+                status = %status,
+                "Failed to terminate terminal process tree"
+            ),
+            Err(error) => tracing::warn!(
+                pid = pid,
+                error = %error,
+                "Failed to run taskkill for terminal process tree"
+            ),
+        }
     }
 }
 
@@ -753,7 +832,18 @@ mod tests {
         let tmp = PathBuf::from("/tmp");
         let v_restricted = CommandValidator::new(ExecutionMode::RestrictedAutonomous, tmp.clone());
         assert!(v_restricted.validate("ls -la").is_ok());
-        assert!(v_restricted.validate("git status").is_ok());
+        assert!(matches!(
+            v_restricted.validate("git status").unwrap_err(),
+            XzatomaError::CommandRequiresConfirmation(_)
+        ));
+        assert!(matches!(
+            v_restricted.validate("python -c 'print(1)'").unwrap_err(),
+            XzatomaError::CommandRequiresConfirmation(_)
+        ));
+        assert!(matches!(
+            v_restricted.validate("find . -delete").unwrap_err(),
+            XzatomaError::CommandRequiresConfirmation(_)
+        ));
         assert!(matches!(
             v_restricted.validate("vim file.txt").unwrap_err(),
             XzatomaError::CommandRequiresConfirmation(_)

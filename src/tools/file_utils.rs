@@ -33,6 +33,10 @@ pub enum FileUtilsError {
     #[error("Parent directory creation failed: {0}")]
     ParentDirCreation(String),
 
+    /// Existing path component is a symbolic link.
+    #[error("Symbolic link components are not allowed: {0}")]
+    SymlinkComponent(String),
+
     /// IO error occurred
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -47,9 +51,8 @@ pub enum FileUtilsError {
 ///
 /// ```
 /// use xzatoma::tools::file_utils::PathValidator;
-/// use std::path::PathBuf;
 ///
-/// let validator = PathValidator::new(PathBuf::from("/project"));
+/// let validator = PathValidator::new(std::env::temp_dir());
 /// let result = validator.validate("src/main.rs");
 /// assert!(result.is_ok());
 /// ```
@@ -77,10 +80,10 @@ impl PathValidator {
     ///
     /// ```
     /// use xzatoma::tools::file_utils::PathValidator;
-    /// use std::path::PathBuf;
     ///
-    /// let validator = PathValidator::new(PathBuf::from("/project"));
-    /// assert_eq!(validator.working_dir().to_str().unwrap(), "/project");
+    /// let working_dir = std::env::temp_dir();
+    /// let validator = PathValidator::new(working_dir.clone());
+    /// assert_eq!(validator.working_dir(), &working_dir);
     /// ```
     pub fn working_dir(&self) -> &PathBuf {
         &self.working_dir
@@ -107,9 +110,8 @@ impl PathValidator {
     ///
     /// ```
     /// use xzatoma::tools::file_utils::PathValidator;
-    /// use std::path::PathBuf;
     ///
-    /// let validator = PathValidator::new(PathBuf::from("/project"));
+    /// let validator = PathValidator::new(std::env::temp_dir());
     ///
     /// // Valid path
     /// let result = validator.validate("src/main.rs");
@@ -145,17 +147,21 @@ impl PathValidator {
         // Compose candidate full path (relative to working_dir)
         let full_path = self.working_dir.join(path);
 
-        // Get canonical working directory
+        // Get canonical working directory. A missing working directory is a
+        // configuration error for all file tools because containment cannot be
+        // verified safely without a real root.
         let canonical_working = self
             .working_dir
             .canonicalize()
-            .unwrap_or_else(|_| self.working_dir.clone());
+            .map_err(FileUtilsError::Io)?;
 
-        // If the file/directory exists, canonicalize to follow symlinks
+        self.reject_existing_symlink_components(path, target)?;
+
+        // If the file/directory exists, canonicalize to follow symlinks and
+        // verify the final target is still contained in the canonical workspace.
         if full_path.exists() {
             let canonical_target = full_path.canonicalize().map_err(FileUtilsError::Io)?;
 
-            // Verify resolved path is within working_dir
             if !canonical_target.starts_with(&canonical_working) {
                 return Err(FileUtilsError::OutsideWorkingDir(format!(
                     "Path escapes working directory: {:?}",
@@ -165,20 +171,68 @@ impl PathValidator {
             return Ok(canonical_target);
         }
 
-        // For non-existent target (creating new file), ensure parent is within working_dir
-        if let Some(parent) = full_path.parent() {
-            if parent.exists() {
-                let parent_canonical = parent.canonicalize().map_err(FileUtilsError::Io)?;
-                if !parent_canonical.starts_with(&canonical_working) {
-                    return Err(FileUtilsError::OutsideWorkingDir(format!(
-                        "Parent directory outside working directory: {:?}",
-                        target
-                    )));
-                }
-            }
+        // For non-existent targets, canonicalize the nearest existing ancestor
+        // instead of only the immediate parent. This prevents paths such as
+        // `link/new/file` from passing validation when `link` is a symlink and
+        // `link/new` does not yet exist.
+        let nearest_existing = Self::nearest_existing_ancestor(&full_path).ok_or_else(|| {
+            FileUtilsError::OutsideWorkingDir(format!(
+                "No existing ancestor under working directory for {:?}",
+                target
+            ))
+        })?;
+        let ancestor_canonical = nearest_existing
+            .canonicalize()
+            .map_err(FileUtilsError::Io)?;
+        if !ancestor_canonical.starts_with(&canonical_working) {
+            return Err(FileUtilsError::OutsideWorkingDir(format!(
+                "Nearest existing ancestor outside working directory: {:?}",
+                target
+            )));
         }
 
         Ok(full_path)
+    }
+
+    fn reject_existing_symlink_components(
+        &self,
+        relative_path: &Path,
+        target: &str,
+    ) -> Result<(), FileUtilsError> {
+        let mut current = self.working_dir.clone();
+        for component in relative_path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::Normal(part) => {
+                    current.push(part);
+                    if let Ok(metadata) = std::fs::symlink_metadata(&current) {
+                        if metadata.file_type().is_symlink() {
+                            return Err(FileUtilsError::SymlinkComponent(format!(
+                                "Path contains symbolic link component while validating {}: {:?}",
+                                target, current
+                            )));
+                        }
+                    }
+                }
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn nearest_existing_ancestor(path: &Path) -> Option<PathBuf> {
+        let mut current = if path.exists() {
+            path.to_path_buf()
+        } else {
+            path.parent()?.to_path_buf()
+        };
+
+        loop {
+            if current.exists() {
+                return Some(current);
+            }
+            current = current.parent()?.to_path_buf();
+        }
     }
 }
 
@@ -364,6 +418,38 @@ mod tests {
         let validator = PathValidator::new(temp.path().to_path_buf());
         let result = validator.validate("~/.bashrc");
         assert!(matches!(result, Err(FileUtilsError::PathTraversal(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_with_symlink_ancestor_for_new_path_returns_error() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        symlink(outside.path(), workspace.path().join("link")).unwrap();
+
+        let validator = PathValidator::new(workspace.path().to_path_buf());
+        let result = validator.validate("link/new/file.txt");
+
+        assert!(matches!(result, Err(FileUtilsError::SymlinkComponent(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_with_existing_symlink_target_returns_error() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let outside_file = outside.path().join("secret.txt");
+        std::fs::write(&outside_file, "secret").unwrap();
+        symlink(&outside_file, workspace.path().join("secret_link.txt")).unwrap();
+
+        let validator = PathValidator::new(workspace.path().to_path_buf());
+        let result = validator.validate("secret_link.txt");
+
+        assert!(matches!(result, Err(FileUtilsError::SymlinkComponent(_))));
     }
 
     #[tokio::test]

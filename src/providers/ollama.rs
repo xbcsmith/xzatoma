@@ -165,7 +165,11 @@ impl OllamaProvider {
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: OllamaConfig) -> Result<Self> {
+    pub fn new(mut config: OllamaConfig) -> Result<Self> {
+        config.host =
+            crate::security::normalize_http_base_url(&config.host, "provider.ollama.host")
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
@@ -871,6 +875,28 @@ mod tests {
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_ollama_provider_normalizes_trailing_slash_host() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434/".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        assert_eq!(provider.host(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_ollama_provider_rejects_host_with_query() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434?token=secret".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let result = OllamaProvider::new(config);
+        assert!(result.is_err());
     }
 
     #[test]
