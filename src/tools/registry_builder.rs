@@ -30,6 +30,69 @@ use crate::tools::terminal::{CommandValidator, TerminalTool};
 use crate::tools::write_file::WriteFileTool;
 use crate::tools::{ToolExecutor, ToolRegistry};
 
+/// Return the canonical names of read-only file tools.
+///
+/// These are the tools registered in Planning mode: they read the filesystem
+/// without making any modifications. Use this list to verify that a
+/// read-only registry contains exactly the expected tools or to enumerate the
+/// read-only subset in tests.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::registry_builder::read_only_tool_names;
+///
+/// let names = read_only_tool_names();
+/// assert!(names.contains(&"read_file"));
+/// assert!(names.contains(&"find_path"));
+/// ```
+pub fn read_only_tool_names() -> &'static [&'static str] {
+    &["read_file", "list_directory", "find_path"]
+}
+
+/// Return the canonical names of file mutation tools.
+///
+/// These tools write, create, copy, move, or delete filesystem entries.
+/// They are registered in Write mode but not in Planning mode.
+/// Use this list to verify that a write-mode registry exposes exactly the
+/// expected mutation tools.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::registry_builder::file_mutation_tool_names;
+///
+/// let names = file_mutation_tool_names();
+/// assert!(names.contains(&"write_file"));
+/// assert!(names.contains(&"edit_file"));
+/// ```
+pub fn file_mutation_tool_names() -> &'static [&'static str] {
+    &[
+        "write_file",
+        "edit_file",
+        "delete_path",
+        "copy_path",
+        "move_path",
+        "create_directory",
+    ]
+}
+
+/// Return the canonical names of terminal execution tools.
+///
+/// These tools run shell commands and are only available in Write mode.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::registry_builder::terminal_tool_names;
+///
+/// let names = terminal_tool_names();
+/// assert!(names.contains(&"terminal"));
+/// ```
+pub fn terminal_tool_names() -> &'static [&'static str] {
+    &["terminal"]
+}
+
 /// Builder for mode-aware tool registries
 ///
 /// Constructs a `ToolRegistry` filtered by chat mode and safety settings.
@@ -544,5 +607,71 @@ mod tests {
             .expect("Failed to build registry");
         // Currently returns the same tools, but flag is passed and logged
         assert_eq!(registry.len(), 10);
+    }
+
+    #[test]
+    fn test_read_only_tool_names_contains_expected_tools() {
+        let names = read_only_tool_names();
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"list_directory"));
+        assert!(names.contains(&"find_path"));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn test_file_mutation_tool_names_contains_expected_tools() {
+        let names = file_mutation_tool_names();
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"delete_path"));
+        assert!(names.contains(&"copy_path"));
+        assert!(names.contains(&"move_path"));
+        assert!(names.contains(&"create_directory"));
+        assert_eq!(names.len(), 6);
+    }
+
+    #[test]
+    fn test_terminal_tool_names_contains_terminal() {
+        let names = terminal_tool_names();
+        assert!(names.contains(&"terminal"));
+        assert_eq!(names.len(), 1);
+    }
+
+    #[test]
+    fn test_planning_registry_matches_read_only_names() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Planning,
+            SafetyMode::AlwaysConfirm,
+            PathBuf::from("."),
+        );
+        let registry = builder.build_for_planning().unwrap();
+        for name in read_only_tool_names() {
+            assert!(
+                registry.get(name).is_some(),
+                "Planning registry missing expected read-only tool: {}",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_registry_contains_all_tool_groups() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::NeverConfirm,
+            PathBuf::from("."),
+        );
+        let registry = builder.build_for_write().unwrap();
+        for name in read_only_tool_names()
+            .iter()
+            .chain(file_mutation_tool_names())
+            .chain(terminal_tool_names())
+        {
+            assert!(
+                registry.get(name).is_some(),
+                "Write registry missing expected tool: {}",
+                name
+            );
+        }
     }
 }

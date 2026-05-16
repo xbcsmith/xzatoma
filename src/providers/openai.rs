@@ -24,6 +24,7 @@
 
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
+use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
 use crate::providers::{
     convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
     CompletionResponse, FinishReason, FunctionCall, ImagePromptSource, Message, ModelCapability,
@@ -37,13 +38,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-/// Type alias for the in-memory model cache shared across async operations.
-///
-/// Caches the list of available models together with the timestamp of the last
-/// fetch so that repeated calls to `list_models` can avoid hitting the API on
-/// every invocation.
-type ModelCache = Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>;
 
 // ---------------------------------------------------------------------------
 // Non-streaming wire types
@@ -592,7 +586,7 @@ impl OpenAIProvider {
         Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
-            model_cache: Arc::new(RwLock::new(None)),
+            model_cache: new_model_cache(),
         })
     }
 
@@ -1238,7 +1232,7 @@ impl Provider for OpenAIProvider {
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         if let Ok(cache) = self.model_cache.read() {
             if let Some((models, cached_at)) = cache.as_ref() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
+                if is_cache_valid(*cached_at) {
                     tracing::debug!("Using cached OpenAI model list");
                     return Ok(models.clone());
                 }

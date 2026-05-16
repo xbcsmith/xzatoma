@@ -5,6 +5,7 @@
 
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
+use crate::providers::cache::MODEL_CACHE_TTL_SECS;
 use crate::providers::{
     convert_tools_from_json, messages_contain_image_content, CompletionResponse, FinishReason,
     FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary, Provider,
@@ -104,7 +105,7 @@ impl ModelEndpoint {
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 
 /// Duration for which the model list cache is considered valid.
-const MODEL_CACHE_DURATION: Duration = Duration::from_secs(300);
+const MODEL_CACHE_DURATION: Duration = Duration::from_secs(MODEL_CACHE_TTL_SECS);
 
 /// Pinned boxed stream of response events
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;

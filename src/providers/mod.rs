@@ -16,6 +16,7 @@
 //! | `openai`       | OpenAI provider implementation                        |
 
 pub mod base;
+pub mod cache;
 pub mod copilot;
 pub mod factory;
 pub mod ollama;
@@ -49,6 +50,12 @@ pub use trait_mod::Provider;
 // ---------------------------------------------------------------------------
 
 pub use factory::{create_provider, create_provider_with_override, ProviderFactory};
+
+// ---------------------------------------------------------------------------
+// Cache helpers (from cache.rs)
+// ---------------------------------------------------------------------------
+
+pub use cache::{is_cache_valid, new_model_cache, ModelCache, MODEL_CACHE_TTL_SECS};
 
 // ---------------------------------------------------------------------------
 // Provider implementations

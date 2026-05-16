@@ -316,6 +316,107 @@ pub async fn check_file_size(path: &Path, max_size: u64) -> Result<u64, FileUtil
     Ok(file_size)
 }
 
+/// Recursively copies a directory from source to destination.
+///
+/// Walks the source directory tree using `WalkDir` and copies every file and
+/// directory entry to the corresponding path under `destination`. Parent
+/// directories are created automatically.
+///
+/// # Arguments
+///
+/// * `source` - Absolute path to the source directory
+/// * `destination` - Absolute path to the destination directory
+///
+/// # Returns
+///
+/// Returns the count of files copied
+///
+/// # Errors
+///
+/// Returns `FileUtilsError::Io` if directory creation or file copy fails
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::tools::file_utils::copy_directory_recursive;
+/// use std::path::Path;
+///
+/// # tokio_test::block_on(async {
+/// let count = copy_directory_recursive(
+///     Path::new("/source/dir"),
+///     Path::new("/dest/dir"),
+/// ).await.unwrap();
+/// assert!(count > 0);
+/// # });
+/// ```
+pub async fn copy_directory_recursive(
+    source: &Path,
+    destination: &Path,
+) -> Result<usize, FileUtilsError> {
+    use walkdir::WalkDir;
+
+    let mut count = 0;
+
+    for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
+        let rel_path = entry.path().strip_prefix(source).map_err(|e| {
+            FileUtilsError::ParentDirCreation(format!(
+                "Failed to compute relative path while copying directory: {}",
+                e
+            ))
+        })?;
+        let dest_path = destination.join(rel_path);
+
+        if entry.file_type().is_dir() {
+            tokio::fs::create_dir_all(&dest_path)
+                .await
+                .map_err(FileUtilsError::Io)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = dest_path.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(FileUtilsError::Io)?;
+            }
+            tokio::fs::copy(entry.path(), &dest_path)
+                .await
+                .map_err(FileUtilsError::Io)?;
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
+/// Match a text string against a glob pattern.
+///
+/// Delegates to the `glob-match` crate which supports `*` (any non-separator
+/// characters), `?` (single character), and `**` (any path segment including
+/// separators).
+///
+/// This is the single canonical glob implementation for all tool modules.
+/// Use this function instead of adding custom recursive glob matchers.
+///
+/// # Arguments
+///
+/// * `text` - Text to match against the pattern
+/// * `pattern` - Glob pattern (supports `*`, `?`, `**`)
+///
+/// # Returns
+///
+/// Returns `true` if `text` matches `pattern`
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::file_utils::glob_match_pattern;
+///
+/// assert!(glob_match_pattern("file.txt", "*.txt"));
+/// assert!(glob_match_pattern("src/main.rs", "**/*.rs"));
+/// assert!(!glob_match_pattern("file.txt", "*.rs"));
+/// ```
+pub fn glob_match_pattern(text: &str, pattern: &str) -> bool {
+    glob_match::glob_match(pattern, text)
+}
+
 /// Generate a unified diff between two text strings
 ///
 /// Creates a line-based unified diff showing changes between old and new content.
@@ -481,5 +582,52 @@ mod tests {
             result,
             Err(FileUtilsError::FileTooLarge(2000, 1000))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_copy_directory_recursive_copies_files_and_dirs() {
+        let temp = TempDir::new().unwrap();
+        let src = temp.path().join("src");
+        let dst = temp.path().join("dst");
+        tokio::fs::create_dir(&src).await.unwrap();
+        tokio::fs::create_dir(src.join("sub")).await.unwrap();
+        tokio::fs::write(src.join("a.txt"), "alpha").await.unwrap();
+        tokio::fs::write(src.join("sub/b.txt"), "beta")
+            .await
+            .unwrap();
+
+        let count = copy_directory_recursive(&src, &dst).await.unwrap();
+        assert_eq!(count, 2);
+        assert!(dst.join("a.txt").exists());
+        assert!(dst.join("sub/b.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_copy_directory_recursive_empty_directory_returns_zero() {
+        let temp = TempDir::new().unwrap();
+        let src = temp.path().join("src");
+        let dst = temp.path().join("dst");
+        tokio::fs::create_dir(&src).await.unwrap();
+
+        let count = copy_directory_recursive(&src, &dst).await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_glob_match_pattern_simple_extension() {
+        assert!(glob_match_pattern("file.txt", "*.txt"));
+        assert!(!glob_match_pattern("file.rs", "*.txt"));
+    }
+
+    #[test]
+    fn test_glob_match_pattern_double_star_matches_path() {
+        assert!(glob_match_pattern("src/main.rs", "**/*.rs"));
+        assert!(glob_match_pattern("a/b/c.rs", "**/*.rs"));
+    }
+
+    #[test]
+    fn test_glob_match_pattern_question_mark() {
+        assert!(glob_match_pattern("file1.txt", "file?.txt"));
+        assert!(!glob_match_pattern("file12.txt", "file?.txt"));
     }
 }

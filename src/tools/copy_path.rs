@@ -3,12 +3,11 @@
 //! Supports recursive directory copying with overwrite control.
 
 use crate::error::Result;
-use crate::tools::file_utils::PathValidator;
+use crate::tools::file_utils::{self, PathValidator};
 use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_COPY_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 /// Copy path tool for copying files and directories
 ///
@@ -144,15 +143,11 @@ impl ToolExecutor for CopyPathTool {
 
         // Create destination parent directories, then revalidate the target so
         // newly created parents cannot redirect through symlinks.
-        if let Some(parent) = destination.parent() {
-            if !parent.exists() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return Ok(ToolResult::error(format!(
-                        "Failed to create parent directories: {}",
-                        e
-                    )));
-                }
-            }
+        if let Err(e) = file_utils::ensure_parent_dirs(&destination).await {
+            return Ok(ToolResult::error(format!(
+                "Failed to create parent directories: {}",
+                e
+            )));
         }
         destination = match self.path_validator.validate(&params.destination_path) {
             Ok(path) => path,
@@ -173,7 +168,7 @@ impl ToolExecutor for CopyPathTool {
                 Err(e) => Ok(ToolResult::error(format!("Failed to copy file: {}", e))),
             }
         } else if source.is_dir() {
-            match self.copy_directory(&source, &destination).await {
+            match file_utils::copy_directory_recursive(&source, &destination).await {
                 Ok(count) => Ok(ToolResult::success(format!(
                     "Copied directory with {} items from {} to {}",
                     count, params.source_path, params.destination_path
@@ -189,35 +184,6 @@ impl ToolExecutor for CopyPathTool {
                 params.source_path
             )))
         }
-    }
-}
-
-impl CopyPathTool {
-    /// Recursively copies a directory from source to destination
-    async fn copy_directory(&self, source: &Path, destination: &Path) -> Result<usize> {
-        let mut count = 0;
-
-        for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
-            let rel_path = entry.path().strip_prefix(source).map_err(|error| {
-                crate::error::XzatomaError::Tool(format!(
-                    "Failed to compute relative path while copying directory: {}",
-                    error
-                ))
-            })?;
-            let dest_path = destination.join(rel_path);
-
-            if entry.file_type().is_dir() {
-                tokio::fs::create_dir_all(&dest_path).await?;
-            } else if entry.file_type().is_file() {
-                if let Some(parent) = dest_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                tokio::fs::copy(entry.path(), &dest_path).await?;
-                count += 1;
-            }
-        }
-
-        Ok(count)
     }
 }
 

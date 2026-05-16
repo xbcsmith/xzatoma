@@ -226,8 +226,14 @@ impl GrepTool {
 
             // Check if file matches include pattern
             if let Some(include) = include_pattern {
-                let path_str = path.display().to_string();
-                if !self.glob_match(&path_str, include) {
+                let rel_str = path
+                    .strip_prefix(&self.working_dir)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string());
+                let file_name_str = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !crate::tools::file_utils::glob_match_pattern(&rel_str, include)
+                    && !crate::tools::file_utils::glob_match_pattern(file_name_str, include)
+                {
                     continue;
                 }
             }
@@ -356,84 +362,16 @@ impl GrepTool {
     /// Check if path should be excluded based on patterns
     fn should_exclude(&self, file_name: &str, path: &Path) -> bool {
         for pattern in &self.excluded_patterns {
-            if self.glob_match(file_name, pattern)
-                || self.glob_match(&path.display().to_string(), pattern)
+            if crate::tools::file_utils::glob_match_pattern(file_name, pattern)
+                || crate::tools::file_utils::glob_match_pattern(
+                    &path.display().to_string(),
+                    pattern,
+                )
             {
                 return true;
             }
         }
         false
-    }
-
-    /// Simple glob pattern matching
-    ///
-    /// # Arguments
-    ///
-    /// * `text` - Text to match against
-    /// * `pattern` - Glob pattern with * and ? wildcards
-    ///
-    /// # Returns
-    ///
-    /// True if text matches the pattern
-    fn glob_match(&self, text: &str, pattern: &str) -> bool {
-        self.glob_match_inner(text, pattern)
-    }
-
-    /// Inner recursive glob matching implementation
-    fn glob_match_inner(&self, text: &str, pattern: &str) -> bool {
-        let text_chars: Vec<char> = text.chars().collect();
-        let pattern_chars: Vec<char> = pattern.chars().collect();
-        glob_match_recursive(&text_chars, 0, &pattern_chars, 0)
-    }
-}
-
-/// Recursive glob matching helper (free function; no struct state required).
-fn glob_match_recursive(
-    text: &[char],
-    text_idx: usize,
-    pattern: &[char],
-    pattern_idx: usize,
-) -> bool {
-    // Both exhausted - match
-    if text_idx == text.len() && pattern_idx == pattern.len() {
-        return true;
-    }
-
-    // Pattern exhausted but text remains - no match (unless only * remaining)
-    if pattern_idx == pattern.len() {
-        return text_idx == text.len();
-    }
-
-    let current_pattern = pattern[pattern_idx];
-
-    match current_pattern {
-        '*' => {
-            // * can match zero characters
-            if glob_match_recursive(text, text_idx, pattern, pattern_idx + 1) {
-                return true;
-            }
-            // Or match one character and recurse
-            if text_idx < text.len() {
-                return glob_match_recursive(text, text_idx + 1, pattern, pattern_idx);
-            }
-            false
-        }
-        '?' => {
-            // ? matches exactly one character
-            if text_idx < text.len() {
-                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-            } else {
-                false
-            }
-        }
-        c => {
-            // Exact character match
-            if text_idx < text.len() && text[text_idx] == c {
-                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-            } else {
-                false
-            }
-        }
     }
 }
 
@@ -658,23 +596,32 @@ mod tests {
 
     #[test]
     fn test_grep_tool_glob_match_simple() {
-        let tool = GrepTool::new(PathBuf::from("."), 20, 2, 1_000_000, vec![]);
-        assert!(tool.glob_match("test.rs", "*.rs"));
-        assert!(!tool.glob_match("test.txt", "*.rs"));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "test.rs", "*.rs"
+        ));
+        assert!(!crate::tools::file_utils::glob_match_pattern(
+            "test.txt", "*.rs"
+        ));
     }
 
     #[test]
     fn test_grep_tool_glob_match_star() {
-        let tool = GrepTool::new(PathBuf::from("."), 20, 2, 1_000_000, vec![]);
-        assert!(tool.glob_match("anything", "*"));
-        assert!(tool.glob_match("test.rs", "test*"));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "anything", "*"
+        ));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "test.rs", "test*"
+        ));
     }
 
     #[test]
     fn test_grep_tool_glob_match_question() {
-        let tool = GrepTool::new(PathBuf::from("."), 20, 2, 1_000_000, vec![]);
-        assert!(tool.glob_match("test.rs", "test.??"));
-        assert!(!tool.glob_match("test.rs", "test.?"));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "test.rs", "test.??"
+        ));
+        assert!(!crate::tools::file_utils::glob_match_pattern(
+            "test.rs", "test.?"
+        ));
     }
 
     #[tokio::test]
@@ -706,17 +653,32 @@ mod tests {
 
     #[test]
     fn test_glob_match_exact() {
-        let tool = GrepTool::new(PathBuf::from("."), 20, 2, 1_000_000, vec![]);
-        assert!(tool.glob_match("file.rs", "file.rs"));
-        assert!(!tool.glob_match("file.rs", "file.txt"));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "file.rs", "file.rs"
+        ));
+        assert!(!crate::tools::file_utils::glob_match_pattern(
+            "file.rs", "file.txt"
+        ));
     }
 
     #[test]
     fn test_glob_match_complex() {
-        let tool = GrepTool::new(PathBuf::from("."), 20, 2, 1_000_000, vec![]);
-        assert!(tool.glob_match("target/", "target/*"));
-        assert!(tool.glob_match("test123.lock", "*.lock"));
-        assert!(tool.glob_match("path/to/file.rs", "*.rs"));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "target/", "target/*"
+        ));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "test123.lock",
+            "*.lock"
+        ));
+        // Single * does not cross path separators; use ** for nested paths
+        assert!(!crate::tools::file_utils::glob_match_pattern(
+            "path/to/file.rs",
+            "*.rs"
+        ));
+        assert!(crate::tools::file_utils::glob_match_pattern(
+            "path/to/file.rs",
+            "**/*.rs"
+        ));
     }
 
     #[tokio::test]

@@ -4,7 +4,9 @@
 //! management, test file creation, and assertion helpers.
 
 use crate::config::Config;
-use crate::error::XzatomaError;
+use crate::error::{Result, XzatomaError};
+use crate::providers::{CompletionResponse, Message, ModelInfo, Provider, ProviderCapabilities};
+use async_trait::async_trait;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -77,7 +79,7 @@ pub fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
 /// let result: Result<(), XzatomaError> = Err(XzatomaError::Config("invalid".to_string()));
 /// assert_error_contains(result, "invalid");
 /// ```
-pub fn assert_error_contains<T>(result: Result<T, XzatomaError>, expected: &str) {
+pub fn assert_error_contains<T>(result: std::result::Result<T, XzatomaError>, expected: &str) {
     match result {
         Ok(_) => panic!("Expected error containing '{}' but got Ok", expected),
         Err(e) => {
@@ -144,6 +146,168 @@ agent:
     .to_string()
 }
 
+/// Builder for configurable test provider instances.
+///
+/// Creates lightweight `TestProvider` instances that implement the `Provider`
+/// trait for use in unit tests. The builder pattern lets each test configure
+/// only the behavior it cares about without boilerplate.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::test_utils::TestProviderBuilder;
+/// use xzatoma::providers::Provider;
+///
+/// let provider = TestProviderBuilder::new()
+///     .with_model("test-model")
+///     .with_completion("Hello from test!")
+///     .build();
+///
+/// assert_eq!(provider.get_current_model(), "test-model".to_string());
+/// assert!(provider.is_authenticated());
+/// ```
+pub struct TestProviderBuilder {
+    model: String,
+    authenticated: bool,
+    completion_text: String,
+}
+
+impl TestProviderBuilder {
+    /// Create a new test provider builder with sensible defaults.
+    ///
+    /// Defaults:
+    /// - `model`: `"test-model"`
+    /// - `authenticated`: `true`
+    /// - `completion_text`: `"test response"`
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xzatoma::test_utils::TestProviderBuilder;
+    ///
+    /// let builder = TestProviderBuilder::new();
+    /// ```
+    pub fn new() -> Self {
+        Self {
+            model: "test-model".to_string(),
+            authenticated: true,
+            completion_text: "test response".to_string(),
+        }
+    }
+
+    /// Set the model name returned by the provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - Model name string
+    pub fn with_model(mut self, model: &str) -> Self {
+        self.model = model.to_string();
+        self
+    }
+
+    /// Set whether the provider reports as authenticated.
+    ///
+    /// # Arguments
+    ///
+    /// * `authenticated` - Authentication state
+    pub fn with_authenticated(mut self, authenticated: bool) -> Self {
+        self.authenticated = authenticated;
+        self
+    }
+
+    /// Set the text content returned by `complete`.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Completion response text
+    pub fn with_completion(mut self, text: &str) -> Self {
+        self.completion_text = text.to_string();
+        self
+    }
+
+    /// Build and return a configured `TestProvider`.
+    pub fn build(self) -> TestProvider {
+        TestProvider {
+            model: self.model,
+            authenticated: self.authenticated,
+            completion_text: self.completion_text,
+        }
+    }
+}
+
+impl Default for TestProviderBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A configurable test implementation of the `Provider` trait.
+///
+/// Used in unit tests to simulate provider behavior without making real HTTP
+/// calls. Create instances via [`TestProviderBuilder`].
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::test_utils::TestProviderBuilder;
+/// use xzatoma::providers::{Provider, Message};
+///
+/// # tokio_test::block_on(async {
+/// let provider = TestProviderBuilder::new()
+///     .with_completion("Hello!")
+///     .build();
+///
+/// let messages = vec![Message::user("Hi")];
+/// let response = provider.complete(&messages, &[]).await.unwrap();
+/// assert_eq!(response.message.content.as_deref().unwrap_or(""), "Hello!");
+/// # });
+/// ```
+pub struct TestProvider {
+    model: String,
+    authenticated: bool,
+    completion_text: String,
+}
+
+#[async_trait]
+impl Provider for TestProvider {
+    fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
+    fn current_model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
+    fn set_model(&mut self, model: &str) {
+        self.model = model.to_string();
+    }
+
+    async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+        Ok(vec![ModelInfo::new(
+            self.model.clone(),
+            self.model.clone(),
+            4096,
+        )])
+    }
+
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
+        let message = Message::assistant(&self.completion_text);
+        Ok(CompletionResponse::new(message))
+    }
+
+    fn get_current_model(&self) -> String {
+        self.model.clone()
+    }
+
+    fn get_provider_capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_assert_error_contains_success() {
-        let result: Result<(), XzatomaError> =
+        let result: std::result::Result<(), XzatomaError> =
             Err(XzatomaError::Config("test error message".to_string()));
         assert_error_contains(result, "test error");
     }
@@ -173,14 +337,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "Expected error containing")]
     fn test_assert_error_contains_ok() {
-        let result: Result<(), XzatomaError> = Ok(());
+        let result: std::result::Result<(), XzatomaError> = Ok(());
         assert_error_contains(result, "error");
     }
 
     #[test]
     #[should_panic(expected = "does not contain")]
     fn test_assert_error_contains_wrong_message() {
-        let result: Result<(), XzatomaError> =
+        let result: std::result::Result<(), XzatomaError> =
             Err(XzatomaError::Config("different error".to_string()));
         assert_error_contains(result, "not present");
     }
@@ -199,5 +363,53 @@ mod tests {
         assert!(yaml.contains("agent:"));
         let config: Config = serde_yaml::from_str(&yaml).unwrap();
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_test_provider_builder_default_authenticated() {
+        let provider = TestProviderBuilder::new().build();
+        assert!(provider.is_authenticated());
+    }
+
+    #[test]
+    fn test_test_provider_builder_with_model() {
+        let provider = TestProviderBuilder::new()
+            .with_model("custom-model")
+            .build();
+        assert_eq!(provider.get_current_model(), "custom-model".to_string());
+    }
+
+    #[test]
+    fn test_test_provider_builder_with_unauthenticated() {
+        let provider = TestProviderBuilder::new().with_authenticated(false).build();
+        assert!(!provider.is_authenticated());
+    }
+
+    #[tokio::test]
+    async fn test_test_provider_complete_returns_configured_text() {
+        let provider = TestProviderBuilder::new()
+            .with_completion("configured response")
+            .build();
+        let messages = vec![Message::user("hello")];
+        let response = provider.complete(&messages, &[]).await.unwrap();
+        assert_eq!(
+            response.message.content.as_deref().unwrap_or(""),
+            "configured response"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_test_provider_fetch_models_returns_configured_model() {
+        let provider = TestProviderBuilder::new().with_model("my-model").build();
+        let models = provider.fetch_models().await.unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "my-model");
+    }
+
+    #[test]
+    fn test_test_provider_builder_default() {
+        let builder = TestProviderBuilder::default();
+        let provider = builder.build();
+        assert_eq!(provider.get_current_model(), "test-model".to_string());
     }
 }

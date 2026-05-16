@@ -3,7 +3,7 @@
 //! Moves or renames files and directories with cross-filesystem fallback.
 
 use crate::error::Result;
-use crate::tools::file_utils::PathValidator;
+use crate::tools::file_utils::{self, PathValidator};
 use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_MOVE_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -118,15 +118,11 @@ impl ToolExecutor for MovePathTool {
 
         // Create destination parent directories, then revalidate the target so
         // newly created parents cannot redirect through symlinks.
-        if let Some(parent) = destination.parent() {
-            if !parent.exists() {
-                if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                    return Ok(ToolResult::error(format!(
-                        "Failed to create parent directories: {}",
-                        e
-                    )));
-                }
-            }
+        if let Err(e) = file_utils::ensure_parent_dirs(&destination).await {
+            return Ok(ToolResult::error(format!(
+                "Failed to create parent directories: {}",
+                e
+            )));
         }
         destination = match self.path_validator.validate(&params.destination_path) {
             Ok(path) => path,
@@ -164,7 +160,7 @@ impl ToolExecutor for MovePathTool {
                 Err(e) => Ok(ToolResult::error(format!("Failed to move file: {}", e))),
             }
         } else if source.is_dir() {
-            match self.copy_directory_recursive(&source, &destination).await {
+            match file_utils::copy_directory_recursive(&source, &destination).await {
                 Ok(count) => {
                     if let Err(e) = tokio::fs::remove_dir_all(&source).await {
                         return Ok(ToolResult::error(format!(
@@ -188,37 +184,6 @@ impl ToolExecutor for MovePathTool {
                 params.source_path
             )))
         }
-    }
-}
-
-impl MovePathTool {
-    /// Recursively copies a directory for cross-filesystem moves
-    async fn copy_directory_recursive(&self, source: &Path, destination: &Path) -> Result<usize> {
-        use walkdir::WalkDir;
-
-        let mut count = 0;
-
-        for entry in WalkDir::new(source).into_iter().filter_map(|e| e.ok()) {
-            let rel_path = entry.path().strip_prefix(source).map_err(|error| {
-                crate::error::XzatomaError::Tool(format!(
-                    "Failed to compute relative path while moving directory: {}",
-                    error
-                ))
-            })?;
-            let dest_path = destination.join(rel_path);
-
-            if entry.file_type().is_dir() {
-                tokio::fs::create_dir_all(&dest_path).await?;
-            } else if entry.file_type().is_file() {
-                if let Some(parent) = dest_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                tokio::fs::copy(entry.path(), &dest_path).await?;
-                count += 1;
-            }
-        }
-
-        Ok(count)
     }
 }
 
