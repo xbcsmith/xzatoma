@@ -1,14 +1,14 @@
 //! Skill validation and diagnostics.
 //!
 //! This module validates parsed `SKILL.md` documents and converts them into
-//! Phase 1-compatible loaded skill records and diagnostics.
+//! Loaded skill records and diagnostics.
 
 use crate::skills::types::{RawSkillDocument, SkillDiagnostic, SkillValidationOutcome};
 use regex::Regex;
 
 /// Validate a parsed skill document.
 ///
-/// This function enforces the Phase 1 validation rules:
+/// This function enforces the validation rules:
 ///
 /// - reject missing `description`
 /// - reject empty `description`
@@ -127,7 +127,7 @@ pub fn normalize_allowed_tools(raw: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-/// Validate a skill name against the Phase 1 format.
+/// Validate a skill name against the expected format.
 ///
 /// Valid names must match `^[a-z][a-z0-9_]*$`.
 ///

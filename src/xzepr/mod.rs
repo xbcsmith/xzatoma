@@ -6,11 +6,11 @@
 //! # Relocation Notice
 //!
 //! All XZepr implementation code has been relocated to `crate::watcher::xzepr`
-//! as part of the generic watcher architecture (Phase 1). This module re-exports
+//! as part of the generic watcher architecture. This module re-exports
 //! everything from that canonical location to preserve full backward compatibility.
 //!
 //! XZepr is a fully supported, permanent watcher backend — an equal configuration
-//! peer alongside the generic watcher introduced in Phase 3. No deprecation notices
+//! peer alongside the generic watcher. No deprecation notices
 //! apply.
 //!
 //! # Submodules

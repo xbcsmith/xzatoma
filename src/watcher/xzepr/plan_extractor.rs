@@ -4,7 +4,7 @@
 //! message payloads.
 //!
 //! This module was relocated from `src/watcher/plan_extractor.rs` into
-//! `src/watcher/xzepr/` as part of the generic watcher architecture (Phase 1).
+//! `src/watcher/xzepr/` as part of the generic watcher architecture.
 
 use crate::watcher::xzepr::consumer::CloudEventMessage;
 use serde_json::Value as JsonValue;

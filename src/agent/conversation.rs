@@ -1125,7 +1125,7 @@ mod tests {
     }
 
     // -----------------------
-    // Phase 3: Helper tests
+    // Helper tests
     // -----------------------
 
     #[test]
@@ -1167,7 +1167,7 @@ mod tests {
     }
 
     // -----------------------
-    // Phase 3: Pruning tests
+    // Token pruning tests
     // -----------------------
 
     #[test]

@@ -1,6 +1,6 @@
 /// ACP run lifecycle compatibility exports.
 ///
-/// This module re-exports the canonical Phase 1 ACP run and lifecycle types from
+/// This module re-exports the canonical ACP run and lifecycle types from
 /// `crate::acp::types`.
 ///
 /// The ACP implementation uses `types.rs` as the single source of truth for:

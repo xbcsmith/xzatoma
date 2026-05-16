@@ -75,7 +75,7 @@ pub enum MessageDisposition {
     Processed,
     /// The event was valid but did not satisfy the configured matcher.
     SkippedNoMatch,
-    /// Reserved for backward compatibility; no longer returned by the Phase 2
+    /// Reserved for backward compatibility; no longer returned by the current
     /// pipeline (result-event JSON now fails plan parsing and is classified
     /// as `InvalidPayload`).
     SkippedNonPlanEvent,
@@ -967,7 +967,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 5: FakeGenericConsumer + FakeResultProducer integration tests
+    // FakeGenericConsumer + FakeResultProducer integration tests
     // -------------------------------------------------------------------------
 
     use crate::watcher::generic::consumer::{FakeGenericConsumer, RawKafkaMessage as TestRawMsg};
@@ -1025,9 +1025,9 @@ mod tests {
             key: None,
         };
 
-        // Verify the disposition directly: Phase 2 returns InvalidPayload for
+        // Verify the disposition directly: InvalidPayload is returned for
         // non-plan payloads (SkippedNonPlanEvent is reserved for back-compat
-        // and is no longer emitted by the Phase 2 pipeline).
+        // and is no longer emitted by the current pipeline).
         let disposition = watcher.process_event(msg.clone()).await.unwrap();
         assert_eq!(disposition, MessageDisposition::InvalidPayload);
 

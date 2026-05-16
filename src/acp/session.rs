@@ -232,7 +232,7 @@ pub enum SessionVisibility {
 
 /// ACP session protocol model.
 ///
-/// This structure is intentionally minimal for Phase 1 and focuses on stable
+/// This structure is intentionally minimal and focuses on stable
 /// identity and metadata that later ACP phases can extend.
 ///
 /// # Examples

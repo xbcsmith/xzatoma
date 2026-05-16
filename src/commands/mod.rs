@@ -105,7 +105,7 @@ pub fn should_enable_subagents(prompt: &str) -> bool {
 
 /// Returns `true` if the given skill is visible for startup disclosure.
 ///
-/// Visibility rules for Phase 2:
+/// Visibility rules:
 ///
 /// - invalid skills are already excluded by discovery
 /// - project skills require trust when `skills.project_trust_required == true`
@@ -230,7 +230,7 @@ pub fn build_startup_skill_disclosure(
 
 /// Builds the visible startup skill catalog for activation and disclosure.
 ///
-/// This helper discovers valid skills, applies Phase 2 visibility filtering, and
+/// This helper discovers valid skills, applies visibility filtering, and
 /// returns a catalog containing only valid visible skills. The returned catalog
 /// is suitable for `activate_skill` registration and startup disclosure.
 ///

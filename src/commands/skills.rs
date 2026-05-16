@@ -1,6 +1,6 @@
 /// Skills command handlers.
 ///
-/// This module implements the Phase 5 CLI backend for skills catalog and trust
+/// This module implements the CLI backend for skills catalog and trust
 /// operations, including path visibility reporting and deterministic trust
 /// store management.
 use crate::config::Config;

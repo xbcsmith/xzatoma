@@ -1,7 +1,7 @@
 /// Skills module for discovery, parsing, validation, disclosure, and catalog
 /// management.
 ///
-/// This module provides the Phase 1 and Phase 2 foundation for agent skill
+/// This module provides the foundation for agent skill
 /// support: deterministic discovery, `SKILL.md` parsing, validation,
 /// diagnostics, catalog disclosure rendering, and a catalog of valid loaded
 /// skills.

@@ -1,4 +1,4 @@
-//! Active skill registry for Phase 3 skill activation.
+//! Active skill registry.
 //!
 //! This module implements the runtime registry used to track active skills
 //! during a single process/session. Activated skills are kept separate from
@@ -92,8 +92,8 @@ pub struct ActiveSkill {
     pub body_content: String,
     /// Optional enumerated resource list.
     ///
-    /// Phase 3 does not yet resolve separate resources, so this defaults to an
-    /// empty list and can be populated in later phases.
+    /// Separate resource resolution is not yet active; this defaults to an empty
+    /// list.
     pub resources: Vec<PathBuf>,
 }
 

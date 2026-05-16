@@ -277,7 +277,7 @@ pub struct OpenAIConfig {
     /// the model default. Has no effect on non-reasoning models.
     ///
     /// Set at runtime via `Provider::set_thinking_effort` or the
-    /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable (Phase 4).
+    /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
 }
@@ -484,7 +484,7 @@ pub enum AcpCompatibilityMode {
 
 /// ACP default run mode configuration.
 ///
-/// This value is configuration-only in Phase 2 and gives later ACP run
+/// This value is configuration-only and gives later ACP run
 /// lifecycle phases a stable place to read default behavior from.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -500,7 +500,7 @@ pub enum AcpDefaultRunMode {
 
 /// ACP persistence tuning configuration.
 ///
-/// Phase 2 stores only configuration for future ACP persistence support.
+/// This section stores only configuration for future ACP persistence support.
 /// Validation still ensures any provided limits are sensible.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -956,7 +956,8 @@ pub struct SubagentConfig {
     /// Enable conversation persistence for debugging
     ///
     /// When true, saves subagent conversations to persistent storage
-    /// for replay and debugging. Phase 4 feature, currently ignored.
+    /// for replay and debugging. Currently not active; subagent conversations
+    /// are held in memory only.
     #[serde(default = "default_subagent_persistence_enabled")]
     pub persistence_enabled: bool,
 
@@ -4386,7 +4387,7 @@ chat_enabled: true
         assert!(err.contains("watcher.kafka is required"));
     }
 
-    // Phase 5: Enhanced subagent configuration tests
+    // Subagent configuration tests
 
     #[test]
     fn test_subagent_config_provider_override_copilot() {

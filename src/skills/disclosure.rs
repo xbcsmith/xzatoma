@@ -1,6 +1,6 @@
 //! Skill catalog disclosure rendering and visibility filtering.
 //!
-//! This module implements the Phase 2 startup disclosure foundation for agent
+//! This module implements the startup disclosure foundation for agent
 //! skills. It renders a metadata-only catalog of valid visible skills for
 //! prompt-time disclosure without exposing full `SKILL.md` instruction bodies.
 
@@ -12,10 +12,9 @@ use std::path::{Path, PathBuf};
 
 /// Trust information used to filter visible skills for startup disclosure.
 ///
-/// Phase 2 disclosure must enforce trust gating before catalog entries are
-/// shown to the model. This lightweight structure allows callers to provide the
-/// currently trusted project/custom paths without requiring the later Phase 4
-/// trust store implementation.
+/// Disclosure must enforce trust gating before catalog entries are shown to the
+/// model. This structure allows callers to provide the currently trusted
+/// project/custom paths.
 ///
 /// # Examples
 ///

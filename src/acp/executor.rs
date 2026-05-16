@@ -10,7 +10,7 @@
 /// - recording ACP lifecycle transitions and output events
 /// - supporting synchronous and background asynchronous execution
 ///
-/// Phase 3 intentionally keeps execution simple and in-process. The runtime
+/// This implementation intentionally keeps execution simple and in-process. The runtime
 /// remains the source of truth for ACP run state and event history, while this
 /// executor delegates actual agent behavior to the existing XZatoma agent.
 ///

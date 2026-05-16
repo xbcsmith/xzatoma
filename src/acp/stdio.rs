@@ -3035,7 +3035,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: Session mode, config option, model, and IDE bridge tests
+    // Session mode, config option, model, and IDE bridge tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -3678,7 +3678,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3: ContextWindowUpdated -> UsageUpdate wiring tests
+    // ContextWindowUpdated -> UsageUpdate wiring tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -3708,7 +3708,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4: Initial UsageUpdate and SessionInfoUpdate tests
+    // Initial UsageUpdate and SessionInfoUpdate tests
     // -----------------------------------------------------------------------
 
     #[test]

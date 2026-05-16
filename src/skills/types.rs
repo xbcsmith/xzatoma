@@ -1,4 +1,4 @@
-//! Core type definitions for Phase 1 agent skills support.
+//! Core type definitions for agent skills support.
 //!
 //! This module defines the shared data model used by discovery, parsing,
 //! validation, and catalog construction.
@@ -69,7 +69,7 @@ impl SkillSourceScope {
     }
 }
 
-/// Phase 1 startup-visible metadata for a valid skill.
+/// Startup-visible metadata for a valid skill.
 ///
 /// This structure intentionally separates metadata from activation content so
 /// startup disclosure can remain lightweight.
@@ -292,7 +292,7 @@ impl SkillDiagnosticSeverity {
     }
 }
 
-/// Machine-readable diagnostic kinds emitted by Phase 1.
+/// Machine-readable diagnostic kinds emitted during skill validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SkillDiagnosticKind {
     /// A candidate did not contain YAML frontmatter.

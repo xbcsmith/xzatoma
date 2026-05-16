@@ -1,6 +1,6 @@
 //! Persistent skill trust store and resource resolution support.
 //!
-//! This module implements the Phase 4 trust and resource foundation for agent
+//! This module implements the persistent trust store and resource foundation for agent
 //! skills.
 //!
 //! It provides:
@@ -89,7 +89,7 @@ pub struct SkillTrustStoreData {
 
 /// Enumerated skill resources under supported subdirectories.
 ///
-/// Phase 4 supports lazy enumeration of resources under:
+/// Lazy enumeration of resources is supported under:
 ///
 /// - `scripts/`
 /// - `references/`

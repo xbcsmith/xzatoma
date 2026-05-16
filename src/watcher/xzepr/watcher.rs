@@ -8,7 +8,7 @@
 //! 5. Executes extracted plans with concurrency control
 //!
 //! This module was relocated from `src/watcher/watcher.rs` into
-//! `src/watcher/xzepr/` as part of the generic watcher architecture (Phase 1).
+//! `src/watcher/xzepr/` as part of the generic watcher architecture.
 
 use super::consumer::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, XzeprConsumer};
 use super::filter::EventFilter;
@@ -120,7 +120,7 @@ impl From<PlanExtractionError> for WatcherError {
 /// limits and integrates with the XZepr Kafka consumer.
 ///
 /// This type is also accessible as `crate::watcher::XzeprWatcher` via the
-/// top-level watcher re-export added in Phase 1.
+/// top-level watcher re-export.
 ///
 /// # Example
 ///

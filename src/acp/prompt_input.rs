@@ -81,7 +81,7 @@ pub fn acp_content_blocks_to_prompt_input(
                     )?));
                 } else {
                     // Directory mentions, file stubs from older Zed clients, and any
-                    // non-image resource link: emit a text reference placeholder so the
+                    // non-image resource link: emit a text reference marker so the
                     // model knows a resource was referenced without failing the prompt.
                     let placeholder = format!("[Reference: {} ({})]", resource.name, resource.uri);
                     parts.push(PromptInputPart::text(placeholder));

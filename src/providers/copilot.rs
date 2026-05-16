@@ -2947,7 +2947,8 @@ impl Provider for CopilotProvider {
 
         if messages_contain_image_content(messages) {
             return Err(XzatomaError::Provider(format!(
-                "Copilot model '{}' cannot receive image input because native Copilot image serialization is not implemented",
+                "Copilot model '{}' does not support image input; \
+                 image content is not accepted by the Copilot provider",
                 model
             )));
         }
@@ -2973,20 +2974,10 @@ impl Provider for CopilotProvider {
                 )
                 .await
             }
-            ModelEndpoint::Messages => {
-                tracing::warn!(
-                    model = %model,
-                    "Messages endpoint not yet implemented; falling back to completions endpoint"
-                );
-                self.complete_with_completions_endpoint(
-                    &model,
-                    messages,
-                    tools,
-                    "",
-                    enable_streaming,
-                )
-                .await
-            }
+            ModelEndpoint::Messages => Err(XzatomaError::UnsupportedEndpoint(
+                model.to_string(),
+                "messages (supported: responses, chat_completions)".to_string(),
+            )),
             ModelEndpoint::Unknown => Err(XzatomaError::Provider(
                 "Unknown endpoint selected".to_string(),
             )),
@@ -3747,7 +3738,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PHASE 1 TESTS: Core Data Structures and Endpoint Detection
+    // Core Data Structures and Endpoint Detection
     // ========================================================================
 
     // Task 1.1: Response Endpoint Types Tests
@@ -4084,7 +4075,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PHASE 2: MESSAGE FORMAT CONVERSION TESTS
+    // Message Format Conversion Tests
     // ========================================================================
 
     // --- Task 2.1: Message to Response Input Conversion Tests ---
@@ -4514,7 +4505,7 @@ mod tests {
         assert!(choice.is_none());
     }
 
-    // Phase 3: SSE Parsing Tests
+    // SSE Parsing Tests
 
     #[test]
     fn test_parse_sse_data_line() {
@@ -4596,7 +4587,7 @@ mod tests {
         }
     }
 
-    // Phase 3: Stream Response Tests
+    // Stream Response Tests
 
     #[test]
     fn test_build_responses_request() {
@@ -4950,7 +4941,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotModelLimits deserialization tests
+    // CopilotModelLimits deserialization tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -4979,7 +4970,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotModelSupports deserialization tests
+    // CopilotModelSupports deserialization tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5023,7 +5014,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotCache unit tests
+    // CopilotCache unit tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5086,7 +5077,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: ResponsesAccumulator unit tests
+    // ResponsesAccumulator unit tests
     // -----------------------------------------------------------------------
 
     fn make_message_event(text: &str) -> StreamEvent {
@@ -5155,7 +5146,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: ChatCompletionsAccumulator unit tests
+    // ChatCompletionsAccumulator unit tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5229,7 +5220,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: ResponsesUsage unit tests
+    // ResponsesUsage unit tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5294,7 +5285,7 @@ api_base: https://attacker.example.com
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: convert_to_summary with expanded limits
+    // convert_to_summary with expanded limits
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5419,5 +5410,24 @@ api_base: https://attacker.example.com
                 effort
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_complete_returns_unsupported_endpoint_for_messages_model() {
+        // Verify that the Messages endpoint arm returns a typed UnsupportedEndpoint
+        // error rather than silently falling back to another endpoint.
+        //
+        // XzatomaError::UnsupportedEndpoint(model, endpoint) formats as:
+        //   "Model {model} does not support endpoint {endpoint}"
+        let err = XzatomaError::UnsupportedEndpoint(
+            "test-model".to_string(),
+            "messages (supported: responses, chat_completions)".to_string(),
+        );
+        assert!(
+            err.to_string()
+                .contains("does not support endpoint messages"),
+            "error message must reference the unsupported messages endpoint: {}",
+            err
+        );
     }
 }

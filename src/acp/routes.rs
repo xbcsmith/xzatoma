@@ -1,11 +1,10 @@
 /// ACP HTTP route construction wrappers.
 ///
-/// This module provides a small transport-facing routing surface for Phase 2
-/// ACP discovery endpoints. The concrete router implementation lives in
+/// This module provides a small transport-facing routing surface for ACP
+/// discovery endpoints. The concrete router implementation lives in
 /// `crate::acp::server`, and this module re-exports the route builder and
-/// related state types through a dedicated routes module so later phases can
-/// evolve route composition without coupling callers directly to server
-/// bootstrap internals.
+/// related state types so route composition can evolve without coupling
+/// callers directly to server bootstrap internals.
 ///
 /// # Examples
 ///

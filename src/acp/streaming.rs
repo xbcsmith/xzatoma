@@ -1,7 +1,7 @@
 /// ACP streaming support for server-sent events.
 ///
 /// This module adapts ACP runtime events into server-sent events (SSE) suitable
-/// for the Phase 3 ACP HTTP streaming surface. The implementation is transport-
+/// for the ACP HTTP streaming surface. The implementation is transport-
 /// focused and intentionally small:
 ///
 /// - replay prior in-memory runtime events in order

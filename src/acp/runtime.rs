@@ -6,7 +6,7 @@
 /// execution state, and replay event history without tightly coupling HTTP
 /// routes to agent internals.
 ///
-/// Phase 4 extends the runtime with durable backing through the shared SQLite
+/// The runtime supports durable backing through the shared SQLite
 /// storage layer so ACP sessions, runs, events, await state, and cancellation
 /// audit data survive process restarts.
 ///
@@ -53,7 +53,7 @@ use uuid::Uuid;
 
 /// Default capacity for live event fan-out.
 ///
-/// This value is intentionally modest because Phase 3 keeps event history in the
+/// This value is intentionally modest because event history is kept in the
 /// per-run record and uses the broadcast channel only for live subscribers.
 const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -179,7 +179,7 @@ impl std::fmt::Display for AcpRuntimeExecuteMode {
 
 /// ACP runtime create request.
 ///
-/// This structure captures the Phase 3 inputs needed to create an ACP run in
+/// This structure captures the inputs needed to create an ACP run in
 /// the runtime coordinator before execution begins.
 ///
 /// # Examples
@@ -505,7 +505,7 @@ struct AcpRuntimeState {
 
 /// ACP runtime coordinator.
 ///
-/// This is the primary in-memory entry point for ACP Phase 3 lifecycle
+/// This is the primary in-memory entry point for ACP lifecycle
 /// management. It creates runs, tracks status, records ordered events, and
 /// supports live subscriptions for streaming transport.
 ///
@@ -1732,8 +1732,8 @@ fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>>
 /// single-agent XZatoma execution model.
 ///
 /// This adapter preserves input ordering and supports text-first ACP messages.
-/// Unsupported multimodal or artifact-only payloads are rejected until fuller
-/// multimodal support is implemented.
+/// Unsupported multimodal or artifact-only payloads are rejected with a typed
+/// validation error.
 ///
 /// # Arguments
 ///
@@ -1784,7 +1784,7 @@ pub fn flatten_input_to_prompt(messages: &[AcpMessage]) -> Result<String> {
                 }
                 AcpMessagePart::Artifact(_) => {
                     return Err(crate::acp::error::AcpError::validation(
-                        "artifact input parts are not yet supported for ACP runs",
+                        "artifact input parts are unsupported in ACP runs; only text parts are accepted",
                     )
                     .into());
                 }
@@ -1866,7 +1866,7 @@ fn extract_text_content(message: &AcpMessage) -> Result<String> {
             AcpMessagePart::Text(text) => Ok(text.text.clone()),
             AcpMessagePart::Artifact(_) => {
                 Err(XzatomaError::Acp(crate::acp::error::AcpError::validation(
-                    "artifact message parts are not yet supported for ACP run execution"
+                    "artifact message parts are unsupported in ACP run execution; only text parts are processed"
                         .to_string(),
                 )))
             }
@@ -1897,7 +1897,7 @@ fn validate_supported_message_parts(message: &AcpMessage) -> Result<()> {
             AcpMessagePart::Text(text) => text.validate()?,
             AcpMessagePart::Artifact(_) => {
                 return Err(crate::acp::error::AcpError::validation(
-                    "artifact and multimodal ACP inputs are not yet supported",
+                    "artifact and multimodal ACP inputs are unsupported; only text message parts are accepted",
                 )
                 .into());
             }

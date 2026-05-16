@@ -1,28 +1,33 @@
-//! MCP task manager (Phase 6 placeholder)
+//! MCP task lifecycle manager.
 //!
-//! This module will provide [`TaskManager`], which tracks the lifecycle of
+//! This module provides [`TaskManager`], which tracks the lifecycle of
 //! long-running MCP tasks created via the `tasks` capability introduced in
 //! protocol revision `2025-11-25`.
 //!
 //! A task is created when a server responds to `tools/call` with a
 //! `_meta.taskId` field instead of an immediate result. The task manager
-//! polls `tasks/get` until the task reaches a terminal state
-//! (`completed`, `failed`, or `cancelled`) and then delivers the final
-//! result to the original caller.
+//! records state updates delivered via `notifications/tasks/status`
+//! notifications and exposes query methods for the current state of each
+//! tracked task.
 //!
-//! # Current Status
+//! # Scope
 //!
-//! This is a Phase 6 placeholder. The public API surface is defined here so
-//! that [`crate::mcp::manager::McpClientManager`] can compile and hold an
-//! `Arc<Mutex<TaskManager>>`. Full implementation will follow in Phase 6.
+//! This module provides task registration, state tracking, and removal.
+//! Polling `tasks/get` and delivering final results to waiting callers via an
+//! async channel requires notification-based wiring that is not yet active.
+//! When a `_meta.taskId` is detected in a tool response,
+//! [`crate::mcp::manager::McpClientManager::call_tool_as_task`] returns
+//! [`crate::error::XzatomaError::McpTask`] so callers receive a stable typed
+//! error instead of a partial result.
 //!
-//! # Planned API
+//! # API
 //!
 //! ```text
 //! manager.register_task(server_id, task_id, ttl)
-//! manager.wait_for_completion(server_id, task_id) -> CallToolResponse
-//! manager.on_task_status(notification)
-//! manager.cancel_task(server_id, task_id)
+//! manager.update_task_state(server_id, task_id, new_state)
+//! manager.task_state(server_id, task_id) -> Option<&TaskLifecycleState>
+//! manager.remove_task(server_id, task_id) -> bool
+//! manager.active_task_count() -> usize
 //! ```
 
 use std::collections::HashMap;
@@ -34,8 +39,8 @@ use std::collections::HashMap;
 /// Lifecycle state of a single MCP task.
 ///
 /// Mirrors the `TaskStatus` values defined in the MCP `2025-11-25`
-/// specification. Phase 6 will wire these states to the
-/// `notifications/tasks/status` notification stream.
+/// specification. These states mirror the `TaskStatus` values in the MCP
+/// `2025-11-25` specification.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskLifecycleState {
     /// The task has been submitted and the server is working on it.
@@ -52,9 +57,8 @@ pub enum TaskLifecycleState {
 
 /// Internal record for a single tracked task.
 ///
-/// Phase 6 will add a `oneshot::Sender<CallToolResponse>` so that
-/// [`TaskManager::wait_for_completion`] can deliver the final result
-/// across an async boundary.
+/// A future iteration could add a `oneshot::Sender<CallToolResponse>` to
+/// deliver completion results across async boundaries.
 #[derive(Debug)]
 #[allow(dead_code)]
 struct TaskEntry {
@@ -74,9 +78,8 @@ struct TaskEntry {
 
 /// Tracks in-flight MCP tasks and delivers their results to waiters.
 ///
-/// This is a Phase 6 placeholder. The struct is `Default`-constructible so
-/// that [`crate::mcp::manager::McpClientManager`] can create an instance
-/// without any additional setup.
+/// The struct is `Default`-constructible so that
+/// [`crate::mcp::manager::McpClientManager`] can hold a shared instance.
 ///
 /// # Examples
 ///
@@ -161,7 +164,7 @@ impl TaskManager {
     /// Update the state of a tracked task.
     ///
     /// Called when a `notifications/tasks/status` notification is received.
-    /// Phase 6 will extend this to wake waiting callers.
+    /// A future iteration can add waiter wake-up logic here.
     ///
     /// # Arguments
     ///

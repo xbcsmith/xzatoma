@@ -1,6 +1,6 @@
 //! Skill discovery engine with deterministic precedence.
 //!
-//! This module implements the Phase 1 discovery foundation for agent skills.
+//! This module implements the skill discovery engine for agent skills.
 //! It scans supported roots, parses `SKILL.md`, validates discovered
 //! candidates, and resolves collisions into a valid-only catalog.
 
@@ -102,7 +102,7 @@ struct CollisionResolution {
     shadowed_diagnostics: Vec<SkillDiagnostic>,
 }
 
-/// Discover skills using the configured Phase 1 roots and limits.
+/// Discover skills using the configured roots and limits.
 ///
 /// Discovery order:
 ///

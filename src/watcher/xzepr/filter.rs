@@ -4,7 +4,7 @@
 //! should be processed based on configured criteria.
 //!
 //! It was relocated from `src/watcher/filter.rs` into `src/watcher/xzepr/`
-//! as part of the generic watcher architecture (Phase 1).
+//! as part of the generic watcher architecture.
 
 use crate::config::EventFilterConfig;
 use crate::error::Result;

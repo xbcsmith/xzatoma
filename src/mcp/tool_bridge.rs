@@ -745,7 +745,7 @@ fn extract_text_content(content: &[ToolResponseContent]) -> String {
 /// The role label is the `Debug` representation of the `Role` variant,
 /// uppercased (e.g. `[USER]`, `[ASSISTANT]`). Content is extracted from the
 /// message's `MessageContent` variant; non-text variants produce a concise
-/// placeholder string.
+/// fallback text.
 fn format_prompt_messages(messages: &[PromptMessage]) -> String {
     messages
         .iter()

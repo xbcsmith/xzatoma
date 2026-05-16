@@ -1,12 +1,12 @@
 /// ACP domain model and core abstractions.
 ///
-/// This module exposes the canonical Phase 1 ACP surface for XZatoma.
+/// This module exposes the canonical ACP surface for XZatoma.
 ///
 /// The ACP domain is intentionally transport-independent. Protocol-facing types
 /// live in focused submodules, but the crate-level ACP API is unified here so
 /// later phases can depend on one stable surface.
 ///
-/// Phase 1 uses `types.rs` as the canonical protocol and lifecycle model for:
+/// This module uses `types.rs` as the canonical protocol and lifecycle model for:
 ///
 /// - ACP messages and message parts
 /// - ACP artifacts

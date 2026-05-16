@@ -97,8 +97,8 @@ pub fn version_matches(plan_version: &str, constraint: &str) -> bool {
 
 /// The XZepr watcher backend, re-exported for use in the watch command dispatcher.
 ///
-/// This alias resolves to [`crate::watcher::xzepr::watcher::Watcher`]. When Phase 4
-/// introduces `watcher_type` dispatch, the call site in `commands::watch::run_watch`
+/// This alias resolves to [`crate::watcher::xzepr::watcher::Watcher`]. When
+/// `watcher_type` dispatch is introduced, the call site in `commands::watch::run_watch`
 /// will select between `XzeprWatcher` and the generic watcher based on configuration.
 ///
 /// # Examples

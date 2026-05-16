@@ -12,7 +12,7 @@
 ///   - `POST /runs`
 ///   - `GET /runs/{run_id}`
 ///   - `GET /runs/{run_id}/events`
-/// - Phase 4 stateful lifecycle endpoints:
+/// - Stateful lifecycle endpoints:
 ///   - `POST /runs/{run_id}`
 ///   - `POST /runs/{run_id}/cancel`
 ///   - `GET /sessions/{session_id}`
@@ -61,7 +61,7 @@ use crate::error::{Result, XzatomaError};
 ///
 /// This state contains the generated ACP discovery manifests and the effective
 /// path strategy chosen from configuration. The state is intentionally small and
-/// read-only for Phase 2.
+/// read-only for discovery.
 ///
 /// # Examples
 ///
@@ -254,7 +254,7 @@ impl AcpServerState {
 
 /// Effective ACP path exposure strategy.
 ///
-/// This captures the chosen Phase 2 route layout so it can be surfaced in
+/// This captures the chosen route layout so it can be surfaced in
 /// metadata and documentation. XZatoma defaults to versioned routes to avoid
 /// colliding with unrelated application paths, but root-compatible ACP paths
 /// can be enabled explicitly for spec-oriented deployments.
@@ -392,7 +392,7 @@ impl PingResponse {
 
 /// Query parameters for `GET /agents`.
 ///
-/// Phase 2 supports a simple list shape with optional offset/limit filtering so
+/// The current implementation supports a simple list shape with optional offset/limit filtering so
 /// the endpoint can evolve toward pagination without breaking its response
 /// contract.
 ///
@@ -799,7 +799,7 @@ impl IntoResponse for AcpHttpError {
 
 /// Builds the ACP discovery router.
 ///
-/// This function wires the Phase 2 discovery handlers according to the selected
+/// This function wires the discovery handlers according to the selected
 /// ACP compatibility mode. In versioned mode, routes are mounted beneath the
 /// configured base path such as `/api/v1/acp`. In root-compatible mode, the
 /// handlers are mounted directly at `/ping`, `/agents`, and `/agents/{name}`.
@@ -1696,7 +1696,7 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_contains_required_phase2_metadata() {
+    fn test_manifest_contains_required_metadata() {
         let manifest = build_primary_manifest(&test_config()).unwrap();
 
         assert_eq!(manifest.name, "xzatoma");

@@ -10,7 +10,7 @@
 //! # Parsing model
 //!
 //! Rather than deserializing the raw wire format into a loosely-typed JSON
-//! value and deferring plan validation to the executor, Phase 2 introduces
+//! value and deferring plan validation to the executor, an improvement introduced
 //! *early parsing*: [`GenericPlanEvent::new`] calls
 //! [`PlanParser::parse_string`] on the raw payload string and returns `Err`
 //! immediately if the payload cannot be parsed or validated as a [`Plan`].
@@ -20,8 +20,8 @@
 //!
 //! # Loop-break guarantee
 //!
-//! In the Phase 1 design the loop-break was enforced by an `event_type`
-//! discriminator on the wire format. In Phase 2 the loop-break is implicit:
+//! Previously the loop-break was enforced by an `event_type` discriminator
+//! on the wire format. The loop-break is now implicit:
 //! when the watcher publishes a
 //! [`GenericPlanResult`](crate::watcher::generic::result_event::GenericPlanResult)
 //! and that JSON payload is later consumed from the same topic, it fails to

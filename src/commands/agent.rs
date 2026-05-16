@@ -4,7 +4,7 @@
 //! designed to be launched as a subprocess by Zed or another ACP-compatible
 //! client that communicates over stdin/stdout using newline-delimited JSON-RPC.
 //!
-//! Phase 1 keeps this handler intentionally small: it constructs stdio-agent
+//! This handler is intentionally small: it constructs stdio-agent
 //! runtime options from CLI flags and delegates all transport-specific behavior
 //! to `crate::acp::stdio`. The handler must not write human-readable output to
 //! stdout because stdout is reserved for the ACP protocol stream.
