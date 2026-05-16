@@ -10,12 +10,10 @@
 //! | `types`        | All shared domain types and wire-format structs       |
 //! | `trait_mod`    | The `Provider` trait                                  |
 //! | `factory`      | `ProviderFactory` and backward-compatible free funcs  |
-//! | `base`         | Compatibility re-export shim (prefer direct imports)  |
 //! | `copilot`      | GitHub Copilot provider implementation                |
 //! | `ollama`       | Ollama provider implementation                        |
 //! | `openai`       | OpenAI provider implementation                        |
 
-pub mod base;
 pub mod cache;
 pub mod copilot;
 pub mod factory;

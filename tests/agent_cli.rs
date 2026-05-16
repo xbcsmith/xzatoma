@@ -1,13 +1,11 @@
-#![allow(deprecated)]
-
-use assert_cmd::cargo::cargo_bin;
-use assert_cmd::Command;
 use predicates::prelude::*;
 use serial_test::serial;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command as StdCommand, Stdio};
 use tempfile::TempDir;
+
+mod common;
 
 fn minimal_config_yaml() -> String {
     r#"
@@ -37,7 +35,7 @@ fn temp_config_file(contents: &str) -> (TempDir, std::path::PathBuf) {
 }
 
 fn spawn_agent(config_path: &std::path::Path) -> Child {
-    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
+    let mut cmd = StdCommand::new(common::xzatoma_binary_path());
     cmd.arg("--config")
         .arg(config_path)
         .arg("agent")
@@ -102,7 +100,7 @@ fn test_agent_command_initialize_returns_xzatoma_metadata() {
 fn test_agent_command_accepts_provider_model_and_allow_dangerous_for_initialize() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
+    let mut cmd = StdCommand::new(common::xzatoma_binary_path());
     cmd.arg("--config")
         .arg(&config_path)
         .arg("agent")
@@ -132,7 +130,7 @@ fn test_agent_command_accepts_working_dir_for_initialize() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
     let workspace = TempDir::new().expect("workspace temp dir should be created");
 
-    let mut cmd = StdCommand::new(cargo_bin("xzatoma"));
+    let mut cmd = StdCommand::new(common::xzatoma_binary_path());
     cmd.arg("--config")
         .arg(&config_path)
         .arg("agent")
@@ -155,7 +153,7 @@ fn test_agent_command_accepts_working_dir_for_initialize() {
 fn test_agent_command_invalid_provider_reports_error_on_stderr_only() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("agent")

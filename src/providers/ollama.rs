@@ -64,9 +64,8 @@ struct OllamaModelTag {
     size: u64,
     // Required for JSON deserialization; digest is present in the API response
     // but not currently read by the model listing path.
-    #[allow(dead_code)]
-    #[serde(default)]
-    digest: String,
+    #[serde(default, rename = "digest")]
+    _digest: String,
     #[serde(default)]
     modified_at: String,
 }
@@ -80,12 +79,10 @@ struct OllamaShowResponse {
     model_info: serde_json::Value,
     // Required for JSON deserialization; parameters and template are returned
     // by /api/show but not currently consumed by the provider.
-    #[allow(dead_code)]
-    #[serde(default)]
-    parameters: String,
-    #[allow(dead_code)]
-    #[serde(default)]
-    template: String,
+    #[serde(default, rename = "parameters")]
+    _parameters: String,
+    #[serde(default, rename = "template")]
+    _template: String,
     #[serde(default)]
     details: OllamaModelDetails,
     #[serde(default)]
@@ -106,7 +103,7 @@ struct OllamaModelDetails {
 /// Shared type aliases for Ollama's wire format.
 ///
 /// Ollama's JSON schema for requests and responses is structurally identical
-/// to the canonical shared types defined in `providers::base`.  These aliases
+/// to the canonical shared types defined in `providers`.  These aliases
 /// keep internal code readable without duplicating struct definitions.
 type OllamaRequest = ProviderRequest;
 type OllamaMessage = ProviderMessage;
@@ -124,9 +121,8 @@ struct OllamaResponse {
     eval_count: usize,
     // Required for JSON deserialization; total_duration is returned by the API
     // but only prompt_eval_count and eval_count are used for token tracking.
-    #[allow(dead_code)]
-    #[serde(default)]
-    total_duration: u64,
+    #[serde(default, rename = "total_duration")]
+    _total_duration: u64,
 }
 
 impl OllamaProvider {
@@ -498,17 +494,6 @@ impl OllamaProvider {
 
         Ok(model_info)
     }
-
-    /// Invalidate the model cache
-    // set_model no longer calls invalidate_cache; retained for potential
-    // future use (e.g. explicit cache busting after external model changes).
-    #[allow(dead_code)]
-    fn invalidate_cache(&self) {
-        if let Ok(mut cache) = self.model_cache.write() {
-            *cache = None;
-            tracing::debug!("Model cache invalidated");
-        }
-    }
 }
 
 /// Get context window size for a model based on its name
@@ -606,18 +591,17 @@ fn build_model_info_from_show_response(
         model_info.set_provider_metadata("capabilities", caps_joined.clone());
 
         for cap in &show.capabilities {
-            #[allow(deprecated)]
             match cap.to_lowercase().as_str() {
                 "tools" => model_info.add_capability(ModelCapability::FunctionCalling),
                 "vision" => model_info.add_capability(ModelCapability::Vision),
                 "streaming" => model_info.add_capability(ModelCapability::Streaming),
-                "json" | "json_mode" | "json-mode" => {
-                    model_info.add_capability(ModelCapability::JsonMode)
-                }
                 "long_context" | "longcontext" | "long-context" => {
                     model_info.add_capability(ModelCapability::LongContext)
                 }
-                "completion" => model_info.add_capability(ModelCapability::Completion),
+                "json" | "json_mode" | "json-mode" | "completion" => {
+                    // Retained in provider metadata; no active ModelCapability variant
+                    // is assigned for these legacy provider strings.
+                }
                 _ => {
                     // Unknown capability: preserve via provider metadata (already added)
                 }
@@ -1284,8 +1268,8 @@ mod tests {
         let show = OllamaShowResponse {
             name: None,
             model_info: serde_json::json!({"description": "Test model"}),
-            parameters: String::new(),
-            template: String::new(),
+            _parameters: String::new(),
+            _template: String::new(),
             details: OllamaModelDetails {
                 parameter_size: String::new(),
                 quantization_level: String::new(),
@@ -1301,7 +1285,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_build_model_info_from_show_response_parses_context_and_capabilities() {
         let json = r#"{
             "name": "granite4:latest",
@@ -1323,7 +1306,6 @@ mod tests {
         );
         assert_eq!(model_info.context_window, 131072);
         assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
-        assert!(model_info.supports_capability(ModelCapability::Completion));
         assert_eq!(
             model_info.provider_specific.get("capabilities").unwrap(),
             "completion, tools"

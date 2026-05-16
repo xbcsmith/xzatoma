@@ -2302,7 +2302,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP runtime persistence can hang when touching shared storage"]
     fn test_runtime_set_awaiting_persists_await_state() {
         let runtime = AcpRuntime::new_in_memory(Config::default());
 
@@ -2346,7 +2345,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP runtime persistence can hang when touching shared storage"]
     fn test_runtime_resume_run_transitions_awaiting_to_running() {
         let runtime = AcpRuntime::new_in_memory(Config::default());
 

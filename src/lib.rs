@@ -45,7 +45,6 @@ pub mod skills;
 pub mod storage;
 pub mod tools;
 pub mod watcher;
-pub mod xzepr;
 
 // Re-export commonly used types
 pub use agent::Agent;

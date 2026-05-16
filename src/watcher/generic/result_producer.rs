@@ -1082,7 +1082,7 @@ mod tests {
         assert!(debug_output.contains("<FutureProducer>"));
     }
 
-    #[ignore] // Requires a running Kafka broker
+    #[ignore = "requires a running Kafka broker at localhost:9092; run with cargo test --all-features -- --ignored"]
     #[tokio::test]
     async fn test_generic_result_producer_publish_succeeds() {
         let config = base_kafka_config();

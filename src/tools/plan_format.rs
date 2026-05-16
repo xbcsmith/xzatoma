@@ -122,7 +122,6 @@ impl ValidatedPlan {
 /// let yaml = "title: Plan\nsteps:\n  - name: Step 1";
 /// assert_eq!(detect_plan_format(yaml), PlanFormat::Yaml);
 /// ```
-#[allow(dead_code)]
 pub fn detect_plan_format(content: &str) -> PlanFormat {
     let trimmed = content.trim_start();
 
@@ -326,7 +325,6 @@ fn validate_frontmatter_plan(content: &str) -> Result<ValidatedPlan> {
 /// let validated = result.unwrap();
 /// assert!(validated.is_valid_plan());
 /// ```
-#[allow(dead_code)]
 pub fn validate_plan(content: &str) -> Result<ValidatedPlan> {
     if content.is_empty() {
         return Ok(ValidatedPlan::new(

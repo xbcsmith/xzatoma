@@ -1977,16 +1977,16 @@ async fn run_prompt_worker(
             );
         }
 
-        let response = execute_queued_prompt(
-            &session_id,
-            Arc::clone(&agent),
-            queued_prompt.messages,
-            &prompt_token,
-            queued_prompt.connection.as_ref(),
-            storage.as_ref(),
-            &conversation_uuid,
-            model_name.as_deref(),
-        )
+        let response = execute_queued_prompt(QueuedPromptExecution {
+            session_id: &session_id,
+            agent: Arc::clone(&agent),
+            messages: queued_prompt.messages,
+            cancellation_token: &prompt_token,
+            connection: queued_prompt.connection.as_ref(),
+            storage: storage.as_ref(),
+            conversation_uuid: &conversation_uuid,
+            model_name: model_name.as_deref(),
+        })
         .await;
 
         if queued_prompt.response_tx.send(response).is_err() {
@@ -1997,6 +1997,26 @@ async fn run_prompt_worker(
     tracing::debug!(session_id = %session_id, "ACP prompt worker stopped");
 }
 
+/// Context needed to execute one queued ACP prompt.
+struct QueuedPromptExecution<'a> {
+    /// ACP session being executed.
+    session_id: &'a acp::SessionId,
+    /// Shared XZatoma agent for the session.
+    agent: Arc<Mutex<XzatomaAgent>>,
+    /// Provider-format prompt messages for this queued prompt.
+    messages: Vec<Message>,
+    /// Cancellation token scoped to this queued prompt.
+    cancellation_token: &'a CancellationToken,
+    /// Optional live ACP connection used for observer notifications.
+    connection: Option<&'a ConnectionTo<AcpClientRole>>,
+    /// Optional storage used for successful conversation checkpoints.
+    storage: Option<&'a SqliteStorage>,
+    /// Persistent conversation identifier used for storage checkpoints.
+    conversation_uuid: &'a str,
+    /// Optional model name stored with successful checkpoints.
+    model_name: Option<&'a str>,
+}
+
 /// Executes a single queued prompt with event-driven session notifications.
 ///
 /// If a connection is available, an [`AcpSessionObserver`] is used so that
@@ -2004,76 +2024,74 @@ async fn run_prompt_worker(
 /// they are emitted. Without a connection the fallback path uses the
 /// `execute_provider_messages_with_observer` shim, preserving backward
 /// compatibility for tests and HTTP-only deployments.
-#[allow(clippy::too_many_arguments)]
 async fn execute_queued_prompt(
-    session_id: &acp::SessionId,
-    agent: Arc<Mutex<XzatomaAgent>>,
-    messages: Vec<Message>,
-    cancellation_token: &CancellationToken,
-    connection: Option<&ConnectionTo<AcpClientRole>>,
-    storage: Option<&SqliteStorage>,
-    conversation_uuid: &str,
-    model_name: Option<&str>,
+    request: QueuedPromptExecution<'_>,
 ) -> acp_sdk::Result<acp::PromptResponse> {
-    if cancellation_token.is_cancelled() {
+    if request.cancellation_token.is_cancelled() {
         return Ok(acp::PromptResponse::new(acp::StopReason::Cancelled));
     }
 
     tracing::debug!(
-        session_id = %session_id,
-        message_count = messages.len(),
+        session_id = %request.session_id,
+        message_count = request.messages.len(),
         "Processing ACP queued multimodal prompt"
     );
 
-    let mut agent = agent.lock().await;
+    let mut agent = request.agent.lock().await;
 
-    let execution_result = if let Some(conn) = connection {
-        let mut observer = AcpSessionObserver::new(session_id.clone(), conn.clone());
+    let execution_result = if let Some(conn) = request.connection {
+        let mut observer = AcpSessionObserver::new(request.session_id.clone(), conn.clone());
         agent
-            .execute_provider_messages_with_observer(messages, cancellation_token, &mut observer)
+            .execute_provider_messages_with_observer(
+                request.messages,
+                request.cancellation_token,
+                &mut observer,
+            )
             .await
     } else {
-        let token = cancellation_token.clone();
+        let token = request.cancellation_token.clone();
         let mut observer = crate::agent::events::NoOpObserver;
         agent
-            .execute_provider_messages_with_observer(messages, &token, &mut observer)
+            .execute_provider_messages_with_observer(request.messages, &token, &mut observer)
             .await
     };
 
     let stop_reason = match execution_result {
         Ok(_) => {
-            if cancellation_token.is_cancelled() {
+            if request.cancellation_token.is_cancelled() {
                 acp::StopReason::Cancelled
             } else {
                 acp::StopReason::EndTurn
             }
         }
-        Err(crate::error::XzatomaError::Cancelled) => acp::StopReason::Cancelled,
-        Err(crate::error::XzatomaError::MaxIterationsExceeded { .. }) => {
-            acp::StopReason::MaxTurnRequests
-        }
-        Err(error) => {
-            tracing::warn!(
-                session_id = %session_id,
-                error = %error,
-                "ACP prompt execution failed"
-            );
-            return Err(acp_internal_error(format!(
-                "prompt execution failed: {}",
-                error
-            )));
-        }
+        Err(error) => match map_error_to_stop_reason(&error) {
+            Some(stop_reason) => stop_reason,
+            None => {
+                tracing::warn!(
+                    session_id = %request.session_id,
+                    error = %error,
+                    "ACP prompt execution failed"
+                );
+                return Err(acp_internal_error(format!(
+                    "prompt execution failed: {}",
+                    error
+                )));
+            }
+        },
     };
 
     // Persist conversation checkpoint on successful non-cancelled completion.
     if stop_reason == acp::StopReason::EndTurn {
-        if let Some(storage) = storage {
-            if let Err(error) =
-                persist_conversation_checkpoint(storage, conversation_uuid, &mut agent, model_name)
-            {
+        if let Some(storage) = request.storage {
+            if let Err(error) = persist_conversation_checkpoint(
+                storage,
+                request.conversation_uuid,
+                &mut agent,
+                request.model_name,
+            ) {
                 tracing::warn!(
-                    session_id = %session_id,
-                    conversation_id = %conversation_uuid,
+                    session_id = %request.session_id,
+                    conversation_id = %request.conversation_uuid,
                     error = %error,
                     "Failed to persist ACP stdio conversation checkpoint"
                 );
@@ -2086,12 +2104,12 @@ async fn execute_queued_prompt(
     // returns a value as soon as one user message exists. Sending on every
     // EndTurn is idempotent: Zed's UI handles repeated title updates gracefully.
     if stop_reason == acp::StopReason::EndTurn {
-        if let Some(conn) = connection {
+        if let Some(conn) = request.connection {
             if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
                 let info_update = acp::SessionInfoUpdate::new().title(title);
                 send_session_update_best_effort(
                     conn,
-                    session_id.clone(),
+                    request.session_id.clone(),
                     acp::SessionUpdate::SessionInfoUpdate(info_update),
                     "session info update",
                 );
@@ -2165,19 +2183,14 @@ fn acp_validation_error(field: &str, error: impl ToString) -> acp_sdk::Error {
 ///
 /// Returns the most semantically accurate `acp::StopReason` for the outcome.
 ///
-/// # Examples
-///
-/// ```
-/// // (internal function, not pub — tested via protocol tests)
-/// ```
-#[allow(dead_code)]
-fn map_error_to_stop_reason(error: &crate::error::XzatomaError) -> acp::StopReason {
+/// Returns `None` for errors that should be surfaced to the ACP client.
+fn map_error_to_stop_reason(error: &crate::error::XzatomaError) -> Option<acp::StopReason> {
     match error {
-        crate::error::XzatomaError::Cancelled => acp::StopReason::Cancelled,
+        crate::error::XzatomaError::Cancelled => Some(acp::StopReason::Cancelled),
         crate::error::XzatomaError::MaxIterationsExceeded { .. } => {
-            acp::StopReason::MaxTurnRequests
+            Some(acp::StopReason::MaxTurnRequests)
         }
-        _ => acp::StopReason::EndTurn,
+        _ => None,
     }
 }
 
@@ -2191,6 +2204,47 @@ mod tests {
         Channel, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, SentRequest, UntypedMessage,
     };
     use serde::{Deserialize, Serialize};
+
+    #[derive(Clone)]
+    struct QueuedPromptMockProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for QueuedPromptMockProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("queued-prompt-test")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<XzatomaModelInfo>> {
+            Ok(vec![])
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<crate::providers::CompletionResponse> {
+            Ok(crate::providers::CompletionResponse::new(
+                Message::assistant("queued prompt response"),
+            ))
+        }
+    }
+
+    fn queued_prompt_test_agent() -> Arc<Mutex<XzatomaAgent>> {
+        Arc::new(Mutex::new(
+            XzatomaAgent::new(
+                QueuedPromptMockProvider,
+                crate::tools::ToolRegistry::new(),
+                crate::config::AgentConfig::default(),
+            )
+            .expect("test agent should be constructed"),
+        ))
+    }
 
     async fn receive_response<T: JsonRpcResponse + Send>(
         response: SentRequest<T>,
@@ -2854,17 +2908,45 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_queued_prompt_returns_cancelled_when_token_cancelled() {
-        // Verify that a pre-cancelled token returns Cancelled stop reason.
-        // Pre-cancel the token so the guard fires before agent execution.
         let token = CancellationToken::new();
         token.cancel();
+        let session_id = acp::SessionId::new("cancelled-session");
 
-        // The function is private; test via run_client_server_test below.
-        // This unit test just validates the token guard logic.
-        assert!(
-            token.is_cancelled(),
-            "token must be pre-cancelled for this test"
-        );
+        let response = execute_queued_prompt(QueuedPromptExecution {
+            session_id: &session_id,
+            agent: queued_prompt_test_agent(),
+            messages: vec![Message::user("cancel before execution")],
+            cancellation_token: &token,
+            connection: None,
+            storage: None,
+            conversation_uuid: "cancelled-conversation",
+            model_name: Some("queued-prompt-test"),
+        })
+        .await
+        .expect("pre-cancelled prompt should return a response");
+
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn test_execute_queued_prompt_fallback_execution_returns_end_turn() {
+        let token = CancellationToken::new();
+        let session_id = acp::SessionId::new("fallback-session");
+
+        let response = execute_queued_prompt(QueuedPromptExecution {
+            session_id: &session_id,
+            agent: queued_prompt_test_agent(),
+            messages: vec![Message::user("run without live ACP connection")],
+            cancellation_token: &token,
+            connection: None,
+            storage: None,
+            conversation_uuid: "fallback-conversation",
+            model_name: Some("queued-prompt-test"),
+        })
+        .await
+        .expect("fallback queued prompt execution should succeed");
+
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
     }
 
     #[tokio::test]
@@ -3002,20 +3084,25 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_stop_reason_cancelled_maps_correctly() {
-        // Unit-test the stop reason mapping helper indirectly through the ACP
-        // response returned by a pre-cancelled token.
-        let token = CancellationToken::new();
-        token.cancel();
+    #[test]
+    fn test_stop_reason_cancelled_maps_correctly() {
+        let reason = map_error_to_stop_reason(&XzatomaError::Cancelled);
+        assert_eq!(reason, Some(acp::StopReason::Cancelled));
+    }
 
-        // The execute_queued_prompt function checks cancellation at entry and
-        // returns Cancelled immediately. We verify the stop reason value.
-        assert_eq!(
-            acp::StopReason::Cancelled,
-            acp::StopReason::Cancelled,
-            "stop reason mapping sanity check"
-        );
+    #[test]
+    fn test_stop_reason_max_iterations_maps_correctly() {
+        let reason = map_error_to_stop_reason(&XzatomaError::MaxIterationsExceeded {
+            limit: 3,
+            message: "too many turns".to_string(),
+        });
+        assert_eq!(reason, Some(acp::StopReason::MaxTurnRequests));
+    }
+
+    #[test]
+    fn test_stop_reason_unhandled_error_surfaces_to_client() {
+        let reason = map_error_to_stop_reason(&XzatomaError::Provider("boom".to_string()));
+        assert_eq!(reason, None);
     }
 
     #[tokio::test]

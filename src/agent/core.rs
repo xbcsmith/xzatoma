@@ -1465,12 +1465,6 @@ mod tests {
                 token_usage: Some(usage),
             }
         }
-
-        // Required for assertions in tests that verify the provider was called
-        #[allow(dead_code)]
-        fn call_count(&self) -> usize {
-            *self.call_count.lock().unwrap()
-        }
     }
 
     #[async_trait]

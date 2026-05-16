@@ -681,7 +681,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092; run with cargo test --all-features -- --ignored"]
     async fn test_ensure_xzepr_watcher_topics_creates_topic_on_broker() {
         let config = base_kafka_config();
         let admin = WatcherTopicAdmin::new(&config).unwrap();
@@ -695,7 +695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092; run with cargo test --all-features -- --ignored"]
     async fn test_ensure_generic_watcher_topics_creates_topics_on_broker() {
         let mut config = base_kafka_config();
         config.output_topic = Some("plans.output".to_string());
@@ -711,7 +711,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092; run with cargo test --all-features -- --ignored"]
     async fn test_ensure_topics_is_idempotent_on_broker() {
         let config = base_kafka_config();
         let admin = WatcherTopicAdmin::new(&config).unwrap();

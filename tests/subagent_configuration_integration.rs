@@ -1,12 +1,9 @@
-#![allow(deprecated)]
-
 //! Phase 5: Integration tests for subagent configuration
 //!
 //! Comprehensive test suite validating subagent provider overrides,
 //! model overrides, chat mode integration, configuration validation,
 //! error handling, performance, and backward compatibility.
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 
 mod common;
@@ -39,7 +36,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     // Config should parse and validate successfully
@@ -67,7 +64,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -98,7 +95,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -124,7 +121,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -151,7 +148,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -181,7 +178,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -206,7 +203,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -236,7 +233,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -266,7 +263,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -301,7 +298,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -330,7 +327,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -368,7 +365,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -391,7 +388,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -417,7 +414,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     // Empty string should be treated as no override
@@ -443,7 +440,7 @@ agent: [invalid yaml structure
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -469,7 +466,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -508,7 +505,7 @@ agent:
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     // Config itself is valid; error would occur at runtime during provider creation
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     // Version check should succeed (no actual provider creation)
@@ -552,7 +549,7 @@ agent:
 
     // Run multiple times to measure consistency
     for _ in 0..5 {
-        let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+        let mut cmd = common::xzatoma_command().unwrap();
         cmd.arg("--config").arg(&config_path).arg("--version");
         cmd.assert().success();
     }
@@ -593,7 +590,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -629,7 +626,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -653,7 +650,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -682,7 +679,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -707,7 +704,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     // Should succeed with defaults
@@ -734,7 +731,7 @@ agent:
 
     let (_temp_dir1, config_path1) = common::temp_config_file(config1);
 
-    let mut cmd1 = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd1 = common::xzatoma_command().unwrap();
     cmd1.arg("--config").arg(&config_path1).arg("--version");
     cmd1.assert().success();
 
@@ -753,7 +750,7 @@ agent:
 
     let (_temp_dir2, config_path2) = common::temp_config_file(config2);
 
-    let mut cmd2 = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd2 = common::xzatoma_command().unwrap();
     cmd2.arg("--config").arg(config_path2).arg("--version");
     cmd2.assert().success();
 }
@@ -786,7 +783,7 @@ agent:
 
         let (_temp_dir, config_path) = common::temp_config_file(&config);
 
-        let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+        let mut cmd = common::xzatoma_command().unwrap();
         cmd.arg("--config").arg(config_path).arg("--version");
 
         cmd.assert().success();
@@ -812,7 +809,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -848,7 +845,7 @@ agent:
 
         let (_temp_dir, config_path) = common::temp_config_file(&config);
 
-        let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+        let mut cmd = common::xzatoma_command().unwrap();
         cmd.arg("--config").arg(config_path).arg("--version");
 
         cmd.assert().success();
@@ -874,7 +871,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -909,7 +906,7 @@ agent:
 
         let (_temp_dir, config_path) = common::temp_config_file(&config);
 
-        let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+        let mut cmd = common::xzatoma_command().unwrap();
         cmd.arg("--config").arg(config_path).arg("--version");
 
         cmd.assert().success();
@@ -942,7 +939,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -973,7 +970,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -1001,7 +998,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -1027,7 +1024,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();

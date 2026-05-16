@@ -1176,38 +1176,21 @@ pub enum ModelCapability {
     LongContext,
     /// Model supports function calling/tool use
     FunctionCalling,
-    /// Model supports completion capability.
-    ///
-    /// Deprecated: use `FunctionCalling` or `Streaming` as appropriate.
-    #[deprecated(
-        note = "Use `FunctionCalling` or `Streaming` instead. Will be removed in a future release."
-    )]
-    Completion,
     /// Model supports vision/image understanding
     Vision,
     /// Model supports streaming responses
     Streaming,
-    /// Model supports JSON output mode.
-    ///
-    /// Deprecated: use `FunctionCalling` or `Streaming` as appropriate.
-    #[deprecated(
-        note = "Use `FunctionCalling` or `Streaming` instead. Will be removed in a future release."
-    )]
-    JsonMode,
     /// Model is optimised for code generation and code-related tasks.
     CodeGeneration,
 }
 
 impl std::fmt::Display for ModelCapability {
-    #[allow(deprecated)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LongContext => write!(f, "LongContext"),
             Self::FunctionCalling => write!(f, "FunctionCalling"),
-            Self::Completion => write!(f, "Completion"),
             Self::Vision => write!(f, "Vision"),
             Self::Streaming => write!(f, "Streaming"),
-            Self::JsonMode => write!(f, "JsonMode"),
             Self::CodeGeneration => write!(f, "CodeGeneration"),
         }
     }
@@ -1791,7 +1774,7 @@ impl CompletionResponse {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::{ProviderTool, ProviderFunction};
+/// use xzatoma::providers::{ProviderTool, ProviderFunction};
 /// use serde_json::json;
 ///
 /// let tool = ProviderTool {
@@ -1817,7 +1800,7 @@ pub struct ProviderTool {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::ProviderFunction;
+/// use xzatoma::providers::ProviderFunction;
 /// use serde_json::json;
 ///
 /// let f = ProviderFunction {
@@ -1847,7 +1830,7 @@ pub struct ProviderFunction {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::ProviderFunctionCall;
+/// use xzatoma::providers::ProviderFunctionCall;
 /// use serde_json::json;
 ///
 /// let fc = ProviderFunctionCall {
@@ -1878,7 +1861,7 @@ impl ProviderFunctionCall {
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::providers::base::ProviderFunctionCall;
+    /// use xzatoma::providers::ProviderFunctionCall;
     /// use serde_json::json;
     ///
     /// let fc = ProviderFunctionCall {
@@ -1901,7 +1884,7 @@ impl ProviderFunctionCall {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::{ProviderToolCall, ProviderFunctionCall};
+/// use xzatoma::providers::{ProviderToolCall, ProviderFunctionCall};
 /// use serde_json::json;
 ///
 /// let tc = ProviderToolCall {
@@ -1939,7 +1922,7 @@ fn provider_tool_call_type() -> String {
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::ProviderMessage;
+/// use xzatoma::providers::ProviderMessage;
 ///
 /// let msg = ProviderMessage {
 ///     role: "user".to_string(),
@@ -2074,7 +2057,7 @@ fn content_parts_to_ollama_images(parts: Option<&[ProviderMessageContentPart]>) 
 /// # Examples
 ///
 /// ```
-/// use xzatoma::providers::base::{ProviderMessage, ProviderRequest};
+/// use xzatoma::providers::{ProviderMessage, ProviderRequest};
 ///
 /// let req = ProviderRequest {
 ///     model: "gpt-4o".to_string(),
@@ -2126,7 +2109,7 @@ pub struct ProviderRequest {
 ///
 /// ```
 /// use serde_json::json;
-/// use xzatoma::providers::base::convert_tools_from_json;
+/// use xzatoma::providers::convert_tools_from_json;
 ///
 /// let tools = vec![
 ///     json!({
@@ -2383,7 +2366,6 @@ mod tests {
         assert_eq!(deserialized.completion_tokens, 50);
     }
 
-    #[allow(deprecated)]
     #[test]
     fn test_model_capability_display() {
         assert_eq!(ModelCapability::LongContext.to_string(), "LongContext");
@@ -2391,10 +2373,8 @@ mod tests {
             ModelCapability::FunctionCalling.to_string(),
             "FunctionCalling"
         );
-        assert_eq!(ModelCapability::Completion.to_string(), "Completion");
         assert_eq!(ModelCapability::Vision.to_string(), "Vision");
         assert_eq!(ModelCapability::Streaming.to_string(), "Streaming");
-        assert_eq!(ModelCapability::JsonMode.to_string(), "JsonMode");
         assert_eq!(
             ModelCapability::CodeGeneration.to_string(),
             "CodeGeneration"
@@ -3067,7 +3047,6 @@ mod tests {
         assert!(summary.max_completion_tokens.is_none());
     }
 
-    #[allow(deprecated)]
     #[test]
     fn test_model_capability_code_generation_round_trips_json() {
         let cap = ModelCapability::CodeGeneration;

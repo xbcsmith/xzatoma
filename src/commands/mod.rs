@@ -35,9 +35,6 @@ use crate::tools::{SubagentTool, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
-// Chat mode types and utilities
-pub mod chat_mode;
-
 // Special commands parser for mode switching
 pub mod special_commands;
 

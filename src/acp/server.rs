@@ -1509,7 +1509,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP server state initialization can touch shared runtime storage"]
     fn test_acp_server_state_generates_primary_manifest() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1654,7 +1653,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_agents_endpoint_returns_list_shape() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1674,7 +1672,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_agent_by_name_endpoint_returns_success() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1685,7 +1682,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_agent_by_name_endpoint_returns_not_found() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1780,7 +1776,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_async_returns_accepted() {
         let state = test_server_state();
 
@@ -1803,7 +1798,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_stream_returns_sse_response() {
         let state = test_server_state();
 
@@ -1877,7 +1871,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_rejects_unknown_agent() {
         let state = test_server_state();
 
@@ -1896,7 +1889,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_rejects_unsupported_artifact_input() {
         let state = test_server_state();
 

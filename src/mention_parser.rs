@@ -80,10 +80,10 @@ pub struct UrlMention {
 /// Contains the file contents and metadata like size, line count, and modification time.
 #[derive(Debug, Clone)]
 pub struct MentionContent {
-    /// The resolved file path (used in cache operations)
-    // Available to callers that need the resolved path; currently read in tests
-    // and available for cache key construction by external consumers.
-    #[allow(dead_code)]
+    /// The resolved file path.
+    ///
+    /// Available to callers that need the resolved path for cache key
+    /// construction or diagnostics.
     pub path: PathBuf,
     /// The original mention path for display purposes
     pub original_path: String,
@@ -246,22 +246,16 @@ impl MentionCache {
     }
 
     /// Clear the entire cache
-    // Available for session-level cache clearing; currently used in tests only.
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.cache.clear();
     }
 
     /// Get number of entries in cache
-    // Provides cache size inspection for monitoring and testing.
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
     /// Check if cache is empty
-    // Companion to len(); part of the standard collection API surface.
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }

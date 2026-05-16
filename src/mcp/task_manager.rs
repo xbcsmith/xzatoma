@@ -56,20 +56,10 @@ pub enum TaskLifecycleState {
 }
 
 /// Internal record for a single tracked task.
-///
-/// A future iteration could add a `oneshot::Sender<CallToolResponse>` to
-/// deliver completion results across async boundaries.
 #[derive(Debug)]
-#[allow(dead_code)]
 struct TaskEntry {
-    /// Identifier of the MCP server that owns this task.
-    server_id: String,
-    /// Opaque task identifier returned by the server.
-    task_id: String,
     /// Current lifecycle state.
     state: TaskLifecycleState,
-    /// Optional time-to-live in seconds, as requested by the caller.
-    ttl: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,15 +138,12 @@ impl TaskManager {
     /// manager.register_task("my-server", "task-001", Some(60));
     /// assert_eq!(manager.active_task_count(), 1);
     /// ```
-    pub fn register_task(&mut self, server_id: &str, task_id: &str, ttl: Option<u64>) {
+    pub fn register_task(&mut self, server_id: &str, task_id: &str, _ttl: Option<u64>) {
         let key = Self::task_key(server_id, task_id);
         self.tasks.insert(
             key,
             TaskEntry {
-                server_id: server_id.to_string(),
-                task_id: task_id.to_string(),
                 state: TaskLifecycleState::Working,
-                ttl,
             },
         );
     }

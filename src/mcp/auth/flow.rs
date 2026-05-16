@@ -194,12 +194,9 @@ impl TokenResponse {
 #[derive(Debug, serde::Deserialize)]
 struct DcrResponse {
     client_id: String,
-    // Required for JSON deserialization of OAuth DCR responses (RFC 7591);
-    // client_secret is optional in the spec but must be captured if present
-    // so the full token store round-trip works correctly.
-    #[allow(dead_code)]
-    #[serde(default)]
-    client_secret: Option<String>,
+    // Required for JSON deserialization of OAuth DCR responses (RFC 7591).
+    #[serde(default, rename = "client_secret")]
+    _client_secret: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use xzatoma::xzepr::consumer::config::KafkaConsumerConfig;
+//! use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
 //!
 //! // Create configuration with defaults
 //! let config = KafkaConsumerConfig::new("localhost:9092", "xzepr.events", "my-service");
@@ -122,7 +122,7 @@ pub struct SslConfig {
 /// # Example
 ///
 /// ```rust
-/// use xzatoma::xzepr::consumer::config::KafkaConsumerConfig;
+/// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
 ///
 /// let config = KafkaConsumerConfig::new("localhost:9092", "my-topic", "my-service")
 ///     .with_group_id("custom-group-id");
@@ -176,7 +176,7 @@ impl KafkaConsumerConfig {
     /// # Example
     ///
     /// ```rust
-    /// use xzatoma::xzepr::consumer::config::KafkaConsumerConfig;
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
     ///
     /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "my-service");
     /// assert_eq!(config.group_id, "xzepr-consumer-my-service");
@@ -206,7 +206,7 @@ impl KafkaConsumerConfig {
     /// # Example
     ///
     /// ```rust
-    /// use xzatoma::xzepr::consumer::config::KafkaConsumerConfig;
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
     ///
     /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "my-service")
     ///     .with_group_id("my-custom-group");
@@ -229,7 +229,7 @@ impl KafkaConsumerConfig {
     /// # Example
     ///
     /// ```rust
-    /// use xzatoma::xzepr::consumer::config::{KafkaConsumerConfig, SecurityProtocol};
+    /// use xzatoma::watcher::xzepr::consumer::config::{KafkaConsumerConfig, SecurityProtocol};
     ///
     /// let config = KafkaConsumerConfig::new("kafka:9093", "events", "my-service")
     ///     .with_sasl_scram_sha256("user", "pass");

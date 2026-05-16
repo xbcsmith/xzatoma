@@ -3183,7 +3183,7 @@ enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_skills_fields() {
         unsafe {
             std::env::remove_var("XZATOMA_SKILLS_ENABLED");
@@ -4103,7 +4103,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_populates_kafka_from_xzepr_vars() {
         // NOTE: This test mutates global environment variables. Run with:
         // `cargo test -- --ignored --test-threads=1`
@@ -4150,7 +4150,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_watcher_fields() {
         // NOTE: This test mutates global environment variables. Run with:
         // `cargo test -- --ignored --test-threads=1`
@@ -4186,7 +4186,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_watcher_type() {
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_TYPE");
@@ -4205,7 +4205,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_watcher_output_topic() {
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_OUTPUT_TOPIC");
@@ -4237,7 +4237,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_watcher_group_id() {
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_GROUP_ID");
@@ -4269,7 +4269,7 @@ chat_enabled: true
     }
 
     #[test]
-    #[ignore = "modifies global environment variables"]
+    #[serial]
     fn test_apply_env_vars_overrides_generic_match_fields() {
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_MATCH_ACTION");

@@ -1,6 +1,3 @@
-#![allow(deprecated)]
-
-use assert_cmd::Command;
 use predicates::prelude::*;
 use serial_test::serial;
 use std::fs;
@@ -65,7 +62,7 @@ acp:
 fn test_acp_config_command_prints_effective_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -88,7 +85,7 @@ fn test_acp_config_command_prints_effective_configuration() {
 fn test_acp_config_command_reflects_env_overrides() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -119,7 +116,7 @@ fn test_acp_config_command_reflects_env_overrides() {
 fn test_acp_validate_command_succeeds_for_valid_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -170,7 +167,7 @@ fn test_acp_validate_command_succeeds_for_valid_manifest_json() {
     )
     .expect("manifest should write");
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -198,7 +195,7 @@ fn test_acp_validate_command_rejects_invalid_manifest_extension() {
     let manifest_path = config_dir.path().join("manifest.txt");
     fs::write(&manifest_path, "not a supported manifest").expect("manifest should write");
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -238,7 +235,7 @@ acp:
 
     let (_temp_dir, config_path) = common::temp_config_file(invalid_config);
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -256,7 +253,7 @@ fn test_acp_runs_command_prints_header_when_no_runs_exist() {
     let db_path = storage_dir.path().join("history.db");
     let (_config_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -275,7 +272,7 @@ fn test_acp_runs_command_rejects_zero_limit() {
     let db_path = storage_dir.path().join("history.db");
     let (_config_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")
@@ -294,7 +291,7 @@ fn test_acp_runs_command_rejects_zero_limit() {
 fn test_acp_config_command_supports_root_compatible_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&root_compatible_config_yaml());
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.arg("--config")
         .arg(&config_path)
         .arg("acp")

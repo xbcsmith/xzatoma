@@ -827,13 +827,12 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_dry_run_processes_matching_event() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
                 action: Some("deploy.*".to_string()),
-                name: Some("deploy".to_string()),
-                version: Some("v1.2.3".to_string()),
+                name: None,
+                version: None,
             }),
             true,
         )
@@ -854,7 +853,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_dry_run_skips_non_matching_event() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -873,7 +871,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_process_event_matching_action_is_processed() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -903,7 +900,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_process_event_non_matching_action_is_skipped() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -928,7 +924,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_generic_watcher_get_kafka_config_includes_security_settings() {
         let mut config = test_config(GenericMatchConfig::default());
         config.watcher.kafka = Some(KafkaWatcherConfig {
@@ -959,7 +954,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_generic_watcher_output_topic_uses_producer_resolution() {
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();

@@ -7,9 +7,9 @@ use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::cache::MODEL_CACHE_TTL_SECS;
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FinishReason,
-    FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary, Provider,
-    ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage, ToolCall,
+    messages_contain_image_content, CompletionResponse, FinishReason, FunctionCall, Message,
+    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
+    ProviderTool, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -67,9 +67,7 @@ impl ModelEndpoint {
     /// assert_eq!(ModelEndpoint::from_name("responses"), ModelEndpoint::Responses);
     /// assert_eq!(ModelEndpoint::from_name("chat_completions"), ModelEndpoint::ChatCompletions);
     /// ```
-    // Used in tests for endpoint name parsing; retained for future endpoint
-    // configuration wiring from string config values.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn from_name(name: &str) -> Self {
         match name {
             "chat_completions" => ModelEndpoint::ChatCompletions,
@@ -137,16 +135,12 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 ///
 /// Shared in-memory cache for the Copilot model list.
 ///
-/// Holds both the converted `ModelInfo` list and the raw `CopilotModelData`
-/// so that callers of `list_models` and `list_models_summary` can share the
-/// same cached fetch. `cached_at` records when the data was last populated;
-/// `is_valid` returns `true` until `MODEL_CACHE_DURATION` has elapsed.
+/// Holds the converted `ModelInfo` list and the timestamp at which it was
+/// last populated. `is_valid` returns `true` until `MODEL_CACHE_DURATION` has
+/// elapsed.
 struct CopilotCache {
     /// Converted model list, populated after the first successful fetch.
     models: Option<Vec<ModelInfo>>,
-    /// Raw model data from the API, used by `list_models_summary`.
-    #[allow(dead_code)]
-    raw_models: Option<Vec<CopilotModelData>>,
     /// Instant at which the cache was last populated.
     cached_at: Option<Instant>,
 }
@@ -156,7 +150,6 @@ impl CopilotCache {
     fn new() -> Self {
         Self {
             models: None,
-            raw_models: None,
             cached_at: None,
         }
     }
@@ -174,10 +167,9 @@ impl CopilotCache {
 
     /// Reset all fields to `None`, forcing the next read to re-fetch from the
     /// API.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn invalidate(&mut self) {
         self.models = None;
-        self.raw_models = None;
         self.cached_at = None;
     }
 }
@@ -274,7 +266,7 @@ struct CopilotMessage {
 /// Type alias kept for backwards compatibility within this module.
 ///
 /// Both `CopilotTool` and `CopilotFunction` are now the shared
-/// `ProviderTool`/`ProviderFunction` types defined in `providers::base`.
+/// `ProviderTool`/`ProviderFunction` types defined in `providers`.
 type CopilotTool = ProviderTool;
 /// Function metadata within a Copilot tool definition.
 type CopilotFunction = ProviderFunction;
@@ -308,8 +300,8 @@ struct CopilotChoice {
     message: CopilotMessage,
     // Required for JSON deserialization; value present in API response but not
     // currently read by the completion path.
-    #[allow(dead_code)]
-    finish_reason: String,
+    #[serde(rename = "finish_reason")]
+    _finish_reason: String,
 }
 
 /// Token usage information from Copilot
@@ -321,8 +313,8 @@ struct CopilotUsage {
     completion_tokens: usize,
     // Required for JSON deserialization; total available but computed from
     // prompt + completion at the call site instead of being read directly.
-    #[allow(dead_code)]
-    total_tokens: usize,
+    #[serde(rename = "total_tokens")]
+    _total_tokens: usize,
 }
 
 /// Token usage reported by the `/responses` endpoint.
@@ -355,7 +347,7 @@ impl ResponsesUsage {
     ///
     /// `Some(total)` when at least a total or both input/output values are
     /// present; `None` otherwise.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn effective_total(&self) -> Option<u64> {
         self.total_tokens.or_else(|| {
             self.input_tokens
@@ -913,7 +905,7 @@ pub(crate) fn convert_response_input_to_messages(
 /// let message = convert_stream_event_to_message(&event);
 /// assert!(message.is_some());
 /// ```
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Message> {
     match event {
         StreamEvent::Message { role, content } => {
@@ -1042,8 +1034,7 @@ pub(crate) fn convert_tools_to_response_format(
 /// let choice = convert_tool_choice(None);
 /// assert!(choice.is_none());
 /// ```
-// Used in tests; retained for Responses-endpoint tool-choice wiring.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
     choice.map(|c| match c {
         "auto" => ToolChoice::Auto { auto: true },
@@ -1741,11 +1732,11 @@ impl CopilotProvider {
     /// Responses-endpoint integration.
     ///
     /// Delegates to the shared [`convert_tools_from_json`] helper in
-    /// `providers::base` which replaces the formerly duplicated
+    /// `providers` which replaces the formerly duplicated
     /// implementation.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<CopilotTool> {
-        convert_tools_from_json(tools)
+        crate::providers::convert_tools_from_json(tools)
     }
 
     /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.
@@ -3107,10 +3098,7 @@ impl Provider for CopilotProvider {
 /// - Ok(Some(token)) when an access token is present
 /// - Ok(None) when polling should continue (authorization_pending / slow_down)
 /// - Err(...) for fatal errors (expired_token or unknown error)
-// Used in tests; retained as a clean extraction of device-flow poll parsing
-// logic that can be re-wired into device_flow if the inline version is
-// refactored.
-#[allow(dead_code)]
+#[cfg(test)]
 fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> {
     if let Some(tok) = value.get("access_token").and_then(|v| v.as_str()) {
         return Ok(Some(tok.to_string()));
@@ -5054,7 +5042,6 @@ api_base: https://attacker.example.com
     fn test_copilot_cache_invalidate_resets_all_fields() {
         let mut cache = CopilotCache::new();
         cache.models = Some(vec![]);
-        cache.raw_models = Some(vec![]);
         cache.cached_at = Some(Instant::now());
 
         cache.invalidate();
@@ -5062,10 +5049,6 @@ api_base: https://attacker.example.com
         assert!(
             cache.models.is_none(),
             "models must be None after invalidate"
-        );
-        assert!(
-            cache.raw_models.is_none(),
-            "raw_models must be None after invalidate"
         );
         assert!(
             cache.cached_at.is_none(),

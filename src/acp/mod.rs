@@ -16,9 +16,8 @@
 /// - ACP events used for history and streaming
 /// - adapter helpers for converting provider messages into ACP messages
 ///
-/// The sibling modules `run.rs`, `events.rs`, and `session.rs` may contain
-/// supporting or compatibility abstractions, but consumers should prefer the
-/// unified exports from this module.
+/// Consumers should prefer the unified exports from this module or the focused
+/// runtime, server, and stdio modules for transport-specific behavior.
 ///
 /// # Examples
 ///
@@ -44,14 +43,10 @@
 /// ```
 pub mod available_commands;
 pub mod error;
-pub mod events;
 pub mod executor;
-pub mod handlers;
 pub mod ide_bridge;
 pub mod manifest;
 pub mod prompt_input;
-pub mod routes;
-pub mod run;
 pub mod runtime;
 pub mod server;
 pub mod session;

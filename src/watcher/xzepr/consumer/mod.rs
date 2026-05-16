@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use xzatoma::xzepr::consumer::{
+//! use xzatoma::watcher::xzepr::consumer::{
 //!     KafkaConsumerConfig, XzeprConsumer, XzeprClient, MessageHandler,
 //!     CloudEventMessage,
 //! };
@@ -36,7 +36,7 @@
 //!         message: CloudEventMessage,
 //!     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //!         // Post work started
-//!         let event = xzatoma::xzepr::consumer::client::WorkEvent {
+//!         let event = xzatoma::watcher::xzepr::consumer::client::WorkEvent {
 //!             receiver_id: &self.receiver_id,
 //!             work_id: &message.id,
 //!             work_name: "my-work",
@@ -49,7 +49,7 @@
 //!         // Do work...
 //!
 //!         // Post work completed
-//!         let event = xzatoma::xzepr::consumer::client::WorkEvent {
+//!         let event = xzatoma::watcher::xzepr::consumer::client::WorkEvent {
 //!             receiver_id: &self.receiver_id,
 //!             work_id: &message.id,
 //!             work_name: "my-work",

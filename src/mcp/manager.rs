@@ -175,10 +175,9 @@ pub struct McpClientManager {
     /// Task manager for long-running MCP tasks.
     ///
     /// Guarded by a `Mutex` so that notification callbacks can enqueue updates
-    /// from background threads. Retained so the `Arc` keeps the `Mutex` live
-    /// for background-thread callbacks wired via `notifications/tasks/status`.
-    #[allow(dead_code)]
-    task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
+    /// from background threads. The leading underscore documents that this
+    /// field is retained for ownership rather than direct reads.
+    _task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
 
     /// Execution mode forwarded to sampling and elicitation handlers.
     ///
@@ -236,7 +235,7 @@ impl McpClientManager {
             servers: HashMap::new(),
             http_client,
             token_store,
-            task_manager: Arc::new(std::sync::Mutex::new(
+            _task_manager: Arc::new(std::sync::Mutex::new(
                 crate::mcp::task_manager::TaskManager::default(),
             )),
             execution_mode: crate::config::ExecutionMode::Interactive,

@@ -1705,20 +1705,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_capabilities_from_id_never_produces_deprecated_completion() {
-        for id in &["gpt-4o", "gpt-4o-mini", "o1-mini", "babbage-002"] {
-            let caps = build_capabilities_from_id(id);
-            #[allow(deprecated)]
-            let has_deprecated = caps.contains(&ModelCapability::Completion);
-            assert!(
-                !has_deprecated,
-                "build_capabilities_from_id must not produce deprecated Completion for {}",
-                id
-            );
-        }
-    }
-
     // -----------------------------------------------------------------------
     // StreamAccumulator unit tests
     // -----------------------------------------------------------------------
@@ -2220,7 +2206,6 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_non_streaming() {
         let server = MockServer::start().await;
 
@@ -2254,7 +2239,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_non_streaming_length_finish_reason() {
         let server = MockServer::start().await;
 
@@ -2283,7 +2267,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_streaming() {
         let server = MockServer::start().await;
 
@@ -2328,7 +2311,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_stream_accumulator_done_sentinel_terminates_stream() {
         let server = MockServer::start().await;
 
@@ -2372,7 +2354,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_streaming_captures_finish_reason() {
         let server = MockServer::start().await;
 
@@ -2410,7 +2391,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models() {
         let server = MockServer::start().await;
 
@@ -2440,17 +2420,9 @@ mod tests {
             models[0].supports_capability(ModelCapability::FunctionCalling),
             "gpt-4o must have FunctionCalling"
         );
-        // Verify the deprecated Completion variant is NOT assigned.
-        #[allow(deprecated)]
-        let has_deprecated = models[0].supports_capability(ModelCapability::Completion);
-        assert!(
-            !has_deprecated,
-            "list_models must not assign the deprecated Completion capability"
-        );
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_fetch_models_filters_non_chat_models() {
         let server = MockServer::start().await;
 
@@ -2498,7 +2470,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_get_model_info_direct_hit_returns_model_info() {
         let server = MockServer::start().await;
 
@@ -2530,7 +2501,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_get_model_info_falls_back_to_list_on_404() {
         let server = MockServer::start().await;
 
@@ -2582,7 +2552,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_with_tools_uses_non_streaming_path() {
         let server = MockServer::start().await;
 
@@ -2619,7 +2588,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_bearer_token_sent_in_header() {
         let server = MockServer::start().await;
 
@@ -2640,7 +2608,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_no_auth_header_when_api_key_empty() {
         let server = MockServer::start().await;
 
@@ -2722,7 +2689,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_401_without_api_key_falls_back_to_configured_model() {
         let server = MockServer::start().await;
 
@@ -2763,7 +2729,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_401_with_api_key_set_returns_error() {
         let server = MockServer::start().await;
 
@@ -2797,7 +2762,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_get_request_omits_content_type() {
         let server = MockServer::start().await;
 
@@ -2839,7 +2803,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_post_completions_401_without_api_key_includes_hint() {
         let server = MockServer::start().await;
 
@@ -2877,7 +2840,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_org_header_sent_when_set() {
         let server = MockServer::start().await;
 
@@ -2906,7 +2868,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_cache_hit() {
         let server = MockServer::start().await;
 

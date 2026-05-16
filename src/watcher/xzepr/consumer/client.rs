@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use xzatoma::xzepr::consumer::client::{XzeprClient, XzeprClientConfig};
+//! use xzatoma::watcher::xzepr::consumer::client::{XzeprClient, XzeprClientConfig};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -470,7 +470,7 @@ impl XzeprClient {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use xzatoma::xzepr::consumer::client::WorkEvent;
+/// use xzatoma::watcher::xzepr::consumer::client::WorkEvent;
 ///
 /// let event = WorkEvent {
 ///     receiver_id: "receiver-123",
