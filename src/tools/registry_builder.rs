@@ -225,9 +225,8 @@ impl ToolRegistryBuilder {
     /// - Planning: read-only tools only
     /// - Write: all tools
     ///
-    /// When subagents are enabled, this method would register subagent tools.
-    /// Currently, this is a placeholder that calls the standard build method,
-    /// but can be extended to include subagent-specific tool registration.
+    /// When subagents are enabled, this method builds the base registry and
+    /// leaves dynamic subagent registration to the agent and command layer.
     ///
     /// # Arguments
     ///
@@ -261,16 +260,10 @@ impl ToolRegistryBuilder {
         // Build the base registry for the current mode
         let registry = self.build()?;
 
-        // Note: Subagent tool registration would be handled here if needed.
-        // Currently, subagent tools are registered separately in the agent/command layer
-        // to allow for dynamic enablement/disablement during chat sessions.
-        // This method serves as a placeholder for future integration of subagent tools
-        // directly into the registry builder.
-
+        // Subagent tools are registered separately in the agent/command layer
+        // so chat sessions can enable or disable delegation dynamically.
         if subagents_enabled {
-            // Placeholder for future subagent tool registration
-            // When implemented, this would register subagent-specific tools
-            debug!("Building registry with subagent support enabled");
+            debug!("Building registry with dynamic subagent support enabled");
         }
 
         Ok(registry)

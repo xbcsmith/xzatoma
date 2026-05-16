@@ -1200,7 +1200,7 @@ pub async fn load_url_content(
 /// Loads file contents for all file mentions and search results for all search mentions,
 /// prepending them to the user prompt in a structured format. Uses cache to avoid
 /// repeated searches and file reads. When individual loads fail we record structured
-/// `LoadError` values and insert a clear placeholder into the prompt so the user
+/// `LoadError` values and insert clear fallback text into the prompt so the user
 /// and agent are both aware of missing content (graceful degradation).
 ///
 /// # Arguments
@@ -1267,7 +1267,7 @@ pub async fn augment_prompt_with_mentions(
                         )),
                     );
                     errors.push(load_err.clone());
-                    // Insert a placeholder into the prompt so the agent knows content was omitted
+                    // Insert fallback text into the prompt so the agent knows content was omitted
                     file_contents.push(format!(
                         "Failed to include file {}:\n\n```text\n{}\n```",
                         file_mention.path, load_err
@@ -2247,7 +2247,7 @@ mod tests {
 
         assert!(!errors.is_empty());
         assert!(successes.is_empty());
-        // Ensure the error placeholder is included in the augmented prompt
+        // Ensure the error fallback text is included in the augmented prompt
         assert!(augmented.contains("Failed to include file"));
         assert!(augmented.contains("missing.rs"));
         assert_eq!(cache.len(), 0);
@@ -2300,7 +2300,7 @@ mod tests {
         )
         .await;
 
-        // We should receive a structured LoadError and the prompt should contain a clear placeholder
+        // We should receive a structured LoadError and the prompt should contain clear fallback text
         assert!(!errors.is_empty());
         assert_eq!(errors[0].kind, LoadErrorKind::FileTooLarge);
         assert!(errors[0].suggestion.is_some());

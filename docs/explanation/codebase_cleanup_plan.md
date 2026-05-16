@@ -504,6 +504,161 @@ The recommended implementation order is:
   compatibility layers.
 - Deprecated model capability handling is removed or clarified as active API.
 
+### Phase 6: Completion Sweep and Residual Gap Closure
+
+Phase 6 exists to close the deliverables that remain partial after Phases 1
+through 5. It should not introduce new architectural ambitions. Treat this phase
+as a focused audit-and-finish pass over the exact gaps left by the earlier
+phases.
+
+#### Task 6.1 Finish residual security hardening
+
+- Complete provider base URL validation for Copilot, OpenAI, and Ollama so API
+  keys, GitHub OAuth tokens, prompts, and code are never sent to untrusted hosts
+  by normal configuration.
+- Split Copilot production authentication endpoints from mock/model API
+  endpoints so GitHub OAuth tokens cannot be sent to any `api_base` override,
+  including loopback test hosts.
+- Require HTTPS and trusted-host allowlists for OpenAI base URLs and remote
+  Ollama hosts, or require clearly named unsafe flags for local development and
+  tests.
+- Decide whether ACP HTTP run/session routes must require authentication even on
+  loopback. If unauthenticated loopback remains supported, document the policy
+  and add tests proving non-loopback binds always require auth.
+- Replace legacy MCP headless and full-autonomous auto-approval with server
+  trust and per-tool allowlist policy everywhere, including sampling paths.
+- Add missing security regression tests for fetch redirect blocking, final-host
+  validation, private metadata endpoints, and per-tool symlink destination
+  escapes.
+
+#### Task 6.2 Finish structured error propagation
+
+- Replace remaining Copilot string-flattened HTTP, auth, parse, and response
+  errors with structured `XzatomaError` variants that retain status, endpoint
+  category, redacted response context, and source errors where available.
+- Audit OpenAI and Ollama provider errors after the Copilot cleanup to ensure
+  all providers use consistent structured provider error boundaries.
+- Introduce shared helpers for best-effort sends, flushes, cleanup actions, and
+  diagnostic logging across ACP, MCP, terminal, and IDE terminal paths.
+- Replace remaining silent notification drops, including MCP protocol
+  notification paths, with the shared helper or hard error propagation according
+  to the documented policy.
+- Add regression tests for provider source-chain preservation, storage
+  source-chain preservation, and ACP/MCP failed-send logging or propagation.
+
+#### Task 6.3 Finalize placeholder and unsupported API cleanup
+
+- Decide the final MCP task strategy: either implement task polling,
+  cancellation, result delivery, and status notifications, or remove/hide public
+  task APIs such as `TaskManager`, `tasks/get`, `tasks/result`, `tasks/cancel`,
+  and `tasks/list` from active API paths.
+- Keep `_meta.taskId` behavior explicit. If task lifecycle remains unsupported,
+  return a stable typed error and add focused tests for the unsupported path.
+- Replace remaining provider and ACP limitation wording with stable
+  unsupported-feature errors. In particular, remove “does not yet” wording from
+  Copilot image handling and use capability-based language.
+- Remove stale phase terminology from production source comments and test names,
+  including references to “later phases” or historical implementation phases.
+- Rename harmless “placeholder” wording in prompt, mention, and tool registry
+  tests/comments to “fallback text”, “reference marker”, or “display hint” when
+  it describes current behavior rather than unfinished work.
+
+#### Task 6.4 Complete duplicate-code consolidation
+
+- Finish the shared destination-preparation helper for file mutation tools so
+  parent creation, destination validation, symlink checks, and revalidation are
+  consistently implemented in one place.
+- Consolidate text-file read and content-size checks used by `write_file` and
+  `edit_file` into shared file utility helpers while preserving tool-specific
+  user-facing messages.
+- Move `find_path` to the same glob matching wrapper used by list and grep so
+  all path tools use one glob implementation.
+- Move Copilot model caching to the shared timed cache helper used by OpenAI and
+  Ollama.
+- Extract common provider tool-call conversion and assistant-response conversion
+  into shared helpers with provider-specific hooks only where behavior differs.
+- Create a single provider capability source of truth for vision support and
+  remove duplicate OpenAI/Ollama/ACP vision heuristics.
+- Finish tool registry grouping helpers for MCP tools, skill tools, read-only
+  tools, mutation tools, terminal tools, and subagent tools.
+- Replace remaining local test-only provider mocks with the reusable
+  `TestProviderBuilder` unless a local mock has behavior that cannot reasonably
+  be expressed through the shared builder.
+
+#### Task 6.5 Finish ignored-test and documentation cleanup
+
+- Convert wiremock-backed MCP auth discovery, MCP auth flow, and MCP HTTP
+  transport tests into normal CI-safe tests, or gate them behind a deliberate
+  integration-test feature with documented ownership.
+- Convert the Copilot mock HTTP model-list test into a normal mocked test or
+  document why it truly requires external infrastructure.
+- Split `GenericResultProducer` configuration tests so pure configuration
+  assertions do not instantiate an `rdkafka` producer or require broker-related
+  behavior.
+- Keep only true external-service tests ignored, such as system keyring tests
+  and real Kafka broker tests, and ensure every ignored test states the required
+  service and command to run it.
+- Update all Markdown docs, examples, and mention samples that reference removed
+  paths such as `src/providers/base.rs` or `src/xzepr/mod.rs`.
+- Re-run markdown linting and formatting for every documentation file touched by
+  this phase.
+
+#### Task 6.6 Testing Requirements
+
+- Add targeted failing-first regression tests for every residual gap before or
+  alongside implementation changes.
+- Run focused tests for each affected cluster before running the full quality
+  gate suite.
+- Run the full quality gates after all residual work is complete:
+  `cargo fmt --all`, `cargo check --all-targets --all-features`,
+  `cargo clippy --all-targets --all-features -- -D warnings`, and
+  `cargo test --all-features`.
+- Run doctests and affected integration tests explicitly when public API paths,
+  documentation imports, or ignored-test behavior changes.
+- Run `markdownlint --fix` and
+  `prettier --write --parser markdown --prose-wrap always` for every changed
+  Markdown file.
+
+#### Task 6.7 Deliverables
+
+- [ ] Provider URL validation and credential isolation finished for Copilot,
+      OpenAI, and Ollama.
+- [ ] ACP authentication and MCP approval policies fully match the documented
+      security model.
+- [ ] Remaining provider, storage, ACP, MCP, and cleanup errors preserve source
+      context or use documented best-effort logging helpers.
+- [ ] MCP task APIs are either fully implemented or removed/hidden with stable
+      unsupported behavior and tests.
+- [ ] Remaining stale phase and placeholder terminology is removed or renamed to
+      current-behavior language.
+- [ ] File operation, glob matching, provider conversion, model cache, vision
+      capability, registry grouping, and test provider duplication gaps are
+      closed.
+- [ ] Ignored tests are limited to true external-service tests with documented
+      requirements.
+- [ ] Markdown docs and doctests reference only current canonical paths.
+- [ ] A final audit document in `docs/explanation/` lists any intentionally
+      remaining exceptions and their justification.
+
+#### Task 6.8 Success Criteria
+
+- Every deliverable from Phases 1 through 5 is either complete or explicitly
+  documented as an intentional exception with a current owner and rationale.
+- No normal configuration can leak credentials, prompts, or code to untrusted
+  provider or OAuth endpoints.
+- MCP tool approval is governed by trust and allowlist policy rather than
+  headless or autonomous-mode shortcuts.
+- Provider and storage failures preserve source context and redact sensitive
+  response data consistently.
+- Public API paths no longer expose historical placeholders, stale task APIs, or
+  compatibility documentation for removed modules.
+- File, glob, provider conversion, cache, vision capability, registry, and test
+  provider helpers each have one authoritative implementation.
+- Normal test runs execute every unit test that does not require an external
+  service.
+- Documentation, doctests, and examples compile or lint against current
+  canonical paths.
+
 ## Cross-Phase Execution Notes
 
 - Keep phases independent where possible, but complete Phase 1 before broad file

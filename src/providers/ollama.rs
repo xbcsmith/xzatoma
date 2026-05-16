@@ -157,7 +157,7 @@ impl OllamaProvider {
     /// ```
     pub fn new(mut config: OllamaConfig) -> Result<Self> {
         config.host =
-            crate::security::normalize_http_base_url(&config.host, "provider.ollama.host")
+            crate::security::validate_provider_base_url(&config.host, "provider.ollama.host")
                 .map_err(|error| XzatomaError::Provider(error.to_string()))?;
 
         let client = Client::builder()
@@ -533,7 +533,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
         "llava" => {
             model.add_capability(ModelCapability::Vision);
         }
-        _ if ollama_model_supports_vision(&model.name) => {
+        _ if crate::providers::ollama_model_supports_vision(&model.name) => {
             model.add_capability(ModelCapability::Vision);
         }
         "codellama" | "codegemma" | "deepseek-coder" | "starcoder" | "starcoder2" | "codestral"
@@ -656,16 +656,6 @@ fn format_size(bytes: u64) -> String {
     format!("{:.1}{}", size, UNITS[unit_idx])
 }
 
-fn ollama_model_supports_vision(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.contains("llava")
-        || model.contains("bakllava")
-        || model.contains("moondream")
-        || model.contains("minicpm-v")
-        || model.contains("gemma3")
-        || model.contains("vision")
-}
-
 #[async_trait]
 impl Provider for OllamaProvider {
     async fn complete(
@@ -680,7 +670,9 @@ impl Provider for OllamaProvider {
             (format!("{}/api/chat", config.host), config.model.clone())
         };
 
-        if messages_contain_image_content(messages) && !ollama_model_supports_vision(&model) {
+        if messages_contain_image_content(messages)
+            && !crate::providers::ollama_model_supports_vision(&model)
+        {
             return Err(XzatomaError::Provider(format!(
                 "Ollama model '{}' does not support image input",
                 model
@@ -1048,9 +1040,13 @@ mod tests {
 
     #[test]
     fn test_ollama_model_supports_vision_allowlist() {
-        assert!(ollama_model_supports_vision("llava:latest"));
-        assert!(ollama_model_supports_vision("gemma3:12b"));
-        assert!(!ollama_model_supports_vision("llama3.2:latest"));
+        assert!(crate::providers::ollama_model_supports_vision(
+            "llava:latest"
+        ));
+        assert!(crate::providers::ollama_model_supports_vision("gemma3:12b"));
+        assert!(!crate::providers::ollama_model_supports_vision(
+            "llama3.2:latest"
+        ));
     }
 
     #[test]

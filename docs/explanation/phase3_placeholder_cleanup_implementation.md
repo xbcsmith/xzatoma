@@ -103,7 +103,8 @@ Files updated:
 - `src/watcher/xzepr/filter.rs`
 - `src/watcher/xzepr/plan_extractor.rs`
 - `src/watcher/xzepr/watcher.rs`
-- `src/xzepr/mod.rs`
+- The former `src/xzepr/mod.rs` compatibility shim, removed in the public API
+  pruning pass
 
 ### Task 3.5: Placeholder Language
 

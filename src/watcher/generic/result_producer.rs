@@ -110,6 +110,126 @@ pub trait ResultProducerTrait: Send + Sync {
 // GenericResultProducer
 // -----------------------------------------------------------------------------
 
+#[derive(Debug, Clone)]
+struct ResolvedProducerSettings {
+    brokers: String,
+    input_topic: String,
+    output_topic: String,
+    client_id: String,
+    security_protocol: SecurityProtocol,
+    sasl_config: Option<SaslConfig>,
+    ssl_config: Option<SslConfig>,
+    request_timeout: Duration,
+}
+
+impl ResolvedProducerSettings {
+    fn from_config(config: &KafkaWatcherConfig) -> Result<Self> {
+        let output_topic = config
+            .output_topic
+            .clone()
+            .unwrap_or_else(|| config.topic.clone());
+
+        let client_id = "xzatoma-generic-result-producer".to_string();
+        let request_timeout = Duration::from_secs(30);
+        let mut security_protocol = SecurityProtocol::Plaintext;
+        let mut sasl_config = None;
+        let mut ssl_config = None;
+
+        if let Some(security) = &config.security {
+            security_protocol = parse_security_protocol(&security.protocol)?;
+
+            if matches!(
+                security_protocol,
+                SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
+            ) {
+                ssl_config = Some(SslConfig {
+                    ca_location: None,
+                    certificate_location: None,
+                    key_location: None,
+                });
+            }
+
+            if let Some(mechanism) = &security.sasl_mechanism {
+                let username = security.sasl_username.clone().ok_or_else(|| {
+                    XzatomaError::Watcher(
+                        "SASL username is required when mechanism is set".to_string(),
+                    )
+                })?;
+
+                let password = security
+                    .sasl_password
+                    .clone()
+                    .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
+                    .ok_or_else(|| {
+                        XzatomaError::Watcher(
+                            "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
+                                .to_string(),
+                        )
+                    })?;
+
+                sasl_config = Some(SaslConfig {
+                    mechanism: parse_sasl_mechanism(mechanism)?,
+                    username,
+                    password,
+                });
+            }
+        }
+
+        Ok(Self {
+            brokers: config.brokers.clone(),
+            input_topic: config.topic.clone(),
+            output_topic,
+            client_id,
+            security_protocol,
+            sasl_config,
+            ssl_config,
+            request_timeout,
+        })
+    }
+
+    fn kafka_config(&self) -> Vec<(String, String)> {
+        let mut settings = vec![
+            ("bootstrap.servers".to_string(), self.brokers.clone()),
+            ("client.id".to_string(), self.client_id.clone()),
+            (
+                "security.protocol".to_string(),
+                self.security_protocol.as_str().to_string(),
+            ),
+            (
+                "message.timeout.ms".to_string(),
+                self.request_timeout.as_millis().to_string(),
+            ),
+            ("acks".to_string(), "all".to_string()),
+            ("retries".to_string(), "5".to_string()),
+            ("compression.type".to_string(), "snappy".to_string()),
+            ("enable.idempotence".to_string(), "true".to_string()),
+        ];
+
+        if let Some(sasl) = &self.sasl_config {
+            settings.push((
+                "sasl.mechanism".to_string(),
+                sasl.mechanism.as_str().to_string(),
+            ));
+            settings.push(("sasl.username".to_string(), sasl.username.clone()));
+            settings.push(("sasl.password".to_string(), sasl.password.clone()));
+        }
+
+        if let Some(ssl) = &self.ssl_config {
+            if let Some(ca) = &ssl.ca_location {
+                settings.push(("ssl.ca.location".to_string(), ca.clone()));
+            }
+            if let Some(cert) = &ssl.certificate_location {
+                settings.push(("ssl.certificate.location".to_string(), cert.clone()));
+            }
+            if let Some(key) = &ssl.key_location {
+                settings.push(("ssl.key.location".to_string(), key.clone()));
+            }
+        }
+
+        settings
+    }
+}
+
 /// Kafka result producer for the generic watcher.
 ///
 /// This type assembles Kafka producer configuration and publishes
@@ -229,56 +349,7 @@ impl GenericResultProducer {
     /// assert_eq!(producer.output_topic(), "plans");
     /// ```
     pub fn new(config: &KafkaWatcherConfig) -> Result<Self> {
-        let output_topic = config
-            .output_topic
-            .clone()
-            .unwrap_or_else(|| config.topic.clone());
-
-        let client_id = "xzatoma-generic-result-producer".to_string();
-        let request_timeout = Duration::from_secs(30);
-        let mut security_protocol = SecurityProtocol::Plaintext;
-        let mut sasl_config = None;
-        let mut ssl_config = None;
-
-        if let Some(security) = &config.security {
-            security_protocol = parse_security_protocol(&security.protocol)?;
-
-            if matches!(
-                security_protocol,
-                SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
-            ) {
-                ssl_config = Some(SslConfig {
-                    ca_location: None,
-                    certificate_location: None,
-                    key_location: None,
-                });
-            }
-
-            if let Some(mechanism) = &security.sasl_mechanism {
-                let username = security.sasl_username.clone().ok_or_else(|| {
-                    XzatomaError::Watcher(
-                        "SASL username is required when mechanism is set".to_string(),
-                    )
-                })?;
-
-                let password = security
-                    .sasl_password
-                    .clone()
-                    .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
-                    .ok_or_else(|| {
-                        XzatomaError::Watcher(
-                            "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
-                                .to_string(),
-                        )
-                    })?;
-
-                sasl_config = Some(SaslConfig {
-                    mechanism: parse_sasl_mechanism(mechanism)?,
-                    username,
-                    password,
-                });
-            }
-        }
+        let settings = ResolvedProducerSettings::from_config(config)?;
 
         // Build the FutureProducer from the assembled configuration.
         // Idempotent delivery settings are applied unconditionally so that
@@ -286,12 +357,12 @@ impl GenericResultProducer {
         // duplicate messages.
         let producer: FutureProducer = {
             let mut client_config = ClientConfig::new();
-            client_config.set("bootstrap.servers", &config.brokers);
-            client_config.set("client.id", &client_id);
-            client_config.set("security.protocol", security_protocol.as_str());
+            client_config.set("bootstrap.servers", &settings.brokers);
+            client_config.set("client.id", &settings.client_id);
+            client_config.set("security.protocol", settings.security_protocol.as_str());
             client_config.set(
                 "message.timeout.ms",
-                request_timeout.as_millis().to_string(),
+                settings.request_timeout.as_millis().to_string(),
             );
 
             // Idempotent delivery settings.
@@ -300,13 +371,13 @@ impl GenericResultProducer {
             client_config.set("compression.type", "snappy");
             client_config.set("enable.idempotence", "true");
 
-            if let Some(sasl) = &sasl_config {
+            if let Some(sasl) = &settings.sasl_config {
                 client_config.set("sasl.mechanism", sasl.mechanism.as_str());
                 client_config.set("sasl.username", &sasl.username);
                 client_config.set("sasl.password", &sasl.password);
             }
 
-            if let Some(ssl) = &ssl_config {
+            if let Some(ssl) = &settings.ssl_config {
                 if let Some(ca) = &ssl.ca_location {
                     client_config.set("ssl.ca.location", ca);
                 }
@@ -324,14 +395,14 @@ impl GenericResultProducer {
         };
 
         Ok(Self {
-            brokers: config.brokers.clone(),
-            input_topic: config.topic.clone(),
-            output_topic,
-            client_id,
-            security_protocol,
-            sasl_config,
-            ssl_config,
-            request_timeout,
+            brokers: settings.brokers,
+            input_topic: settings.input_topic,
+            output_topic: settings.output_topic,
+            client_id: settings.client_id,
+            security_protocol: settings.security_protocol,
+            sasl_config: settings.sasl_config,
+            ssl_config: settings.ssl_config,
+            request_timeout: settings.request_timeout,
             producer,
         })
     }
@@ -432,46 +503,17 @@ impl GenericResultProducer {
     /// assert_eq!(settings.get("enable.idempotence").unwrap(), "true");
     /// ```
     pub fn get_kafka_config(&self) -> Vec<(String, String)> {
-        let mut settings = vec![
-            ("bootstrap.servers".to_string(), self.brokers.clone()),
-            ("client.id".to_string(), self.client_id.clone()),
-            (
-                "security.protocol".to_string(),
-                self.security_protocol.as_str().to_string(),
-            ),
-            (
-                "message.timeout.ms".to_string(),
-                self.request_timeout.as_millis().to_string(),
-            ),
-            // Idempotent delivery settings.
-            ("acks".to_string(), "all".to_string()),
-            ("retries".to_string(), "5".to_string()),
-            ("compression.type".to_string(), "snappy".to_string()),
-            ("enable.idempotence".to_string(), "true".to_string()),
-        ];
-
-        if let Some(sasl) = &self.sasl_config {
-            settings.push((
-                "sasl.mechanism".to_string(),
-                sasl.mechanism.as_str().to_string(),
-            ));
-            settings.push(("sasl.username".to_string(), sasl.username.clone()));
-            settings.push(("sasl.password".to_string(), sasl.password.clone()));
+        ResolvedProducerSettings {
+            brokers: self.brokers.clone(),
+            input_topic: self.input_topic.clone(),
+            output_topic: self.output_topic.clone(),
+            client_id: self.client_id.clone(),
+            security_protocol: self.security_protocol.clone(),
+            sasl_config: self.sasl_config.clone(),
+            ssl_config: self.ssl_config.clone(),
+            request_timeout: self.request_timeout,
         }
-
-        if let Some(ssl) = &self.ssl_config {
-            if let Some(ca) = &ssl.ca_location {
-                settings.push(("ssl.ca.location".to_string(), ca.clone()));
-            }
-            if let Some(cert) = &ssl.certificate_location {
-                settings.push(("ssl.certificate.location".to_string(), cert.clone()));
-            }
-            if let Some(key) = &ssl.key_location {
-                settings.push(("ssl.key.location".to_string(), key.clone()));
-            }
-        }
-
-        settings
+        .kafka_config()
     }
 }
 
@@ -957,33 +999,33 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_uses_input_topic_when_output_topic_not_set() {
         let config = base_kafka_config();
-        let producer = GenericResultProducer::new(&config).unwrap();
+        let settings = ResolvedProducerSettings::from_config(&config).unwrap();
 
-        assert_eq!(producer.input_topic(), "plans.input");
-        assert_eq!(producer.output_topic(), "plans.input");
+        assert_eq!(settings.input_topic, "plans.input");
+        assert_eq!(settings.output_topic, "plans.input");
     }
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_uses_explicit_output_topic_when_configured() {
         let mut config = base_kafka_config();
         config.output_topic = Some("plans.output".to_string());
 
-        let producer = GenericResultProducer::new(&config).unwrap();
+        let settings = ResolvedProducerSettings::from_config(&config).unwrap();
 
-        assert_eq!(producer.input_topic(), "plans.input");
-        assert_eq!(producer.output_topic(), "plans.output");
+        assert_eq!(settings.input_topic, "plans.input");
+        assert_eq!(settings.output_topic, "plans.output");
     }
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_basic_settings() {
         let config = base_kafka_config();
-        let producer = GenericResultProducer::new(&config).unwrap();
-        let settings: HashMap<_, _> = producer.get_kafka_config().into_iter().collect();
+        let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
+            .unwrap()
+            .kafka_config()
+            .into_iter()
+            .collect();
 
         assert_eq!(settings.get("bootstrap.servers").unwrap(), "localhost:9092");
         assert_eq!(
@@ -995,11 +1037,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_idempotent_settings() {
         let config = base_kafka_config();
-        let producer = GenericResultProducer::new(&config).unwrap();
-        let settings: HashMap<_, _> = producer.get_kafka_config().into_iter().collect();
+        let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
+            .unwrap()
+            .kafka_config()
+            .into_iter()
+            .collect();
 
         assert_eq!(settings.get("acks").unwrap(), "all");
         assert_eq!(settings.get("retries").unwrap(), "5");
@@ -1008,7 +1052,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
     fn test_generic_result_producer_get_kafka_config_includes_sasl_settings() {
         let mut config = base_kafka_config();
         config.security = Some(KafkaSecurityConfig {
@@ -1018,8 +1061,11 @@ mod tests {
             sasl_password: Some("pass1".to_string()),
         });
 
-        let producer = GenericResultProducer::new(&config).unwrap();
-        let settings: HashMap<_, _> = producer.get_kafka_config().into_iter().collect();
+        let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
+            .unwrap()
+            .kafka_config()
+            .into_iter()
+            .collect();
 
         assert_eq!(settings.get("security.protocol").unwrap(), "SASL_SSL");
         assert_eq!(settings.get("sasl.mechanism").unwrap(), "SCRAM-SHA-256");
@@ -1037,7 +1083,7 @@ mod tests {
             sasl_password: None,
         });
 
-        let result = GenericResultProducer::new(&config);
+        let result = ResolvedProducerSettings::from_config(&config);
         assert!(result.is_err());
     }
 
@@ -1051,7 +1097,7 @@ mod tests {
             sasl_password: Some("secret".to_string()),
         });
 
-        let result = GenericResultProducer::new(&config);
+        let result = ResolvedProducerSettings::from_config(&config);
         assert!(result.is_err());
     }
 
@@ -1065,12 +1111,12 @@ mod tests {
             sasl_password: None,
         });
 
-        let result = GenericResultProducer::new(&config);
+        let result = ResolvedProducerSettings::from_config(&config);
         assert!(result.is_err());
     }
 
     #[test]
-    #[ignore = "instantiates an rdkafka FutureProducer, which can attempt broker communication"]
+    #[ignore = "instantiates an rdkafka FutureProducer for Debug formatting; run with cargo test --all-features -- --ignored"]
     fn test_generic_result_producer_debug_impl() {
         let config = base_kafka_config();
         let producer = GenericResultProducer::new(&config).unwrap();

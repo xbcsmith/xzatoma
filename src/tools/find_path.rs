@@ -3,7 +3,7 @@
 //! Searches for files matching glob patterns with pagination support.
 
 use crate::error::Result;
-use crate::tools::file_utils::PathValidator;
+use crate::tools::file_utils::{glob_match_pattern, PathValidator};
 use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_FIND_PATH};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -148,8 +148,8 @@ impl ToolExecutor for FindPathTool {
             // Normalize path separators for cross-platform compatibility
             let normalized = path_str.replace('\\', "/");
 
-            // Use glob-match for pattern matching
-            if glob_match::glob_match(&params.glob, &normalized) {
+            // Use the shared glob implementation for all path tools.
+            if glob_match_pattern(&normalized, &params.glob) {
                 matches.push(normalized);
             }
         }

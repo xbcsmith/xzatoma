@@ -172,13 +172,6 @@ pub struct McpClientManager {
     /// Shared OS-keyring token store used by all OAuth-enabled servers.
     token_store: Arc<TokenStore>,
 
-    /// Task manager for long-running MCP tasks.
-    ///
-    /// Guarded by a `Mutex` so that notification callbacks can enqueue updates
-    /// from background threads. The leading underscore documents that this
-    /// field is retained for ownership rather than direct reads.
-    _task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
-
     /// Execution mode forwarded to sampling and elicitation handlers.
     ///
     /// Set via [`Self::set_execution_context`] before calling
@@ -235,9 +228,6 @@ impl McpClientManager {
             servers: HashMap::new(),
             http_client,
             token_store,
-            _task_manager: Arc::new(std::sync::Mutex::new(
-                crate::mcp::task_manager::TaskManager::default(),
-            )),
             execution_mode: crate::config::ExecutionMode::Interactive,
             headless: false,
             sampling_provider: None,
@@ -806,10 +796,9 @@ impl McpClientManager {
             .call_tool(tool_name, arguments, Some(task_params))
             .await?;
 
-        // Detect a server-initiated long-running task.  The MCP task polling
-        // flow (tasks/get until terminal state) requires notification-based
-        // wiring that is not active.  Return a typed error so callers receive
-        // explicit feedback rather than a partial initial result.
+        // Detect a server-initiated long-running task. Task polling is outside
+        // the active API surface, so callers receive explicit feedback rather
+        // than a partial initial result.
         if let Some(task_id) = response
             .meta
             .as_ref()

@@ -84,13 +84,13 @@ pub fn approval_decision(
     }
 }
 
-/// Returns `true` if legacy callers should auto-approve without policy.
+/// Returns `true` if a legacy caller may auto-approve without policy.
 ///
-/// New MCP tool, resource, and prompt paths must use [`approval_decision`]
-/// instead. This helper remains for older non-tool paths until they receive
-/// explicit per-operation trust metadata.
-pub fn should_auto_approve(execution_mode: ExecutionMode, headless: bool) -> bool {
-    headless || execution_mode == ExecutionMode::FullAutonomous
+/// Headless execution and autonomous modes do not imply MCP trust. New paths
+/// must use [`approval_decision`] with a server policy; older non-tool paths
+/// receive `false` until they are passed explicit trust metadata.
+pub fn should_auto_approve(_execution_mode: ExecutionMode, _headless: bool) -> bool {
+    false
 }
 
 /// Prompt the user interactively for approval of an MCP operation.
@@ -205,8 +205,13 @@ mod tests {
     }
 
     #[test]
-    fn test_should_auto_approve_legacy_full_autonomous_returns_true() {
-        assert!(should_auto_approve(ExecutionMode::FullAutonomous, false));
+    fn test_should_auto_approve_legacy_full_autonomous_returns_false() {
+        assert!(!should_auto_approve(ExecutionMode::FullAutonomous, false));
+    }
+
+    #[test]
+    fn test_should_auto_approve_legacy_headless_returns_false() {
+        assert!(!should_auto_approve(ExecutionMode::Interactive, true));
     }
 
     #[test]

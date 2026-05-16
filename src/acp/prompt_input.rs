@@ -83,8 +83,9 @@ pub fn acp_content_blocks_to_prompt_input(
                     // Directory mentions, file stubs from older Zed clients, and any
                     // non-image resource link: emit a text reference marker so the
                     // model knows a resource was referenced without failing the prompt.
-                    let placeholder = format!("[Reference: {} ({})]", resource.name, resource.uri);
-                    parts.push(PromptInputPart::text(placeholder));
+                    let reference_marker =
+                        format!("[Reference: {} ({})]", resource.name, resource.uri);
+                    parts.push(PromptInputPart::text(reference_marker));
                 }
             }
             acp::ContentBlock::Resource(resource) => match &resource.resource {
@@ -216,17 +217,7 @@ pub fn validate_provider_supports_prompt_input(
 /// # Returns
 ///
 /// Returns `true` for conservatively allowlisted vision-capable combinations.
-pub fn provider_model_supports_vision(provider_name: &str, model_name: &str) -> bool {
-    let provider = provider_name.to_ascii_lowercase();
-    let model = model_name.to_ascii_lowercase();
-
-    match provider.as_str() {
-        "openai" => openai_model_supports_vision(&model),
-        "copilot" => false,
-        "ollama" => ollama_model_supports_vision(&model),
-        _ => false,
-    }
-}
+pub use crate::providers::provider_model_supports_vision;
 
 fn convert_inline_image(
     image: &acp::ImageContent,
@@ -501,24 +492,6 @@ fn is_image_mime_type(mime_type: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
-fn openai_model_supports_vision(model: &str) -> bool {
-    model.contains("gpt-4o")
-        || model.contains("gpt-4.1")
-        || model.contains("gpt-4-turbo")
-        || model.contains("vision")
-        || model.contains("o3")
-        || model.contains("o4")
-}
-
-fn ollama_model_supports_vision(model: &str) -> bool {
-    model.contains("llava")
-        || model.contains("bakllava")
-        || model.contains("moondream")
-        || model.contains("minicpm-v")
-        || model.contains("gemma3")
-        || model.contains("vision")
-}
-
 fn provider_error(message: impl ToString) -> XzatomaError {
     XzatomaError::Provider(message.to_string())
 }
@@ -787,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_image_resource_link_produces_placeholder() {
+    fn test_non_image_resource_link_produces_reference_marker() {
         let blocks = vec![ContentBlock::ResourceLink(
             ResourceLink::new("src/", "file:///src/").mime_type("inode/directory"),
         )];
@@ -800,16 +773,16 @@ mod tests {
         let text = input.as_legacy_text();
         assert!(
             text.contains("src/"),
-            "placeholder should contain the resource name, got: {text}"
+            "reference marker should contain the resource name, got: {text}"
         );
         assert!(
             text.contains("file:///src/"),
-            "placeholder should contain the URI, got: {text}"
+            "reference marker should contain the URI, got: {text}"
         );
     }
 
     #[test]
-    fn test_non_image_resource_link_with_no_mime_type_produces_placeholder() {
+    fn test_non_image_resource_link_with_no_mime_type_produces_reference_marker() {
         let blocks = vec![ContentBlock::ResourceLink(ResourceLink::new(
             "notes.txt",
             "file:///notes.txt",
@@ -823,7 +796,7 @@ mod tests {
         let text = input.as_legacy_text();
         assert!(
             text.contains("notes.txt"),
-            "placeholder should contain the resource name, got: {text}"
+            "reference marker should contain the resource name, got: {text}"
         );
     }
 

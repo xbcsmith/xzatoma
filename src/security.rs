@@ -31,6 +31,43 @@ pub(crate) fn normalize_http_base_url(input: &str, field_name: &str) -> Result<S
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
+/// Validates a provider base URL used for prompt or credential-bearing traffic.
+///
+/// The policy allows local development over plain HTTP only for loopback hosts.
+/// Remote hosts must use HTTPS and must not be literal private or special-use
+/// IP addresses. This keeps normal configuration from sending prompts, code, or
+/// API keys to untrusted plaintext endpoints.
+pub(crate) fn validate_provider_base_url(input: &str, field_name: &str) -> Result<String> {
+    let normalized = normalize_http_base_url(input, field_name)?;
+    let url = Url::parse(&normalized).map_err(|error| {
+        XzatomaError::Config(format!("{} must be a valid URL: {}", field_name, error))
+    })?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| XzatomaError::Config(format!("{} must include a host", field_name)))?;
+
+    match url.scheme() {
+        "http" if is_loopback_host(host) => Ok(normalized),
+        "http" => Err(XzatomaError::Config(format!(
+            "{} may use http only for localhost or loopback addresses; use https or an explicit local endpoint",
+            field_name
+        ))),
+        "https" => {
+            if host.eq_ignore_ascii_case("localhost") {
+                return Ok(normalized);
+            }
+            if let Ok(ip) = host.parse::<IpAddr>() {
+                validate_config_public_ip(ip, field_name)?;
+            }
+            Ok(normalized)
+        }
+        other => Err(XzatomaError::Config(format!(
+            "{} scheme must be 'http' or 'https', got '{}'",
+            field_name, other
+        ))),
+    }
+}
+
 /// Validates that an HTTP base URL points at a loopback host.
 ///
 /// This is used for test-only provider endpoint overrides that may receive
@@ -229,6 +266,17 @@ fn is_loopback_host(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn validate_config_public_ip(ip: IpAddr, field_name: &str) -> Result<()> {
+    if is_blocked_ip(ip) {
+        Err(XzatomaError::Config(format!(
+            "{} resolved to blocked address {}",
+            field_name, ip
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 fn validate_public_ip(ip: IpAddr, field_name: &str) -> Result<()> {
     if is_blocked_ip(ip) {
         Err(XzatomaError::McpAuth(format!(
@@ -318,6 +366,32 @@ mod tests {
     #[test]
     fn test_validate_loopback_http_base_url_rejects_external_host() {
         let result = validate_loopback_http_base_url("https://api.example.com", "api_base");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_provider_base_url_accepts_https_public_host() {
+        let result = validate_provider_base_url("https://api.example.com/v1/", "base_url")
+            .expect("https public provider URL should be accepted");
+        assert_eq!(result, "https://api.example.com/v1");
+    }
+
+    #[test]
+    fn test_validate_provider_base_url_accepts_http_loopback() {
+        let result = validate_provider_base_url("http://127.0.0.1:11434/", "base_url")
+            .expect("http loopback provider URL should be accepted");
+        assert_eq!(result, "http://127.0.0.1:11434");
+    }
+
+    #[test]
+    fn test_validate_provider_base_url_rejects_http_remote_host() {
+        let result = validate_provider_base_url("http://api.example.com/v1", "base_url");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_provider_base_url_rejects_private_ip() {
+        let result = validate_provider_base_url("https://192.168.1.10/v1", "base_url");
         assert!(result.is_err());
     }
 

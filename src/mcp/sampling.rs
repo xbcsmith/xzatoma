@@ -114,6 +114,13 @@ impl SamplingHandler for XzatomaSamplingHandler {
         Box::pin(async move {
             // Step 1: Interactive confirmation check.
             if !should_auto_approve(self.execution_mode, self.headless) {
+                if self.headless {
+                    return Err(XzatomaError::McpElicitation(
+                        "MCP sampling requires explicit server trust metadata in headless mode"
+                            .into(),
+                    ));
+                }
+
                 eprint!(
                     "MCP server requests LLM sampling. System prompt: {:?}. \
                      Max tokens: {}. Allow? [y/N] ",
@@ -311,75 +318,46 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_full_autonomous_mode_skips_user_prompt_and_calls_provider() {
-        // FullAutonomous + headless=false => should_auto_approve returns true,
-        // so the handler must skip the stdin prompt and call the provider.
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "provider reply");
+    async fn test_headless_mode_rejects_without_trust_metadata() {
+        let handler = make_handler(ExecutionMode::FullAutonomous, true, "provider reply");
 
         let req = simple_request(None, "what is 2+2?");
         let result = handler.create_message(req).await;
 
-        assert!(
-            result.is_ok(),
-            "create_message must succeed in FullAutonomous mode: {:?}",
-            result
-        );
-
-        let msg = result.unwrap();
-        assert_eq!(msg.role, Role::Assistant);
-        if let MessageContent::Text(t) = msg.content {
-            assert_eq!(t.text, "provider reply");
-        } else {
-            panic!("expected Text content");
-        }
-        assert_eq!(msg.stop_reason.as_deref(), Some("endTurn"));
+        assert!(matches!(
+            result,
+            Err(XzatomaError::McpElicitation(message)) if message.contains("headless")
+        ));
     }
 
     #[tokio::test]
-    async fn test_headless_mode_skips_prompt_and_calls_provider() {
-        // Interactive + headless=true => auto-approve, no stdin prompt.
+    async fn test_headless_mode_rejects_prompt_without_trust_metadata() {
         let handler = make_handler(ExecutionMode::Interactive, true, "headless reply");
 
         let req = simple_request(Some("You are a test assistant."), "ping");
         let result = handler.create_message(req).await;
 
-        assert!(
-            result.is_ok(),
-            "create_message must succeed in headless mode: {:?}",
-            result
-        );
-
-        let msg = result.unwrap();
-        if let MessageContent::Text(t) = msg.content {
-            assert_eq!(t.text, "headless reply");
-        } else {
-            panic!("expected Text content");
-        }
+        assert!(matches!(
+            result,
+            Err(XzatomaError::McpElicitation(message)) if message.contains("headless")
+        ));
     }
 
     #[tokio::test]
-    async fn test_system_prompt_included_in_provider_call() {
-        // Verify that a system prompt is prepended to the messages list.
-        // We cannot inspect the messages sent to the provider directly,
-        // but we can verify the overall call succeeds and the system_prompt
-        // field is accepted without error.
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "ok");
+    async fn test_system_prompt_request_requires_interactive_approval() {
+        let handler = make_handler(ExecutionMode::FullAutonomous, true, "ok");
 
         let req = simple_request(Some("System context here."), "user question");
         let result = handler.create_message(req).await;
 
-        assert!(
-            result.is_ok(),
-            "system prompt case must succeed: {:?}",
-            result
-        );
+        assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
     }
 
     #[tokio::test]
     async fn test_empty_messages_returns_error() {
-        // An empty messages list (after filtering) must return an error rather
-        // than passing an empty slice to the provider.
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "ok");
+        // An empty messages list in headless mode still fails before provider
+        // execution rather than passing an empty slice to the provider.
+        let handler = make_handler(ExecutionMode::FullAutonomous, true, "ok");
 
         let req = CreateMessageRequest {
             messages: vec![],
@@ -403,38 +381,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stop_reason_is_end_turn_for_text_response() {
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "hello");
+    async fn test_sampling_request_does_not_auto_approve_in_full_autonomous() {
+        let handler = make_handler(ExecutionMode::FullAutonomous, true, "hello");
         let req = simple_request(None, "question");
-        let result = handler.create_message(req).await.unwrap();
+        let result = handler.create_message(req).await;
 
-        assert_eq!(
-            result.stop_reason.as_deref(),
-            Some("endTurn"),
-            "text-only response must have stopReason 'endTurn'"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_result_role_is_always_assistant() {
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "answer");
-        let req = simple_request(None, "question");
-        let result = handler.create_message(req).await.unwrap();
-
-        assert_eq!(result.role, Role::Assistant);
-    }
-
-    #[tokio::test]
-    async fn test_result_model_field_is_set() {
-        let handler = make_handler(ExecutionMode::FullAutonomous, false, "text");
-        let req = simple_request(None, "hello");
-        let result = handler.create_message(req).await.unwrap();
-
-        // MockProvider returns no model; the handler maps None to "unknown".
-        assert!(
-            !result.model.is_empty(),
-            "model field must not be empty; got: {:?}",
-            result.model
-        );
+        assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
     }
 }

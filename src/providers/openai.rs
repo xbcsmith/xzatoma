@@ -287,7 +287,7 @@ fn build_capabilities_from_id(id: &str) -> Vec<ModelCapability> {
         caps.push(ModelCapability::FunctionCalling);
     }
 
-    if openai_model_supports_vision(&id_lower) {
+    if crate::providers::openai_model_supports_vision(id) {
         caps.push(ModelCapability::Vision);
     }
 
@@ -567,9 +567,11 @@ impl OpenAIProvider {
     /// assert!(provider.is_ok());
     /// ```
     pub fn new(mut config: OpenAIConfig) -> Result<Self> {
-        config.base_url =
-            crate::security::normalize_http_base_url(&config.base_url, "provider.openai.base_url")
-                .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+        config.base_url = crate::security::validate_provider_base_url(
+            &config.base_url,
+            "provider.openai.base_url",
+        )
+        .map_err(|error| XzatomaError::Provider(error.to_string()))?;
 
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
@@ -1184,7 +1186,7 @@ impl Provider for OpenAIProvider {
         };
 
         if messages_contain_image_content(messages)
-            && !openai_model_supports_vision(&model.to_ascii_lowercase())
+            && !crate::providers::openai_model_supports_vision(&model)
         {
             return Err(XzatomaError::Provider(format!(
                 "OpenAI-compatible model '{}' does not support image input",
@@ -1426,15 +1428,6 @@ impl Provider for OpenAIProvider {
         );
         Ok(())
     }
-}
-
-fn openai_model_supports_vision(model: &str) -> bool {
-    model.contains("gpt-4o")
-        || model.contains("gpt-4.1")
-        || model.contains("gpt-4-turbo")
-        || model.contains("vision")
-        || model.contains("o3")
-        || model.contains("o4")
 }
 
 // ---------------------------------------------------------------------------

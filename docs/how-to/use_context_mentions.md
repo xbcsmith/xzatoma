@@ -1,23 +1,27 @@
 # Using Context Mentions
 
-Learn how to use context mentions to include file contents, search results, and web content directly in your agent prompts.
+Learn how to use context mentions to include file contents, search results, and
+web content directly in your agent prompts.
 
 ## Overview
 
-Context mentions (or just "mentions") are a powerful way to add relevant information to your agent prompts without manually copying and pasting content. By using special `@` syntax, you can reference:
+Context mentions (or just "mentions") are a powerful way to add relevant
+information to your agent prompts without manually copying and pasting content.
+By using special `@` syntax, you can reference:
 
 - **Files** - Include file contents or specific line ranges
 - **Search** - Find patterns across your codebase
 - **Grep** - Run regex searches through file contents
 - **URLs** - Fetch and include web page content
 
-The agent uses this injected context to better understand your code and requirements, making more accurate decisions.
+The agent uses this injected context to better understand your code and
+requirements, making more accurate decisions.
 
 ## Quick Start
 
 ### Include a File
 
-```
+```text
 @config.yaml
 ```
 
@@ -25,7 +29,7 @@ The agent will see the full contents of `config.yaml`.
 
 ### Include a Specific File Range
 
-```
+```text
 @src/main.rs#L10-25
 ```
 
@@ -33,7 +37,7 @@ Shows lines 10 through 25 of `src/main.rs`.
 
 ### Search for a Pattern
 
-```
+```text
 @search:"function_name"
 ```
 
@@ -41,7 +45,7 @@ Finds all lines containing "function_name" anywhere in the project.
 
 ### Search with Regex
 
-```
+```text
 @grep:"^pub fn.*\("
 ```
 
@@ -49,7 +53,7 @@ Finds all lines matching the regex pattern across the project.
 
 ### Include Web Content
 
-```
+```text
 @url:https://example.com/api-docs
 ```
 
@@ -57,17 +61,19 @@ Fetches and includes the content from the URL.
 
 ## File Mentions
 
-File mentions let you include file contents in your prompt for the agent to analyze.
+File mentions let you include file contents in your prompt for the agent to
+analyze.
 
 ### Basic File Mention
 
 Simply reference a file by name:
 
-```
+```text
 Please review the configuration in @config.yaml
 ```
 
-The agent sees the full file contents inserted into the conversation. XZatoma will:
+The agent sees the full file contents inserted into the conversation. XZatoma
+will:
 
 1. Search for the file in your project
 2. Load the contents
@@ -78,7 +84,7 @@ The agent sees the full file contents inserted into the conversation. XZatoma wi
 
 For unambiguous references, use the full path:
 
-```
+```text
 @src/config/production.yaml
 ```
 
@@ -92,15 +98,17 @@ XZatoma supports helpful abbreviations:
 - `@lib` - Finds `src/lib.rs`
 - `@readme` - Finds `README.md`
 - `@readme.rs` - Finds `src/lib.rs` (common variant)
-- `@test_foo.rs` - Finds `src/test_foo.rs`, `tests/test_foo.rs`, or `foo/test_foo.rs`
+- `@test_foo.rs` - Finds `src/test_foo.rs`, `tests/test_foo.rs`, or
+  `foo/test_foo.rs`
 
-These expansions follow common Rust conventions and try multiple paths before failing.
+These expansions follow common Rust conventions and try multiple paths before
+failing.
 
 ### Line Range Syntax
 
 Include only specific lines from a file:
 
-```
+```text
 @src/agent.rs#L50-100
 ```
 
@@ -115,7 +123,7 @@ Line numbers are 1-based (as shown in most editors).
 
 ### Line Range Examples
 
-```
+```text
 @config.yaml#L1-10
 Show just the beginning of the config file
 
@@ -130,7 +138,7 @@ Include from line 50 to the end of the file
 
 To include a specific function or struct definition, estimate the line numbers:
 
-```
+```text
 Review this error handler: @src/error.rs#L150-175
 ```
 
@@ -140,7 +148,7 @@ Or use a search mention instead (see below).
 
 Include multiple files in one prompt:
 
-```
+```text
 Please review @config.yaml, @src/main.rs, and @README.md
 ```
 
@@ -152,25 +160,27 @@ Search mentions use literal string matching to find relevant code.
 
 ### Basic Search
 
-```
+```text
 @search:"error_handler"
 ```
 
-Finds all lines containing "error_handler" anywhere in the project and shows them with context (file name and line number).
+Finds all lines containing "error_handler" anywhere in the project and shows
+them with context (file name and line number).
 
 ### Search is Case-Sensitive
 
-```
+```text
 @search:"Error"
 ```
 
-Finds "Error" but not "error". Use a grep mention for case-insensitive searching.
+Finds "Error" but not "error". Use a grep mention for case-insensitive
+searching.
 
 ### Special Characters in Search
 
 For patterns with spaces, use quotes:
 
-```
+```text
 @search:"pub fn"
 ```
 
@@ -178,7 +188,7 @@ This finds all lines with "pub fn" (public function declarations).
 
 ### Practical Search Examples
 
-```
+```text
 @search:"TODO"
 Find all TODO comments
 
@@ -194,7 +204,8 @@ Find all derive macros
 
 ### Search Performance
 
-Searches scan the entire project, which can be slow on large codebases. For better performance:
+Searches scan the entire project, which can be slow on large codebases. For
+better performance:
 
 - Use specific patterns that are unlikely to have many matches
 - Use grep (regex) for more precise patterns
@@ -206,7 +217,7 @@ Grep mentions use regular expressions for more powerful pattern matching.
 
 ### Basic Grep Pattern
 
-```
+```text
 @grep:"^pub fn"
 ```
 
@@ -230,7 +241,7 @@ XZatoma uses Rust regex syntax. Common patterns:
 
 ### Practical Grep Examples
 
-```
+```text
 @grep:"^impl\s+\w+\s+for"
 Find all trait implementations
 
@@ -251,7 +262,7 @@ Find all common comment markers
 
 For literal special characters, use backslash:
 
-```
+```text
 @grep:"version = \"[0-9]+\.[0-9]+\""
 Find semantic version patterns
 
@@ -263,7 +274,7 @@ Find all URLs
 
 Wrap your pattern with `(?i)`:
 
-```
+```text
 @grep:"(?i)error"
 Matches "error", "Error", "ERROR", etc.
 ```
@@ -274,7 +285,7 @@ URL mentions fetch web content and include it in your prompt.
 
 ### Basic URL Mention
 
-```
+```text
 @url:https://docs.rust-lang.org/std/result/enum.Result.html
 ```
 
@@ -284,13 +295,13 @@ The agent will see the HTML content converted to readable text.
 
 Always use the full URL with protocol:
 
-```
+```text
 @url:https://example.com/page
 ```
 
 Not:
 
-```
+```text
 @url:example.com/page
 ```
 
@@ -305,7 +316,7 @@ Internal protocols like `file://` are not supported.
 
 URL fetching has built-in safety protections:
 
-**Server-Side Request Forgery (SSRF) Prevention**
+#### Server-Side Request Forgery Prevention
 
 The following URLs are blocked to prevent attacks:
 
@@ -314,13 +325,13 @@ The following URLs are blocked to prevent attacks:
 - Link-local: `169.254.0.0/16`
 - Localhost: `localhost`, `localhost:*`
 
-**Rate Limiting**
+#### Rate Limiting
 
 - Maximum 10 URLs per prompt
 - 60-second timeout per URL
 - Content size limit: 1 MB
 
-**Content Type Handling**
+#### Content Type Handling
 
 Only text-based content is processed:
 
@@ -332,7 +343,7 @@ Only text-based content is processed:
 
 ### Practical URL Mention Examples
 
-```
+```text
 @url:https://raw.githubusercontent.com/rust-lang/rust/master/RELEASES.md
 Include release notes
 
@@ -345,11 +356,14 @@ Include GitHub API response
 
 ### URL Caching
 
-Fetched URL content is cached for 24 hours. If you mention the same URL again, the cached version is used without a new fetch. This improves performance and respects server bandwidth.
+Fetched URL content is cached for 24 hours. If you mention the same URL again,
+the cached version is used without a new fetch. This improves performance and
+respects server bandwidth.
 
 ### Handling Large Pages
 
-If a page is larger than 1 MB, only the first 1 MB is included and you'll see a message indicating the content was truncated. Try:
+If a page is larger than 1 MB, only the first 1 MB is included and you'll see a
+message indicating the content was truncated. Try:
 
 - Mentioning a more specific page
 - Using a search mention instead if the content is code
@@ -359,7 +373,7 @@ If a page is larger than 1 MB, only the first 1 MB is included and you'll see a 
 
 ### Code Review Pattern
 
-```
+```text
 Please review @src/feature.rs#L1-50 for correctness and style issues
 ```
 
@@ -367,7 +381,7 @@ This combines file mentions with line ranges for focused code review.
 
 ### Architecture Understanding Pattern
 
-```
+```text
 Help me understand the architecture. Here are the main components:
 @src/agent/mod.rs
 @src/providers/mod.rs
@@ -378,7 +392,7 @@ Multiple file mentions help the agent understand your project structure.
 
 ### Documentation Context Pattern
 
-```
+```text
 Based on @README.md, help me implement the missing feature from:
 @url:https://example.com/specification
 ```
@@ -387,7 +401,7 @@ Mix file and URL mentions to relate project docs with external specifications.
 
 ### Bug Investigation Pattern
 
-```
+```text
 I'm getting this error. Please check:
 @grep:"error_code_123"
 @search:"handle_error"
@@ -399,7 +413,7 @@ Use search and file mentions together to investigate issues.
 
 ### Feature Implementation Pattern
 
-```
+```text
 Implement the API from @url:https://api.example.com/docs
 following our patterns in @src/api/handlers.rs
 ```
@@ -420,21 +434,22 @@ Searches scan the entire project. For better performance:
 
 For large files, include specific line ranges instead of the whole file:
 
-```
+```text
 @src/large_file.rs#L100-150
 ```
 
 Not:
 
-```
+```text
 @src/large_file.rs
 ```
 
 ### Avoid Redundant Mentions
 
-The agent keeps track of what's been included. Avoid mentioning the same file twice:
+The agent keeps track of what's been included. Avoid mentioning the same file
+twice:
 
-```
+```text
 @config.yaml
 Check this config for issues
 
@@ -496,23 +511,29 @@ The URL took longer than 60 seconds. Solutions:
 
 ### Can I mention directories?
 
-Not directly. Mention specific files or use search/grep to find contents. This keeps prompts focused and manageable.
+Not directly. Mention specific files or use search/grep to find contents. This
+keeps prompts focused and manageable.
 
 ### Are mentions case-sensitive?
 
-File mentions are case-sensitive (matches your filesystem). Search is case-sensitive, but grep with `(?i)` is case-insensitive.
+File mentions are case-sensitive (matches your filesystem). Search is
+case-sensitive, but grep with `(?i)` is case-insensitive.
 
 ### How large can an included file be?
 
-Individual files are included in full (no size limit), but the total augmented prompt should stay reasonable. Very large files (>100 KB of raw content) may impact token usage.
+Individual files are included in full (no size limit), but the total augmented
+prompt should stay reasonable. Very large files (>100 KB of raw content) may
+impact token usage.
 
 ### Do mentions work in plan files?
 
-Yes, mention syntax works in both interactive prompts and plan files. The agent will include the mentioned content when processing your goals.
+Yes, mention syntax works in both interactive prompts and plan files. The agent
+will include the mentioned content when processing your goals.
 
 ### Can I nest mentions?
 
-No, you cannot mention a search result or URL content directly. But the agent can execute a search and then ask you to mention the results.
+No, you cannot mention a search result or URL content directly. But the agent
+can execute a search and then ask you to mention the results.
 
 ### What happens if a mention fails?
 
@@ -525,36 +546,43 @@ If a file, search, or URL fails to load:
 
 ### Can I use mentions to share secrets?
 
-Not recommended. Avoid mentioning files with credentials, API keys, or other secrets. If you accidentally mention sensitive data, the content was already sent to the AI provider.
+Not recommended. Avoid mentioning files with credentials, API keys, or other
+secrets. If you accidentally mention sensitive data, the content was already
+sent to the AI provider.
 
 ### How are mentions different from normal chat?
 
-Mentions pre-load content into the augmented prompt before sending to the AI provider. Regular chat forces the agent to use tools to discover content. Mentions are faster and save tokens.
+Mentions pre-load content into the augmented prompt before sending to the AI
+provider. Regular chat forces the agent to use tools to discover content.
+Mentions are faster and save tokens.
 
 ### Can the agent modify mentioned content?
 
-The agent sees mention content as input context. It cannot directly modify mentioned files through the mention mechanism. The agent uses separate write tools to make changes.
+The agent sees mention content as input context. It cannot directly modify
+mentioned files through the mention mechanism. The agent uses separate write
+tools to make changes.
 
 ### Do mentions work with all providers?
 
-Yes, mentions are a client-side feature that work with any AI provider (Copilot, Ollama, etc.).
+Yes, mentions are a client-side feature that work with any AI provider (Copilot,
+Ollama, etc.).
 
 ## Advanced Examples
 
 ### Full Architecture Analysis
 
-```
+```text
 Analyze our architecture and recommend improvements. Review:
 
 @src/agent/mod.rs
-@src/providers/base.rs
+@src/providers/trait_mod.rs
 @src/tools/mod.rs
 @README.md
 ```
 
 ### Implementing From Specification
 
-```
+```text
 Implement the logging feature according to this spec:
 @url:https://example.com/logging-spec
 
@@ -568,7 +596,7 @@ Follow our patterns in:
 
 ### Debugging with Search and Files
 
-```
+```text
 I'm getting panic: "message not found". Debug this:
 
 Look for where we handle this error:
@@ -583,7 +611,7 @@ Plus our error types:
 
 ### Multi-File Refactoring
 
-```
+```text
 Refactor these modules to use a common trait. Current implementations:
 
 @src/handler_a.rs#L50-100
@@ -603,4 +631,5 @@ If you need help with mentions:
 - Use `/status` to see your current mode
 - Ask the agent directly: "How should I reference this file?"
 
-Remember: the agent is there to help! If you're unsure about the right mention syntax, just ask and it will guide you.
+Remember: the agent is there to help! If you're unsure about the right mention
+syntax, just ask and it will guide you.

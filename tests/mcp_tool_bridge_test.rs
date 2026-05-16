@@ -202,34 +202,32 @@ fn make_executor(
 }
 
 // ---------------------------------------------------------------------------
-// Task 5A.3: approval policy
+// MCP approval policy
 // ---------------------------------------------------------------------------
 
-/// `should_auto_approve` returns `true` for `FullAutonomous`, `headless: false`.
-/// (Named "false_in_full_autonomous_mode" to match the plan's naming, which
-/// means "no prompt needed = auto-approve returns true".)
+/// `should_auto_approve` returns `false` for `FullAutonomous`, `headless: false`.
 #[test]
 fn test_should_auto_approve_false_in_full_autonomous_mode() {
     assert!(
-        should_auto_approve(ExecutionMode::FullAutonomous, false),
-        "FullAutonomous, headless=false must auto-approve (no prompt needed)"
+        !should_auto_approve(ExecutionMode::FullAutonomous, false),
+        "FullAutonomous, headless=false must not imply MCP trust"
     );
 }
 
-/// `should_auto_approve` returns `true` when `headless: true` regardless of mode.
+/// `should_auto_approve` returns `false` when `headless: true` regardless of mode.
 #[test]
-fn test_should_auto_approve_true_when_headless() {
+fn test_should_auto_approve_false_when_headless() {
     assert!(
-        should_auto_approve(ExecutionMode::Interactive, true),
-        "Interactive, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::Interactive, true),
+        "Interactive, headless=true must not imply MCP trust"
     );
     assert!(
-        should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
-        "RestrictedAutonomous, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
+        "RestrictedAutonomous, headless=true must not imply MCP trust"
     );
     assert!(
-        should_auto_approve(ExecutionMode::FullAutonomous, true),
-        "FullAutonomous, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::FullAutonomous, true),
+        "FullAutonomous, headless=true must not imply MCP trust"
     );
 }
 

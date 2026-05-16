@@ -5,7 +5,7 @@
 
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::MODEL_CACHE_TTL_SECS;
+use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
 use crate::providers::{
     messages_contain_image_content, CompletionResponse, FinishReason, FunctionCall, Message,
     ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
@@ -102,9 +102,6 @@ impl ModelEndpoint {
 /// Default context window size when not provided by API
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 
-/// Duration for which the model list cache is considered valid.
-const MODEL_CACHE_DURATION: Duration = Duration::from_secs(MODEL_CACHE_TTL_SECS);
-
 /// Pinned boxed stream of response events
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
@@ -133,47 +130,6 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 /// # }
 /// ```
 ///
-/// Shared in-memory cache for the Copilot model list.
-///
-/// Holds the converted `ModelInfo` list and the timestamp at which it was
-/// last populated. `is_valid` returns `true` until `MODEL_CACHE_DURATION` has
-/// elapsed.
-struct CopilotCache {
-    /// Converted model list, populated after the first successful fetch.
-    models: Option<Vec<ModelInfo>>,
-    /// Instant at which the cache was last populated.
-    cached_at: Option<Instant>,
-}
-
-impl CopilotCache {
-    /// Create a new, empty cache with no data and no timestamp.
-    fn new() -> Self {
-        Self {
-            models: None,
-            cached_at: None,
-        }
-    }
-
-    /// Return `true` when the cache holds data that is younger than
-    /// `MODEL_CACHE_DURATION`.
-    ///
-    /// Returns `false` when `cached_at` is `None` (i.e., the cache has never
-    /// been populated or was explicitly invalidated).
-    fn is_valid(&self) -> bool {
-        self.cached_at
-            .map(|t| t.elapsed() < MODEL_CACHE_DURATION)
-            .unwrap_or(false)
-    }
-
-    /// Reset all fields to `None`, forcing the next read to re-fetch from the
-    /// API.
-    #[cfg(test)]
-    fn invalidate(&mut self) {
-        self.models = None;
-        self.cached_at = None;
-    }
-}
-
 /// GitHub Copilot provider
 ///
 /// This provider connects to GitHub Copilot's API to generate completions.
@@ -203,9 +159,8 @@ pub struct CopilotProvider {
     config: Arc<RwLock<CopilotConfig>>,
     keyring_service: String,
     keyring_user: String,
-    /// Cached model list and raw data. All accesses go through `CopilotCache`
-    /// methods (`is_valid`, `invalidate`) rather than inline TTL arithmetic.
-    models_cache: Arc<RwLock<CopilotCache>>,
+    /// Cached model list using the shared provider TTL cache helper.
+    models_cache: ModelCache,
 }
 
 /// Request for GitHub device code
@@ -1424,7 +1379,7 @@ impl CopilotProvider {
             config: Arc::new(RwLock::new(config)),
             keyring_service: super::factory::KEYRING_SERVICE.to_string(),
             keyring_user: super::factory::KEYRING_COPILOT_USER.to_string(),
-            models_cache: Arc::new(RwLock::new(CopilotCache::new())),
+            models_cache: new_model_cache(),
         })
     }
 
@@ -1604,10 +1559,10 @@ impl CopilotProvider {
             token: String,
         }
 
-        let token_url = self.api_endpoint("copilot_internal/v2/token");
+        let token_url = COPILOT_TOKEN_URL;
         let response: CopilotTokenResponse = self
             .client
-            .get(&token_url)
+            .get(token_url)
             .header("Authorization", format!("token {}", github_token))
             .send()
             .await
@@ -1664,8 +1619,9 @@ impl CopilotProvider {
 
     /// Convert XZatoma messages to Copilot format.
     ///
-    /// Copilot does not yet serialize image content, so callers must reject
-    /// image-bearing messages before invoking this conversion. Text-only
+    /// The Copilot chat conversion path accepts text-only messages. Callers
+    /// must reject image-bearing messages before invoking this conversion when
+    /// the selected endpoint lacks image serialization support. Text-only
     /// multimodal content is folded into the legacy text field.
     fn convert_messages(&self, messages: &[Message]) -> Vec<CopilotMessage> {
         let validated_messages = crate::providers::validate_message_sequence(messages);
@@ -1739,21 +1695,31 @@ impl CopilotProvider {
         crate::providers::convert_tools_from_json(tools)
     }
 
-    /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.
+    /// Build a Copilot API URL using the optional mock endpoint override.
+    ///
+    /// Production authentication endpoints are intentionally not routed through
+    /// `CopilotConfig::api_base`, so GitHub OAuth tokens are never sent to a
+    /// mock or local API override.
     fn api_endpoint(&self, path: &str) -> String {
-        if let Ok(cfg) = self.config.read() {
-            if let Some(base) = &cfg.api_base {
-                return format!(
-                    "{}/{}",
-                    base.trim_end_matches('/'),
-                    path.trim_start_matches('/')
-                );
-            }
-        }
         match path {
-            "models" => COPILOT_MODELS_URL.to_string(),
-            "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
-            "responses" => COPILOT_RESPONSES_URL.to_string(),
+            "models" | "chat/completions" | "responses" => {
+                if let Ok(cfg) = self.config.read() {
+                    if let Some(base) = &cfg.api_base {
+                        return format!(
+                            "{}/{}",
+                            base.trim_end_matches('/'),
+                            path.trim_start_matches('/')
+                        );
+                    }
+                }
+
+                match path {
+                    "models" => COPILOT_MODELS_URL.to_string(),
+                    "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
+                    "responses" => COPILOT_RESPONSES_URL.to_string(),
+                    _ => unreachable!(),
+                }
+            }
             "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
             other => format!(
                 "https://api.githubcopilot.com/{}",
@@ -1827,14 +1793,13 @@ impl CopilotProvider {
     /// If `CopilotConfig::api_base` is set, it will be used to construct the
     /// models endpoint (useful for tests/local mocking).
     async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-        // Check models cache first using CopilotCache::is_valid().
+        // Check models cache first using the shared provider TTL helper.
         if let Ok(cache_guard) = self.models_cache.read() {
-            if cache_guard.is_valid() {
-                if let Some(models) = &cache_guard.models {
+            if let Some((models, cached_at)) = &*cache_guard {
+                if is_cache_valid(*cached_at) {
                     tracing::debug!("Using cached Copilot models");
                     return Ok(models.clone());
                 }
-            } else if cache_guard.cached_at.is_some() {
                 tracing::debug!("Copilot models cache expired");
             }
         }
@@ -1986,10 +1951,9 @@ impl CopilotProvider {
                                 models.push(model_info);
                             }
 
-                            // Populate cache via CopilotCache fields.
+                            // Populate cache via the shared provider cache helper.
                             if let Ok(mut cache_guard) = self.models_cache.write() {
-                                cache_guard.models = Some(models.clone());
-                                cache_guard.cached_at = Some(Instant::now());
+                                *cache_guard = Some((models.clone(), Instant::now()));
                             } else {
                                 tracing::warn!("Failed to acquire write lock on models cache");
                             }
@@ -2064,10 +2028,9 @@ impl CopilotProvider {
             models.push(model_info);
         }
 
-        // Populate cache via CopilotCache fields.
+        // Populate cache via the shared provider cache helper.
         if let Ok(mut cache_guard) = self.models_cache.write() {
-            cache_guard.models = Some(models.clone());
-            cache_guard.cached_at = Some(Instant::now());
+            *cache_guard = Some((models.clone(), Instant::now()));
         } else {
             tracing::warn!("Failed to acquire write lock on models cache");
         }
@@ -3412,9 +3375,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
+    #[ignore = "requires a dedicated Copilot mock API plus system keyring token setup; run with cargo test --all-features -- --ignored"]
     async fn test_list_models_returns_all_supported_models() {
-        // list_models requires a live or mocked Copilot models endpoint.
+        // list_models requires a mocked Copilot API and keyring-backed token setup.
         // See test_parse_models_from_testdata for offline parsing validation.
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
@@ -4748,8 +4711,8 @@ api_base: https://attacker.example.com
 
     #[test]
     fn test_provider_cache_ttl() {
-        // Verify the cache duration constant matches the documented 5-minute TTL.
-        assert_eq!(MODEL_CACHE_DURATION, Duration::from_secs(300));
+        // Verify Copilot uses the shared provider cache TTL helper.
+        assert!(is_cache_valid(Instant::now()));
     }
 
     // --- Task 2.1: Message Conversion Roundtrip ---
@@ -5000,64 +4963,6 @@ api_base: https://attacker.example.com
         assert!(supports.max_thinking_budget.is_none());
         assert!(supports.min_thinking_budget.is_none());
         assert!(supports.dimensions.is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // CopilotCache unit tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_false_for_fresh_cache() {
-        let cache = CopilotCache::new();
-        assert!(
-            !cache.is_valid(),
-            "Freshly created cache must not be valid (cached_at is None)"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_true_after_population() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        cache.cached_at = Some(Instant::now());
-        assert!(
-            cache.is_valid(),
-            "Cache with a recent timestamp must be valid"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_false_after_duration_elapses() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        // Set cached_at to MODEL_CACHE_DURATION + 1 second in the past.
-        cache.cached_at = Some(Instant::now() - MODEL_CACHE_DURATION - Duration::from_secs(1));
-        assert!(
-            !cache.is_valid(),
-            "Cache older than MODEL_CACHE_DURATION must not be valid"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_invalidate_resets_all_fields() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        cache.cached_at = Some(Instant::now());
-
-        cache.invalidate();
-
-        assert!(
-            cache.models.is_none(),
-            "models must be None after invalidate"
-        );
-        assert!(
-            cache.cached_at.is_none(),
-            "cached_at must be None after invalidate"
-        );
-        assert!(
-            !cache.is_valid(),
-            "Cache must not be valid after invalidate"
-        );
     }
 
     // -----------------------------------------------------------------------

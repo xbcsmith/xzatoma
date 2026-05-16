@@ -4,7 +4,7 @@
 ///
 /// The ACP domain is intentionally transport-independent. Protocol-facing types
 /// live in focused submodules, but the crate-level ACP API is unified here so
-/// later phases can depend on one stable surface.
+/// consumers can depend on one stable surface.
 ///
 /// This module uses `types.rs` as the canonical protocol and lifecycle model for:
 ///

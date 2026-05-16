@@ -94,68 +94,34 @@ fn simple_request(system: Option<&str>, user_text: &str) -> CreateMessageRequest
 }
 
 // ---------------------------------------------------------------------------
-// Task 5B.5: test_full_autonomous_mode_skips_user_prompt_and_calls_provider
+// MCP sampling approval policy tests
 // ---------------------------------------------------------------------------
 
-/// In `FullAutonomous` mode the handler must skip any stdin prompt and
-/// forward the request directly to the provider.
-///
-/// We verify this by:
-/// 1. Constructing a handler with `execution_mode: FullAutonomous, headless:
-///    false`.
-/// 2. Calling `create_message` -- if it tried to read stdin it would block
-///    forever (test harness has no stdin).
-/// 3. Asserting the call succeeds and the mock provider was invoked exactly
-///    once.
+/// FullAutonomous mode must not auto-approve sampling without explicit policy.
 #[tokio::test]
-async fn test_full_autonomous_mode_skips_user_prompt_and_calls_provider() {
+async fn test_full_autonomous_mode_requires_explicit_approval_policy() {
     let mock = Arc::new(MockProvider::new("the answer is 42"));
 
     let handler = XzatomaSamplingHandler {
         provider: Arc::clone(&mock) as Arc<dyn Provider>,
         execution_mode: ExecutionMode::FullAutonomous,
-        headless: false,
+        headless: true,
     };
 
     let req = simple_request(None, "what is 6 times 7?");
+    let result = handler.create_message(req).await;
 
-    // Wrap in timeout so a blocking stdin read would surface as a test
-    // failure rather than hanging indefinitely.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        handler.create_message(req),
-    )
-    .await
-    .expect("create_message timed out -- did it block on stdin?");
-
-    assert!(
-        result.is_ok(),
-        "create_message must succeed in FullAutonomous mode: {:?}",
-        result
-    );
-
-    let msg = result.unwrap();
-    assert_eq!(msg.role, Role::Assistant, "result role must be Assistant");
-
-    if let MessageContent::Text(t) = msg.content {
-        assert_eq!(
-            t.text, "the answer is 42",
-            "result text must match mock provider response"
-        );
-    } else {
-        panic!("expected Text content in CreateMessageResult");
-    }
-
+    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
     assert_eq!(
         mock.call_count(),
-        1,
-        "provider::complete must be called exactly once"
+        0,
+        "provider::complete must not be called without approval"
     );
 }
 
-/// Headless mode must also skip the prompt, regardless of execution mode.
+/// Headless mode must reject sampling without explicit trust metadata.
 #[tokio::test]
-async fn test_headless_mode_skips_user_prompt_and_calls_provider() {
+async fn test_headless_mode_rejects_without_trust_metadata() {
     let mock = Arc::new(MockProvider::new("headless result"));
 
     let handler = XzatomaSamplingHandler {
@@ -165,21 +131,10 @@ async fn test_headless_mode_skips_user_prompt_and_calls_provider() {
     };
 
     let req = simple_request(Some("You are helpful."), "hello");
+    let result = handler.create_message(req).await;
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        handler.create_message(req),
-    )
-    .await
-    .expect("create_message timed out in headless mode");
-
-    assert!(
-        result.is_ok(),
-        "headless create_message must succeed: {:?}",
-        result
-    );
-
-    assert_eq!(mock.call_count(), 1);
+    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+    assert_eq!(mock.call_count(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,63 +222,51 @@ async fn test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error
 // Additional coverage: result fields
 // ---------------------------------------------------------------------------
 
-/// `stop_reason` is `"endTurn"` for a plain text response with no tool calls.
+/// Plain text sampling requires approval before provider execution.
 #[tokio::test]
-async fn test_stop_reason_is_end_turn_for_plain_text_response() {
+async fn test_plain_text_sampling_requires_approval() {
     let mock = Arc::new(MockProvider::new("plain text"));
 
     let handler = XzatomaSamplingHandler {
         provider: Arc::clone(&mock) as Arc<dyn Provider>,
         execution_mode: ExecutionMode::FullAutonomous,
-        headless: false,
+        headless: true,
     };
 
     let req = simple_request(None, "summarise this");
-    let result = handler
-        .create_message(req)
-        .await
-        .expect("create_message must succeed");
+    let result = handler.create_message(req).await;
 
-    assert_eq!(
-        result.stop_reason.as_deref(),
-        Some("endTurn"),
-        "plain text response must have stopReason 'endTurn'"
-    );
+    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+    assert_eq!(mock.call_count(), 0);
 }
 
-/// The result's `model` field must not be empty.
+/// Sampling rejection happens before constructing a result model field.
 #[tokio::test]
-async fn test_result_model_field_not_empty() {
+async fn test_result_model_field_not_constructed_without_approval() {
     let mock = Arc::new(MockProvider::new("hello"));
 
     let handler = XzatomaSamplingHandler {
         provider: Arc::clone(&mock) as Arc<dyn Provider>,
         execution_mode: ExecutionMode::FullAutonomous,
-        headless: false,
+        headless: true,
     };
 
     let req = simple_request(None, "hi");
-    let result = handler
-        .create_message(req)
-        .await
-        .expect("create_message must succeed");
+    let result = handler.create_message(req).await;
 
-    assert!(
-        !result.model.is_empty(),
-        "model field must not be empty; got: {:?}",
-        result.model
-    );
+    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+    assert_eq!(mock.call_count(), 0);
 }
 
-/// Multiple user messages are all forwarded to the provider.
+/// Multiple user messages are rejected before provider execution without approval.
 #[tokio::test]
-async fn test_multiple_messages_all_forwarded_to_provider() {
+async fn test_multiple_messages_require_approval_before_provider_execution() {
     let mock = Arc::new(MockProvider::new("multi-turn answer"));
 
     let handler = XzatomaSamplingHandler {
         provider: Arc::clone(&mock) as Arc<dyn Provider>,
         execution_mode: ExecutionMode::FullAutonomous,
-        headless: false,
+        headless: true,
     };
 
     let req = CreateMessageRequest {
@@ -361,11 +304,8 @@ async fn test_multiple_messages_all_forwarded_to_provider() {
         tool_choice: None,
     };
 
-    let result = handler
-        .create_message(req)
-        .await
-        .expect("multi-turn create_message must succeed");
+    let result = handler.create_message(req).await;
 
-    assert_eq!(mock.call_count(), 1);
-    assert_eq!(result.role, Role::Assistant);
+    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+    assert_eq!(mock.call_count(), 0);
 }

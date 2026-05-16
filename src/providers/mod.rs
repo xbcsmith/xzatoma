@@ -15,6 +15,7 @@
 //! | `openai`       | OpenAI provider implementation                        |
 
 pub mod cache;
+pub mod capabilities;
 pub mod copilot;
 pub mod factory;
 pub mod ollama;
@@ -54,6 +55,9 @@ pub use factory::{create_provider, create_provider_with_override, ProviderFactor
 // ---------------------------------------------------------------------------
 
 pub use cache::{is_cache_valid, new_model_cache, ModelCache, MODEL_CACHE_TTL_SECS};
+pub use capabilities::{
+    ollama_model_supports_vision, openai_model_supports_vision, provider_model_supports_vision,
+};
 
 // ---------------------------------------------------------------------------
 // Provider implementations

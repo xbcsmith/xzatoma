@@ -18,7 +18,6 @@
 //! - `protocol`     -- Typed MCP lifecycle wrapper over `JsonRpcClient`
 //! - `sampling`     -- Sampling handler forwarding LLM inference to the Provider
 //! - `server`       -- Per-server connection descriptors
-//! - `task_manager` -- Long-running task lifecycle tracking
 //! - `tool_bridge`  -- ToolExecutor adapters for MCP tools, resources, and prompts
 //! - `transport`    -- `Transport` trait and concrete implementations (stdio, HTTP,
 //!   fake)
@@ -33,7 +32,6 @@ pub mod manager;
 pub mod protocol;
 pub mod sampling;
 pub mod server;
-pub mod task_manager;
 pub mod tool_bridge;
 pub mod transport;
 pub mod types;

@@ -95,7 +95,7 @@ fn token_response_body() -> serde_json::Value {
 /// `OAuthFlow` is constructed with `noop_browser_opener` so no subprocess
 /// is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_full_pkce_exchange_sends_correct_verifier() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -162,7 +162,7 @@ async fn test_full_pkce_exchange_sends_correct_verifier() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_token_endpoint_response_is_parsed_correctly() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -223,7 +223,7 @@ async fn test_token_endpoint_response_is_parsed_correctly() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_refresh_token_sends_correct_grant_type_and_resource() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -262,7 +262,7 @@ async fn test_refresh_token_sends_correct_grant_type_and_resource() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_refresh_token_includes_scope_when_provided() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -299,7 +299,7 @@ async fn test_refresh_token_includes_scope_when_provided() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_refresh_token_propagates_error_on_400_response() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -337,7 +337,7 @@ async fn test_refresh_token_propagates_error_on_400_response() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_refresh_token_propagates_error_on_401_response() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -368,7 +368,7 @@ async fn test_refresh_token_propagates_error_on_401_response() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_refresh_token_includes_resource_parameter() {
     let server = MockServer::start().await;
     let base_url = server.uri();
@@ -408,7 +408,7 @@ async fn test_refresh_token_includes_resource_parameter() {
 /// HTTP calls go only to the in-process `wiremock::MockServer`.
 /// `noop_browser_opener` ensures no subprocess is spawned.
 #[tokio::test]
-#[ignore = "disabled in CI because wiremock-backed OAuth flow tests touch local network sockets"]
+#[ignore = "requires local HTTP wiremock OAuth endpoints that intentionally violate production HTTPS policy; run with cargo test --all-features -- --ignored"]
 async fn test_token_response_without_optional_fields_is_parsed_correctly() {
     let server = MockServer::start().await;
     let base_url = server.uri();
