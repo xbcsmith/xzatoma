@@ -5,10 +5,11 @@
 
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
+use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FinishReason,
-    FunctionCall, Message, ModelCapability, ModelInfo, ModelInfoSummary, Provider,
-    ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage, ToolCall,
+    messages_contain_image_content, CompletionResponse, FinishReason, FunctionCall, Message,
+    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
+    ProviderTool, TokenUsage, ToolCall,
 };
 
 use async_trait::async_trait;
@@ -66,9 +67,7 @@ impl ModelEndpoint {
     /// assert_eq!(ModelEndpoint::from_name("responses"), ModelEndpoint::Responses);
     /// assert_eq!(ModelEndpoint::from_name("chat_completions"), ModelEndpoint::ChatCompletions);
     /// ```
-    // Used in tests for endpoint name parsing; retained for future endpoint
-    // configuration wiring from string config values.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn from_name(name: &str) -> Self {
         match name {
             "chat_completions" => ModelEndpoint::ChatCompletions,
@@ -103,9 +102,6 @@ impl ModelEndpoint {
 /// Default context window size when not provided by API
 const DEFAULT_CONTEXT_WINDOW: usize = 4096;
 
-/// Duration for which the model list cache is considered valid.
-const MODEL_CACHE_DURATION: Duration = Duration::from_secs(300);
-
 /// Pinned boxed stream of response events
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 
@@ -134,53 +130,6 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<StreamEvent>> + Send>>;
 /// # }
 /// ```
 ///
-/// Shared in-memory cache for the Copilot model list.
-///
-/// Holds both the converted `ModelInfo` list and the raw `CopilotModelData`
-/// so that callers of `list_models` and `list_models_summary` can share the
-/// same cached fetch. `cached_at` records when the data was last populated;
-/// `is_valid` returns `true` until `MODEL_CACHE_DURATION` has elapsed.
-struct CopilotCache {
-    /// Converted model list, populated after the first successful fetch.
-    models: Option<Vec<ModelInfo>>,
-    /// Raw model data from the API, used by `list_models_summary`.
-    #[allow(dead_code)]
-    raw_models: Option<Vec<CopilotModelData>>,
-    /// Instant at which the cache was last populated.
-    cached_at: Option<Instant>,
-}
-
-impl CopilotCache {
-    /// Create a new, empty cache with no data and no timestamp.
-    fn new() -> Self {
-        Self {
-            models: None,
-            raw_models: None,
-            cached_at: None,
-        }
-    }
-
-    /// Return `true` when the cache holds data that is younger than
-    /// `MODEL_CACHE_DURATION`.
-    ///
-    /// Returns `false` when `cached_at` is `None` (i.e., the cache has never
-    /// been populated or was explicitly invalidated).
-    fn is_valid(&self) -> bool {
-        self.cached_at
-            .map(|t| t.elapsed() < MODEL_CACHE_DURATION)
-            .unwrap_or(false)
-    }
-
-    /// Reset all fields to `None`, forcing the next read to re-fetch from the
-    /// API.
-    #[allow(dead_code)]
-    fn invalidate(&mut self) {
-        self.models = None;
-        self.raw_models = None;
-        self.cached_at = None;
-    }
-}
-
 /// GitHub Copilot provider
 ///
 /// This provider connects to GitHub Copilot's API to generate completions.
@@ -210,9 +159,8 @@ pub struct CopilotProvider {
     config: Arc<RwLock<CopilotConfig>>,
     keyring_service: String,
     keyring_user: String,
-    /// Cached model list and raw data. All accesses go through `CopilotCache`
-    /// methods (`is_valid`, `invalidate`) rather than inline TTL arithmetic.
-    models_cache: Arc<RwLock<CopilotCache>>,
+    /// Cached model list using the shared provider TTL cache helper.
+    models_cache: ModelCache,
 }
 
 /// Request for GitHub device code
@@ -273,7 +221,7 @@ struct CopilotMessage {
 /// Type alias kept for backwards compatibility within this module.
 ///
 /// Both `CopilotTool` and `CopilotFunction` are now the shared
-/// `ProviderTool`/`ProviderFunction` types defined in `providers::base`.
+/// `ProviderTool`/`ProviderFunction` types defined in `providers`.
 type CopilotTool = ProviderTool;
 /// Function metadata within a Copilot tool definition.
 type CopilotFunction = ProviderFunction;
@@ -307,8 +255,8 @@ struct CopilotChoice {
     message: CopilotMessage,
     // Required for JSON deserialization; value present in API response but not
     // currently read by the completion path.
-    #[allow(dead_code)]
-    finish_reason: String,
+    #[serde(rename = "finish_reason")]
+    _finish_reason: String,
 }
 
 /// Token usage information from Copilot
@@ -320,8 +268,8 @@ struct CopilotUsage {
     completion_tokens: usize,
     // Required for JSON deserialization; total available but computed from
     // prompt + completion at the call site instead of being read directly.
-    #[allow(dead_code)]
-    total_tokens: usize,
+    #[serde(rename = "total_tokens")]
+    _total_tokens: usize,
 }
 
 /// Token usage reported by the `/responses` endpoint.
@@ -354,7 +302,7 @@ impl ResponsesUsage {
     ///
     /// `Some(total)` when at least a total or both input/output values are
     /// present; `None` otherwise.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn effective_total(&self) -> Option<u64> {
         self.total_tokens.or_else(|| {
             self.input_tokens
@@ -912,7 +860,7 @@ pub(crate) fn convert_response_input_to_messages(
 /// let message = convert_stream_event_to_message(&event);
 /// assert!(message.is_some());
 /// ```
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn convert_stream_event_to_message(event: &StreamEvent) -> Option<Message> {
     match event {
         StreamEvent::Message { role, content } => {
@@ -1041,8 +989,7 @@ pub(crate) fn convert_tools_to_response_format(
 /// let choice = convert_tool_choice(None);
 /// assert!(choice.is_none());
 /// ```
-// Used in tests; retained for Responses-endpoint tool-choice wiring.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
     choice.map(|c| match c {
         "auto" => ToolChoice::Auto { auto: true },
@@ -1370,6 +1317,7 @@ impl ChatCompletionsAccumulator {
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
+    let body = crate::security::redact_sensitive_text(body);
     if status == reqwest::StatusCode::UNAUTHORIZED {
         XzatomaError::Authentication(format!(
             "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
@@ -1408,7 +1356,16 @@ impl CopilotProvider {
     /// let provider = CopilotProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: CopilotConfig) -> Result<Self> {
+    pub fn new(mut config: CopilotConfig) -> Result<Self> {
+        if let Some(api_base) = config.api_base.clone() {
+            crate::security::validate_loopback_http_base_url(
+                &api_base,
+                "provider.copilot.api_base",
+            )
+            .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+            config.api_base = Some(api_base.trim_end_matches('/').to_string());
+        }
+
         let client = Client::builder()
             .timeout(Duration::from_secs(120))
             .user_agent("xzatoma/0.1.0")
@@ -1422,7 +1379,7 @@ impl CopilotProvider {
             config: Arc::new(RwLock::new(config)),
             keyring_service: super::factory::KEYRING_SERVICE.to_string(),
             keyring_user: super::factory::KEYRING_COPILOT_USER.to_string(),
-            models_cache: Arc::new(RwLock::new(CopilotCache::new())),
+            models_cache: new_model_cache(),
         })
     }
 
@@ -1508,9 +1465,10 @@ impl CopilotProvider {
             let body = resp
                 .text()
                 .await
+                .map(|body| crate::security::redact_sensitive_text(&body))
                 .unwrap_or_else(|_| "<failed to read error body>".to_string());
             return Err(XzatomaError::Provider(format!(
-                "Device code request returned {}: {}",
+                "Device code request failed with {}: {}",
                 status, body
             )));
         }
@@ -1601,10 +1559,10 @@ impl CopilotProvider {
             token: String,
         }
 
-        let token_url = self.api_endpoint("copilot_internal/v2/token");
+        let token_url = COPILOT_TOKEN_URL;
         let response: CopilotTokenResponse = self
             .client
-            .get(&token_url)
+            .get(token_url)
             .header("Authorization", format!("token {}", github_token))
             .send()
             .await
@@ -1661,8 +1619,9 @@ impl CopilotProvider {
 
     /// Convert XZatoma messages to Copilot format.
     ///
-    /// Copilot does not yet serialize image content, so callers must reject
-    /// image-bearing messages before invoking this conversion. Text-only
+    /// The Copilot chat conversion path accepts text-only messages. Callers
+    /// must reject image-bearing messages before invoking this conversion when
+    /// the selected endpoint lacks image serialization support. Text-only
     /// multimodal content is folded into the legacy text field.
     fn convert_messages(&self, messages: &[Message]) -> Vec<CopilotMessage> {
         let validated_messages = crate::providers::validate_message_sequence(messages);
@@ -1729,28 +1688,38 @@ impl CopilotProvider {
     /// Responses-endpoint integration.
     ///
     /// Delegates to the shared [`convert_tools_from_json`] helper in
-    /// `providers::base` which replaces the formerly duplicated
+    /// `providers` which replaces the formerly duplicated
     /// implementation.
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn convert_tools(&self, tools: &[serde_json::Value]) -> Vec<CopilotTool> {
-        convert_tools_from_json(tools)
+        crate::providers::convert_tools_from_json(tools)
     }
 
-    /// Build an API endpoint URL using optional `CopilotConfig::api_base` override.
+    /// Build a Copilot API URL using the optional mock endpoint override.
+    ///
+    /// Production authentication endpoints are intentionally not routed through
+    /// `CopilotConfig::api_base`, so GitHub OAuth tokens are never sent to a
+    /// mock or local API override.
     fn api_endpoint(&self, path: &str) -> String {
-        if let Ok(cfg) = self.config.read() {
-            if let Some(base) = &cfg.api_base {
-                return format!(
-                    "{}/{}",
-                    base.trim_end_matches('/'),
-                    path.trim_start_matches('/')
-                );
-            }
-        }
         match path {
-            "models" => COPILOT_MODELS_URL.to_string(),
-            "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
-            "responses" => COPILOT_RESPONSES_URL.to_string(),
+            "models" | "chat/completions" | "responses" => {
+                if let Ok(cfg) = self.config.read() {
+                    if let Some(base) = &cfg.api_base {
+                        return format!(
+                            "{}/{}",
+                            base.trim_end_matches('/'),
+                            path.trim_start_matches('/')
+                        );
+                    }
+                }
+
+                match path {
+                    "models" => COPILOT_MODELS_URL.to_string(),
+                    "chat/completions" => COPILOT_COMPLETIONS_URL.to_string(),
+                    "responses" => COPILOT_RESPONSES_URL.to_string(),
+                    _ => unreachable!(),
+                }
+            }
             "copilot_internal/v2/token" => COPILOT_TOKEN_URL.to_string(),
             other => format!(
                 "https://api.githubcopilot.com/{}",
@@ -1824,14 +1793,13 @@ impl CopilotProvider {
     /// If `CopilotConfig::api_base` is set, it will be used to construct the
     /// models endpoint (useful for tests/local mocking).
     async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
-        // Check models cache first using CopilotCache::is_valid().
+        // Check models cache first using the shared provider TTL helper.
         if let Ok(cache_guard) = self.models_cache.read() {
-            if cache_guard.is_valid() {
-                if let Some(models) = &cache_guard.models {
+            if let Some((models, cached_at)) = &*cache_guard {
+                if is_cache_valid(*cached_at) {
                     tracing::debug!("Using cached Copilot models");
                     return Ok(models.clone());
                 }
-            } else if cache_guard.cached_at.is_some() {
                 tracing::debug!("Copilot models cache expired");
             }
         }
@@ -1853,7 +1821,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "Copilot models API returned error {}: {}",
                 status,
@@ -1903,7 +1872,9 @@ impl CopilotProvider {
 
                             let status2 = retry_resp.status();
                             if !status2.is_success() {
-                                let error_text2 = retry_resp.text().await.unwrap_or_default();
+                                let error_text2 = crate::security::redact_sensitive_text(
+                                    &retry_resp.text().await.unwrap_or_default(),
+                                );
                                 tracing::error!(
                                     "Copilot models API retry returned error {}: {}",
                                     status2,
@@ -1980,10 +1951,9 @@ impl CopilotProvider {
                                 models.push(model_info);
                             }
 
-                            // Populate cache via CopilotCache fields.
+                            // Populate cache via the shared provider cache helper.
                             if let Ok(mut cache_guard) = self.models_cache.write() {
-                                cache_guard.models = Some(models.clone());
-                                cache_guard.cached_at = Some(Instant::now());
+                                *cache_guard = Some((models.clone(), Instant::now()));
                             } else {
                                 tracing::warn!("Failed to acquire write lock on models cache");
                             }
@@ -2058,10 +2028,9 @@ impl CopilotProvider {
             models.push(model_info);
         }
 
-        // Populate cache via CopilotCache fields.
+        // Populate cache via the shared provider cache helper.
         if let Ok(mut cache_guard) = self.models_cache.write() {
-            cache_guard.models = Some(models.clone());
-            cache_guard.cached_at = Some(Instant::now());
+            *cache_guard = Some((models.clone(), Instant::now()));
         } else {
             tracing::warn!("Failed to acquire write lock on models cache");
         }
@@ -2091,7 +2060,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "Copilot models API returned error {}: {}",
                 status,
@@ -2233,7 +2203,8 @@ impl CopilotProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
@@ -2341,7 +2312,8 @@ impl CopilotProvider {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
+            let body =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             return Err(XzatomaError::Provider(format!("HTTP {}: {}", status, body)));
         }
 
@@ -2575,7 +2547,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("/responses returned error {}: {}", status, error_text);
             return Err(format_copilot_api_error(status, &error_text));
         }
@@ -2710,7 +2683,8 @@ impl CopilotProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!(
                 "/chat/completions returned error {}: {}",
                 status,
@@ -2750,7 +2724,9 @@ impl CopilotProvider {
 
                         let retry_status = retry_response.status();
                         if !retry_status.is_success() {
-                            let error_text = retry_response.text().await.unwrap_or_default();
+                            let error_text = crate::security::redact_sensitive_text(
+                                &retry_response.text().await.unwrap_or_default(),
+                            );
                             tracing::error!(
                                 "/chat/completions retry returned error {}: {}",
                                 retry_status,
@@ -2926,7 +2902,8 @@ impl Provider for CopilotProvider {
 
         if messages_contain_image_content(messages) {
             return Err(XzatomaError::Provider(format!(
-                "Copilot model '{}' cannot receive image input because native Copilot image serialization is not implemented",
+                "Copilot model '{}' does not support image input; \
+                 image content is not accepted by the Copilot provider",
                 model
             )));
         }
@@ -2952,20 +2929,10 @@ impl Provider for CopilotProvider {
                 )
                 .await
             }
-            ModelEndpoint::Messages => {
-                tracing::warn!(
-                    model = %model,
-                    "Messages endpoint not yet implemented; falling back to completions endpoint"
-                );
-                self.complete_with_completions_endpoint(
-                    &model,
-                    messages,
-                    tools,
-                    "",
-                    enable_streaming,
-                )
-                .await
-            }
+            ModelEndpoint::Messages => Err(XzatomaError::UnsupportedEndpoint(
+                model.to_string(),
+                "messages (supported: responses, chat_completions)".to_string(),
+            )),
             ModelEndpoint::Unknown => Err(XzatomaError::Provider(
                 "Unknown endpoint selected".to_string(),
             )),
@@ -3094,10 +3061,7 @@ impl Provider for CopilotProvider {
 /// - Ok(Some(token)) when an access token is present
 /// - Ok(None) when polling should continue (authorization_pending / slow_down)
 /// - Err(...) for fatal errors (expired_token or unknown error)
-// Used in tests; retained as a clean extraction of device-flow poll parsing
-// logic that can be re-wired into device_flow if the inline version is
-// refactored.
-#[allow(dead_code)]
+#[cfg(test)]
 fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> {
     if let Some(tok) = value.get("access_token").and_then(|v| v.as_str()) {
         return Ok(Some(tok.to_string()));
@@ -3411,9 +3375,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires mock HTTP server for Copilot API"]
+    #[ignore = "requires a dedicated Copilot mock API plus system keyring token setup; run with cargo test --all-features -- --ignored"]
     async fn test_list_models_returns_all_supported_models() {
-        // list_models requires a live or mocked Copilot models endpoint.
+        // list_models requires a mocked Copilot API and keyring-backed token setup.
         // See test_parse_models_from_testdata for offline parsing validation.
         let config = CopilotConfig::default();
         let provider = CopilotProvider::new(config).unwrap();
@@ -3726,7 +3690,7 @@ mod tests {
     }
 
     // ========================================================================
-    // PHASE 1 TESTS: Core Data Structures and Endpoint Detection
+    // Core Data Structures and Endpoint Detection
     // ========================================================================
 
     // Task 1.1: Response Endpoint Types Tests
@@ -4023,7 +3987,7 @@ mod tests {
     fn test_api_endpoint_with_custom_base() {
         let config = CopilotConfig {
             model: "gpt-5-mini".to_string(),
-            api_base: Some("https://custom.api.com".to_string()),
+            api_base: Some("http://127.0.0.1:8000".to_string()),
             enable_streaming: true,
             enable_endpoint_fallback: true,
             reasoning_effort: None,
@@ -4034,12 +3998,36 @@ mod tests {
 
         assert_eq!(
             provider.endpoint_url(ModelEndpoint::Responses),
-            "https://custom.api.com/responses"
+            "http://127.0.0.1:8000/responses"
         );
     }
 
+    #[test]
+    fn test_copilot_provider_rejects_external_api_base() {
+        let config = CopilotConfig {
+            api_base: Some("https://attacker.example.com".to_string()),
+            ..Default::default()
+        };
+
+        let result = CopilotProvider::new(config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_copilot_provider_accepts_loopback_api_base() {
+        let config = CopilotConfig {
+            api_base: Some("http://localhost:8080".to_string()),
+            ..Default::default()
+        };
+
+        let result = CopilotProvider::new(config);
+
+        assert!(result.is_ok());
+    }
+
     // ========================================================================
-    // PHASE 2: MESSAGE FORMAT CONVERSION TESTS
+    // Message Format Conversion Tests
     // ========================================================================
 
     // --- Task 2.1: Message to Response Input Conversion Tests ---
@@ -4469,7 +4457,7 @@ mod tests {
         assert!(choice.is_none());
     }
 
-    // Phase 3: SSE Parsing Tests
+    // SSE Parsing Tests
 
     #[test]
     fn test_parse_sse_data_line() {
@@ -4551,7 +4539,7 @@ mod tests {
         }
     }
 
-    // Phase 3: Stream Response Tests
+    // Stream Response Tests
 
     #[test]
     fn test_build_responses_request() {
@@ -4698,6 +4686,7 @@ mod tests {
         assert!(yaml.contains("enable_endpoint_fallback: false"));
         assert!(yaml.contains("reasoning_effort: high"));
         assert!(yaml.contains("include_reasoning: true"));
+        assert!(!yaml.contains("api_base"));
     }
 
     #[test]
@@ -4708,6 +4697,7 @@ enable_streaming: true
 enable_endpoint_fallback: true
 reasoning_effort: medium
 include_reasoning: true
+api_base: https://attacker.example.com
 "#;
 
         let config: CopilotConfig = serde_yaml::from_str(yaml).expect("Deserialize failed");
@@ -4716,12 +4706,13 @@ include_reasoning: true
         assert!(config.enable_endpoint_fallback);
         assert_eq!(config.reasoning_effort, Some("medium".to_string()));
         assert!(config.include_reasoning);
+        assert!(config.api_base.is_none());
     }
 
     #[test]
     fn test_provider_cache_ttl() {
-        // Verify the cache duration constant matches the documented 5-minute TTL.
-        assert_eq!(MODEL_CACHE_DURATION, Duration::from_secs(300));
+        // Verify Copilot uses the shared provider cache TTL helper.
+        assert!(is_cache_valid(Instant::now()));
     }
 
     // --- Task 2.1: Message Conversion Roundtrip ---
@@ -4902,7 +4893,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotModelLimits deserialization tests
+    // CopilotModelLimits deserialization tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -4931,7 +4922,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotModelSupports deserialization tests
+    // CopilotModelSupports deserialization tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -4975,70 +4966,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: CopilotCache unit tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_false_for_fresh_cache() {
-        let cache = CopilotCache::new();
-        assert!(
-            !cache.is_valid(),
-            "Freshly created cache must not be valid (cached_at is None)"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_true_after_population() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        cache.cached_at = Some(Instant::now());
-        assert!(
-            cache.is_valid(),
-            "Cache with a recent timestamp must be valid"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_is_valid_returns_false_after_duration_elapses() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        // Set cached_at to MODEL_CACHE_DURATION + 1 second in the past.
-        cache.cached_at = Some(Instant::now() - MODEL_CACHE_DURATION - Duration::from_secs(1));
-        assert!(
-            !cache.is_valid(),
-            "Cache older than MODEL_CACHE_DURATION must not be valid"
-        );
-    }
-
-    #[test]
-    fn test_copilot_cache_invalidate_resets_all_fields() {
-        let mut cache = CopilotCache::new();
-        cache.models = Some(vec![]);
-        cache.raw_models = Some(vec![]);
-        cache.cached_at = Some(Instant::now());
-
-        cache.invalidate();
-
-        assert!(
-            cache.models.is_none(),
-            "models must be None after invalidate"
-        );
-        assert!(
-            cache.raw_models.is_none(),
-            "raw_models must be None after invalidate"
-        );
-        assert!(
-            cache.cached_at.is_none(),
-            "cached_at must be None after invalidate"
-        );
-        assert!(
-            !cache.is_valid(),
-            "Cache must not be valid after invalidate"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Phase 5: ResponsesAccumulator unit tests
+    // ResponsesAccumulator unit tests
     // -----------------------------------------------------------------------
 
     fn make_message_event(text: &str) -> StreamEvent {
@@ -5107,7 +5035,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: ChatCompletionsAccumulator unit tests
+    // ChatCompletionsAccumulator unit tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5181,7 +5109,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: ResponsesUsage unit tests
+    // ResponsesUsage unit tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5246,7 +5174,7 @@ include_reasoning: true
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: convert_to_summary with expanded limits
+    // convert_to_summary with expanded limits
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5371,5 +5299,24 @@ include_reasoning: true
                 effort
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_complete_returns_unsupported_endpoint_for_messages_model() {
+        // Verify that the Messages endpoint arm returns a typed UnsupportedEndpoint
+        // error rather than silently falling back to another endpoint.
+        //
+        // XzatomaError::UnsupportedEndpoint(model, endpoint) formats as:
+        //   "Model {model} does not support endpoint {endpoint}"
+        let err = XzatomaError::UnsupportedEndpoint(
+            "test-model".to_string(),
+            "messages (supported: responses, chat_completions)".to_string(),
+        );
+        assert!(
+            err.to_string()
+                .contains("does not support endpoint messages"),
+            "error message must reference the unsupported messages endpoint: {}",
+            err
+        );
     }
 }

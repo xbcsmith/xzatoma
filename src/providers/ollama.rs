@@ -6,6 +6,7 @@
 
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
+use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
 use crate::providers::{
     convert_tools_from_json, messages_contain_image_content, CompletionResponse, FunctionCall,
     Message, ModelCapability, ModelInfo, Provider, ProviderCapabilities, ProviderFunctionCall,
@@ -43,13 +44,6 @@ use std::time::{Duration, Instant};
 /// # Ok(())
 /// # }
 /// ```
-/// Type alias for the in-memory model cache shared across async operations.
-///
-/// Caches the list of available models together with the timestamp of the last
-/// fetch so that repeated calls to `list_models` can avoid hitting the API on
-/// every invocation.
-type ModelCache = Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>;
-
 pub struct OllamaProvider {
     client: Client,
     config: Arc<RwLock<OllamaConfig>>,
@@ -70,9 +64,8 @@ struct OllamaModelTag {
     size: u64,
     // Required for JSON deserialization; digest is present in the API response
     // but not currently read by the model listing path.
-    #[allow(dead_code)]
-    #[serde(default)]
-    digest: String,
+    #[serde(default, rename = "digest")]
+    _digest: String,
     #[serde(default)]
     modified_at: String,
 }
@@ -86,12 +79,10 @@ struct OllamaShowResponse {
     model_info: serde_json::Value,
     // Required for JSON deserialization; parameters and template are returned
     // by /api/show but not currently consumed by the provider.
-    #[allow(dead_code)]
-    #[serde(default)]
-    parameters: String,
-    #[allow(dead_code)]
-    #[serde(default)]
-    template: String,
+    #[serde(default, rename = "parameters")]
+    _parameters: String,
+    #[serde(default, rename = "template")]
+    _template: String,
     #[serde(default)]
     details: OllamaModelDetails,
     #[serde(default)]
@@ -112,7 +103,7 @@ struct OllamaModelDetails {
 /// Shared type aliases for Ollama's wire format.
 ///
 /// Ollama's JSON schema for requests and responses is structurally identical
-/// to the canonical shared types defined in `providers::base`.  These aliases
+/// to the canonical shared types defined in `providers`.  These aliases
 /// keep internal code readable without duplicating struct definitions.
 type OllamaRequest = ProviderRequest;
 type OllamaMessage = ProviderMessage;
@@ -130,9 +121,8 @@ struct OllamaResponse {
     eval_count: usize,
     // Required for JSON deserialization; total_duration is returned by the API
     // but only prompt_eval_count and eval_count are used for token tracking.
-    #[allow(dead_code)]
-    #[serde(default)]
-    total_duration: u64,
+    #[serde(default, rename = "total_duration")]
+    _total_duration: u64,
 }
 
 impl OllamaProvider {
@@ -165,7 +155,11 @@ impl OllamaProvider {
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: OllamaConfig) -> Result<Self> {
+    pub fn new(mut config: OllamaConfig) -> Result<Self> {
+        config.host =
+            crate::security::validate_provider_base_url(&config.host, "provider.ollama.host")
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
@@ -181,7 +175,7 @@ impl OllamaProvider {
         Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
-            model_cache: Arc::new(RwLock::new(None)),
+            model_cache: new_model_cache(),
         })
     }
 
@@ -331,24 +325,35 @@ impl OllamaProvider {
         let url = format!("{}/api/tags", host);
         tracing::debug!("Fetching models from Ollama: {}", url);
 
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            tracing::warn!("Failed to fetch Ollama models: {}", e);
-            XzatomaError::Provider(format!("Failed to connect to Ollama server: {}", e))
+        let response = self.client.get(&url).send().await.map_err(|source| {
+            tracing::warn!("Failed to fetch Ollama models: {}", source);
+            XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                source: source.into(),
+            }
         })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::Provider(format!(
-                "Ollama returned error {}: {}",
-                status, error_text
-            )));
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                status,
+                response: error_text,
+            });
         }
 
-        let ollama_response: OllamaTagsResponse = response.json().await.map_err(|e| {
-            tracing::error!("Failed to parse Ollama tags response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e))
+        let ollama_response: OllamaTagsResponse = response.json().await.map_err(|source| {
+            tracing::error!("Failed to parse Ollama tags response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/tags".to_string(),
+                source: source.into(),
+            }
         })?;
 
         // Try to fetch richer model details for each tag via /api/show where possible.
@@ -413,33 +418,48 @@ impl OllamaProvider {
             })
             .send()
             .await
-            .map_err(|e| {
-                tracing::warn!("Failed to fetch Ollama model details: {}", e);
-                XzatomaError::Provider(format!("Failed to fetch model details: {}", e))
+            .map_err(|source| {
+                tracing::warn!("Failed to fetch Ollama model details: {}", source);
+                XzatomaError::ProviderHttpRequest {
+                    provider: "ollama".to_string(),
+                    endpoint: "api/show".to_string(),
+                    source: source.into(),
+                }
             })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::Provider(format!(
-                "Model not found: {}",
-                model_name
-            )));
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/show".to_string(),
+                status,
+                response: format!("model={}: {}", model_name, error_text),
+            });
         }
 
         // Read the response body as text first so we can handle varying response shapes
-        let body = response.text().await.map_err(|e| {
-            tracing::error!("Failed to read Ollama show response body: {}", e);
-            XzatomaError::Provider(format!("Failed to read model details: {}", e))
+        let body = response.text().await.map_err(|source| {
+            tracing::error!("Failed to read Ollama show response body: {}", source);
+            XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/show:body".to_string(),
+                source: source.into(),
+            }
         })?;
 
         let raw_json: serde_json::Value =
             serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
 
-        let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|e| {
-            tracing::error!("Failed to parse Ollama show response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse model details: {}", e))
+        let show_response: OllamaShowResponse = serde_json::from_str(&body).map_err(|source| {
+            tracing::error!("Failed to parse Ollama show response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/show".to_string(),
+                source: source.into(),
+            }
         })?;
 
         // Use the name from the response when present; otherwise fall back to the requested model name
@@ -473,22 +493,6 @@ impl OllamaProvider {
         }
 
         Ok(model_info)
-    }
-
-    /// Invalidate the model cache
-    // set_model no longer calls invalidate_cache; retained for potential
-    // future use (e.g. explicit cache busting after external model changes).
-    #[allow(dead_code)]
-    fn invalidate_cache(&self) {
-        if let Ok(mut cache) = self.model_cache.write() {
-            *cache = None;
-            tracing::debug!("Model cache invalidated");
-        }
-    }
-
-    /// Check if cache is still valid (less than 5 minutes old)
-    fn is_cache_valid(cached_at: Instant) -> bool {
-        cached_at.elapsed() < Duration::from_secs(300)
     }
 }
 
@@ -529,7 +533,7 @@ fn add_model_capabilities(model: &mut ModelInfo, family: &str) {
         "llava" => {
             model.add_capability(ModelCapability::Vision);
         }
-        _ if ollama_model_supports_vision(&model.name) => {
+        _ if crate::providers::ollama_model_supports_vision(&model.name) => {
             model.add_capability(ModelCapability::Vision);
         }
         "codellama" | "codegemma" | "deepseek-coder" | "starcoder" | "starcoder2" | "codestral"
@@ -587,18 +591,17 @@ fn build_model_info_from_show_response(
         model_info.set_provider_metadata("capabilities", caps_joined.clone());
 
         for cap in &show.capabilities {
-            #[allow(deprecated)]
             match cap.to_lowercase().as_str() {
                 "tools" => model_info.add_capability(ModelCapability::FunctionCalling),
                 "vision" => model_info.add_capability(ModelCapability::Vision),
                 "streaming" => model_info.add_capability(ModelCapability::Streaming),
-                "json" | "json_mode" | "json-mode" => {
-                    model_info.add_capability(ModelCapability::JsonMode)
-                }
                 "long_context" | "longcontext" | "long-context" => {
                     model_info.add_capability(ModelCapability::LongContext)
                 }
-                "completion" => model_info.add_capability(ModelCapability::Completion),
+                "json" | "json_mode" | "json-mode" | "completion" => {
+                    // Retained in provider metadata; no active ModelCapability variant
+                    // is assigned for these legacy provider strings.
+                }
                 _ => {
                     // Unknown capability: preserve via provider metadata (already added)
                 }
@@ -653,16 +656,6 @@ fn format_size(bytes: u64) -> String {
     format!("{:.1}{}", size, UNITS[unit_idx])
 }
 
-fn ollama_model_supports_vision(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.contains("llava")
-        || model.contains("bakllava")
-        || model.contains("moondream")
-        || model.contains("minicpm-v")
-        || model.contains("gemma3")
-        || model.contains("vision")
-}
-
 #[async_trait]
 impl Provider for OllamaProvider {
     async fn complete(
@@ -677,7 +670,9 @@ impl Provider for OllamaProvider {
             (format!("{}/api/chat", config.host), config.model.clone())
         };
 
-        if messages_contain_image_content(messages) && !ollama_model_supports_vision(&model) {
+        if messages_contain_image_content(messages)
+            && !crate::providers::ollama_model_supports_vision(&model)
+        {
             return Err(XzatomaError::Provider(format!(
                 "Ollama model '{}' does not support image input",
                 model
@@ -705,20 +700,31 @@ impl Provider for OllamaProvider {
             .json(&ollama_request)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Ollama request failed: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(XzatomaError::Provider(format!(
-                "Ollama returned error {}: {}",
-                status, error_text
-            )));
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                status,
+                response: error_text,
+            });
         }
 
-        let ollama_response: OllamaResponse = response.json().await.map_err(|e| {
-            tracing::error!("Failed to parse Ollama response: {}", e);
-            XzatomaError::Provider(format!("Failed to parse Ollama response: {}", e))
+        let ollama_response: OllamaResponse = response.json().await.map_err(|source| {
+            tracing::error!("Failed to parse Ollama response: {}", source);
+            XzatomaError::ProviderResponseParse {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat".to_string(),
+                source: source.into(),
+            }
         })?;
 
         tracing::debug!(
@@ -777,7 +783,7 @@ impl Provider for OllamaProvider {
         // Check cache first
         if let Ok(cache) = self.model_cache.read() {
             if let Some((models, cached_at)) = cache.as_ref() {
-                if Self::is_cache_valid(*cached_at) {
+                if is_cache_valid(*cached_at) {
                     tracing::debug!("Using cached model list");
                     return Ok(models.clone());
                 }
@@ -801,7 +807,7 @@ impl Provider for OllamaProvider {
         // Try to get from cache first
         if let Ok(cache) = self.model_cache.read() {
             if let Some((models, cached_at)) = cache.as_ref() {
-                if Self::is_cache_valid(*cached_at) {
+                if is_cache_valid(*cached_at) {
                     if let Some(model) = models.iter().find(|m| m.name == model_name) {
                         return Ok(model.clone());
                     }
@@ -871,6 +877,28 @@ mod tests {
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_ollama_provider_normalizes_trailing_slash_host() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434/".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        assert_eq!(provider.host(), "http://localhost:11434");
+    }
+
+    #[test]
+    fn test_ollama_provider_rejects_host_with_query() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434?token=secret".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+        let result = OllamaProvider::new(config);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1012,9 +1040,13 @@ mod tests {
 
     #[test]
     fn test_ollama_model_supports_vision_allowlist() {
-        assert!(ollama_model_supports_vision("llava:latest"));
-        assert!(ollama_model_supports_vision("gemma3:12b"));
-        assert!(!ollama_model_supports_vision("llama3.2:latest"));
+        assert!(crate::providers::ollama_model_supports_vision(
+            "llava:latest"
+        ));
+        assert!(crate::providers::ollama_model_supports_vision("gemma3:12b"));
+        assert!(!crate::providers::ollama_model_supports_vision(
+            "llama3.2:latest"
+        ));
     }
 
     #[test]
@@ -1175,13 +1207,13 @@ mod tests {
     #[test]
     fn test_is_cache_valid_fresh() {
         let instant = Instant::now();
-        assert!(OllamaProvider::is_cache_valid(instant));
+        assert!(is_cache_valid(instant));
     }
 
     #[test]
     fn test_is_cache_valid_expired() {
         let instant = Instant::now() - Duration::from_secs(400);
-        assert!(!OllamaProvider::is_cache_valid(instant));
+        assert!(!is_cache_valid(instant));
     }
 
     #[test]
@@ -1232,8 +1264,8 @@ mod tests {
         let show = OllamaShowResponse {
             name: None,
             model_info: serde_json::json!({"description": "Test model"}),
-            parameters: String::new(),
-            template: String::new(),
+            _parameters: String::new(),
+            _template: String::new(),
             details: OllamaModelDetails {
                 parameter_size: String::new(),
                 quantization_level: String::new(),
@@ -1249,7 +1281,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_build_model_info_from_show_response_parses_context_and_capabilities() {
         let json = r#"{
             "name": "granite4:latest",
@@ -1271,7 +1302,6 @@ mod tests {
         );
         assert_eq!(model_info.context_window, 131072);
         assert!(model_info.supports_capability(ModelCapability::FunctionCalling));
-        assert!(model_info.supports_capability(ModelCapability::Completion));
         assert_eq!(
             model_info.provider_specific.get("capabilities").unwrap(),
             "completion, tools"

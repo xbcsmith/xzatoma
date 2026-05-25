@@ -120,8 +120,11 @@ impl ConversationStore {
     /// # }
     /// ```
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        let db = sled::open(path)
-            .map_err(|e| XzatomaError::Storage(format!("Failed to open database: {}", e)))?;
+        let path_display = path.as_ref().display().to_string();
+        let db = sled::open(path).map_err(|source| XzatomaError::StorageDatabaseOpen {
+            path: path_display,
+            source: source.into(),
+        })?;
         Ok(Self { db })
     }
 
@@ -140,16 +143,25 @@ impl ConversationStore {
     /// Returns `XzatomaError::Storage` if serialization or insertion fails
     pub fn save(&self, record: &ConversationRecord) -> Result<()> {
         let key = record.id.as_bytes();
-        let value = serde_json::to_vec(record)
-            .map_err(|e| XzatomaError::Storage(format!("Serialization failed: {}", e)))?;
+        let value =
+            serde_json::to_vec(record).map_err(|source| XzatomaError::StorageSerialization {
+                operation: "serialize conversation record".to_string(),
+                source: source.into(),
+            })?;
 
         self.db
             .insert(key, value)
-            .map_err(|e| XzatomaError::Storage(format!("Insert failed: {}", e)))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "insert conversation record".to_string(),
+                source: source.into(),
+            })?;
 
         self.db
             .flush()
-            .map_err(|e| XzatomaError::Storage(format!("Flush failed: {}", e)))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "flush conversation store".to_string(),
+                source: source.into(),
+            })?;
 
         Ok(())
     }
@@ -172,11 +184,17 @@ impl ConversationStore {
         match self
             .db
             .get(key)
-            .map_err(|e| XzatomaError::Storage(format!("Get failed: {}", e)))?
-        {
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "get conversation record".to_string(),
+                source: source.into(),
+            })? {
             Some(bytes) => {
-                let record = serde_json::from_slice(&bytes)
-                    .map_err(|e| XzatomaError::Storage(format!("Deserialization failed: {}", e)))?;
+                let record = serde_json::from_slice(&bytes).map_err(|source| {
+                    XzatomaError::StorageSerialization {
+                        operation: "deserialize conversation record".to_string(),
+                        source: source.into(),
+                    }
+                })?;
                 Ok(Some(record))
             }
             None => Ok(None),
@@ -207,11 +225,17 @@ impl ConversationStore {
                 break;
             }
 
-            let (_, value) =
-                result.map_err(|e| XzatomaError::Storage(format!("Iteration failed: {}", e)))?;
+            let (_, value) = result.map_err(|source| XzatomaError::StorageQuery {
+                operation: "iterate conversation records".to_string(),
+                source: source.into(),
+            })?;
 
-            let record: ConversationRecord = serde_json::from_slice(&value)
-                .map_err(|e| XzatomaError::Storage(format!("Deserialization failed: {}", e)))?;
+            let record: ConversationRecord = serde_json::from_slice(&value).map_err(|source| {
+                XzatomaError::StorageSerialization {
+                    operation: "deserialize conversation record".to_string(),
+                    source: source.into(),
+                }
+            })?;
 
             records.push(record);
         }
@@ -238,11 +262,17 @@ impl ConversationStore {
     pub fn find_by_parent(&self, parent_id: &str) -> Result<Vec<ConversationRecord>> {
         let mut records = Vec::new();
         for result in self.db.iter() {
-            let (_, value) =
-                result.map_err(|e| XzatomaError::Storage(format!("Iteration failed: {}", e)))?;
+            let (_, value) = result.map_err(|source| XzatomaError::StorageQuery {
+                operation: "iterate conversation records by parent".to_string(),
+                source: source.into(),
+            })?;
 
-            let record: ConversationRecord = serde_json::from_slice(&value)
-                .map_err(|e| XzatomaError::Storage(format!("Deserialization failed: {}", e)))?;
+            let record: ConversationRecord = serde_json::from_slice(&value).map_err(|source| {
+                XzatomaError::StorageSerialization {
+                    operation: "deserialize conversation record".to_string(),
+                    source: source.into(),
+                }
+            })?;
 
             if record.parent_id.as_deref() == Some(parent_id) {
                 records.push(record);

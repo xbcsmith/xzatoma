@@ -8,7 +8,7 @@
 //!
 //! ```rust,no_run
 //! use std::sync::Arc;
-//! use xzatoma::xzepr::consumer::{
+//! use xzatoma::watcher::xzepr::consumer::{
 //!     KafkaConsumerConfig, XzeprConsumer, MessageHandler, CloudEventMessage,
 //! };
 //!
@@ -76,7 +76,7 @@ pub enum ConsumerError {
 /// # Example
 ///
 /// ```rust
-/// use xzatoma::xzepr::consumer::{MessageHandler, CloudEventMessage};
+/// use xzatoma::watcher::xzepr::consumer::{MessageHandler, CloudEventMessage};
 ///
 /// struct MyHandler;
 ///
@@ -130,7 +130,7 @@ impl XzeprConsumer {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use xzatoma::xzepr::consumer::{KafkaConsumerConfig, XzeprConsumer};
+    /// use xzatoma::watcher::xzepr::consumer::{KafkaConsumerConfig, XzeprConsumer};
     ///
     /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "my-service");
     /// let consumer = XzeprConsumer::new(config).unwrap();
@@ -637,7 +637,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092 and topic test-topic; run with cargo test --all-features -- --ignored"]
     async fn test_run_and_stop() {
         // This test requires a real Kafka broker at localhost:9092.
         let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
@@ -750,7 +750,7 @@ mod tests {
     // -- Integration tests that require a running Kafka broker --
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092 and topic test-topic; run with cargo test --all-features -- --ignored"]
     async fn test_run_with_channel_integration() {
         // Requires a real Kafka broker at localhost:9092 with topic "test-topic".
         let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
@@ -777,7 +777,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires a running Kafka broker at localhost:9092 with published CloudEvent messages; run with cargo test --all-features -- --ignored"]
     async fn test_run_handler_receives_messages_integration() {
         // Requires a real Kafka broker at localhost:9092 with topic "test-topic"
         // and at least one CloudEventMessage published to the topic.

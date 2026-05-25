@@ -1,7 +1,7 @@
 //! Plan parsing tool for XZatoma
 //!
 //! This module provides plan file parsing functionality.
-//! Phase 5 implementation: YAML, JSON, Markdown parsing and validation.
+//! Supports YAML, JSON, and Markdown plan formats.
 
 use crate::error::{Result, XzatomaError};
 use serde::{Deserialize, Serialize};

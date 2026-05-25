@@ -183,7 +183,8 @@ main -> cli -> commands -> agent -> providers
 
 ### Provider Trait
 
-Defined in `src/providers/base.rs`:
+Defined in `src/providers/trait_mod.rs` with shared provider types in
+`src/providers/types.rs`:
 
 ```rust
 pub trait Provider: Send + Sync {

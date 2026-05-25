@@ -104,6 +104,7 @@ libc = "0.2"
 prometheus = ["metrics-exporter-prometheus"]
 
 [dev-dependencies]
+http = "0.2"
 mockall = "0.12"
 tempfile = "3.8"
 tokio-test = "0.4"

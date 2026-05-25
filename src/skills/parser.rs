@@ -1,6 +1,6 @@
 //! Skill document parser for `SKILL.md` files.
 //!
-//! This module provides the Phase 1 parsing foundation for agent skills.
+//! This module provides the SKILL.md document parser for agent skills.
 //! It parses `SKILL.md` files into a lightweight raw document model that is
 //! later validated by the skills validation layer.
 
@@ -157,9 +157,9 @@ pub fn parse_skill_content(
 
 /// Split content into optional frontmatter and Markdown body.
 ///
-/// Phase 1 requires invalid skills to be diagnosed rather than promoted into the
-/// valid catalog. This parser therefore accepts content without frontmatter and
-/// marks it as such so validation can reject it deterministically.
+/// Invalid skills are diagnosed rather than promoted into the valid catalog.
+/// This parser accepts content without frontmatter and marks it as such so
+/// validation can reject it deterministically.
 ///
 /// # Arguments
 ///
@@ -223,7 +223,7 @@ pub fn split_frontmatter(content: &str) -> Result<(bool, &str, &str)> {
 
 /// Parse YAML frontmatter into a flattened string map.
 ///
-/// Supported Phase 1 fields:
+/// Supported frontmatter fields:
 ///
 /// - `name`
 /// - `description`

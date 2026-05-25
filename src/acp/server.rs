@@ -12,7 +12,7 @@
 ///   - `POST /runs`
 ///   - `GET /runs/{run_id}`
 ///   - `GET /runs/{run_id}/events`
-/// - Phase 4 stateful lifecycle endpoints:
+/// - Stateful lifecycle endpoints:
 ///   - `POST /runs/{run_id}`
 ///   - `POST /runs/{run_id}/cancel`
 ///   - `GET /sessions/{session_id}`
@@ -32,11 +32,14 @@
 /// let state = AcpServerState::from_config(&config).unwrap();
 /// let _router = build_router(state, &config.acp);
 /// ```
+use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
+use axum::http::{header, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -58,7 +61,7 @@ use crate::error::{Result, XzatomaError};
 ///
 /// This state contains the generated ACP discovery manifests and the effective
 /// path strategy chosen from configuration. The state is intentionally small and
-/// read-only for Phase 2.
+/// read-only for discovery.
 ///
 /// # Examples
 ///
@@ -251,7 +254,7 @@ impl AcpServerState {
 
 /// Effective ACP path exposure strategy.
 ///
-/// This captures the chosen Phase 2 route layout so it can be surfaced in
+/// This captures the chosen route layout so it can be surfaced in
 /// metadata and documentation. XZatoma defaults to versioned routes to avoid
 /// colliding with unrelated application paths, but root-compatible ACP paths
 /// can be enabled explicitly for spec-oriented deployments.
@@ -389,7 +392,7 @@ impl PingResponse {
 
 /// Query parameters for `GET /agents`.
 ///
-/// Phase 2 supports a simple list shape with optional offset/limit filtering so
+/// The current implementation supports a simple list shape with optional offset/limit filtering so
 /// the endpoint can evolve toward pagination without breaking its response
 /// contract.
 ///
@@ -635,6 +638,116 @@ impl AcpHttpErrorBody {
     }
 }
 
+#[derive(Debug)]
+struct AcpHttpProtection {
+    auth_token: Option<String>,
+    rate_limiter: Mutex<AcpRateLimiter>,
+}
+
+impl AcpHttpProtection {
+    fn from_config(config: &AcpConfig) -> Self {
+        Self {
+            auth_token: config.auth_token.clone(),
+            rate_limiter: Mutex::new(AcpRateLimiter::new(config.rate_limit_per_minute)),
+        }
+    }
+
+    fn validate_authorization(&self, request: &Request) -> std::result::Result<(), AcpHttpError> {
+        let Some(expected_token) = self.auth_token.as_deref() else {
+            return Ok(());
+        };
+
+        let authorized = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .map(|token| token == expected_token)
+            .unwrap_or(false);
+
+        if authorized {
+            Ok(())
+        } else {
+            Err(AcpHttpError::new(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "ACP HTTP request requires a valid bearer token",
+            ))
+        }
+    }
+
+    fn check_rate_limit(&self) -> std::result::Result<(), AcpHttpError> {
+        let mut limiter = self.rate_limiter.lock().map_err(|_| {
+            AcpHttpError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "rate_limiter_unavailable",
+                "ACP rate limiter is unavailable",
+            )
+        })?;
+        if limiter.check_and_record() {
+            Ok(())
+        } else {
+            Err(AcpHttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_exceeded",
+                "ACP HTTP request rate limit exceeded",
+            ))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct AcpRateLimiter {
+    requests: VecDeque<Instant>,
+    limit: usize,
+    window: Duration,
+}
+
+impl AcpRateLimiter {
+    fn new(limit: usize) -> Self {
+        Self {
+            requests: VecDeque::new(),
+            limit,
+            window: Duration::from_secs(60),
+        }
+    }
+
+    fn check_and_record(&mut self) -> bool {
+        let cutoff = Instant::now() - self.window;
+        while self
+            .requests
+            .front()
+            .map(|instant| *instant <= cutoff)
+            .unwrap_or(false)
+        {
+            self.requests.pop_front();
+        }
+
+        if self.requests.len() >= self.limit {
+            return false;
+        }
+
+        self.requests.push_back(Instant::now());
+        true
+    }
+}
+
+async fn enforce_acp_http_protection(
+    State(protection): State<Arc<AcpHttpProtection>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Err(error) = protection.validate_authorization(&request) {
+        return error.into_response();
+    }
+
+    if let Err(error) = protection.check_rate_limit() {
+        return error.into_response();
+    }
+
+    next.run(request).await
+}
+
 /// Typed ACP HTTP error response.
 ///
 /// # Examples
@@ -686,7 +799,7 @@ impl IntoResponse for AcpHttpError {
 
 /// Builds the ACP discovery router.
 ///
-/// This function wires the Phase 2 discovery handlers according to the selected
+/// This function wires the discovery handlers according to the selected
 /// ACP compatibility mode. In versioned mode, routes are mounted beneath the
 /// configured base path such as `/api/v1/acp`. In root-compatible mode, the
 /// handlers are mounted directly at `/ping`, `/agents`, and `/agents/{name}`.
@@ -711,6 +824,7 @@ impl IntoResponse for AcpHttpError {
 /// let _router = build_router(state, &config.acp);
 /// ```
 pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
+    let protection = Arc::new(AcpHttpProtection::from_config(config));
     let discovery_router = Router::new()
         .route("/ping", get(handle_ping))
         .route("/agents", get(handle_agents))
@@ -720,6 +834,11 @@ pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
         .route("/runs/:run_id/events", get(handle_get_run_events))
         .route("/runs/:run_id/cancel", post(handle_cancel_run))
         .route("/sessions/:session_id", get(handle_get_session))
+        .layer(DefaultBodyLimit::max(config.max_request_bytes))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&protection),
+            enforce_acp_http_protection,
+        ))
         .with_state(state.clone());
 
     match AcpPathStrategy::from_config(config) {
@@ -803,6 +922,19 @@ pub fn bind_address(config: &AcpConfig) -> Result<SocketAddr> {
             config.host, error
         ))
     })?;
+
+    if !ip_addr.is_loopback()
+        && config
+            .auth_token
+            .as_ref()
+            .map(|token| token.trim().is_empty())
+            .unwrap_or(true)
+    {
+        return Err(XzatomaError::Config(
+            "acp.auth_token is required when binding ACP server to a non-loopback address"
+                .to_string(),
+        ));
+    }
 
     Ok(SocketAddr::new(ip_addr, config.port))
 }
@@ -1335,6 +1467,31 @@ mod tests {
     }
 
     #[test]
+    fn test_bind_address_rejects_non_loopback_without_auth_token() {
+        let config = AcpConfig {
+            host: "0.0.0.0".to_string(),
+            ..Default::default()
+        };
+
+        let result = bind_address(&config);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bind_address_accepts_non_loopback_with_auth_token() {
+        let config = AcpConfig {
+            host: "0.0.0.0".to_string(),
+            auth_token: Some("test-token".to_string()),
+            ..Default::default()
+        };
+
+        let result = bind_address(&config);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_path_strategy_uses_versioned_mode_by_default() {
         let strategy = AcpPathStrategy::from_config(&AcpConfig::default());
         assert_eq!(
@@ -1352,7 +1509,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP server state initialization can touch shared runtime storage"]
     fn test_acp_server_state_generates_primary_manifest() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1403,7 +1559,100 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
+    async fn test_router_rejects_missing_bearer_token_when_auth_configured() {
+        let mut config = test_config();
+        config.acp.auth_token = Some("test-token".to_string());
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/acp/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_router_accepts_valid_bearer_token_when_auth_configured() {
+        let mut config = test_config();
+        config.acp.auth_token = Some("test-token".to_string());
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/acp/ping")
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_router_enforces_rate_limit() {
+        let mut config = test_config();
+        config.acp.rate_limit_per_minute = 1;
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let first = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/acp/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let second = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/acp/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_router_enforces_request_body_limit() {
+        let mut config = test_config();
+        config.acp.max_request_bytes = 8;
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/acp/runs")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{\"input\":\"too large\"}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
     async fn test_agents_endpoint_returns_list_shape() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1423,7 +1672,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_agent_by_name_endpoint_returns_success() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1434,7 +1682,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_agent_by_name_endpoint_returns_not_found() {
         let config = test_config();
         let state = test_server_state_from_config(&config);
@@ -1445,7 +1692,7 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_contains_required_phase2_metadata() {
+    fn test_manifest_contains_required_metadata() {
         let manifest = build_primary_manifest(&test_config()).unwrap();
 
         assert_eq!(manifest.name, "xzatoma");
@@ -1529,7 +1776,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_async_returns_accepted() {
         let state = test_server_state();
 
@@ -1552,7 +1798,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_stream_returns_sse_response() {
         let state = test_server_state();
 
@@ -1626,7 +1871,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_rejects_unknown_agent() {
         let state = test_server_state();
 
@@ -1645,7 +1889,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because ACP server endpoint tests can hang when touching shared runtime storage"]
     async fn test_handle_create_run_rejects_unsupported_artifact_input() {
         let state = test_server_state();
 

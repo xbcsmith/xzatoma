@@ -79,10 +79,10 @@ pub struct HttpTransport {
     /// Shared receiver exposed via `receive()`.
     response_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
     /// Sender for transport-level error/diagnostic strings.
-    // Kept alive so the channel remains open; the paired error_rx is exposed
-    // via receive_err() for callers that need diagnostic messages.
-    #[allow(dead_code)]
-    error_tx: mpsc::UnboundedSender<String>,
+    ///
+    /// Kept alive so the channel remains open; the paired `error_rx` is exposed
+    /// via `receive_err()` for callers that need diagnostic messages.
+    _error_tx: mpsc::UnboundedSender<String>,
     /// Shared receiver exposed via `receive_err()`.
     error_rx: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<String>>>,
     /// Last SSE event ID, used for stream resumption via `Last-Event-ID`.
@@ -129,7 +129,7 @@ impl HttpTransport {
             headers,
             response_tx,
             response_rx: Arc::new(tokio::sync::Mutex::new(response_rx)),
-            error_tx,
+            _error_tx: error_tx,
             error_rx: Arc::new(tokio::sync::Mutex::new(error_rx)),
             last_event_id: Arc::new(RwLock::new(None)),
         }

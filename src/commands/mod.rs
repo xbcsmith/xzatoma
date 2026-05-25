@@ -35,9 +35,6 @@ use crate::tools::{SubagentTool, ToolRegistry};
 use std::path::Path;
 use std::sync::Arc;
 
-// Chat mode types and utilities
-pub mod chat_mode;
-
 // Special commands parser for mode switching
 pub mod special_commands;
 
@@ -105,7 +102,7 @@ pub fn should_enable_subagents(prompt: &str) -> bool {
 
 /// Returns `true` if the given skill is visible for startup disclosure.
 ///
-/// Visibility rules for Phase 2:
+/// Visibility rules:
 ///
 /// - invalid skills are already excluded by discovery
 /// - project skills require trust when `skills.project_trust_required == true`
@@ -230,7 +227,7 @@ pub fn build_startup_skill_disclosure(
 
 /// Builds the visible startup skill catalog for activation and disclosure.
 ///
-/// This helper discovers valid skills, applies Phase 2 visibility filtering, and
+/// This helper discovers valid skills, applies visibility filtering, and
 /// returns a catalog containing only valid visible skills. The returned catalog
 /// is suitable for `activate_skill` registration and startup disclosure.
 ///
@@ -2359,8 +2356,7 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)
-                    .map_err(|error| XzatomaError::Watcher(error.to_string()))?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2384,7 +2380,7 @@ pub mod watch {
 
                 tokio::select! {
                     result = watcher.start() => {
-                        result.map_err(|error| XzatomaError::Watcher(error.to_string()))
+                        result.map_err(XzatomaError::from)
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("Graceful shutdown completed");

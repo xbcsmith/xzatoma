@@ -1,6 +1,3 @@
-#![allow(deprecated)]
-
-use assert_cmd::Command;
 use predicates::prelude::*;
 use serial_test::serial;
 use std::fs;
@@ -177,7 +174,7 @@ fn test_skills_list_output_shows_only_valid_visible_skills() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
         .arg("--config")
         .arg(&config_path)
@@ -231,7 +228,7 @@ fn test_skills_validate_output_shows_valid_invalid_and_shadowed_diagnostics() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
         .arg("--config")
         .arg(&config_path)
@@ -282,7 +279,7 @@ fn test_skills_show_output_displays_visible_skill_metadata() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
         .arg("--config")
         .arg(&config_path)
@@ -322,7 +319,7 @@ fn test_skills_show_errors_on_hidden_project_skill() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
         .arg("--config")
         .arg(&config_path)
@@ -347,7 +344,7 @@ fn test_skills_paths_output_prints_effective_roots_and_trust_status() {
     let config_yaml = config_with_additional_paths(&trust_store_path, &[custom_dir.path()], false);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut add_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
         .arg("--config")
@@ -359,7 +356,7 @@ fn test_skills_paths_output_prints_effective_roots_and_trust_status() {
 
     add_cmd.assert().success();
 
-    let mut cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
         .arg("--config")
         .arg(&config_path)
@@ -397,7 +394,7 @@ fn test_skills_trust_show_output_prints_trusted_paths() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut add_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
         .arg("--config")
@@ -409,7 +406,7 @@ fn test_skills_trust_show_output_prints_trusted_paths() {
 
     add_cmd.assert().success();
 
-    let mut show_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut show_cmd = common::xzatoma_command().expect("binary should build");
     show_cmd
         .current_dir(project_dir.path())
         .arg("--config")
@@ -444,7 +441,7 @@ fn test_skills_trust_add_output_updates_trust_store_deterministically() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut first_add = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut first_add = common::xzatoma_command().expect("binary should build");
     first_add
         .current_dir(project_dir.path())
         .arg("--config")
@@ -464,7 +461,7 @@ fn test_skills_trust_add_output_updates_trust_store_deterministically() {
 
     let initial_contents = trust_store_contents(&trust_store_path);
 
-    let mut second_add = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut second_add = common::xzatoma_command().expect("binary should build");
     second_add
         .current_dir(project_dir.path())
         .arg("--config")
@@ -493,7 +490,7 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
     let config_yaml = default_config_yaml(&trust_store_path);
     let (_config_dir, config_path) = common::temp_config_file(&config_yaml);
 
-    let mut add_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
         .arg("--config")
@@ -505,7 +502,7 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
 
     add_cmd.assert().success();
 
-    let mut remove_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut remove_cmd = common::xzatoma_command().expect("binary should build");
     remove_cmd
         .current_dir(project_dir.path())
         .arg("--config")
@@ -527,7 +524,7 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
     assert!(contents_after_remove.contains("trusted_paths:"));
     assert!(!contents_after_remove.contains(&custom_dir.path().display().to_string()));
 
-    let mut remove_again_cmd = Command::cargo_bin("xzatoma").expect("binary should build");
+    let mut remove_again_cmd = common::xzatoma_command().expect("binary should build");
     remove_again_cmd
         .current_dir(project_dir.path())
         .arg("--config")

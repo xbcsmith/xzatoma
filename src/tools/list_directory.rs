@@ -9,69 +9,6 @@ use serde_json::json;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
-/// Simple glob pattern matching
-///
-/// Supports * (match any number of characters) and ? (match single character)
-fn glob_match(text: &str, pattern: &str) -> bool {
-    let text_chars: Vec<char> = text.chars().collect();
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    glob_match_recursive(&text_chars, 0, &pattern_chars, 0)
-}
-
-/// Recursive helper for glob matching
-// False positive: all four parameters (text, text_idx, pattern, pattern_idx) are
-// read directly in the function body for bounds checks and character access, not
-// merely forwarded to the recursive calls unchanged.
-#[allow(clippy::only_used_in_recursion)]
-fn glob_match_recursive(
-    text: &[char],
-    text_idx: usize,
-    pattern: &[char],
-    pattern_idx: usize,
-) -> bool {
-    // Both exhausted - match
-    if text_idx == text.len() && pattern_idx == pattern.len() {
-        return true;
-    }
-
-    // Pattern exhausted but text remains - no match
-    if pattern_idx == pattern.len() {
-        return text_idx == text.len();
-    }
-
-    let current_pattern = pattern[pattern_idx];
-
-    match current_pattern {
-        '*' => {
-            // * can match zero characters
-            if glob_match_recursive(text, text_idx, pattern, pattern_idx + 1) {
-                return true;
-            }
-            // Or match one character and recurse
-            if text_idx < text.len() {
-                return glob_match_recursive(text, text_idx + 1, pattern, pattern_idx);
-            }
-            false
-        }
-        '?' => {
-            // ? matches exactly one character
-            if text_idx < text.len() {
-                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-            } else {
-                false
-            }
-        }
-        c => {
-            // Exact character match
-            if text_idx < text.len() && text[text_idx] == c {
-                glob_match_recursive(text, text_idx + 1, pattern, pattern_idx + 1)
-            } else {
-                false
-            }
-        }
-    }
-}
-
 /// Parameters for the list_directory tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ListDirectoryParams {
@@ -201,7 +138,7 @@ impl ToolExecutor for ListDirectoryTool {
             // Apply pattern filter if provided
             if let Some(ref pattern) = params.pattern {
                 let file_name = entry.file_name().to_string_lossy();
-                if !glob_match(&file_name, pattern) {
+                if !file_utils::glob_match_pattern(&file_name, pattern) {
                     continue;
                 }
             }

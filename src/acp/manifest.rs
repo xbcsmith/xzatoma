@@ -99,7 +99,7 @@ pub fn validate_agent_name(value: &str) -> Result<()> {
 
 /// Validates an ACP manifest version string.
 ///
-/// The version is intentionally validated conservatively in Phase 1:
+/// The version is intentionally validated conservatively:
 ///
 /// - it must be non-empty
 /// - it must not exceed 64 characters
@@ -193,7 +193,7 @@ pub fn validate_manifest_display_name(value: &str) -> Result<()> {
 /// ACP agent capability flags.
 ///
 /// These capabilities describe which ACP surfaces the agent intends to support.
-/// Phase 1 keeps them protocol-facing and transport-independent.
+/// These types are protocol-facing and transport-independent.
 ///
 /// # Examples
 ///
@@ -391,7 +391,7 @@ impl AcpManifestLink {
 
 /// ACP agent manifest.
 ///
-/// This is the Phase 1 protocol-facing description of an ACP-capable XZatoma
+/// This is the protocol-facing description of an ACP-capable XZatoma
 /// agent. It is intentionally transport-independent and serializable so later
 /// phases can expose it over discovery surfaces.
 ///
@@ -434,10 +434,10 @@ pub struct AcpAgentManifest {
 }
 
 impl AcpAgentManifest {
-    /// Creates a new ACP agent manifest with sensible Phase 1 defaults.
+    /// Creates a new ACP agent manifest with sensible defaults.
     ///
     /// The default capability set includes manifest and run-readiness
-    /// capabilities that later phases can expose incrementally.
+    /// capabilities that can be exposed incrementally.
     ///
     /// # Arguments
     ///

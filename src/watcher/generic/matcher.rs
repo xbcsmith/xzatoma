@@ -18,7 +18,7 @@
 //! - Missing required event fields never match.
 //! - When no match fields are configured, all events are accepted (accept-all mode).
 //!
-//! The `event_type` gate that existed in Phase 1 is no longer present here.
+//! The `event_type` gate from an earlier design is no longer present here.
 //! The loop-break guarantee is now enforced upstream: [`GenericPlanEvent::new`]
 //! returns `Err` for any payload that cannot be parsed as a valid plan (including
 //! result event JSON), so the matcher only ever receives structurally valid plan
@@ -619,7 +619,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 3: version constraint tests
+    // Version constraint tests
     // -------------------------------------------------------------------------
 
     #[test]

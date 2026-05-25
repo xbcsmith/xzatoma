@@ -5298,6 +5298,7 @@ dependencies = [
  "futures",
  "glob",
  "glob-match",
+ "http 0.2.12",
  "ignore",
  "image",
  "keyring",

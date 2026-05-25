@@ -8,6 +8,7 @@
 //! - Caching support
 
 use crate::error::{Result, XzatomaError};
+use futures::StreamExt;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
@@ -401,8 +402,12 @@ impl FetchTool {
     pub fn new(timeout: Duration, max_size_bytes: usize) -> Self {
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "Falling back to default fetch HTTP client");
+                reqwest::Client::new()
+            });
 
         Self {
             client,
@@ -426,8 +431,12 @@ impl FetchTool {
     pub fn new_for_testing(timeout: Duration, max_size_bytes: usize) -> Self {
         let client = reqwest::Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "Falling back to default test fetch HTTP client");
+                reqwest::Client::new()
+            });
 
         Self {
             client,
@@ -480,7 +489,13 @@ impl FetchTool {
             .await
             .map_err(|e| XzatomaError::Fetch(format!("Failed to fetch URL: {}", e)))?;
 
+        self.ssrf_validator.validate(response.url().as_str())?;
+
         let status = response.status();
+        let declared_too_large = response
+            .content_length()
+            .map(|length| length > self.max_size_bytes as u64)
+            .unwrap_or(false);
         let content_type = response
             .headers()
             .get("content-type")
@@ -497,20 +512,11 @@ impl FetchTool {
             )));
         }
 
-        // Get content
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| XzatomaError::Fetch(format!("Failed to read response body: {}", e)))?;
-
-        // Check size limit
-        let mut truncated = false;
-        let content_bytes = if bytes.len() > self.max_size_bytes {
-            truncated = true;
-            &bytes[..self.max_size_bytes]
-        } else {
-            &bytes[..]
-        };
+        // Stream content with a hard byte cap so oversized responses cannot be
+        // fully buffered before truncation.
+        let (content_bytes, stream_truncated) = self.read_limited_body(response).await?;
+        let truncated = declared_too_large || stream_truncated;
+        let content_bytes = content_bytes.as_slice();
 
         // Detect if binary and convert if possible
         let content = if self.is_binary(content_bytes) {
@@ -540,6 +546,32 @@ impl FetchTool {
             status.as_u16(),
         )
         .with_truncated(truncated))
+    }
+
+    async fn read_limited_body(&self, response: reqwest::Response) -> Result<(Vec<u8>, bool)> {
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        let mut truncated = false;
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(|e| XzatomaError::Fetch(format!("Failed to read response body: {}", e)))?;
+            let remaining = self.max_size_bytes.saturating_sub(bytes.len());
+            if remaining == 0 {
+                truncated = true;
+                break;
+            }
+
+            if chunk.len() > remaining {
+                bytes.extend_from_slice(&chunk[..remaining]);
+                truncated = true;
+                break;
+            }
+
+            bytes.extend_from_slice(&chunk);
+        }
+
+        Ok((bytes, truncated))
     }
 
     /// Check if content appears to be binary
@@ -824,6 +856,22 @@ mod tests {
         let tool = FetchTool::new(Duration::from_secs(30), 5 * 1024 * 1024);
         assert_eq!(tool.timeout, Duration::from_secs(30));
         assert_eq!(tool.max_size_bytes, 5 * 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_tool_read_limited_body_truncates_oversized_response() {
+        let tool = FetchTool::new_for_testing(Duration::from_secs(30), 4);
+        let response = reqwest::Response::from(
+            http::Response::builder()
+                .status(200)
+                .body("abcdef".to_string())
+                .unwrap(),
+        );
+
+        let (body, truncated) = tool.read_limited_body(response).await.unwrap();
+
+        assert_eq!(body, b"abcd");
+        assert!(truncated);
     }
 
     #[test]

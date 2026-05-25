@@ -126,7 +126,7 @@ pub fn append_skill_disclosure_section(
 /// Builds a mode-specific system prompt with both skill disclosure and active
 /// skill injection.
 ///
-/// This helper centralizes Phase 2 and Phase 3 prompt assembly:
+/// This helper centralizes prompt assembly:
 ///
 /// - base mode prompt
 /// - optional skill catalog disclosure

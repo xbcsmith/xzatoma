@@ -22,7 +22,9 @@ use tokio::sync::RwLock;
 use xzatoma::config::ExecutionMode;
 use xzatoma::mcp::auth::token_store::TokenStore;
 use xzatoma::mcp::manager::McpClientManager;
-use xzatoma::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use xzatoma::mcp::server::{
+    McpApprovalAction, McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig,
+};
 use xzatoma::mcp::tool_bridge::register_mcp_tools;
 use xzatoma::tools::ToolRegistry;
 
@@ -62,6 +64,8 @@ fn test_server_exe() -> PathBuf {
 /// The server ID is `"test_server"` so that tools are registered under the
 /// name `"test_server__<tool_name>"`.
 fn test_server_config() -> McpServerConfig {
+    let mut tools = HashMap::new();
+    tools.insert("*".to_string(), McpApprovalAction::Allow);
     McpServerConfig {
         id: "test_server".to_string(),
         transport: McpServerTransportConfig::Stdio {
@@ -77,6 +81,13 @@ fn test_server_config() -> McpServerConfig {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: false,
+        approval: McpServerApprovalPolicy {
+            trusted: true,
+            default_tool_action: McpApprovalAction::Allow,
+            tools,
+            resource_read_action: McpApprovalAction::Allow,
+            prompt_get_action: McpApprovalAction::Allow,
+        },
     }
 }
 

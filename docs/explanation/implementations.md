@@ -276,9 +276,9 @@ Audit against
 `docs/explanation/copilot_responses_endpoint_implementation_plan.md` identified
 and resolved four gaps:
 
-- `CompletionResponse.model` field added to `src/providers/base.rs` - surfaces
+- `CompletionResponse.model` field added to `src/providers/types.rs` - surfaces
   the model identifier that generated each response
-- `CompletionResponse.reasoning` field added to `src/providers/base.rs` -
+- `CompletionResponse.reasoning` field added to `src/providers/types.rs` -
   surfaces extended-thinking content from o1-family models
 - Builder methods `set_model()` and `set_reasoning()` added to
   `CompletionResponse`, plus `with_model()` constructor

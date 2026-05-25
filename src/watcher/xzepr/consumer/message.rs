@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```rust
-//! use xzatoma::xzepr::consumer::message::CloudEventMessage;
+//! use xzatoma::watcher::xzepr::consumer::message::CloudEventMessage;
 //!
 //! let json = r#"{
 //!   "success": true,

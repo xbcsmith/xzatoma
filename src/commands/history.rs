@@ -186,8 +186,27 @@ mod tests {
     use crate::storage::SqliteStorage;
     use assert_cmd::Command;
     use predicates::prelude::*;
+    use std::path::PathBuf;
     use tempfile::tempdir;
     use uuid::Uuid;
+
+    fn xzatoma_binary_path() -> PathBuf {
+        if let Some(path) = std::env::var_os("CARGO_BIN_EXE_xzatoma") {
+            return PathBuf::from(path);
+        }
+
+        let mut path = std::env::current_exe().expect("test executable path should be available");
+        if path.ends_with("deps") {
+            path.pop();
+        } else {
+            path.pop();
+            if path.ends_with("deps") {
+                path.pop();
+            }
+        }
+        path.push(format!("xzatoma{}", std::env::consts::EXE_SUFFIX));
+        path
+    }
 
     #[test]
     fn test_handle_history_list_displays_sessions() {
@@ -204,10 +223,7 @@ mod tests {
             .expect("save2 failed");
 
         // Run the CLI binary, pointing it at our temp DB, and assert output contains expected rows
-        // FIXME: Using deprecated cargo_bin; should use cargo::cargo_bin_cmd! once project
-        // structure allows environment variables to be set at compile time
-        #[allow(deprecated)]
-        let mut cmd = Command::cargo_bin("xzatoma").expect("failed to find binary");
+        let mut cmd = Command::new(xzatoma_binary_path());
         cmd.arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())
             .arg("history")
@@ -239,10 +255,7 @@ mod tests {
             .is_some());
 
         // Run the CLI binary to delete the session
-        // FIXME: Using deprecated cargo_bin; should use cargo::cargo_bin_cmd! once project
-        // structure allows environment variables to be set at compile time
-        #[allow(deprecated)]
-        let mut cmd = Command::cargo_bin("xzatoma").expect("failed to find binary");
+        let mut cmd = Command::new(xzatoma_binary_path());
         cmd.arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())
             .arg("history")

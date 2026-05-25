@@ -1,6 +1,6 @@
-//! Integration tests for Phase 5A: Tool Bridge, Resources, and Prompts
+//! Integration tests for MCP tool bridge: executor routing, approval policy, task support, and tool registration.
 //!
-//! Covers Task 5A.3 requirements:
+//! Covers tool bridge requirements:
 //!
 //! - `test_registry_name_uses_double_underscore_separator`
 //! - `test_tool_definition_format_matches_xzatoma_convention`
@@ -25,7 +25,9 @@ use xzatoma::mcp::auth::token_store::TokenStore;
 use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
 use xzatoma::mcp::manager::{McpClientManager, McpServerEntry, McpServerState};
 use xzatoma::mcp::protocol::InitializedMcpProtocol;
-use xzatoma::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use xzatoma::mcp::server::{
+    McpApprovalAction, McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig,
+};
 use xzatoma::mcp::tool_bridge::{register_mcp_tools, McpToolExecutor};
 use xzatoma::mcp::types::{
     Implementation, InitializeResponse, McpTool, ServerCapabilities, TaskSupport, ToolExecution,
@@ -43,6 +45,8 @@ fn make_manager() -> McpClientManager {
 
 /// Build a default stdio `McpServerConfig`.
 fn stdio_config(id: &str) -> McpServerConfig {
+    let mut tools = HashMap::new();
+    tools.insert("*".to_string(), McpApprovalAction::Allow);
     McpServerConfig {
         id: id.to_string(),
         transport: McpServerTransportConfig::Stdio {
@@ -58,6 +62,13 @@ fn stdio_config(id: &str) -> McpServerConfig {
         prompts_enabled: false,
         sampling_enabled: false,
         elicitation_enabled: false,
+        approval: McpServerApprovalPolicy {
+            trusted: true,
+            default_tool_action: McpApprovalAction::Allow,
+            tools,
+            resource_read_action: McpApprovalAction::Allow,
+            prompt_get_action: McpApprovalAction::Allow,
+        },
     }
 }
 
@@ -191,34 +202,32 @@ fn make_executor(
 }
 
 // ---------------------------------------------------------------------------
-// Task 5A.3: approval policy
+// MCP approval policy
 // ---------------------------------------------------------------------------
 
-/// `should_auto_approve` returns `true` for `FullAutonomous`, `headless: false`.
-/// (Named "false_in_full_autonomous_mode" to match the plan's naming, which
-/// means "no prompt needed = auto-approve returns true".)
+/// `should_auto_approve` returns `false` for `FullAutonomous`, `headless: false`.
 #[test]
 fn test_should_auto_approve_false_in_full_autonomous_mode() {
     assert!(
-        should_auto_approve(ExecutionMode::FullAutonomous, false),
-        "FullAutonomous, headless=false must auto-approve (no prompt needed)"
+        !should_auto_approve(ExecutionMode::FullAutonomous, false),
+        "FullAutonomous, headless=false must not imply MCP trust"
     );
 }
 
-/// `should_auto_approve` returns `true` when `headless: true` regardless of mode.
+/// `should_auto_approve` returns `false` when `headless: true` regardless of mode.
 #[test]
-fn test_should_auto_approve_true_when_headless() {
+fn test_should_auto_approve_false_when_headless() {
     assert!(
-        should_auto_approve(ExecutionMode::Interactive, true),
-        "Interactive, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::Interactive, true),
+        "Interactive, headless=true must not imply MCP trust"
     );
     assert!(
-        should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
-        "RestrictedAutonomous, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
+        "RestrictedAutonomous, headless=true must not imply MCP trust"
     );
     assert!(
-        should_auto_approve(ExecutionMode::FullAutonomous, true),
-        "FullAutonomous, headless=true must auto-approve"
+        !should_auto_approve(ExecutionMode::FullAutonomous, true),
+        "FullAutonomous, headless=true must not imply MCP trust"
     );
 }
 
@@ -509,12 +518,19 @@ async fn test_structured_content_appended_after_delimiter() {
 // Task 5A.3: task_support Required routes to call_tool_as_task
 // ---------------------------------------------------------------------------
 
-/// When `task_support == Some(TaskSupport::Required)`, `execute` must use the
-/// `call_tool_as_task` code path.  We verify this by checking that the
-/// JSON-RPC request captured on `outbound_rx` contains the `task` field
-/// (which is only sent by `call_tool_as_task`, not `call_tool`).
+/// When `task_support == Some(TaskSupport::Required)`, `execute` uses the
+/// `call_tool_as_task` code path.  We verify two behaviors:
+///
+/// 1. The JSON-RPC outbound request includes the `task` field (task-wrapping
+///    path is selected, not the plain `call_tool` path).
+/// 2. When the server response includes `_meta.taskId`, `execute` returns
+///    [`XzatomaError::McpTask`] with a message identifying the task, because
+///    long-running task polling is not supported in this session.
 #[tokio::test]
 async fn test_task_support_required_routes_to_call_tool_as_task() {
+    // -----------------------------------------------------------------------
+    // Part 1: task-backed execution returns McpTask error when taskId present.
+    // -----------------------------------------------------------------------
     let tool = make_tool("task_tool", Some(TaskSupport::Required));
     let (protocol, mut outbound_rx, inbound_tx) = wired_protocol();
 
@@ -531,35 +547,55 @@ async fn test_task_support_required_routes_to_call_tool_as_task() {
         false,
     );
 
+    // Capture the outbound request params before injecting a taskId response.
+    // We store the result in a shared flag so we can assert it after execute.
+    let params_had_task = Arc::new(std::sync::Mutex::new(false));
+    let params_flag = Arc::clone(&params_had_task);
     let inbound = inbound_tx.clone();
     tokio::spawn(async move {
-        // Read the outbound request and inspect it.
         let req_str = tokio::time::timeout(Duration::from_secs(5), outbound_rx.recv())
             .await
             .expect("timed out waiting for task request")
             .expect("channel closed");
 
-        // Inject a task-style response (includes _meta.taskId).
         let req: serde_json::Value = serde_json::from_str(&req_str).unwrap();
         let id = req["id"].as_u64().unwrap_or(1);
 
+        // Record whether the outbound params included the "task" field.
+        let has_task = req["params"].get("task").is_some();
+        *params_flag.lock().unwrap() = has_task;
+
+        // Reply with a task-style response (includes _meta.taskId).
         let resp = call_tool_as_task_response_json(id, "task completed");
         inbound.send(serde_json::to_string(&resp).unwrap()).unwrap();
     });
 
-    let result = executor
+    // When the server response contains _meta.taskId, execute returns McpTask
+    // error rather than a partial result, giving the caller a typed signal.
+    let err = executor
         .execute(serde_json::json!({"input": "run_task"}))
         .await
-        .expect("execute must not return Err for task-backed tool");
-
+        .expect_err("execute must return Err when response contains _meta.taskId");
+    let err_str = err.to_string();
     assert!(
-        result.success,
-        "task-backed tool must return a successful ToolResult"
+        err_str.contains("task-abc-123"),
+        "McpTask error must identify the returned task ID, got: {err_str}"
+    );
+    assert!(
+        err_str.contains("task polling is not supported"),
+        "McpTask error must describe the limitation, got: {err_str}"
     );
 
-    // Now verify that the params sent had the `task` field set.
-    // We need a second call to capture and inspect the raw request.
-    // Re-insert a fresh connected entry so we can observe the outbound message.
+    // Allow the spawned task to finish and then verify the outbound params.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        *params_had_task.lock().unwrap(),
+        "call_tool_as_task must include a 'task' field in outbound params"
+    );
+
+    // -----------------------------------------------------------------------
+    // Part 2: A separate executor also returns McpTask and has the task field.
+    // -----------------------------------------------------------------------
     let tool2 = make_tool("task_tool2", Some(TaskSupport::Required));
     let (protocol2, mut outbound_rx2, inbound_tx2) = wired_protocol();
 
@@ -576,7 +612,8 @@ async fn test_task_support_required_routes_to_call_tool_as_task() {
         false,
     );
 
-    // Spawn responder for the second executor.
+    let params_had_task2 = Arc::new(std::sync::Mutex::new(false));
+    let params_flag2 = Arc::clone(&params_had_task2);
     let inbound2 = inbound_tx2.clone();
     tokio::spawn(async move {
         let req_str = tokio::time::timeout(Duration::from_secs(5), outbound_rx2.recv())
@@ -587,13 +624,8 @@ async fn test_task_support_required_routes_to_call_tool_as_task() {
         let req: serde_json::Value = serde_json::from_str(&req_str).unwrap();
         let id = req["id"].as_u64().unwrap_or(1);
 
-        // Assert the call has a "task" field in its params (task-wrapping path).
-        let params = &req["params"];
-        assert!(
-            params.get("task").is_some(),
-            "call_tool_as_task must include a 'task' field in params, got params: {}",
-            params
-        );
+        let has_task = req["params"].get("task").is_some();
+        *params_flag2.lock().unwrap() = has_task;
 
         let resp = call_tool_as_task_response_json(id, "task completed");
         inbound2
@@ -601,12 +633,20 @@ async fn test_task_support_required_routes_to_call_tool_as_task() {
             .unwrap();
     });
 
-    let result2 = executor2
+    let err2 = executor2
         .execute(serde_json::json!({"input": "run_task"}))
         .await
-        .expect("execute must not return Err");
+        .expect_err("execute must return Err when taskId is present");
+    assert!(
+        err2.to_string().contains("task-abc-123"),
+        "second McpTask error must also identify the task ID"
+    );
 
-    assert!(result2.success);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        *params_had_task2.lock().unwrap(),
+        "second call_tool_as_task must also include a 'task' field in outbound params"
+    );
 }
 
 /// When `task_support` is `None`, `execute` uses the plain `call_tool` path

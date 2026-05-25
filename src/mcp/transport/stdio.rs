@@ -152,7 +152,12 @@ impl StdioTransport {
             let mut stdin = stdin;
             while let Some(msg) = stdin_rx.recv().await {
                 let line = format!("{}\n", msg);
-                if stdin.write_all(line.as_bytes()).await.is_err() {
+                if let Err(error) = stdin.write_all(line.as_bytes()).await {
+                    tracing::warn!(
+                        target: "xzatoma::mcp::transport::stdio",
+                        error = %error,
+                        "failed to write MCP message to child stdin"
+                    );
                     break;
                 }
             }
@@ -162,9 +167,26 @@ impl StdioTransport {
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if stdout_tx.send(line).is_err() {
-                    break;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if stdout_tx.send(line).is_err() {
+                            tracing::debug!(
+                                target: "xzatoma::mcp::transport::stdio",
+                                "MCP stdout receiver dropped"
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "xzatoma::mcp::transport::stdio",
+                            error = %error,
+                            "failed to read MCP child stdout"
+                        );
+                        break;
+                    }
                 }
             }
         });
@@ -173,14 +195,31 @@ impl StdioTransport {
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                tracing::debug!(
-                    target: "xzatoma::mcp::transport::stdio",
-                    "mcp server stderr: {}",
-                    line
-                );
-                if stderr_tx.send(line).is_err() {
-                    break;
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        tracing::debug!(
+                            target: "xzatoma::mcp::transport::stdio",
+                            "mcp server stderr: {}",
+                            line
+                        );
+                        if stderr_tx.send(line).is_err() {
+                            tracing::debug!(
+                                target: "xzatoma::mcp::transport::stdio",
+                                "MCP stderr receiver dropped"
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "xzatoma::mcp::transport::stdio",
+                            error = %error,
+                            "failed to read MCP child stderr"
+                        );
+                        break;
+                    }
                 }
             }
         });

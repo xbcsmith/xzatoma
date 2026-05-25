@@ -10,12 +10,12 @@
 //! | `types`        | All shared domain types and wire-format structs       |
 //! | `trait_mod`    | The `Provider` trait                                  |
 //! | `factory`      | `ProviderFactory` and backward-compatible free funcs  |
-//! | `base`         | Compatibility re-export shim (prefer direct imports)  |
 //! | `copilot`      | GitHub Copilot provider implementation                |
 //! | `ollama`       | Ollama provider implementation                        |
 //! | `openai`       | OpenAI provider implementation                        |
 
-pub mod base;
+pub mod cache;
+pub mod capabilities;
 pub mod copilot;
 pub mod factory;
 pub mod ollama;
@@ -29,12 +29,13 @@ pub mod types;
 
 pub use types::{
     convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
-    CompletionResponse, FinishReason, FunctionCall, ImagePromptPart, ImagePromptSource, Message,
-    ModelCapability, ModelInfo, ModelInfoSummary, MultimodalPromptInput, PromptInputPart,
-    ProviderCapabilities, ProviderFunction, ProviderFunctionCall, ProviderImagePromptPart,
-    ProviderImagePromptSource, ProviderMessage, ProviderMessageContentPart,
-    ProviderMessageContentParts, ProviderPromptInput, ProviderPromptInputPart, ProviderRequest,
-    ProviderTextPromptPart, ProviderTool, ProviderToolCall, TextPromptPart, TokenUsage, ToolCall,
+    CompletionResponse, FinishReason, FunctionCall, ImagePromptError, ImagePromptPart,
+    ImagePromptSource, Message, ModelCapability, ModelInfo, ModelInfoSummary,
+    MultimodalPromptInput, PromptInputError, PromptInputPart, ProviderCapabilities,
+    ProviderFunction, ProviderFunctionCall, ProviderImagePromptPart, ProviderImagePromptSource,
+    ProviderMessage, ProviderMessageContentPart, ProviderMessageContentParts, ProviderPromptInput,
+    ProviderPromptInputPart, ProviderRequest, ProviderTextPromptPart, ProviderTool,
+    ProviderToolCall, TextPromptPart, TokenUsage, ToolCall,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,15 @@ pub use trait_mod::Provider;
 // ---------------------------------------------------------------------------
 
 pub use factory::{create_provider, create_provider_with_override, ProviderFactory};
+
+// ---------------------------------------------------------------------------
+// Cache helpers (from cache.rs)
+// ---------------------------------------------------------------------------
+
+pub use cache::{is_cache_valid, new_model_cache, ModelCache, MODEL_CACHE_TTL_SECS};
+pub use capabilities::{
+    ollama_model_supports_vision, openai_model_supports_vision, provider_model_supports_vision,
+};
 
 // ---------------------------------------------------------------------------
 // Provider implementations

@@ -19,7 +19,7 @@
 //! XZepr-specific types are intentionally NOT re-exported at the top-level
 //! `crate::watcher` module. They are exclusively accessible via
 //! `crate::watcher::xzepr::*` (or through the backward-compatible
-//! `crate::xzepr::*` re-exports in `src/xzepr/mod.rs`).
+//! `crate::watcher::xzepr::*` re-exports in `src/xzepr/mod.rs`).
 //!
 //! The only top-level watcher re-export is:
 //! `pub use xzepr::watcher::Watcher as XzeprWatcher`

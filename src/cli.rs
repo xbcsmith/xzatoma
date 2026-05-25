@@ -944,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_watch_with_phase4_flags() {
+    fn test_cli_parse_watch_with_extended_flags() {
         let cli = Cli::try_parse_from([
             "xzatoma",
             "watch",

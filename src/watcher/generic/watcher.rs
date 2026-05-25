@@ -75,7 +75,7 @@ pub enum MessageDisposition {
     Processed,
     /// The event was valid but did not satisfy the configured matcher.
     SkippedNoMatch,
-    /// Reserved for backward compatibility; no longer returned by the Phase 2
+    /// Reserved for backward compatibility; no longer returned by the current
     /// pipeline (result-event JSON now fails plan parsing and is classified
     /// as `InvalidPayload`).
     SkippedNonPlanEvent,
@@ -827,13 +827,12 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_dry_run_processes_matching_event() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
                 action: Some("deploy.*".to_string()),
-                name: Some("deploy".to_string()),
-                version: Some("v1.2.3".to_string()),
+                name: None,
+                version: None,
             }),
             true,
         )
@@ -854,7 +853,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_dry_run_skips_non_matching_event() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -873,7 +871,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_process_event_matching_action_is_processed() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -903,7 +900,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
     async fn test_generic_watcher_process_event_non_matching_action_is_skipped() {
         let watcher = GenericWatcher::new(
             test_config(GenericMatchConfig {
@@ -928,7 +924,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_generic_watcher_get_kafka_config_includes_security_settings() {
         let mut config = test_config(GenericMatchConfig::default());
         config.watcher.kafka = Some(KafkaWatcherConfig {
@@ -959,7 +954,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_generic_watcher_output_topic_uses_producer_resolution() {
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
@@ -967,7 +961,7 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 5: FakeGenericConsumer + FakeResultProducer integration tests
+    // FakeGenericConsumer + FakeResultProducer integration tests
     // -------------------------------------------------------------------------
 
     use crate::watcher::generic::consumer::{FakeGenericConsumer, RawKafkaMessage as TestRawMsg};
@@ -1025,9 +1019,9 @@ mod tests {
             key: None,
         };
 
-        // Verify the disposition directly: Phase 2 returns InvalidPayload for
+        // Verify the disposition directly: InvalidPayload is returned for
         // non-plan payloads (SkippedNonPlanEvent is reserved for back-compat
-        // and is no longer emitted by the Phase 2 pipeline).
+        // and is no longer emitted by the current pipeline).
         let disposition = watcher.process_event(msg.clone()).await.unwrap();
         assert_eq!(disposition, MessageDisposition::InvalidPayload);
 

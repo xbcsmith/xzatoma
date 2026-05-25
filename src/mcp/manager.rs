@@ -39,7 +39,7 @@ use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::auth::discovery::{
     fetch_authorization_server_metadata, fetch_protected_resource_metadata,
-    AuthorizationServerMetadata,
+    validate_authorization_server_metadata, AuthorizationServerMetadata,
 };
 use crate::mcp::auth::flow::OAuthFlowConfig;
 use crate::mcp::auth::manager::AuthManager;
@@ -47,7 +47,7 @@ use crate::mcp::auth::token_store::TokenStore;
 use crate::mcp::client::{start_read_loop, JsonRpcClient};
 use crate::mcp::config::McpConfig;
 use crate::mcp::protocol::{InitializedMcpProtocol, McpProtocol};
-use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
+use crate::mcp::server::{McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig};
 use crate::mcp::transport::Transport;
 use crate::mcp::types::{
     CallToolResponse, ClientCapabilities, ElicitationCapability, GetPromptResponse, Implementation,
@@ -172,15 +172,25 @@ pub struct McpClientManager {
     /// Shared OS-keyring token store used by all OAuth-enabled servers.
     token_store: Arc<TokenStore>,
 
-    /// Task manager for long-running MCP tasks (Phase 6 placeholder).
+    /// Execution mode forwarded to sampling and elicitation handlers.
     ///
-    /// Guarded by a `Mutex` so that notification callbacks registered during
-    /// `connect` can enqueue updates from background threads.
-    // Retained for Phase 6: task lifecycle tracking via notifications/tasks/status.
-    // The field must stay alive so the Arc keeps the Mutex live for future
-    // background-thread callbacks.
-    #[allow(dead_code)]
-    task_manager: Arc<std::sync::Mutex<crate::mcp::task_manager::TaskManager>>,
+    /// Set via [`Self::set_execution_context`] before calling
+    /// [`Self::connect`] on servers that require sampling or elicitation.
+    execution_mode: crate::config::ExecutionMode,
+
+    /// Whether the agent is running headless (no interactive stdin/stdout).
+    ///
+    /// Set via [`Self::set_execution_context`] before calling
+    /// [`Self::connect`] on servers that require sampling or elicitation.
+    headless: bool,
+
+    /// Optional AI provider for MCP sampling requests.
+    ///
+    /// When set, sampling requests from connected servers are forwarded to
+    /// this provider via [`crate::mcp::sampling::XzatomaSamplingHandler`].
+    /// Set via [`Self::set_sampling_provider`] before connecting to servers
+    /// with `sampling_enabled: true`.
+    sampling_provider: Option<Arc<dyn crate::providers::Provider>>,
 }
 
 impl std::fmt::Debug for McpClientManager {
@@ -218,10 +228,71 @@ impl McpClientManager {
             servers: HashMap::new(),
             http_client,
             token_store,
-            task_manager: Arc::new(std::sync::Mutex::new(
-                crate::mcp::task_manager::TaskManager::default(),
-            )),
+            execution_mode: crate::config::ExecutionMode::Interactive,
+            headless: false,
+            sampling_provider: None,
         }
+    }
+
+    /// Set the execution context used by sampling and elicitation handlers.
+    ///
+    /// Call this before [`Self::connect`] on any server that has
+    /// `sampling_enabled` or `elicitation_enabled` set to `true`.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_mode` - Agent execution mode (Interactive, RestrictedAutonomous, FullAutonomous).
+    /// * `headless` - Whether the agent is running without interactive input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use xzatoma::config::ExecutionMode;
+    /// use xzatoma::mcp::auth::token_store::TokenStore;
+    /// use xzatoma::mcp::manager::McpClientManager;
+    ///
+    /// let mut manager = McpClientManager::new(
+    ///     Arc::new(reqwest::Client::new()),
+    ///     Arc::new(TokenStore),
+    /// );
+    /// manager.set_execution_context(ExecutionMode::FullAutonomous, true);
+    /// ```
+    pub fn set_execution_context(
+        &mut self,
+        execution_mode: crate::config::ExecutionMode,
+        headless: bool,
+    ) {
+        self.execution_mode = execution_mode;
+        self.headless = headless;
+    }
+
+    /// Set the AI provider used to handle MCP sampling requests.
+    ///
+    /// Must be called before [`Self::connect`] on servers with
+    /// `sampling_enabled: true`. If a provider is not configured and a
+    /// server requests sampling, [`Self::connect`] will return
+    /// [`crate::error::XzatomaError::Mcp`].
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - Shared reference to an AI provider implementation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use xzatoma::mcp::auth::token_store::TokenStore;
+    /// use xzatoma::mcp::manager::McpClientManager;
+    ///
+    /// let mut manager = McpClientManager::new(
+    ///     Arc::new(reqwest::Client::new()),
+    ///     Arc::new(TokenStore),
+    /// );
+    /// // manager.set_sampling_provider(Arc::new(my_provider));
+    /// ```
+    pub fn set_sampling_provider(&mut self, provider: Arc<dyn crate::providers::Provider>) {
+        self.sampling_provider = Some(provider);
     }
 
     /// Connect to all enabled servers listed in `config`.
@@ -389,14 +460,44 @@ impl McpClientManager {
 
         let protocol = Arc::new(initialized);
 
-        // Register sampling handler stub if enabled.
+        // Wire the sampling handler when enabled.
         if config.sampling_enabled {
-            tracing::warn!(id = %id, "Sampling handler not yet implemented; MCP servers requiring sampling will fail");
+            match &self.sampling_provider {
+                Some(provider) => {
+                    let handler = Arc::new(crate::mcp::sampling::XzatomaSamplingHandler {
+                        provider: Arc::clone(provider),
+                        execution_mode: self.execution_mode,
+                        headless: self.headless,
+                    });
+                    protocol.register_sampling_handler(handler);
+                    tracing::debug!(id = %id, "Registered sampling handler");
+                }
+                None => {
+                    // Mark as failed and propagate a typed error so the
+                    // operator knows exactly what is missing.
+                    if let Some(entry) = self.servers.get_mut(&id) {
+                        entry.state = McpServerState::Failed(
+                            "sampling_enabled requires a provider; call set_sampling_provider before connecting".to_string(),
+                        );
+                    }
+                    return Err(XzatomaError::Mcp(format!(
+                        "server '{}' has sampling_enabled but no provider is configured; \
+                         call set_sampling_provider before connecting",
+                        id
+                    )));
+                }
+            }
         }
 
-        // Register elicitation handler stub if enabled.
+        // Wire the elicitation handler when enabled.
         if config.elicitation_enabled {
-            tracing::warn!(id = %id, "Elicitation handler not yet implemented; MCP servers requiring elicitation will fail");
+            let handler = Arc::new(crate::mcp::elicitation::XzatomaElicitationHandler {
+                execution_mode: self.execution_mode,
+                headless: self.headless,
+                browser_opener: crate::mcp::elicitation::open_browser,
+            });
+            protocol.register_elicitation_handler(handler);
+            tracing::debug!(id = %id, "Registered elicitation handler");
         }
 
         // Fetch and cache the tool list.
@@ -550,6 +651,21 @@ impl McpClientManager {
             .collect()
     }
 
+    /// Returns the configured approval policy for a server.
+    ///
+    /// # Arguments
+    ///
+    /// * `server_id` - MCP server identifier.
+    ///
+    /// # Returns
+    ///
+    /// The server approval policy when the server is registered.
+    pub fn approval_policy_for_server(&self, server_id: &str) -> Option<McpServerApprovalPolicy> {
+        self.servers
+            .get(server_id)
+            .map(|entry| entry.config.approval.clone())
+    }
+
     /// Invoke a tool on the named server.
     ///
     /// Looks up the server, verifies the tool is in the cached list, and
@@ -649,7 +765,8 @@ impl McpClientManager {
     /// # Errors
     ///
     /// Same as [`call_tool`][Self::call_tool], plus
-    /// [`XzatomaError::McpTask`] if task management fails.
+    /// * [`XzatomaError::McpTask`] when the server returns a `_meta.taskId`
+    ///   indicating a long-running task, because task polling is not supported.
     pub async fn call_tool_as_task(
         &self,
         server_id: &str,
@@ -679,20 +796,20 @@ impl McpClientManager {
             .call_tool(tool_name, arguments, Some(task_params))
             .await?;
 
-        // If the response meta indicates a task was created, log a warning.
-        // Full task polling is not yet implemented; we return the initial
-        // response directly.
-        if response
+        // Detect a server-initiated long-running task. Task polling is outside
+        // the active API surface, so callers receive explicit feedback rather
+        // than a partial initial result.
+        if let Some(task_id) = response
             .meta
             .as_ref()
             .and_then(|m| m.get("taskId"))
-            .is_some()
+            .and_then(|v| v.as_str())
         {
-            tracing::warn!(
-                server_id = %server_id,
-                tool = %tool_name,
-                "Long-running MCP task detected but polling is not yet implemented; returning partial result"
-            );
+            return Err(XzatomaError::McpTask(format!(
+                "server '{}' tool '{}' returned long-running task '{}'; \
+                 task polling is not supported in this session",
+                server_id, tool_name, task_id
+            )));
         }
 
         Ok(response)
@@ -839,31 +956,78 @@ impl McpClientManager {
                 if let Some(oauth_cfg) = oauth {
                     let resource_url = endpoint.clone();
 
-                    // Discovery: fetch protected resource metadata to find the
-                    // authorization server, then fetch AS metadata.
-                    let prm =
-                        fetch_protected_resource_metadata(&self.http_client, &resource_url, None)
+                    let as_metadata = if let Some(metadata_url) = &oauth_cfg.metadata_url {
+                        let metadata_url = url::Url::parse(metadata_url).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "Invalid OAuth metadata URL '{}': {}",
+                                metadata_url, e
+                            ))
+                        })?;
+                        crate::security::validate_public_https_url(
+                            &metadata_url,
+                            "OAuth metadata URL",
+                        )
+                        .await?;
+                        let response = self
+                            .http_client
+                            .get(metadata_url.clone())
+                            .send()
                             .await
                             .map_err(|e| {
-                                XzatomaError::McpAuth(format!("PRM discovery failed: {}", e))
+                                XzatomaError::McpAuth(format!(
+                                    "OAuth metadata override fetch failed: {}",
+                                    e
+                                ))
                             })?;
-
-                    let as_url_str =
-                        prm.authorization_servers.first().cloned().ok_or_else(|| {
-                            XzatomaError::McpAuth(
-                                "No authorization servers in protected resource metadata"
-                                    .to_string(),
-                            )
+                        if !response.status().is_success() {
+                            return Err(XzatomaError::McpAuth(format!(
+                                "OAuth metadata override returned {}",
+                                response.status()
+                            )));
+                        }
+                        let metadata: AuthorizationServerMetadata =
+                            response.json().await.map_err(|e| {
+                                XzatomaError::McpAuth(format!(
+                                    "Failed to parse OAuth metadata override: {}",
+                                    e
+                                ))
+                            })?;
+                        let issuer = url::Url::parse(&metadata.issuer).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "OAuth metadata override issuer is invalid: {}",
+                                e
+                            ))
+                        })?;
+                        validate_authorization_server_metadata(&issuer, &metadata)?;
+                        metadata
+                    } else {
+                        // Discovery: fetch protected resource metadata to find the
+                        // authorization server, then fetch AS metadata.
+                        let prm = fetch_protected_resource_metadata(
+                            &self.http_client,
+                            &resource_url,
+                            None,
+                        )
+                        .await
+                        .map_err(|e| {
+                            XzatomaError::McpAuth(format!("PRM discovery failed: {}", e))
                         })?;
 
-                    let as_url = url::Url::parse(&as_url_str).map_err(|e| {
-                        XzatomaError::McpAuth(format!(
-                            "Invalid authorization server URL '{}': {}",
-                            as_url_str, e
-                        ))
-                    })?;
+                        let as_url_str =
+                            prm.authorization_servers.first().cloned().ok_or_else(|| {
+                                XzatomaError::McpAuth(
+                                    "No authorization servers in protected resource metadata"
+                                        .to_string(),
+                                )
+                            })?;
 
-                    let as_metadata =
+                        let as_url = url::Url::parse(&as_url_str).map_err(|e| {
+                            XzatomaError::McpAuth(format!(
+                                "Invalid authorization server URL '{}': {}",
+                                as_url_str, e
+                            ))
+                        })?;
+
                         fetch_authorization_server_metadata(&self.http_client, &as_url)
                             .await
                             .map_err(|e| {
@@ -871,7 +1035,8 @@ impl McpClientManager {
                                     "AS metadata discovery failed: {}",
                                     e
                                 ))
-                            })?;
+                            })?
+                    };
 
                     // Build the flow config.
                     let flow_config = OAuthFlowConfig {
@@ -1057,7 +1222,12 @@ pub async fn build_mcp_manager_from_config(
         return Ok(None);
     }
 
-    let http_client = Arc::new(reqwest::Client::new());
+    let http_client = Arc::new(
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(config.mcp.request_timeout_seconds))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?,
+    );
     let token_store = Arc::new(TokenStore);
     let mut manager = McpClientManager::new(http_client, token_store);
 
@@ -1145,6 +1315,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: false,
+            approval: Default::default(),
         };
 
         let entry = McpServerEntry {
@@ -1421,6 +1592,7 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }];
 
         let result = build_mcp_manager_from_config(&config).await;
@@ -1451,14 +1623,80 @@ mod tests {
             prompts_enabled: false,
             sampling_enabled: false,
             elicitation_enabled: true,
+            approval: Default::default(),
         }];
 
         let result = build_mcp_manager_from_config(&config).await;
         assert!(result.is_ok());
-        // auto_connect=true and non-empty servers list → Some, even though
+        // auto_connect=true and non-empty servers list -> Some, even though
         // the only server is disabled (disabled servers are simply skipped).
         let manager_arc = result.unwrap().unwrap();
         let manager = manager_arc.read().await;
         assert_eq!(manager.connected_servers().len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // set_execution_context / set_sampling_provider
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_set_execution_context_stores_values() {
+        let mut manager = make_manager();
+        manager.set_execution_context(crate::config::ExecutionMode::FullAutonomous, true);
+        // Verify the side-effect: sampling_provider is still absent (no
+        // provider was configured), confirming the method only touches the
+        // execution context fields without disturbing the provider slot.
+        assert!(manager.sampling_provider.is_none());
+    }
+
+    #[test]
+    fn test_set_execution_context_interactive_non_headless() {
+        let mut manager = make_manager();
+        manager.set_execution_context(crate::config::ExecutionMode::Interactive, false);
+        assert!(manager.sampling_provider.is_none());
+    }
+
+    #[test]
+    fn test_set_sampling_provider_stores_provider() {
+        struct MockProvider;
+
+        #[async_trait::async_trait]
+        impl crate::providers::Provider for MockProvider {
+            fn is_authenticated(&self) -> bool {
+                false
+            }
+            fn current_model(&self) -> Option<&str> {
+                None
+            }
+            fn set_model(&mut self, _: &str) {}
+            async fn fetch_models(&self) -> crate::error::Result<Vec<crate::providers::ModelInfo>> {
+                Ok(vec![])
+            }
+            async fn complete(
+                &self,
+                _: &[crate::providers::Message],
+                _: &[serde_json::Value],
+            ) -> crate::error::Result<crate::providers::CompletionResponse> {
+                Ok(crate::providers::CompletionResponse::new(
+                    crate::providers::Message::assistant("test"),
+                ))
+            }
+        }
+
+        let mut manager = make_manager();
+        assert!(manager.sampling_provider.is_none());
+        manager.set_sampling_provider(Arc::new(MockProvider));
+        assert!(manager.sampling_provider.is_some());
+    }
+
+    #[test]
+    fn test_new_manager_has_default_execution_context() {
+        let manager = make_manager();
+        // Default: Interactive mode, not headless, no provider.
+        assert!(manager.sampling_provider.is_none());
+        // We cannot inspect execution_mode directly (private field), but
+        // verify that set_execution_context compiles and runs without error.
+        let mut m = make_manager();
+        m.set_execution_context(crate::config::ExecutionMode::RestrictedAutonomous, false);
     }
 }

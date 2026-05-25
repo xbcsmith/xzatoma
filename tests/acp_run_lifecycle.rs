@@ -298,7 +298,7 @@ async fn test_invalid_input_handling_rejects_unsupported_artifact_input() {
     assert!(json["message"]
         .as_str()
         .expect("message should be a string")
-        .contains("not yet supported"));
+        .contains("unsupported"));
 }
 
 #[tokio::test]

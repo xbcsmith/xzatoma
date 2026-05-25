@@ -144,12 +144,15 @@ Implemented providers:
 
 - GitHub Copilot
 - Ollama
+- OpenAI-compatible providers
 
 Important files:
 
-- `src/providers/base.rs`
+- `src/providers/trait_mod.rs`
+- `src/providers/types.rs`
 - `src/providers/copilot.rs`
 - `src/providers/ollama.rs`
+- `src/providers/openai.rs`
 
 ### Agent Layer
 
@@ -257,19 +260,14 @@ The XZepr watcher is accessed through:
 
 - `crate::watcher::xzepr::*`
 
-## XZepr Compatibility Shim
+## Canonical XZepr Watcher Path
 
-`src/xzepr/mod.rs` remains in place as a compatibility shim.
-
-Its role is to preserve existing import paths while the canonical implementation
-lives under:
+XZepr implementation code lives under:
 
 - `src/watcher/xzepr/`
 
-This means:
-
-- new code should treat `crate::watcher::xzepr::*` as the canonical location
-- existing code that still references `crate::xzepr::*` can continue to resolve
+Use `crate::watcher::xzepr::*` as the canonical location for XZepr watcher
+imports.
 
 ## Watcher Backend Selection
 

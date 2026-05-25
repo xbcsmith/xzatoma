@@ -24,6 +24,7 @@
 
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
+use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
 use crate::providers::{
     convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
     CompletionResponse, FinishReason, FunctionCall, ImagePromptSource, Message, ModelCapability,
@@ -37,13 +38,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-
-/// Type alias for the in-memory model cache shared across async operations.
-///
-/// Caches the list of available models together with the timestamp of the last
-/// fetch so that repeated calls to `list_models` can avoid hitting the API on
-/// every invocation.
-type ModelCache = Arc<RwLock<Option<(Vec<ModelInfo>, Instant)>>>;
 
 // ---------------------------------------------------------------------------
 // Non-streaming wire types
@@ -293,7 +287,7 @@ fn build_capabilities_from_id(id: &str) -> Vec<ModelCapability> {
         caps.push(ModelCapability::FunctionCalling);
     }
 
-    if openai_model_supports_vision(&id_lower) {
+    if crate::providers::openai_model_supports_vision(id) {
         caps.push(ModelCapability::Vision);
     }
 
@@ -572,7 +566,13 @@ impl OpenAIProvider {
     /// let provider = OpenAIProvider::new(config);
     /// assert!(provider.is_ok());
     /// ```
-    pub fn new(config: OpenAIConfig) -> Result<Self> {
+    pub fn new(mut config: OpenAIConfig) -> Result<Self> {
+        config.base_url = crate::security::validate_provider_base_url(
+            &config.base_url,
+            "provider.openai.base_url",
+        )
+        .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
             .user_agent("xzatoma/0.1.0")
@@ -588,7 +588,7 @@ impl OpenAIProvider {
         Ok(Self {
             client,
             config: Arc::new(RwLock::new(config)),
-            model_cache: Arc::new(RwLock::new(None)),
+            model_cache: new_model_cache(),
         })
     }
 
@@ -888,17 +888,27 @@ impl OpenAIProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("OpenAI request failed: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "chat/completions".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("chat/completions", status, body));
         }
 
-        let openai_response: OpenAIResponse = response.json().await.map_err(|e| {
-            XzatomaError::Provider(format!("Failed to parse OpenAI response: {}", e))
-        })?;
+        let openai_response: OpenAIResponse =
+            response
+                .json()
+                .await
+                .map_err(|source| XzatomaError::ProviderResponseParse {
+                    provider: "openai".to_string(),
+                    endpoint: "chat/completions".to_string(),
+                    source: source.into(),
+                })?;
 
         let choice = openai_response
             .choices
@@ -972,14 +982,16 @@ impl OpenAIProvider {
             .json(request)
             .send()
             .await
-            .map_err(|e| {
-                XzatomaError::Provider(format!("OpenAI streaming request failed: {}", e))
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "chat/completions:stream".to_string(),
+                source: source.into(),
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("chat/completions:stream", status, body));
         }
 
         let mut stream = response.bytes_stream();
@@ -1070,7 +1082,13 @@ impl OpenAIProvider {
     /// # Returns
     ///
     /// An `XzatomaError::Provider` with a contextual error message.
-    fn http_error(&self, status: reqwest::StatusCode, body: String) -> XzatomaError {
+    fn http_error(
+        &self,
+        endpoint: &str,
+        status: reqwest::StatusCode,
+        body: String,
+    ) -> XzatomaError {
+        let mut response = crate::security::redact_sensitive_text(&body);
         if status == reqwest::StatusCode::UNAUTHORIZED {
             let api_key_empty = self
                 .config
@@ -1078,15 +1096,17 @@ impl OpenAIProvider {
                 .map(|c| c.api_key.is_empty())
                 .unwrap_or(true);
             if api_key_empty {
-                return XzatomaError::Provider(format!(
-                    "HTTP {}: {} -- server requires authentication; \
-                     set api_key in the OpenAI provider configuration \
-                     or start the server without requiring authentication",
-                    status, body
-                ));
+                response.push_str(
+                    " -- server requires authentication; set api_key in the OpenAI provider configuration or start the server without requiring authentication",
+                );
             }
         }
-        XzatomaError::Provider(format!("HTTP {}: {}", status, body))
+        XzatomaError::ProviderHttpStatus {
+            provider: "openai".to_string(),
+            endpoint: endpoint.to_string(),
+            status,
+            response,
+        }
     }
 }
 
@@ -1166,7 +1186,7 @@ impl Provider for OpenAIProvider {
         };
 
         if messages_contain_image_content(messages)
-            && !openai_model_supports_vision(&model.to_ascii_lowercase())
+            && !crate::providers::openai_model_supports_vision(&model)
         {
             return Err(XzatomaError::Provider(format!(
                 "OpenAI-compatible model '{}' does not support image input",
@@ -1214,7 +1234,7 @@ impl Provider for OpenAIProvider {
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
         if let Ok(cache) = self.model_cache.read() {
             if let Some((models, cached_at)) = cache.as_ref() {
-                if cached_at.elapsed() < Duration::from_secs(300) {
+                if is_cache_valid(*cached_at) {
                     tracing::debug!("Using cached OpenAI model list");
                     return Ok(models.clone());
                 }
@@ -1231,7 +1251,11 @@ impl Provider for OpenAIProvider {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Failed to fetch models: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "models".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -1260,12 +1284,18 @@ impl Provider for OpenAIProvider {
                     return Ok(vec![info]);
                 }
             }
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("models", status, body));
         }
 
-        let models_response: OpenAIModelsResponse = response.json().await.map_err(|e| {
-            XzatomaError::Provider(format!("Failed to parse models response: {}", e))
-        })?;
+        let models_response: OpenAIModelsResponse =
+            response
+                .json()
+                .await
+                .map_err(|source| XzatomaError::ProviderResponseParse {
+                    provider: "openai".to_string(),
+                    endpoint: "models".to_string(),
+                    source: source.into(),
+                })?;
 
         let mut models: Vec<ModelInfo> = models_response
             .data
@@ -1314,7 +1344,11 @@ impl Provider for OpenAIProvider {
             .headers(headers)
             .send()
             .await
-            .map_err(|e| XzatomaError::Provider(format!("Failed to fetch model info: {}", e)))?;
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "openai".to_string(),
+                endpoint: "models/{id}".to_string(),
+                source: source.into(),
+            })?;
 
         let status = response.status();
 
@@ -1328,7 +1362,7 @@ impl Provider for OpenAIProvider {
 
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            return Err(self.http_error(status, body));
+            return Err(self.http_error("models/{id}", status, body));
         }
 
         match response.json::<OpenAIModelEntry>().await {
@@ -1394,15 +1428,6 @@ impl Provider for OpenAIProvider {
         );
         Ok(())
     }
-}
-
-fn openai_model_supports_vision(model: &str) -> bool {
-    model.contains("gpt-4o")
-        || model.contains("gpt-4.1")
-        || model.contains("gpt-4-turbo")
-        || model.contains("vision")
-        || model.contains("o3")
-        || model.contains("o4")
 }
 
 // ---------------------------------------------------------------------------
@@ -1477,6 +1502,26 @@ mod tests {
         let config = OpenAIConfig::default();
         let provider = OpenAIProvider::new(config).unwrap();
         assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_openai_provider_normalizes_trailing_slash_base_url() {
+        let config = OpenAIConfig {
+            base_url: "https://api.openai.com/v1/".to_string(),
+            ..Default::default()
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn test_openai_provider_rejects_base_url_with_credentials() {
+        let config = OpenAIConfig {
+            base_url: "https://user:pass@example.com/v1".to_string(),
+            ..Default::default()
+        };
+        let result = OpenAIProvider::new(config);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1649,20 +1694,6 @@ mod tests {
                 !caps.contains(&ModelCapability::FunctionCalling),
                 "Did not expect FunctionCalling for {}",
                 old_name
-            );
-        }
-    }
-
-    #[test]
-    fn test_build_capabilities_from_id_never_produces_deprecated_completion() {
-        for id in &["gpt-4o", "gpt-4o-mini", "o1-mini", "babbage-002"] {
-            let caps = build_capabilities_from_id(id);
-            #[allow(deprecated)]
-            let has_deprecated = caps.contains(&ModelCapability::Completion);
-            assert!(
-                !has_deprecated,
-                "build_capabilities_from_id must not produce deprecated Completion for {}",
-                id
             );
         }
     }
@@ -2168,7 +2199,6 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_non_streaming() {
         let server = MockServer::start().await;
 
@@ -2202,7 +2232,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_non_streaming_length_finish_reason() {
         let server = MockServer::start().await;
 
@@ -2231,7 +2260,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_streaming() {
         let server = MockServer::start().await;
 
@@ -2276,7 +2304,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_stream_accumulator_done_sentinel_terminates_stream() {
         let server = MockServer::start().await;
 
@@ -2320,7 +2347,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_streaming_captures_finish_reason() {
         let server = MockServer::start().await;
 
@@ -2358,7 +2384,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models() {
         let server = MockServer::start().await;
 
@@ -2388,17 +2413,9 @@ mod tests {
             models[0].supports_capability(ModelCapability::FunctionCalling),
             "gpt-4o must have FunctionCalling"
         );
-        // Verify the deprecated Completion variant is NOT assigned.
-        #[allow(deprecated)]
-        let has_deprecated = models[0].supports_capability(ModelCapability::Completion);
-        assert!(
-            !has_deprecated,
-            "list_models must not assign the deprecated Completion capability"
-        );
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_fetch_models_filters_non_chat_models() {
         let server = MockServer::start().await;
 
@@ -2446,7 +2463,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_get_model_info_direct_hit_returns_model_info() {
         let server = MockServer::start().await;
 
@@ -2478,7 +2494,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_get_model_info_falls_back_to_list_on_404() {
         let server = MockServer::start().await;
 
@@ -2530,7 +2545,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_complete_with_tools_uses_non_streaming_path() {
         let server = MockServer::start().await;
 
@@ -2567,7 +2581,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_bearer_token_sent_in_header() {
         let server = MockServer::start().await;
 
@@ -2588,7 +2601,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_no_auth_header_when_api_key_empty() {
         let server = MockServer::start().await;
 
@@ -2670,7 +2682,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_401_without_api_key_falls_back_to_configured_model() {
         let server = MockServer::start().await;
 
@@ -2711,7 +2722,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_401_with_api_key_set_returns_error() {
         let server = MockServer::start().await;
 
@@ -2745,7 +2755,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_get_request_omits_content_type() {
         let server = MockServer::start().await;
 
@@ -2787,7 +2796,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_post_completions_401_without_api_key_includes_hint() {
         let server = MockServer::start().await;
 
@@ -2825,7 +2833,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_org_header_sent_when_set() {
         let server = MockServer::start().await;
 
@@ -2854,7 +2861,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "disabled in CI because wiremock-backed OpenAI provider tests touch local network sockets"]
     async fn test_list_models_cache_hit() {
         let server = MockServer::start().await;
 

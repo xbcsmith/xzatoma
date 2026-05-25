@@ -32,14 +32,13 @@ use crate::mcp::types::{
     CompletionCompleteResponse, ElicitationCreateParams, ElicitationResult, GetPromptParams,
     GetPromptResponse, Implementation, InitializeParams, InitializeResponse, ListPromptsResponse,
     ListResourcesResponse, ListToolsResponse, McpTool, PaginatedParams, Prompt, ReadResourceParams,
-    ReadResourceResponse, Resource, ResourceContents, Task, TasksGetParams, TasksListParams,
-    TasksListResponse, TasksResultParams, LATEST_PROTOCOL_VERSION, METHOD_COMPLETION_COMPLETE,
-    METHOD_INITIALIZE, METHOD_INITIALIZED, METHOD_PING, METHOD_PROMPTS_GET, METHOD_PROMPTS_LIST,
-    METHOD_RESOURCES_LIST, METHOD_RESOURCES_READ, METHOD_SAMPLING_CREATE_MESSAGE,
-    METHOD_TASKS_CANCEL, METHOD_TASKS_GET, METHOD_TASKS_LIST, METHOD_TASKS_RESULT,
-    METHOD_TOOLS_CALL, METHOD_TOOLS_LIST, SUPPORTED_PROTOCOL_VERSIONS,
+    ReadResourceResponse, Resource, ResourceContents, LATEST_PROTOCOL_VERSION,
+    METHOD_COMPLETION_COMPLETE, METHOD_INITIALIZE, METHOD_INITIALIZED, METHOD_PING,
+    METHOD_PROMPTS_GET, METHOD_PROMPTS_LIST, METHOD_RESOURCES_LIST, METHOD_RESOURCES_READ,
+    METHOD_SAMPLING_CREATE_MESSAGE, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
+    SUPPORTED_PROTOCOL_VERSIONS,
 };
-use crate::mcp::types::{CreateMessageRequest, CreateMessageResult, TaskParams, TasksCancelParams};
+use crate::mcp::types::{CreateMessageRequest, CreateMessageResult, TaskParams};
 
 // ---------------------------------------------------------------------------
 // Capability flag enum
@@ -303,10 +302,13 @@ impl McpProtocol {
             });
         }
 
-        // Fire-and-forget the initialized notification; errors are not fatal.
-        let _ = self
+        // Fire-and-forget the initialized notification; errors are diagnostic.
+        if let Err(error) = self
             .client
-            .notify(METHOD_INITIALIZED, serde_json::json!({}));
+            .notify(METHOD_INITIALIZED, serde_json::json!({}))
+        {
+            tracing::warn!(%error, "Failed to send MCP initialized notification");
+        }
 
         Ok(InitializedMcpProtocol {
             client: self.client,
@@ -581,95 +583,6 @@ impl InitializedMcpProtocol {
             .request(METHOD_PING, serde_json::json!({}), None)
             .await?;
         Ok(())
-    }
-
-    /// Retrieve the current state of a long-running task.
-    ///
-    /// # Arguments
-    ///
-    /// * `task_id` - The unique identifier of the task.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails or the task is not found.
-    pub async fn tasks_get(&self, task_id: &str) -> Result<Task> {
-        self.client
-            .request(
-                METHOD_TASKS_GET,
-                TasksGetParams {
-                    task_id: task_id.to_string(),
-                },
-                None,
-            )
-            .await
-    }
-
-    /// Retrieve the final result of a completed task.
-    ///
-    /// The server returns the same payload that was produced by the originating
-    /// `tools/call` once the task transitions to `completed`.
-    ///
-    /// # Arguments
-    ///
-    /// * `task_id` - The unique identifier of the task.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails or the task has not yet completed.
-    pub async fn tasks_result(&self, task_id: &str) -> Result<CallToolResponse> {
-        self.client
-            .request(
-                METHOD_TASKS_RESULT,
-                TasksResultParams {
-                    task_id: task_id.to_string(),
-                },
-                None,
-            )
-            .await
-    }
-
-    /// Request cancellation of a running task.
-    ///
-    /// The server will attempt to cancel the task and return its final state.
-    ///
-    /// # Arguments
-    ///
-    /// * `task_id` - The unique identifier of the task to cancel.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails or the task cannot be cancelled.
-    pub async fn tasks_cancel(&self, task_id: &str) -> Result<Task> {
-        self.client
-            .request(
-                METHOD_TASKS_CANCEL,
-                TasksCancelParams {
-                    task_id: task_id.to_string(),
-                },
-                None,
-            )
-            .await
-    }
-
-    /// List tasks known to the server, following pagination automatically.
-    ///
-    /// # Arguments
-    ///
-    /// * `cursor` - Optional opaque cursor from a previous response.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub async fn tasks_list(&self, cursor: Option<&str>) -> Result<TasksListResponse> {
-        self.client
-            .request(
-                METHOD_TASKS_LIST,
-                TasksListParams {
-                    cursor: cursor.map(|s| s.to_string()),
-                },
-                None,
-            )
-            .await
     }
 
     /// Register a handler for `sampling/createMessage` server-initiated requests.

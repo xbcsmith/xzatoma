@@ -35,7 +35,7 @@ use agent_client_protocol as acp_sdk;
 /// Each entry corresponds to a slash command that Zed surfaces in the chat
 /// input completion menu. Commands that accept an optional value argument are
 /// annotated with an [`acp::AvailableCommandInput::Unstructured`] hint so
-/// that Zed can display a descriptive placeholder.
+/// that Zed can display a descriptive display hint.
 ///
 /// # Returns
 ///

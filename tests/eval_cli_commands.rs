@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! Eval tests for CLI command argument parsing and basic command dispatch.
 //!
 //! Loads scenario definitions from `evals/cli_commands/scenarios.yaml` and for
@@ -22,12 +21,13 @@
 //! with the absolute path of the per-scenario temp directory, enabling
 //! subcommands like `replay --db-path __TEMP_DIR__/replay.db`.
 
-use assert_cmd::Command;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Scenario schema
@@ -220,7 +220,7 @@ fn run_scenario(scenario: &Scenario) -> Result<(), String> {
 
     // Build the assert_cmd Command.
     let mut cmd =
-        Command::cargo_bin("xzatoma").map_err(|e| format!("failed to locate binary: {}", e))?;
+        common::xzatoma_command().map_err(|e| format!("failed to locate binary: {}", e))?;
 
     cmd.args(&final_args);
 

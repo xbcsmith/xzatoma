@@ -1,10 +1,7 @@
-#![allow(deprecated)]
-
 /// End-to-end integration tests for subagent configuration
 ///
 /// These tests validate subagent configuration parsing and validation.
 /// They focus on config schema validation rather than end-to-end execution.
-use assert_cmd::Command;
 use predicates::prelude::*;
 mod common;
 
@@ -17,7 +14,7 @@ fn test_subagent_config_valid_custom_values() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 5\n    default_max_turns: 20\n    output_max_size: 8192\n    telemetry_enabled: false\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     // Config should parse successfully (version doesn't execute run)
@@ -33,7 +30,7 @@ fn test_invalid_config_subagent_depth_zero() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 0\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -55,7 +52,7 @@ fn test_invalid_config_subagent_depth_too_large() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    max_depth: 15\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -76,7 +73,7 @@ fn test_invalid_config_subagent_output_size_too_small() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    output_max_size: 512\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -97,7 +94,7 @@ fn test_invalid_config_subagent_default_max_turns_zero() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    default_max_turns: 0\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -118,7 +115,7 @@ fn test_invalid_config_subagent_default_max_turns_too_large() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    default_max_turns: 200\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config")
         .arg(config_path)
         .arg("run")
@@ -139,7 +136,7 @@ fn test_subagent_config_telemetry_disabled() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    telemetry_enabled: false\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -154,7 +151,7 @@ fn test_subagent_config_persistence_enabled() {
         "provider:\n  type: ollama\nagent:\n  max_turns: 50\n  subagent:\n    persistence_enabled: true\n",
     );
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();
@@ -165,7 +162,7 @@ fn test_subagent_config_persistence_enabled() {
 /// Validates that default subagent configuration is applied
 #[test]
 fn test_default_subagent_config_works() {
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--version");
 
     // Should use defaults and succeed
@@ -192,7 +189,7 @@ agent:
 
     let (_temp_dir, config_path) = common::temp_config_file(yaml_content);
 
-    let mut cmd = Command::cargo_bin("xzatoma").unwrap();
+    let mut cmd = common::xzatoma_command().unwrap();
     cmd.arg("--config").arg(config_path).arg("--version");
 
     cmd.assert().success();

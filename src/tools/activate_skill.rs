@@ -1,6 +1,6 @@
 //! Synthetic `activate_skill` tool implementation.
 //!
-//! This tool is the only supported activation path for Phase 3 agent skills.
+//! This tool is the only supported activation path for agent skills.
 //! It activates one valid visible skill by name, deduplicates repeated
 //! activation requests, and returns a structured wrapper suitable for prompt
 //! injection by the runtime layer.

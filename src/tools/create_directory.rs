@@ -110,10 +110,16 @@ impl ToolExecutor for CreateDirectoryTool {
         }
 
         match tokio::fs::create_dir_all(&dir_path).await {
-            Ok(_) => Ok(ToolResult::success(format!(
-                "Created directory: {}",
-                params.path
-            ))),
+            Ok(_) => match self.path_validator.validate(&params.path) {
+                Ok(_) => Ok(ToolResult::success(format!(
+                    "Created directory: {}",
+                    params.path
+                ))),
+                Err(e) => Ok(ToolResult::error(format!(
+                    "Created directory but validation failed after creation: {}",
+                    e
+                ))),
+            },
             Err(e) => Ok(ToolResult::error(format!(
                 "Failed to create directory: {}",
                 e

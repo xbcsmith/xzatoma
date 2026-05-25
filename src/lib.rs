@@ -40,15 +40,15 @@ pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
+pub(crate) mod security;
 pub mod skills;
 pub mod storage;
 pub mod tools;
 pub mod watcher;
-pub mod xzepr;
 
 // Re-export commonly used types
 pub use agent::Agent;
-pub use chat_mode::{ChatMode, SafetyMode};
+pub use chat_mode::{ChatMode, ChatModeParseError, SafetyMode, SafetyModeParseError};
 pub use config::Config;
 pub use error::{Result, XzatomaError};
 pub use mention_parser::{

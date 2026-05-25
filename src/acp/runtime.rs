@@ -6,7 +6,7 @@
 /// execution state, and replay event history without tightly coupling HTTP
 /// routes to agent internals.
 ///
-/// Phase 4 extends the runtime with durable backing through the shared SQLite
+/// The runtime supports durable backing through the shared SQLite
 /// storage layer so ACP sessions, runs, events, await state, and cancellation
 /// audit data survive process restarts.
 ///
@@ -53,7 +53,7 @@ use uuid::Uuid;
 
 /// Default capacity for live event fan-out.
 ///
-/// This value is intentionally modest because Phase 3 keeps event history in the
+/// This value is intentionally modest because event history is kept in the
 /// per-run record and uses the broadcast channel only for live subscribers.
 const DEFAULT_EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -179,7 +179,7 @@ impl std::fmt::Display for AcpRuntimeExecuteMode {
 
 /// ACP runtime create request.
 ///
-/// This structure captures the Phase 3 inputs needed to create an ACP run in
+/// This structure captures the inputs needed to create an ACP run in
 /// the runtime coordinator before execution begins.
 ///
 /// # Examples
@@ -505,7 +505,7 @@ struct AcpRuntimeState {
 
 /// ACP runtime coordinator.
 ///
-/// This is the primary in-memory entry point for ACP Phase 3 lifecycle
+/// This is the primary in-memory entry point for ACP lifecycle
 /// management. It creates runs, tracks status, records ordered events, and
 /// supports live subscriptions for streaming transport.
 ///
@@ -552,7 +552,13 @@ impl AcpRuntime {
     /// let _ = runtime.run_count();
     /// ```
     pub fn new(config: Config) -> Self {
-        let storage = SqliteStorage::new().ok();
+        let storage = match SqliteStorage::new() {
+            Ok(storage) => Some(storage),
+            Err(error) => {
+                tracing::warn!(error = %error, "ACP runtime storage initialization failed");
+                None
+            }
+        };
         let runtime = Self {
             config,
             state: Arc::new(Mutex::new(AcpRuntimeState::default())),
@@ -623,7 +629,17 @@ impl AcpRuntime {
     /// assert_eq!(runtime.run_count(), 0);
     /// ```
     pub fn new_with_storage_path<P: AsRef<std::path::Path>>(config: Config, db_path: P) -> Self {
-        let storage = SqliteStorage::new_with_path(db_path.as_ref()).ok();
+        let storage = match SqliteStorage::new_with_path(db_path.as_ref()) {
+            Ok(storage) => Some(storage),
+            Err(error) => {
+                tracing::warn!(
+                    path = %db_path.as_ref().display(),
+                    error = %error,
+                    "ACP runtime explicit storage initialization failed"
+                );
+                None
+            }
+        };
         let runtime = Self {
             config,
             state: Arc::new(Mutex::new(AcpRuntimeState::default())),
@@ -1538,13 +1554,12 @@ impl AcpRuntime {
 
         if let Some(await_state) = storage.load_acp_await_state(run_id)? {
             if let Some(resume_payload_json) = await_state.resume_payload_json {
-                record.resume_payload =
-                    Some(serde_json::from_str(&resume_payload_json).map_err(|error| {
-                        XzatomaError::Storage(format!(
-                            "Failed to deserialize stored ACP resume payload: {}",
-                            error
-                        ))
-                    })?);
+                record.resume_payload = Some(serde_json::from_str(&resume_payload_json).map_err(
+                    |source| XzatomaError::StorageSerialization {
+                        operation: "deserialize stored ACP resume payload".to_string(),
+                        source: source.into(),
+                    },
+                )?);
             }
         }
 
@@ -1604,12 +1619,12 @@ impl AcpRuntime {
                     sequence: event.sequence,
                     kind: event.event.kind.to_string(),
                     created_at: parse_runtime_timestamp(&event.event.created_at)?,
-                    payload_json: serde_json::to_string(&event.event.payload).map_err(|error| {
-                        XzatomaError::Storage(format!(
-                            "Failed to serialize ACP event payload: {}",
-                            error
-                        ))
-                    })?,
+                    payload_json: serde_json::to_string(&event.event.payload).map_err(
+                        |source| XzatomaError::StorageSerialization {
+                            operation: "serialize ACP event payload".to_string(),
+                            source: source.into(),
+                        },
+                    )?,
                     terminal: event.terminal,
                 })
             })
@@ -1669,18 +1684,31 @@ impl AcpRuntime {
             return Ok(());
         };
 
-        let conn = rusqlite::Connection::open(storage.database_path())
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+        let conn = rusqlite::Connection::open(storage.database_path()).map_err(|source| {
+            XzatomaError::StorageDatabaseOpen {
+                path: storage.database_path().display().to_string(),
+                source: source.into(),
+            }
+        })?;
         let mut stmt = conn
             .prepare("SELECT run_id FROM acp_runs ORDER BY created_at ASC")
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "prepare ACP runtime restore query".to_string(),
+                source: source.into(),
+            })?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| XzatomaError::Storage(error.to_string()))?;
+            .map_err(|source| XzatomaError::StorageQuery {
+                operation: "query ACP runtime restore run IDs".to_string(),
+                source: source.into(),
+            })?;
 
         let mut run_ids = Vec::new();
         for run_id in rows {
-            run_ids.push(run_id.map_err(|error| XzatomaError::Storage(error.to_string()))?);
+            run_ids.push(run_id.map_err(|source| XzatomaError::StorageRowDecode {
+                operation: "decode ACP runtime restore run ID".to_string(),
+                source: source.into(),
+            })?);
         }
 
         for run_id in run_ids {
@@ -1694,11 +1722,9 @@ impl AcpRuntime {
 fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|value| value.with_timezone(&chrono::Utc))
-        .map_err(|error| {
-            XzatomaError::Storage(format!(
-                "Failed to parse persisted ACP runtime timestamp '{}': {}",
-                value, error
-            ))
+        .map_err(|source| XzatomaError::StorageRowDecode {
+            operation: format!("parse persisted ACP runtime timestamp '{value}'"),
+            source: source.into(),
         })
 }
 
@@ -1706,8 +1732,8 @@ fn parse_runtime_timestamp(value: &str) -> Result<chrono::DateTime<chrono::Utc>>
 /// single-agent XZatoma execution model.
 ///
 /// This adapter preserves input ordering and supports text-first ACP messages.
-/// Unsupported multimodal or artifact-only payloads are rejected until fuller
-/// multimodal support is implemented.
+/// Unsupported multimodal or artifact-only payloads are rejected with a typed
+/// validation error.
 ///
 /// # Arguments
 ///
@@ -1758,7 +1784,7 @@ pub fn flatten_input_to_prompt(messages: &[AcpMessage]) -> Result<String> {
                 }
                 AcpMessagePart::Artifact(_) => {
                     return Err(crate::acp::error::AcpError::validation(
-                        "artifact input parts are not yet supported for ACP runs",
+                        "artifact input parts are unsupported in ACP runs; only text parts are accepted",
                     )
                     .into());
                 }
@@ -1840,7 +1866,7 @@ fn extract_text_content(message: &AcpMessage) -> Result<String> {
             AcpMessagePart::Text(text) => Ok(text.text.clone()),
             AcpMessagePart::Artifact(_) => {
                 Err(XzatomaError::Acp(crate::acp::error::AcpError::validation(
-                    "artifact message parts are not yet supported for ACP run execution"
+                    "artifact message parts are unsupported in ACP run execution; only text parts are processed"
                         .to_string(),
                 )))
             }
@@ -1871,7 +1897,7 @@ fn validate_supported_message_parts(message: &AcpMessage) -> Result<()> {
             AcpMessagePart::Text(text) => text.validate()?,
             AcpMessagePart::Artifact(_) => {
                 return Err(crate::acp::error::AcpError::validation(
-                    "artifact and multimodal ACP inputs are not yet supported",
+                    "artifact and multimodal ACP inputs are unsupported; only text message parts are accepted",
                 )
                 .into());
             }
@@ -2276,7 +2302,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP runtime persistence can hang when touching shared storage"]
     fn test_runtime_set_awaiting_persists_await_state() {
         let runtime = AcpRuntime::new_in_memory(Config::default());
 
@@ -2320,7 +2345,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "disabled in CI because ACP runtime persistence can hang when touching shared storage"]
     fn test_runtime_resume_run_transitions_awaiting_to_running() {
         let runtime = AcpRuntime::new_in_memory(Config::default());
 

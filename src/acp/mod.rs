@@ -1,12 +1,12 @@
 /// ACP domain model and core abstractions.
 ///
-/// This module exposes the canonical Phase 1 ACP surface for XZatoma.
+/// This module exposes the canonical ACP surface for XZatoma.
 ///
 /// The ACP domain is intentionally transport-independent. Protocol-facing types
 /// live in focused submodules, but the crate-level ACP API is unified here so
-/// later phases can depend on one stable surface.
+/// consumers can depend on one stable surface.
 ///
-/// Phase 1 uses `types.rs` as the canonical protocol and lifecycle model for:
+/// This module uses `types.rs` as the canonical protocol and lifecycle model for:
 ///
 /// - ACP messages and message parts
 /// - ACP artifacts
@@ -16,9 +16,8 @@
 /// - ACP events used for history and streaming
 /// - adapter helpers for converting provider messages into ACP messages
 ///
-/// The sibling modules `run.rs`, `events.rs`, and `session.rs` may contain
-/// supporting or compatibility abstractions, but consumers should prefer the
-/// unified exports from this module.
+/// Consumers should prefer the unified exports from this module or the focused
+/// runtime, server, and stdio modules for transport-specific behavior.
 ///
 /// # Examples
 ///
@@ -44,14 +43,10 @@
 /// ```
 pub mod available_commands;
 pub mod error;
-pub mod events;
 pub mod executor;
-pub mod handlers;
 pub mod ide_bridge;
 pub mod manifest;
 pub mod prompt_input;
-pub mod routes;
-pub mod run;
 pub mod runtime;
 pub mod server;
 pub mod session;
