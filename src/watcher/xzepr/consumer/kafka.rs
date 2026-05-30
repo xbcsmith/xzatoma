@@ -42,6 +42,7 @@ use tracing::{debug, error, info, warn};
 
 use futures::StreamExt;
 use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::error::KafkaError;
 use rdkafka::ClientConfig;
 use rdkafka::Message;
 
@@ -66,6 +67,17 @@ pub enum ConsumerError {
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),
+}
+
+/// Returns true when a Kafka receive error is safe to treat as transient.
+///
+/// librdkafka can emit connection-level errors while it is still retrying
+/// bootstrap brokers. These errors should not stop long-running watchers.
+fn is_transient_kafka_recv_error(err: &KafkaError) -> bool {
+    let error_message = err.to_string();
+    error_message.contains("BrokerTransportFailure")
+        || error_message.contains("AllBrokersDown")
+        || error_message.contains("NetworkException")
 }
 
 /// Handler trait for processing CloudEvents messages.
@@ -279,7 +291,8 @@ impl XzeprConsumer {
     ///
     /// Creates a `StreamConsumer`, subscribes to the configured topic, and
     /// streams messages to the provided handler. The consumer runs until
-    /// `stop()` is called or a fatal Kafka error occurs.
+    /// `stop()` is called, the stream ends, or a fatal Kafka error occurs.
+    /// Transient broker connectivity errors are logged and retried.
     ///
     /// Messages are processed sequentially through the handler. If the handler
     /// returns an error for a particular message, the error is logged and the
@@ -347,9 +360,18 @@ impl XzeprConsumer {
                     }
                 },
                 Some(Err(e)) => {
+                    if is_transient_kafka_recv_error(&e) {
+                        warn!(
+                            service = %self.config.service_name,
+                            error = %e,
+                            "Transient Kafka consumer error; continuing"
+                        );
+                        continue;
+                    }
+
                     error!(
                         service = %self.config.service_name,
-                        "Kafka consumer error: {}", e
+                        "Fatal Kafka consumer error: {}", e
                     );
                     self.running.store(false, Ordering::SeqCst);
                     return Err(ConsumerError::Kafka(e.to_string()));
@@ -376,8 +398,9 @@ impl XzeprConsumer {
     /// `mpsc::Sender`. This provides an alternative to the handler pattern,
     /// allowing messages to be processed in a separate task.
     ///
-    /// The consumer stops when `stop()` is called, a fatal Kafka error occurs,
-    /// or the channel receiver is dropped.
+    /// The consumer stops when `stop()` is called, the stream ends, a fatal
+    /// Kafka error occurs, or the channel receiver is dropped. Transient
+    /// broker connectivity errors are logged and retried.
     ///
     /// # Arguments
     ///
@@ -454,9 +477,18 @@ impl XzeprConsumer {
                     }
                 },
                 Some(Err(e)) => {
+                    if is_transient_kafka_recv_error(&e) {
+                        warn!(
+                            service = %self.config.service_name,
+                            error = %e,
+                            "Transient Kafka consumer error; continuing"
+                        );
+                        continue;
+                    }
+
                     error!(
                         service = %self.config.service_name,
-                        "Kafka consumer error: {}", e
+                        "Fatal Kafka consumer error: {}", e
                     );
                     self.running.store(false, Ordering::SeqCst);
                     return Err(ConsumerError::Kafka(e.to_string()));
@@ -551,6 +583,10 @@ mod tests {
         }
     }
 
+    fn make_kafka_error(message: &str) -> KafkaError {
+        KafkaError::ClientCreation(message.to_string())
+    }
+
     #[test]
     fn test_consumer_new() {
         let config = KafkaConsumerConfig::new("localhost:9092", "test-topic", "test-service");
@@ -595,6 +631,30 @@ mod tests {
 
         consumer.stop();
         assert!(!consumer.is_running());
+    }
+
+    #[test]
+    fn test_is_transient_kafka_recv_error_accepts_broker_transport_failure() {
+        let err = make_kafka_error("BrokerTransportFailure: connection refused");
+        assert!(is_transient_kafka_recv_error(&err));
+    }
+
+    #[test]
+    fn test_is_transient_kafka_recv_error_accepts_all_brokers_down() {
+        let err = make_kafka_error("AllBrokersDown");
+        assert!(is_transient_kafka_recv_error(&err));
+    }
+
+    #[test]
+    fn test_is_transient_kafka_recv_error_accepts_network_exception() {
+        let err = make_kafka_error("NetworkException: timeout");
+        assert!(is_transient_kafka_recv_error(&err));
+    }
+
+    #[test]
+    fn test_is_transient_kafka_recv_error_rejects_fatal_error() {
+        let err = make_kafka_error("UnknownTopicOrPartition");
+        assert!(!is_transient_kafka_recv_error(&err));
     }
 
     #[tokio::test]

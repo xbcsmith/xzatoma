@@ -196,13 +196,15 @@ impl PlanExtractor {
         strategy: &PlanExtractionStrategy,
     ) -> PlanExtractionResult<String> {
         let json_value = match strategy {
-            PlanExtractionStrategy::EventPayload => event
-                .data
-                .events
-                .first()
-                .ok_or(PlanExtractionError::NoEvents)?
-                .payload
-                .clone(),
+            PlanExtractionStrategy::EventPayload => {
+                let event_entity = event
+                    .data
+                    .events
+                    .first()
+                    .ok_or(PlanExtractionError::NoEvents)?;
+
+                event_entity.payload.clone()
+            }
             PlanExtractionStrategy::EventPayloadPlan => {
                 let event_entity = event
                     .data

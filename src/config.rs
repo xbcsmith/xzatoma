@@ -5087,9 +5087,11 @@ pub struct KafkaWatcherConfig {
     /// Topic to consume from
     pub topic: String,
 
-    /// Output topic for publishing plan execution results (Generic watcher only).
+    /// Output topic for publishing plan execution results.
     ///
-    /// If `None`, results are published back to the input `topic`.
+    /// When set, both watcher backends publish result events to this topic.
+    /// If `None` and `watcher_type` is `generic`, results are published back
+    /// to the input `topic`. For the XZepr watcher, the same fallback applies.
     #[serde(default)]
     pub output_topic: Option<String>,
 

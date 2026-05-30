@@ -2320,8 +2320,9 @@ pub mod watch {
         // Apply CLI argument overrides to configuration
         apply_cli_overrides(&mut config, &overrides)?;
 
-        // Initialize logging system
-        crate::watcher::logging::init_watcher_logging(&config.watcher.logging)?;
+        // Logging is already initialised by main() using the Watch command's
+        // --json-logs and --log-file flags.  Do not call init_watcher_logging()
+        // here; a second subscriber initialisation would panic.
 
         tracing::info!("Watch command started");
         tracing::info!(

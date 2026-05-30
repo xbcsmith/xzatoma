@@ -2,28 +2,34 @@
 //!
 //! This module defines the CLI structure using clap's derive API,
 //! providing commands for chat, plan execution, and authentication.
+//!
+//! Global options such as `--config`, `--verbose`, and `--storage-path` can be
+//! placed before or after the selected subcommand.
 
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
-/// XZatoma - Autonomous AI agent CLI
+/// XZatoma - Autonomous AI agent CLI.
 ///
-/// Execute tasks through conversation with AI providers using
-/// basic file system and terminal tools.
+/// Execute tasks through conversation with AI providers using basic file system
+/// and terminal tools.
+///
+/// Global options such as `--config`, `--verbose`, and `--storage-path` can be
+/// placed before or after the selected subcommand.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "xzatoma")]
 #[command(version, about, long_about = None)]
 pub struct Cli {
     /// Path to configuration file
-    #[arg(short, long, default_value = "config/config.yaml")]
+    #[arg(short, long, global = true, default_value = "config/config.yaml")]
     pub config: Option<String>,
 
     /// Enable verbose logging
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub verbose: bool,
 
     /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
-    #[arg(long, env = "XZATOMA_HISTORY_DB")]
+    #[arg(long, global = true, env = "XZATOMA_HISTORY_DB")]
     pub storage_path: Option<String>,
 
     /// Command to execute
@@ -834,9 +840,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_storage_path() {
-        // Include a subcommand (auth) so clap parsing succeeds (avoids MissingSubcommand).
-        let cli = Cli::try_parse_from(["xzatoma", "--storage-path", "/tmp/my.db", "auth"])
+    fn test_cli_parse_storage_path_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "auth", "--storage-path", "/tmp/my.db"])
             .expect("failed to parse CLI args (storage-path)");
         assert_eq!(cli.storage_path, Some("/tmp/my.db".to_string()));
     }
@@ -1176,24 +1181,19 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_with_config() {
-        let cli = Cli::try_parse_from([
-            "xzatoma",
-            "--config",
-            "custom.yaml",
-            "auth",
-            "--provider",
-            "copilot",
-        ]);
+    fn test_cli_parse_watch_with_config_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--config", "custom.yaml"]);
         assert!(cli.is_ok());
+
         let cli = cli.unwrap();
         assert_eq!(cli.config, Some("custom.yaml".to_string()));
     }
 
     #[test]
-    fn test_cli_parse_with_verbose() {
-        let cli = Cli::try_parse_from(["xzatoma", "-v", "auth", "--provider", "copilot"]);
+    fn test_cli_parse_with_verbose_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "auth", "--provider", "copilot", "--verbose"]);
         assert!(cli.is_ok());
+
         let cli = cli.unwrap();
         assert!(cli.verbose);
     }

@@ -31,8 +31,9 @@ tools to accomplish it.
   `xzatoma history list` to view sessions, `xzatoma chat --resume <ID>` to
   resume, and `xzatoma history delete --id <ID>` to delete a session (see
   `docs/how-to/manage_conversation_history.md`). You can override the history
-  database path with `--storage-path <PATH>` (CLI) or by setting the environment
-  variable `XZATOMA_HISTORY_DB` to point to an alternate `history.db` file.
+  database path with `xzatoma chat --storage-path <PATH>` (or any other
+  subcommand) or by setting the environment variable `XZATOMA_HISTORY_DB` to
+  point to an alternate `history.db` file.
 - **Zed IDE Integration**: Run as an ACP stdio subprocess for
   [Zed](https://zed.dev) agent panel integration
 - **Generic Design**: No specialized features - agent uses basic tools

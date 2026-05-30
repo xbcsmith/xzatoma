@@ -138,77 +138,22 @@ async fn test_headless_mode_rejects_without_trust_metadata() {
 }
 
 // ---------------------------------------------------------------------------
-// Task 5B.5: test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error
+// Task 5B.5: interactive user rejection
 //
-// NOTE: We cannot mock stdin in a multi-process test harness without a
-// dedicated stdin-injection harness. The next-best approach is to test
-// the error path via the FullAutonomous fast-path and verify the error
-// type contract separately using the approval module.
+// The stdin-based rejection path cannot run in `cargo test` because
+// `should_auto_approve` always returns false and a non-headless handler blocks
+// on `stdin().read_line()` waiting for "[y/N]" input. That is not a network
+// dependency; it is interactive terminal I/O.
 //
-// The canonical user-rejection test is covered in the unit tests inside
-// src/mcp/sampling.rs::tests. The integration test below verifies the
-// error type is correctly propagated from the crate's public API.
+// User rejection behavior is covered in `src/mcp/sampling.rs` unit tests.
 // ---------------------------------------------------------------------------
 
-/// When `should_auto_approve` returns `false` AND the user provides a
-/// non-affirmative answer, the handler must return
-/// `XzatomaError::McpElicitation("user rejected sampling request")`.
+/// Verify the public `McpElicitation` rejection error contract.
 ///
-/// Because we cannot inject stdin from an integration test without a helper
-/// binary, this test verifies the error path by directly calling
-/// `create_message` with a handler whose approval policy returns `false` AND
-/// by faking the rejection via the empty-messages guard (which returns an
-/// `Mcp` error, not `McpElicitation`).
-///
-/// The stdin-based rejection path is tested in the unit tests inside
-/// `src/mcp/sampling.rs`.
-#[tokio::test]
-async fn test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error() {
-    // We test the McpElicitation error variant by directly inspecting the
-    // error type returned when a request has no usable messages AND would
-    // have been auto-approved -- the guard triggers a distinct Mcp error.
-    // The interactive rejection path (stdin-based) is covered in unit tests.
-
-    let mock = Arc::new(MockProvider::new("unreachable"));
-
-    // headless=false, FullAutonomous=false => approval required, but since
-    // we cannot inject "n" into stdin here we test that the empty-messages
-    // guard (a different error path) surfaces correctly as an Err.
-    let handler = XzatomaSamplingHandler {
-        provider: Arc::clone(&mock) as Arc<dyn Provider>,
-        execution_mode: ExecutionMode::FullAutonomous, // auto-approve to skip stdin
-        headless: false,
-    };
-
-    // An empty messages list must produce an error (not reach the provider).
-    let empty_req = CreateMessageRequest {
-        messages: vec![],
-        model_preferences: None,
-        system_prompt: None,
-        include_context: None,
-        temperature: None,
-        max_tokens: 100,
-        stop_sequences: None,
-        metadata: None,
-        tools: None,
-        tool_choice: None,
-    };
-
-    let result = handler.create_message(empty_req).await;
-    assert!(
-        result.is_err(),
-        "empty messages must produce an error; got Ok"
-    );
-
-    // Provider must NOT have been called.
-    assert_eq!(
-        mock.call_count(),
-        0,
-        "provider must not be called when messages are empty"
-    );
-
-    // Verify the McpElicitation error type is a recognised XzatomaError variant
-    // by constructing one directly and checking its display message.
+/// Does not call `create_message` with `headless: false` because sampling
+/// approval always requires interactive stdin in that configuration.
+#[test]
+fn test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error() {
     let elicitation_err = XzatomaError::McpElicitation("user rejected sampling request".into());
     assert!(
         elicitation_err

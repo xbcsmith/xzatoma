@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # seed_plan.sh
 #
-# Publishes a Plan JSON event to the Redpanda input topic that the Atoma
+# Publishes a Plan JSON event to the Redpanda input topic that the XZatoma
 # generic watcher is subscribed to.  The plan payload is consumed directly
-# by Atoma; no plan files on disk are required on the watcher side.
+# by XZatoma; no plan files on disk are required on the watcher side.
 #
 # Usage:
 #   ./seed_plan.sh [PRESET]
@@ -35,7 +35,7 @@ set -euo pipefail
 
 PRESET="${1:-hello}"
 
-TOPIC="atoma.plans"
+TOPIC="xzatoma.plans"
 
 # ---------------------------------------------------------------------------
 # Task ID generator - uses ulid CLI when available, falls back to date+random
@@ -89,7 +89,7 @@ case "${PRESET}" in
   "tasks": [
     {
       "id": "${TASK_ID_1}",
-      "description": "You are Atoma running in generic watcher mode. Run these three commands and report each one with its output: (1) echo Generic watcher is alive (2) date -u (3) uname -s. Then run mkdir -p tmp and write a brief report to tmp/hello-world-report.txt containing: a header line Atoma Generic Watcher - Hello World, the timestamp from command 2, and the platform from command 3. Finish with cat tmp/hello-world-report.txt to confirm the file was written.",
+      "description": "You are XZatoma running in generic watcher mode. Run these three commands and report each one with its output: (1) echo Generic watcher is alive (2) date -u (3) uname -s. Then run mkdir -p tmp and write a brief report to tmp/hello-world-report.txt containing: a header line XZatoma Generic Watcher - Hello World, the timestamp from command 2, and the platform from command 3. Finish with cat tmp/hello-world-report.txt to confirm the file was written.",
       "priority": "low"
     }
   ],
@@ -146,12 +146,12 @@ ENDJSON
         fi
         _plan_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plans/doc_audit.yaml"
         PLAN_JSON=$(
-            ATOMA_PLAN_ID="${PLAN_ID}" ATOMA_PLAN_FILE="${_plan_file}" \
+            XZATOMA_PLAN_ID="${PLAN_ID}" XZATOMA_PLAN_FILE="${_plan_file}" \
             python3 -c "
 import json, yaml, os
-with open(os.environ['ATOMA_PLAN_FILE']) as f:
+with open(os.environ['XZATOMA_PLAN_FILE']) as f:
     plan = yaml.safe_load(f)
-plan['id'] = os.environ['ATOMA_PLAN_ID']
+plan['id'] = os.environ['XZATOMA_PLAN_ID']
 print(json.dumps(plan))
 "
         ) || die "Failed to load plans/doc_audit.yaml.  Install pyyaml: pip install pyyaml"

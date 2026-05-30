@@ -13,8 +13,13 @@
 use super::consumer::{CloudEventMessage, KafkaConsumerConfig, MessageHandler, XzeprConsumer};
 use super::filter::EventFilter;
 use super::plan_extractor::{PlanExtractionError, PlanExtractor};
-use crate::config::{Config, WatcherConfig};
+use crate::config::{Config, KafkaWatcherConfig, WatcherConfig};
+use crate::watcher::generic::result_event::GenericPlanResult;
+use crate::watcher::generic::result_producer::{
+    FakeResultProducer, GenericResultProducer, ResultProducerTrait,
+};
 use async_trait::async_trait;
+use serde_json::json;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
@@ -75,6 +80,10 @@ pub enum WatcherError {
     /// Plan execution error.
     #[error("Execution error: {0}")]
     Execution(String),
+
+    /// Result producer error.
+    #[error("Producer error: {0}")]
+    Producer(String),
 }
 
 impl WatcherError {
@@ -103,6 +112,7 @@ impl WatcherError {
             Self::Filter(_) => "filter",
             Self::PlanExtraction { .. } => "plan extraction",
             Self::Execution(_) => "execution",
+            Self::Producer(_) => "producer",
         }
     }
 }
@@ -138,9 +148,11 @@ impl From<PlanExtractionError> for WatcherError {
 pub struct Watcher {
     config: Arc<Config>,
     watcher_config: WatcherConfig,
+    kafka_config: KafkaWatcherConfig,
     consumer: XzeprConsumer,
     filter: Arc<EventFilter>,
     extractor: Arc<PlanExtractor>,
+    producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
 }
@@ -179,7 +191,7 @@ impl Watcher {
         let watcher_config = config.watcher.clone();
 
         // Validate Kafka configuration exists
-        let kafka_config = watcher_config.kafka.as_ref().ok_or_else(|| {
+        let kafka_config = watcher_config.kafka.clone().ok_or_else(|| {
             WatcherError::Config("Kafka configuration is required for watcher".to_string())
         })?;
 
@@ -207,6 +219,15 @@ impl Watcher {
 
         debug!("Kafka consumer created successfully");
 
+        let producer: Arc<dyn ResultProducerTrait> = if dry_run {
+            Arc::new(FakeResultProducer::new())
+        } else {
+            Arc::new(
+                GenericResultProducer::new(&kafka_config)
+                    .map_err(|e| WatcherError::Producer(e.to_string()))?,
+            )
+        };
+
         // Create event filter
         let filter = Arc::new(
             EventFilter::new(watcher_config.filters.clone())
@@ -229,12 +250,44 @@ impl Watcher {
         Ok(Self {
             config: Arc::new(config),
             watcher_config,
+            kafka_config,
             consumer,
             filter,
             extractor,
+            producer,
             execution_semaphore,
             dry_run,
         })
+    }
+
+    /// Replace the result producer with the provided implementation.
+    ///
+    /// This builder method enables injection of test doubles such as
+    /// [`FakeResultProducer`](crate::watcher::generic::result_producer::FakeResultProducer)
+    /// so the watcher loop can be exercised without a live Kafka broker.
+    ///
+    /// # Arguments
+    ///
+    /// * `producer` - The producer implementation to use
+    ///
+    /// # Returns
+    ///
+    /// `self` with the producer replaced.
+    pub fn with_producer(mut self, producer: Arc<dyn ResultProducerTrait>) -> Self {
+        self.producer = producer;
+        self
+    }
+
+    /// Return the configured output topic used by the result producer.
+    ///
+    /// # Returns
+    ///
+    /// The effective output topic.
+    pub fn output_topic(&self) -> &str {
+        self.kafka_config
+            .output_topic
+            .as_deref()
+            .unwrap_or(self.kafka_config.topic.as_str())
     }
 
     /// Start watching for and processing events from the Kafka topic.
@@ -270,6 +323,7 @@ impl Watcher {
     pub async fn start(&mut self) -> WatcherResult<()> {
         info!(
             filters = %self.filter.summary(),
+            output_topic = %self.output_topic(),
             dry_run = self.dry_run,
             "Starting XZepr watcher service"
         );
@@ -280,6 +334,7 @@ impl Watcher {
             watcher_config: self.watcher_config.clone(),
             filter: self.filter.clone(),
             extractor: self.extractor.clone(),
+            producer: self.producer.clone(),
             execution_semaphore: self.execution_semaphore.clone(),
             dry_run: self.dry_run,
         };
@@ -382,6 +437,7 @@ struct WatcherMessageHandler {
     watcher_config: WatcherConfig,
     filter: Arc<EventFilter>,
     extractor: Arc<PlanExtractor>,
+    producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
 }
@@ -447,9 +503,27 @@ impl MessageHandler for WatcherMessageHandler {
 
         info!("Plan extracted and ready for execution");
 
+        let trigger_event_id = message.id.clone();
+        let event_type = message.event_type.clone();
+
         // Check if in dry-run mode
         if self.dry_run {
             info!("Dry-run mode enabled: skipping plan execution");
+
+            let mut result = GenericPlanResult::new(
+                trigger_event_id,
+                true,
+                "Dry-run: XZepr plan extracted and processed without execution".to_string(),
+            );
+            result.plan_output = Some(json!({
+                "mode": "dry_run",
+                "source_event_type": event_type,
+            }));
+
+            if let Err(e) = self.producer.publish(&result).await {
+                warn!(error = %e, "Failed to publish dry-run XZepr watcher result");
+            }
+
             return Ok(());
         }
 
@@ -478,41 +552,51 @@ impl MessageHandler for WatcherMessageHandler {
         let execution_task = tokio::spawn(async move {
             debug!("Plan execution task started");
 
-            let result = crate::commands::r#run::run_plan_with_options(
+            crate::commands::r#run::run_plan_with_options(
                 config,
                 None,
                 Some(plan_yaml),
                 allow_dangerous,
                 None,
             )
-            .await;
-
-            result
+            .await
         });
 
-        // Wait for execution to complete
-        match execution_task.await {
-            Ok(Ok(())) => {
-                info!("Plan executed successfully");
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                error!(
-                    error = %e,
-                    "Plan execution failed"
-                );
-                // Don't propagate execution errors; continue processing
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    error = %e,
-                    "Task join error during plan execution"
-                );
-                // Don't propagate task errors; continue processing
-                Ok(())
-            }
+        // Wait for execution to complete and publish the result
+        let (success, summary) = match execution_task.await {
+            Ok(Ok(())) => (
+                true,
+                "XZepr watcher plan execution completed successfully".to_string(),
+            ),
+            Ok(Err(e)) => (false, format!("XZepr watcher plan execution failed: {}", e)),
+            Err(e) => (
+                false,
+                format!("XZepr watcher plan execution task join failed: {}", e),
+            ),
+        };
+
+        if success {
+            info!("Plan executed successfully");
+        } else {
+            error!(summary = %summary, "Plan execution failed");
         }
+
+        let mut result = GenericPlanResult::new(trigger_event_id, success, summary);
+        result.plan_output = Some(json!({
+            "mode": "execute",
+            "source_event_type": event_type,
+            "success": success,
+        }));
+
+        if let Err(e) = self.producer.publish(&result).await {
+            warn!(
+                error = %e,
+                success = success,
+                "Failed to publish XZepr watcher result"
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -547,6 +631,9 @@ mod tests {
 
         let err = WatcherError::Execution("execution timeout".to_string());
         assert_eq!(err.to_string(), "Execution error: execution timeout");
+
+        let err = WatcherError::Producer("kafka unavailable".to_string());
+        assert_eq!(err.to_string(), "Producer error: kafka unavailable");
     }
 
     #[test]
@@ -684,6 +771,42 @@ mod tests {
 
         let error = Watcher::apply_security_config(config, &security).unwrap_err();
         assert!(matches!(error, WatcherError::InvalidSaslMechanism { .. }));
+    }
+
+    #[test]
+    fn test_watcher_output_topic_uses_explicit_output_topic_when_configured() {
+        let mut config = Config::default();
+        config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "xzepr.events".to_string(),
+            output_topic: Some("xzepr.results".to_string()),
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+            num_partitions: 1,
+            replication_factor: 1,
+        });
+
+        let watcher = Watcher::new(config, false).unwrap();
+        assert_eq!(watcher.output_topic(), "xzepr.results");
+    }
+
+    #[test]
+    fn test_watcher_output_topic_falls_back_to_input_topic() {
+        let mut config = Config::default();
+        config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "xzepr.events".to_string(),
+            output_topic: None,
+            group_id: "test-group".to_string(),
+            auto_create_topics: true,
+            security: None,
+            num_partitions: 1,
+            replication_factor: 1,
+        });
+
+        let watcher = Watcher::new(config, false).unwrap();
+        assert_eq!(watcher.output_topic(), "xzepr.events");
     }
 
     #[test]
