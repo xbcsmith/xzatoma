@@ -19,18 +19,28 @@
 //!   [`BufferedResultProducer`]) for generic watcher results
 //! - [`watcher`]: Core generic watcher service and dry-run processing flow
 //!
+//! # Wire Format
+//!
+//! The generic watcher requires every inbound Kafka message to be a standard
+//! **CloudEvents 1.0** JSON object ([`GenericPlanCloudEvent`]).  Required
+//! attributes: `id`, `specversion` (`"1.0"`), `type`, `source`, `data`.
+//! The `data` field contains the [`Plan`] payload (task-based or step-based).
+//!
+//! This is intentionally distinct from the XZepr watcher, which uses an
+//! XZepr-specific CloudEvents schema with extensions such as `success`,
+//! `api_version`, `platform_id`, `release`, and `package`.
+//!
 //! # Loop prevention
 //!
-//! The generic watcher prevents same-topic re-trigger loops through early plan
-//! parsing:
+//! The generic watcher prevents same-topic re-trigger loops at the CloudEvents
+//! parsing boundary:
 //!
-//! - [`GenericPlanEvent::new`] calls [`PlanParser::parse_string`] on the raw
-//!   Kafka payload and returns `Err` if the payload cannot be parsed as a
-//!   valid [`Plan`].
-//! - [`GenericPlanResult`] messages published to the output topic carry JSON
-//!   fields (`id`, `event_type`, `trigger_event_id`, etc.) that do not match
-//!   the [`Plan`] schema, so they fail plan parsing when consumed back on the
-//!   same topic.
+//! - [`GenericPlanEvent::new`] parses the payload as a [`GenericPlanCloudEvent`]
+//!   and returns `Err` if the envelope is invalid or `data` cannot be validated
+//!   as a [`Plan`].
+//! - [`GenericPlanResult`] messages published to the output topic are plain JSON
+//!   (not CloudEvents envelopes), so they fail at the first parse step when
+//!   consumed back on the same topic.
 //! - The [`GenericEventHandler`] propagates the parse error and the watcher
 //!   classifies the message as `InvalidPayload` — no execution, no new result.
 //!
@@ -84,13 +94,20 @@
 //! })
 //! .unwrap();
 //!
-//! let mut event = GenericPlanEvent::new(
-//!     "name: deploy\naction: deploy-prod\nsteps:\n  - name: s1\n    action: kubectl apply\n",
-//!     "input.topic".to_string(),
-//!     None,
-//! )
-//! .unwrap();
+//! // Messages must be CloudEvents 1.0 envelopes with the plan in `data`.
+//! let cloud_event = r#"{
+//!     "id": "01JTEST000000000000000001",
+//!     "specversion": "1.0",
+//!     "type": "xzatoma.plan.execute",
+//!     "source": "my-producer",
+//!     "data": {
+//!         "name": "deploy",
+//!         "action": "deploy-prod",
+//!         "steps": [{ "name": "s1", "action": "kubectl apply" }]
+//!     }
+//! }"#;
 //!
+//! let event = GenericPlanEvent::new(cloud_event, "input.topic".to_string(), None).unwrap();
 //! assert!(matcher.should_process(&event));
 //! ```
 //!
@@ -101,6 +118,7 @@ pub mod consumer;
 pub mod event;
 pub mod event_handler;
 pub mod matcher;
+pub mod message;
 pub mod result_event;
 pub mod result_producer;
 pub mod watcher;
@@ -112,6 +130,7 @@ pub use consumer::{
 pub use event::GenericPlanEvent;
 pub use event_handler::{GenericEventHandler, GenericTask};
 pub use matcher::GenericMatcher;
+pub use message::GenericPlanCloudEvent;
 pub use result_event::GenericPlanResult;
 pub use result_producer::{
     BufferedResultProducer, FakeResultProducer, GenericResultProducer, ResultProducerTrait,

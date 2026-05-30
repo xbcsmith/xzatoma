@@ -42,8 +42,9 @@
 //! assert_eq!(event.source_topic, "input.topic");
 //! ```
 
-use crate::error::Result;
+use crate::error::{Result, XzatomaError};
 use crate::tools::plan::{Plan, PlanParser};
+use crate::watcher::generic::message::GenericPlanCloudEvent;
 use chrono::{DateTime, Utc};
 
 /// A parsed and validated inbound plan event for the generic Kafka watcher.
@@ -154,8 +155,20 @@ impl GenericPlanEvent {
     /// assert_eq!(event.plan.name, "deploy");
     /// assert_eq!(event.name.as_deref(), Some("deploy"));
     /// ```
+    /// Parse a raw Kafka payload as a standard CloudEvents 1.0 envelope and
+    /// extract the embedded plan from the `data` field.
+    ///
+    /// The payload must be a JSON object that satisfies the `GenericPlanCloudEvent`
+    /// schema (i.e., it must carry `id`, `specversion`, `type`, `source`, and
+    /// `data`). The `data` field is then deserialized and validated as a [`Plan`].
+    ///
+    /// This is intentionally distinct from the XZepr consumer, which expects
+    /// XZepr-specific CloudEvent extensions (`success`, `api_version`,
+    /// `platform_id`, etc.).
     pub fn new(payload: &str, source_topic: String, key: Option<String>) -> Result<Self> {
-        let plan = PlanParser::parse_string(payload)?;
+        let cloud_event: GenericPlanCloudEvent = serde_json::from_str(payload)
+            .map_err(|e| XzatomaError::Watcher(format!("Error parsing CloudEvent: {}", e)))?;
+        let plan = PlanParser::from_value(cloud_event.data)?;
         let name = Some(plan.name.clone());
         let version = plan.version.clone();
         let action = plan.action.clone();
@@ -177,29 +190,30 @@ mod tests {
     use crate::watcher::generic::consumer::RawKafkaMessage;
 
     // ---------------------------------------------------------------------------
-    // Shared test payloads
+    // Shared test payloads — standard CloudEvents 1.0 envelopes
     // ---------------------------------------------------------------------------
 
-    const VALID_YAML: &str = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply\n";
-    const VALID_YAML_WITH_ACTION: &str =
-        "name: deploy\naction: deploy-prod\nsteps:\n  - name: apply\n    action: kubectl apply\n";
-    const VALID_YAML_WITH_VERSION: &str =
-        "name: deploy\nversion: v1.2.3\nsteps:\n  - name: apply\n    action: kubectl apply\n";
-    const VALID_JSON: &str =
-        r#"{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply"}]}"#;
+    // Steps-based plan wrapped in a CloudEvents envelope.
+    const VALID_CE: &str = r#"{"id":"01JTEST000000000000000001","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
+
+    // Steps-based plan with action field.
+    const VALID_CE_WITH_ACTION: &str = r#"{"id":"01JTEST000000000000000002","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
+
+    // Steps-based plan with version field.
+    const VALID_CE_WITH_VERSION: &str = r#"{"id":"01JTEST000000000000000003","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","version":"v1.2.3","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
+
+    // Task-based plan wrapped in a CloudEvents envelope.
+    const VALID_CE_TASKS: &str = r#"{"id":"01JTEST000000000000000004","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","tasks":[{"id":"t1","description":"Run: kubectl apply"}]}}"#;
 
     // ---------------------------------------------------------------------------
     // Task 2.6 required tests
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn test_new_valid_yaml_payload() {
-        let event = GenericPlanEvent::new(
-            VALID_YAML,
-            "input.topic".to_string(),
-            Some("k1".to_string()),
-        )
-        .unwrap();
+    fn test_new_valid_cloud_event_steps() {
+        let event =
+            GenericPlanEvent::new(VALID_CE, "input.topic".to_string(), Some("k1".to_string()))
+                .unwrap();
         assert_eq!(event.plan.name, "deploy");
         assert_eq!(event.source_topic, "input.topic");
         assert_eq!(event.key.as_deref(), Some("k1"));
@@ -207,10 +221,23 @@ mod tests {
     }
 
     #[test]
-    fn test_new_valid_json_payload() {
-        let event = GenericPlanEvent::new(VALID_JSON, "input.topic".to_string(), None).unwrap();
+    fn test_new_valid_cloud_event_tasks() {
+        let event = GenericPlanEvent::new(VALID_CE_TASKS, "input.topic".to_string(), None).unwrap();
         assert_eq!(event.plan.name, "deploy");
-        assert_eq!(event.plan.steps.len(), 1);
+        assert_eq!(event.plan.tasks.len(), 1);
+        assert!(event.plan.steps.is_empty());
+    }
+
+    #[test]
+    fn test_new_raw_plan_without_envelope_returns_err() {
+        // Raw plan JSON without a CloudEvents envelope must fail — specversion,
+        // source, and type are required CloudEvents attributes.
+        let raw_plan = r#"{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply"}]}"#;
+        let result = GenericPlanEvent::new(raw_plan, "t".to_string(), None);
+        assert!(
+            result.is_err(),
+            "raw plan without CloudEvents envelope must return Err"
+        );
     }
 
     #[test]
@@ -220,36 +247,29 @@ mod tests {
     }
 
     #[test]
-    fn test_new_missing_tasks_returns_err() {
-        // Structurally valid YAML with an empty steps list must fail validation.
-        let result = GenericPlanEvent::new("name: test\nsteps: []\n", "t".to_string(), None);
+    fn test_new_cloud_event_with_empty_tasks_returns_err() {
+        let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"test","tasks":[]}}"#;
+        let result = GenericPlanEvent::new(ce, "t".to_string(), None);
         assert!(
             result.is_err(),
-            "plan with no tasks must return Err from validation"
+            "plan with no tasks or steps must return Err from validation"
         );
     }
 
     #[test]
     fn test_new_received_at_is_recent() {
         let before = Utc::now();
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
         let after = Utc::now();
-        assert!(
-            event.received_at >= before,
-            "received_at must not be before construction"
-        );
-        assert!(
-            event.received_at <= after,
-            "received_at must not be after construction"
-        );
+        assert!(event.received_at >= before);
+        assert!(event.received_at <= after);
     }
 
     #[test]
     fn test_clone_produces_independent_copy() {
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
         let mut cloned = event.clone();
         cloned.plan.name = "different".to_string();
-        // The original must not be affected.
         assert_eq!(event.plan.name, "deploy");
         assert_eq!(cloned.plan.name, "different");
     }
@@ -260,50 +280,32 @@ mod tests {
 
     #[test]
     fn test_new_action_auto_populated_from_plan() {
-        let event = GenericPlanEvent::new(VALID_YAML_WITH_ACTION, "t".to_string(), None).unwrap();
-        assert_eq!(
-            event.action.as_deref(),
-            Some("deploy-prod"),
-            "action should be auto-populated from plan.action"
-        );
+        let event = GenericPlanEvent::new(VALID_CE_WITH_ACTION, "t".to_string(), None).unwrap();
+        assert_eq!(event.action.as_deref(), Some("deploy-prod"));
     }
 
     #[test]
     fn test_new_action_is_none_when_plan_has_no_action() {
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
-        assert!(
-            event.action.is_none(),
-            "action should be None when plan carries no action field"
-        );
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
+        assert!(event.action.is_none());
     }
 
     #[test]
     fn test_new_version_auto_populated_from_plan() {
-        let event = GenericPlanEvent::new(VALID_YAML_WITH_VERSION, "t".to_string(), None).unwrap();
-        assert_eq!(
-            event.version.as_deref(),
-            Some("v1.2.3"),
-            "version should be auto-populated from plan.version"
-        );
+        let event = GenericPlanEvent::new(VALID_CE_WITH_VERSION, "t".to_string(), None).unwrap();
+        assert_eq!(event.version.as_deref(), Some("v1.2.3"));
     }
 
     #[test]
     fn test_new_version_defaults_to_none_when_plan_has_no_version() {
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
-        assert!(
-            event.version.is_none(),
-            "version should be None when plan carries no version field"
-        );
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
+        assert!(event.version.is_none());
     }
 
     #[test]
     fn test_new_name_auto_populated_from_plan() {
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
-        assert_eq!(
-            event.name.as_deref(),
-            Some("deploy"),
-            "name should mirror plan.name"
-        );
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
+        assert_eq!(event.name.as_deref(), Some("deploy"));
     }
 
     #[test]
@@ -331,7 +333,7 @@ mod tests {
     #[test]
     fn test_new_key_propagated_to_event() {
         let event = GenericPlanEvent::new(
-            VALID_YAML,
+            VALID_CE,
             "t".to_string(),
             Some("correlation-abc".to_string()),
         )
@@ -341,14 +343,14 @@ mod tests {
 
     #[test]
     fn test_new_key_is_none_when_not_provided() {
-        let event = GenericPlanEvent::new(VALID_YAML, "t".to_string(), None).unwrap();
+        let event = GenericPlanEvent::new(VALID_CE, "t".to_string(), None).unwrap();
         assert!(event.key.is_none());
     }
 
     #[test]
-    fn test_new_result_json_payload_returns_err() {
-        // Simulate a GenericPlanResult JSON being consumed back on the same
-        // topic. It must fail to parse as a Plan, providing the loop-break.
+    fn test_bare_result_json_returns_err() {
+        // A bare GenericPlanResult JSON (no CloudEvents envelope) must fail —
+        // it lacks specversion, source, and type. Loop-break guarantee preserved.
         let result_json = r#"{
             "id": "01JRESULT000000000000000001",
             "event_type": "result",
@@ -360,7 +362,25 @@ mod tests {
         let err = GenericPlanEvent::new(result_json, "t".to_string(), None);
         assert!(
             err.is_err(),
-            "result event JSON must fail to parse as a plan"
+            "bare result JSON must fail CloudEvents parsing"
+        );
+    }
+
+    #[test]
+    fn test_result_cloud_event_with_non_plan_data_returns_err() {
+        // Even when wrapped in a valid CloudEvents envelope, if data is not a Plan
+        // (no name/tasks/steps), validation must fail.
+        let ce = r#"{
+            "id": "01JRESULT000000000000000001",
+            "specversion": "1.0",
+            "type": "xzatoma.plan.result",
+            "source": "xzatoma.watcher",
+            "data": { "success": true, "summary": "done" }
+        }"#;
+        let err = GenericPlanEvent::new(ce, "t".to_string(), None);
+        assert!(
+            err.is_err(),
+            "result data without plan fields must fail validation"
         );
     }
 }

@@ -33,11 +33,28 @@ pub struct Plan {
     /// allow plan authors to annotate plans for automated dispatch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
-    /// Ordered list of plan steps
+    /// Task-based plan steps (preferred format for the generic watcher).
+    /// When present, takes precedence over `steps` in instruction generation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<PlanTask>,
+    /// Step-based plan steps (legacy format; retained for backward compatibility).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<PlanStep>,
+    /// High-level goal statements for the plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goals: Vec<String>,
+    /// Maximum number of agent iterations allowed for this plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<usize>,
+    /// Whether to allow dangerous terminal operations during execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_dangerous: Option<bool>,
+    /// File paths that the result event should reference upon completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub result_mentions: Vec<String>,
 }
 
-/// A single step in a plan
+/// A single step in a plan (legacy step-based format)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanStep {
     /// Step name/title
@@ -49,32 +66,70 @@ pub struct PlanStep {
     pub context: Option<String>,
 }
 
+/// A single task in a plan (task-based format used by the generic watcher)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanTask {
+    /// Unique task identifier within the plan
+    pub id: String,
+    /// Full agent instruction for this task
+    pub description: String,
+    /// Optional priority ("low", "medium", "high")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// IDs of tasks that must complete before this task runs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+}
+
 impl Plan {
-    /// Create a new plan
+    /// Create a new plan with step-based tasks (legacy format).
     pub fn new(name: String, steps: Vec<PlanStep>) -> Self {
         Self {
             name,
             description: None,
             version: None,
             action: None,
+            tasks: Vec::new(),
             steps,
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
         }
     }
 
-    /// Number of steps
-    pub fn step_count(&self) -> usize {
-        self.steps.len()
+    /// Create a new plan with task-based steps (generic watcher format).
+    pub fn new_with_tasks(name: String, tasks: Vec<PlanTask>) -> Self {
+        Self {
+            name,
+            description: None,
+            version: None,
+            action: None,
+            tasks,
+            steps: Vec::new(),
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
+        }
     }
 
-    /// If plan has no steps
+    /// Number of tasks or steps in the plan.
+    pub fn step_count(&self) -> usize {
+        self.tasks.len() + self.steps.len()
+    }
+
+    /// Returns true when the plan has no tasks and no steps.
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty()
+        self.tasks.is_empty() && self.steps.is_empty()
     }
 
     /// Format the plan as an instruction prompt for the agent executor.
     ///
-    /// Produces a human-readable task description containing the plan name and all
-    /// step names and actions in order. This string is used by
+    /// When `tasks` are present they are formatted as numbered task blocks
+    /// with the full task description as the agent instruction. When only
+    /// `steps` are present the legacy step format is used instead. This
+    /// string is used by
     /// [`GenericEventHandler`](crate::watcher::generic::event_handler::GenericEventHandler)
     /// as the prompt passed to the agent when executing a plan received over Kafka.
     ///
@@ -92,10 +147,15 @@ impl Plan {
     ///     description: None,
     ///     version: None,
     ///     action: None,
+    ///     tasks: vec![],
     ///     steps: vec![
     ///         PlanStep::new("build".to_string()).with_action("cargo build --release".to_string()),
     ///         PlanStep::new("deploy".to_string()).with_action("kubectl apply -f deploy.yaml".to_string()),
     ///     ],
+    ///     goals: vec![],
+    ///     max_iterations: None,
+    ///     allow_dangerous: None,
+    ///     result_mentions: vec![],
     /// };
     ///
     /// let instruction = plan.to_instruction();
@@ -104,16 +164,37 @@ impl Plan {
     /// assert!(instruction.contains("kubectl apply -f deploy.yaml"));
     /// ```
     pub fn to_instruction(&self) -> String {
-        let steps_s = self
-            .steps
-            .iter()
-            .map(|s| format!("- {}: {}", s.name, s.action))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
-            self.name, steps_s
-        )
+        if !self.tasks.is_empty() {
+            let tasks_s = self
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let deps = if t.dependencies.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (after: {})", t.dependencies.join(", "))
+                    };
+                    format!("Task {}:{} {}\n{}", i + 1, deps, t.id, t.description.trim())
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            format!(
+                "Execute this plan:\n\nName: {}\n\nTasks:\n{}\n",
+                self.name, tasks_s
+            )
+        } else {
+            let steps_s = self
+                .steps
+                .iter()
+                .map(|s| format!("- {}: {}", s.name, s.action))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
+                self.name, steps_s
+            )
+        }
     }
 }
 
@@ -330,23 +411,40 @@ impl PlanParser {
             description,
             version: None,
             action: None,
+            tasks: Vec::new(),
             steps,
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
         };
 
         Self::validate(&plan)?;
         Ok(plan)
     }
 
-    /// Validate a plan instance (structure and content)
+    /// Validate a plan instance (structure and content).
+    ///
+    /// A plan is valid when it has a non-empty name and at least one task
+    /// (task-based format) or one step (legacy step-based format).
     pub fn validate(plan: &Plan) -> Result<()> {
         if plan.name.trim().is_empty() {
             return Err(XzatomaError::Tool("Plan name cannot be empty".to_string()));
         }
 
-        if plan.steps.is_empty() {
+        if plan.tasks.is_empty() && plan.steps.is_empty() {
             return Err(XzatomaError::Tool(
-                "Plan must have at least one step".to_string(),
+                "Plan must have at least one task or step".to_string(),
             ));
+        }
+
+        for task in &plan.tasks {
+            if task.description.trim().is_empty() {
+                return Err(XzatomaError::Tool(format!(
+                    "Task '{}' must have a non-empty description",
+                    task.id
+                )));
+            }
         }
 
         for (i, step) in plan.steps.iter().enumerate() {
@@ -362,6 +460,16 @@ impl PlanParser {
         }
 
         Ok(())
+    }
+
+    /// Parse and validate a plan from a `serde_json::Value`.
+    ///
+    /// Used by the generic watcher to deserialize the `data` field of an
+    /// inbound `GenericPlanCloudEvent` directly into a validated `Plan`.
+    pub fn from_value(value: serde_json::Value) -> Result<Plan> {
+        let plan: Plan = serde_json::from_value(value).map_err(XzatomaError::Serialization)?;
+        Self::validate(&plan)?;
+        Ok(plan)
     }
 }
 
@@ -503,34 +611,33 @@ steps:
     #[test]
     fn test_validate_errors() {
         // Missing name
-        let plan = Plan {
-            name: "".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: vec![PlanStep::new("s".to_string()).with_action("a".to_string())],
-        };
-        assert!(PlanParser::validate(&plan).is_err());
+        assert!(PlanParser::validate(&Plan::new(
+            "".to_string(),
+            vec![PlanStep::new("s".to_string()).with_action("a".to_string())]
+        ))
+        .is_err());
 
-        // Missing steps
-        let plan2 = Plan {
-            name: "n".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: Vec::new(),
-        };
-        assert!(PlanParser::validate(&plan2).is_err());
+        // Missing steps and tasks
+        assert!(PlanParser::validate(&Plan::new("n".to_string(), Vec::new())).is_err());
 
-        // Missing action
-        let plan3 = Plan {
-            name: "n".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: vec![PlanStep::new("step".to_string())],
-        };
-        assert!(PlanParser::validate(&plan3).is_err());
+        // Step with no action
+        assert!(PlanParser::validate(&Plan::new(
+            "n".to_string(),
+            vec![PlanStep::new("step".to_string())]
+        ))
+        .is_err());
+
+        // Task with empty description
+        assert!(PlanParser::validate(&Plan::new_with_tasks(
+            "n".to_string(),
+            vec![crate::tools::plan::PlanTask {
+                id: "t1".to_string(),
+                description: "".to_string(),
+                priority: None,
+                dependencies: vec![],
+            }]
+        ))
+        .is_err());
     }
 
     #[tokio::test]
@@ -613,22 +720,63 @@ steps:
             ],
         );
         let instruction = plan.to_instruction();
-        assert!(
-            instruction.contains("Deploy App"),
-            "instruction must contain plan name"
-        );
+        assert!(instruction.contains("Deploy App"), "must contain plan name");
         assert!(
             instruction.contains("cargo build"),
-            "instruction must contain step action"
+            "must contain step action"
         );
         assert!(
             instruction.contains("docker push"),
-            "instruction must contain step action"
+            "must contain step action"
         );
         assert!(
             instruction.contains("Execute this plan"),
-            "instruction must have header"
+            "must have header"
         );
+    }
+
+    #[test]
+    fn test_to_instruction_task_format() {
+        let plan = Plan::new_with_tasks(
+            "Audit".to_string(),
+            vec![PlanTask {
+                id: "check-logs".to_string(),
+                description: "Review the application logs for errors.".to_string(),
+                priority: Some("high".to_string()),
+                dependencies: vec![],
+            }],
+        );
+        let instruction = plan.to_instruction();
+        assert!(instruction.contains("Audit"), "must contain plan name");
+        assert!(instruction.contains("check-logs"), "must contain task id");
+        assert!(
+            instruction.contains("Review the application logs"),
+            "must contain task description"
+        );
+        assert!(instruction.contains("Tasks:"), "must use Tasks header");
+    }
+
+    #[test]
+    fn test_to_instruction_task_with_dependencies() {
+        let plan = Plan::new_with_tasks(
+            "Multi".to_string(),
+            vec![
+                PlanTask {
+                    id: "setup".to_string(),
+                    description: "Prepare environment.".to_string(),
+                    priority: None,
+                    dependencies: vec![],
+                },
+                PlanTask {
+                    id: "run".to_string(),
+                    description: "Execute the job.".to_string(),
+                    priority: None,
+                    dependencies: vec!["setup".to_string()],
+                },
+            ],
+        );
+        let instruction = plan.to_instruction();
+        assert!(instruction.contains("after: setup"), "must show dependency");
     }
 
     #[test]
@@ -663,7 +811,7 @@ steps:
 
         // Round-trip through JSON.
         let json_str = serde_json::to_string(&plan2).unwrap();
-        let plan3: crate::tools::plan::Plan = serde_json::from_str(&json_str).unwrap();
+        let plan3: Plan = serde_json::from_str(&json_str).unwrap();
         assert_eq!(plan3.action.as_deref(), Some("deploy"));
     }
 }

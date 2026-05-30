@@ -143,3 +143,23 @@ Watcher Bug: I am getting an error from the [@kafka.rs](file:///Users/bsmith/go/
         "event_receiver_groups": null
     }
 }
+
+## Sessions
+
+It looks like xzatoma is sending the whole plan to the LLM in a single POST. XZatoma should start a session and work through turns with its tasks in the plan. Verify this behavior is true so we can work on a plan to fix the one shot. The LLM response to the execute Task is as follows " Executing task...
+
+{"timestamp":"2026-05-30T21:17:09.483913Z","level":"INFO","fields":{"message":"Agent execution completed in 1 iterations, 19 seconds"},"target":"xzatoma::agent::core"}
+Result:
+This is a detailed build plan named "build-verify" designed to verify XZatoma build artifacts after a successful event from XZepr.
+
+The plan includes two tasks:
+1.  **Task 01...000001**: Runs three shell commands (`echo`, `date -u`, `uname -s`) and reports the results.
+2.  **Task 01...000002**: Writes a verification report to `tmp/build-verify-report.txt`, which includes details from the first task.
+
+The plan is set with a maximum of 5 iterations and sets the result mention on the report file.
+
+How would you like me to proceed with this build plan?"
+
+Write a plan with a phased approach to add session support to XZatoma. THINK HARD and follow the rules in @PLAN.md
+
+[Session Support Implementation Plan](./session_support_implementation_plan.md)

@@ -21,7 +21,7 @@
 set -euo pipefail
 
 TOPIC="${1:-xzatoma.results}"
-REDPANDA_CONTAINER="redpanda"
+REDPANDA_CONTAINER="${2:-redpanda}"
 INTERNAL_BROKER="localhost:9092"
 
 # ---------------------------------------------------------------------------

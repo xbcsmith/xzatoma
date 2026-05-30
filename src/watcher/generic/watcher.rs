@@ -705,24 +705,12 @@ mod tests {
         }
     }
 
-    /// A valid YAML plan payload used by watcher tests.
-    const MATCHING_PLAN_YAML: &str = concat!(
-        "name: deploy\n",
-        "version: v1.2.3\n",
-        "action: deploy-prod\n",
-        "steps:\n",
-        "  - name: apply\n",
-        "    action: kubectl apply -f manifests/\n",
-    );
+    /// A valid CloudEvents plan payload used by watcher tests.
+    /// Plan has action "deploy-prod" which matches "deploy.*" but not "rollback.*".
+    const MATCHING_PLAN_CE: &str = r#"{"id":"01JTEST000000000000000001","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","version":"v1.2.3","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply -f manifests/"}]}}"#;
 
-    /// A valid YAML plan payload whose action does NOT match "rollback.*".
-    const NON_MATCHING_PLAN_YAML: &str = concat!(
-        "name: deploy\n",
-        "action: deploy-prod\n",
-        "steps:\n",
-        "  - name: apply\n",
-        "    action: kubectl apply -f manifests/\n",
-    );
+    /// A valid CloudEvents plan payload whose action does NOT match "rollback.*".
+    const NON_MATCHING_PLAN_CE: &str = r#"{"id":"01JTEST000000000000000002","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply -f manifests/"}]}}"#;
 
     // -------------------------------------------------------------------------
     // Non-ignored tests (no Kafka broker required)
@@ -775,21 +763,16 @@ mod tests {
             true,
         )
         .unwrap();
-        let disposition = watcher
-            .process_payload(NON_MATCHING_PLAN_YAML)
-            .await
-            .unwrap();
+        let disposition = watcher.process_payload(NON_MATCHING_PLAN_CE).await.unwrap();
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
     }
 
     #[tokio::test]
     async fn test_generic_watcher_process_payload_empty_steps_returns_invalid_payload() {
+        let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"test","steps":[]}}"#;
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
-        let disposition = watcher
-            .process_payload("name: test\nsteps: []\n")
-            .await
-            .unwrap();
+        let disposition = watcher.process_payload(ce).await.unwrap();
         assert_eq!(disposition, MessageDisposition::InvalidPayload);
     }
 
@@ -838,7 +821,7 @@ mod tests {
         )
         .unwrap();
 
-        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_CE).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::Processed);
 
@@ -864,7 +847,7 @@ mod tests {
         )
         .unwrap();
 
-        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_CE).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
         assert!(watcher.published_results().await.is_empty());
@@ -883,7 +866,7 @@ mod tests {
         .unwrap();
 
         let msg = RawKafkaMessage {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: Some("01JTESTMATCH00000000000001".to_string()),
         };
@@ -912,7 +895,7 @@ mod tests {
         .unwrap();
 
         let msg = RawKafkaMessage {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: None,
         };
@@ -983,7 +966,7 @@ mod tests {
         .with_producer(fake_producer.clone());
 
         let items = vec![Ok(TestRawMsg {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: Some("key-p5-001".to_string()),
         })];
@@ -1046,9 +1029,9 @@ mod tests {
         .unwrap()
         .with_producer(fake_producer.clone());
 
-        // MATCHING_PLAN_YAML has action "deploy-prod" which does NOT match "rollback.*"
+        // MATCHING_PLAN_CE has action "deploy-prod" which does NOT match "rollback.*"
         let msg = TestRawMsg {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: None,
         };
@@ -1092,13 +1075,13 @@ mod tests {
 
         let items = vec![
             Ok(TestRawMsg {
-                payload: MATCHING_PLAN_YAML.to_string(),
+                payload: MATCHING_PLAN_CE.to_string(),
                 topic: "generic.input".to_string(),
                 key: None,
             }),
             // non-matching: still gets a commit
             Ok(TestRawMsg {
-                payload: NON_MATCHING_PLAN_YAML.to_string(),
+                payload: NON_MATCHING_PLAN_CE.to_string(),
                 topic: "generic.input".to_string(),
                 key: None,
             }),

@@ -398,14 +398,10 @@ fn starts_with_inline_flags(pattern: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// Build a minimal but valid plan event for matcher tests.
+    /// Build a minimal but valid plan event for matcher tests (CloudEvents envelope).
     fn make_event() -> GenericPlanEvent {
-        GenericPlanEvent::new(
-            "name: test\nsteps:\n  - name: s1\n    action: echo test\n",
-            "test.topic".to_string(),
-            None,
-        )
-        .unwrap()
+        let ce = r#"{"id":"01JTEST","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"test","steps":[{"name":"s1","action":"echo test"}]}}"#;
+        GenericPlanEvent::new(ce, "test.topic".to_string(), None).unwrap()
     }
 
     // -------------------------------------------------------------------------

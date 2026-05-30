@@ -48,7 +48,7 @@ gen_id() {
     fi
 }
 
-REDPANDA_CONTAINER="redpanda"
+REDPANDA_CONTAINER="${2:-redpanda}"
 INTERNAL_BROKER="localhost:9092"
 
 # ---------------------------------------------------------------------------
@@ -158,6 +158,8 @@ print(json.dumps(plan))
         ;;
 
     --stdin)
+        # Stdin mode accepts a raw plan JSON document (not a CloudEvents envelope).
+        # The plan is wrapped in a CloudEvents envelope by the validation step below.
         PLAN_JSON=$(cat)
         if [ -z "${PLAN_JSON}" ]; then
             die "No input received on stdin.  Pipe a Plan JSON document to this script."
@@ -185,23 +187,48 @@ Use --stdin to pipe a custom plan JSON document."
 esac
 
 # ---------------------------------------------------------------------------
-# Validate and compact the JSON to a single line before publishing.
+# Validate and compact the plan JSON, then wrap it in a standard CloudEvents
+# 1.0 envelope before publishing.
+#
+# The generic watcher requires CloudEvents format — raw plan JSON is rejected.
+# The envelope adds: id (ULID), specversion "1.0", type, source, time, and
+# datacontenttype, with the plan JSON as the `data` field.
 #
 # rpk topic produce is newline-delimited: every newline in stdin becomes a
-# separate Kafka record.  Compacting to one line guarantees the entire plan
-# is delivered as a single message regardless of how the heredoc or stdin
-# payload was formatted.
+# separate Kafka record.  Compacting to one line guarantees the entire
+# envelope is delivered as a single message.
 # ---------------------------------------------------------------------------
+EVENT_ID=$(gen_id)
+EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+
 if command -v python3 >/dev/null 2>&1; then
     PLAN_JSON=$(printf '%s' "${PLAN_JSON}" | \
-        python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null) \
+        python3 -c "
+import sys, json
+plan = json.load(sys.stdin)
+envelope = {
+    'id': '${EVENT_ID}',
+    'specversion': '1.0',
+    'type': 'xzatoma.plan.execute',
+    'source': 'xzatoma.seed-plan',
+    'time': '${EVENT_TIME}',
+    'datacontenttype': 'application/json',
+    'data': plan,
+}
+print(json.dumps(envelope))
+" 2>/dev/null) \
         || die "Plan payload is not valid JSON.  Check the plan content and try again."
 elif command -v jq >/dev/null 2>&1; then
-    PLAN_JSON=$(printf '%s' "${PLAN_JSON}" | jq -c .) \
+    PLAN_DATA=$(printf '%s' "${PLAN_JSON}" | jq -c .) \
         || die "Plan payload is not valid JSON.  Check the plan content and try again."
+    PLAN_JSON=$(jq -cn \
+        --arg id "${EVENT_ID}" \
+        --arg time "${EVENT_TIME}" \
+        --argjson data "${PLAN_DATA}" \
+        '{id: $id, specversion: "1.0", type: "xzatoma.plan.execute", source: "xzatoma.seed-plan", time: $time, datacontenttype: "application/json", data: $data}')
 else
-    warn "Neither python3 nor jq found; skipping JSON validation and compaction."
-    warn "The plan JSON must be a single line or rpk will split it into multiple records."
+    warn "Neither python3 nor jq found; skipping CloudEvents wrapping and JSON validation."
+    warn "The plan JSON must be a single line and must already be a valid CloudEvents envelope."
 fi
 
 # ---------------------------------------------------------------------------
