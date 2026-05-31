@@ -17,7 +17,7 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: granite4:3b
+    model: granite4:3b-h
 
 agent:
   max_turns: 20

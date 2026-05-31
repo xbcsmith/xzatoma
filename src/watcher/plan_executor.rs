@@ -168,6 +168,90 @@ pub async fn execute_tasks_sequentially(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Agent;
+    use crate::config::{AgentConfig, WatcherPlanExecutionMode};
+    use crate::providers::{CompletionResponse, Message, ModelInfo};
+    use crate::tools::plan::PlanParser;
+    use crate::tools::ToolRegistry;
+    use async_trait::async_trait;
+
+    #[derive(Clone)]
+    struct SuccessProvider {
+        response: String,
+    }
+
+    #[async_trait]
+    impl crate::providers::Provider for SuccessProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> crate::error::Result<Vec<ModelInfo>> {
+            Ok(vec![])
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> crate::error::Result<CompletionResponse> {
+            Ok(CompletionResponse::new(Message::assistant(
+                self.response.clone(),
+            )))
+        }
+    }
+
+    #[derive(Clone)]
+    struct ErrorProvider;
+
+    #[async_trait]
+    impl crate::providers::Provider for ErrorProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("error-model")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> crate::error::Result<Vec<ModelInfo>> {
+            Ok(vec![])
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> crate::error::Result<CompletionResponse> {
+            Err(crate::error::XzatomaError::Provider(
+                "simulated provider error".to_string(),
+            ))
+        }
+    }
+
+    fn make_plan_with_tasks(task_ids: &[&str]) -> Plan {
+        if task_ids.is_empty() {
+            // A plan with steps (no tasks) passes validation and yields an empty tasks vec.
+            return PlanParser::from_yaml(
+                "name: test-plan\nsteps:\n  - name: placeholder\n    action: noop\n",
+            )
+            .unwrap();
+        }
+        let tasks_yaml: String = task_ids
+            .iter()
+            .map(|id| format!("  - id: {}\n    description: Execute task {}\n", id, id))
+            .collect();
+        let yaml = format!("name: test-plan\ntasks:\n{}", tasks_yaml);
+        PlanParser::from_yaml(&yaml).unwrap()
+    }
 
     #[test]
     fn test_task_outcome_fields() {
@@ -209,5 +293,80 @@ mod tests {
         assert_eq!(original.success, cloned.success);
         assert_eq!(original.summary, cloned.summary);
         assert_eq!(original.iterations, cloned.iterations);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tasks_sequentially_all_tasks_succeed() {
+        let plan = make_plan_with_tasks(&["t1", "t2", "t3"]);
+        let provider = SuccessProvider {
+            response: "task done".to_string(),
+        };
+        let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default()).unwrap();
+
+        let outcomes = execute_tasks_sequentially(&plan, &mut agent).await.unwrap();
+
+        assert_eq!(outcomes.len(), 3);
+        assert_eq!(outcomes[0].id, "t1");
+        assert!(outcomes[0].success);
+        assert_eq!(outcomes[1].id, "t2");
+        assert!(outcomes[1].success);
+        assert_eq!(outcomes[2].id, "t3");
+        assert!(outcomes[2].success);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tasks_sequentially_records_failure_and_continues_to_next_task() {
+        let plan = make_plan_with_tasks(&["t1", "t2", "t3"]);
+        let mut agent =
+            Agent::new(ErrorProvider, ToolRegistry::new(), AgentConfig::default()).unwrap();
+
+        let outcomes = execute_tasks_sequentially(&plan, &mut agent).await.unwrap();
+
+        assert_eq!(outcomes.len(), 3);
+        assert!(!outcomes[0].success);
+        assert!(!outcomes[1].success);
+        assert!(!outcomes[2].success);
+        assert!(outcomes[0].summary.contains("Task failed"));
+        assert_eq!(outcomes[0].iterations, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tasks_sequentially_empty_plan_returns_empty_outcomes() {
+        let plan = make_plan_with_tasks(&[]);
+        let provider = SuccessProvider {
+            response: "done".to_string(),
+        };
+        let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default()).unwrap();
+
+        let outcomes = execute_tasks_sequentially(&plan, &mut agent).await.unwrap();
+
+        assert!(outcomes.is_empty());
+    }
+
+    #[test]
+    fn test_use_per_task_is_false_when_execution_mode_is_single_shot() {
+        let plan = make_plan_with_tasks(&["t1", "t2"]);
+        let execution_mode = WatcherPlanExecutionMode::SingleShot;
+        let use_per_task =
+            matches!(execution_mode, WatcherPlanExecutionMode::PerTask) && !plan.tasks.is_empty();
+        assert!(!use_per_task);
+    }
+
+    #[test]
+    fn test_use_per_task_is_false_when_plan_has_no_tasks() {
+        let plan = make_plan_with_tasks(&[]);
+        let execution_mode = WatcherPlanExecutionMode::PerTask;
+        let use_per_task =
+            matches!(execution_mode, WatcherPlanExecutionMode::PerTask) && !plan.tasks.is_empty();
+        assert!(!use_per_task);
+    }
+
+    #[test]
+    fn test_use_per_task_is_true_when_per_task_mode_and_tasks_present() {
+        let plan = make_plan_with_tasks(&["t1", "t2"]);
+        let execution_mode = WatcherPlanExecutionMode::PerTask;
+        let use_per_task =
+            matches!(execution_mode, WatcherPlanExecutionMode::PerTask) && !plan.tasks.is_empty();
+        assert!(use_per_task);
     }
 }

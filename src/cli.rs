@@ -131,8 +131,8 @@ pub enum Commands {
         #[arg(long, default_value = "true")]
         json_logs: bool,
 
-        /// Watcher backend type: "xzepr" (default) or "generic"
-        #[arg(long, default_value = "xzepr")]
+        /// Watcher backend type: "xzepr" or "generic" (default: from config file)
+        #[arg(long)]
         watcher_type: Option<String>,
 
         /// Kafka consumer group ID (overrides config)
@@ -934,7 +934,7 @@ mod tests {
             assert_eq!(filter_config, None);
             assert_eq!(log_file, None);
             assert!(json_logs);
-            assert_eq!(watcher_type, Some("xzepr".to_string()));
+            assert_eq!(watcher_type, None);
             assert_eq!(group_id, None);
             assert_eq!(output_topic, None);
             assert!(!create_topics);
