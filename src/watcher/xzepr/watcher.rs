@@ -592,19 +592,76 @@ impl MessageHandler for WatcherMessageHandler {
                 agent.set_transient_system_messages(vec![skill_prompt]);
             }
 
-            agent.execute(plan_yaml).await.map(|_| ())
+            // Task 3.1: Try to parse plan_yaml into a Plan. On success with
+            // tasks, run the per-task loop. On success without tasks, use
+            // to_instruction(). On parse failure, fall back to single-shot.
+            let exec_result: crate::error::Result<(bool, String, Option<Vec<serde_json::Value>>)> =
+                match crate::tools::plan::PlanParser::from_yaml(&plan_yaml) {
+                    Ok(plan) if !plan.tasks.is_empty() => {
+                        // Task-based plan: per-task execution loop.
+                        let outcomes = crate::watcher::plan_executor::execute_tasks_sequentially(
+                            &plan, &mut agent,
+                        )
+                        .await?;
+                        let success = outcomes.iter().all(|o| o.success);
+                        let final_summary = agent
+                        .execute(
+                            "Summarise the results of all tasks completed above in one paragraph."
+                                .to_string(),
+                        )
+                        .await
+                        .unwrap_or_else(|e| format!("Summary generation failed: {}", e));
+                        let outcomes_json: Vec<serde_json::Value> = outcomes
+                            .iter()
+                            .map(|o| {
+                                serde_json::json!({
+                                    "id": o.id,
+                                    "success": o.success,
+                                    "summary": o.summary,
+                                })
+                            })
+                            .collect();
+                        Ok((success, final_summary, Some(outcomes_json)))
+                    }
+                    Ok(plan) => {
+                        // Step-based or task-less plan: single-shot with to_instruction().
+                        let instruction = plan.to_instruction();
+                        match agent.execute(instruction).await {
+                            Ok(response) => Ok((true, response, None)),
+                            Err(e) => {
+                                Ok((false, format!("XZepr plan execution failed: {}", e), None))
+                            }
+                        }
+                    }
+                    Err(parse_err) => {
+                        // Parse failed: fall back to raw YAML as single-shot prompt.
+                        warn!(
+                            error = %parse_err,
+                            "Failed to parse XZepr plan YAML; falling back to single-shot execution"
+                        );
+                        match agent.execute(plan_yaml).await {
+                            Ok(response) => Ok((true, response, None)),
+                            Err(e) => {
+                                Ok((false, format!("XZepr plan execution failed: {}", e), None))
+                            }
+                        }
+                    }
+                };
+            exec_result
         });
 
         // Wait for execution to complete and publish the result
-        let (success, summary) = match execution_task.await {
-            Ok(Ok(())) => (
-                true,
-                "XZepr watcher plan execution completed successfully".to_string(),
+        let (success, summary, task_outcomes_opt) = match execution_task.await {
+            Ok(Ok((success, summary, outcomes))) => (success, summary, outcomes),
+            Ok(Err(e)) => (
+                false,
+                format!("XZepr watcher plan execution failed: {}", e),
+                None,
             ),
-            Ok(Err(e)) => (false, format!("XZepr watcher plan execution failed: {}", e)),
             Err(e) => (
                 false,
                 format!("XZepr watcher plan execution task join failed: {}", e),
+                None,
             ),
         };
 
@@ -614,9 +671,11 @@ impl MessageHandler for WatcherMessageHandler {
             error!(summary = %summary, "Plan execution failed");
         }
 
+        let has_task_outcomes = task_outcomes_opt.is_some();
         let mut result = GenericPlanResult::new(trigger_event_id, success, summary);
+        result.task_outcomes = task_outcomes_opt;
         result.plan_output = Some(json!({
-            "mode": "execute",
+            "mode": if has_task_outcomes { "execute_tasks" } else { "execute" },
             "source_event_type": event_type,
             "success": success,
         }));
