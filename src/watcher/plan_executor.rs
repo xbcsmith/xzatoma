@@ -31,6 +31,7 @@
 //!     id: "setup".to_string(),
 //!     success: true,
 //!     summary: "Created tmp directory".to_string(),
+//!     iterations: 2,
 //! };
 //! assert!(outcome.success);
 //! assert_eq!(outcome.id, "setup");
@@ -55,6 +56,7 @@ use tracing::{info, warn};
 ///     id: "build".to_string(),
 ///     success: false,
 ///     summary: "Task failed: provider timeout".to_string(),
+///     iterations: 0,
 /// };
 /// assert!(!outcome.success);
 /// assert!(outcome.summary.contains("timeout"));
@@ -67,6 +69,11 @@ pub struct TaskOutcome {
     pub success: bool,
     /// Agent response text on success, or error description on failure.
     pub summary: String,
+    /// Number of LLM provider round-trips the agent performed for this task.
+    ///
+    /// Captured from [`crate::agent::Agent::iteration_count`] immediately after
+    /// `agent.execute` returns. Zero if the task failed before the agent loop ran.
+    pub iterations: usize,
 }
 
 /// Execute all tasks in a plan sequentially within a single shared agent session.
@@ -123,15 +130,18 @@ pub async fn execute_tasks_sequentially(
 
         let outcome = match agent.execute(task.description.clone()).await {
             Ok(response) => {
+                let iterations = agent.iteration_count();
                 info!(
                     task_id = %task.id,
                     success = true,
+                    iterations,
                     "Task execution complete"
                 );
                 TaskOutcome {
                     id: task.id.clone(),
                     success: true,
                     summary: response,
+                    iterations,
                 }
             }
             Err(e) => {
@@ -144,6 +154,7 @@ pub async fn execute_tasks_sequentially(
                     id: task.id.clone(),
                     success: false,
                     summary: format!("Task failed: {}", e),
+                    iterations: 0,
                 }
             }
         };
@@ -164,10 +175,12 @@ mod tests {
             id: "t1".to_string(),
             success: true,
             summary: "done".to_string(),
+            iterations: 3,
         };
         assert_eq!(outcome.id, "t1");
         assert!(outcome.success);
         assert_eq!(outcome.summary, "done");
+        assert_eq!(outcome.iterations, 3);
     }
 
     #[test]
@@ -176,9 +189,11 @@ mod tests {
             id: "t2".to_string(),
             success: false,
             summary: "Task failed: timeout".to_string(),
+            iterations: 0,
         };
         assert!(!outcome.success);
         assert!(outcome.summary.contains("timeout"));
+        assert_eq!(outcome.iterations, 0);
     }
 
     #[test]
@@ -187,10 +202,12 @@ mod tests {
             id: "t1".to_string(),
             success: true,
             summary: "ok".to_string(),
+            iterations: 5,
         };
         let cloned = original.clone();
         assert_eq!(original.id, cloned.id);
         assert_eq!(original.success, cloned.success);
         assert_eq!(original.summary, cloned.summary);
+        assert_eq!(original.iterations, cloned.iterations);
     }
 }

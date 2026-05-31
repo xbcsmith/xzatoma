@@ -113,3 +113,4 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 1
     execution_timeout_secs: 300
+    execution_mode: per_task

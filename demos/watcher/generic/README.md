@@ -43,10 +43,12 @@ In generic watcher mode XZatoma:
 This demo includes:
 
 - `config.yaml` — watcher configuration using Ollama `granite4:3b`
-- `config_ollama_granite.yaml` — watcher configuration using Ollama `granite4:3b`
+- `config_ollama_granite.yaml` — watcher configuration using Ollama
+  `granite4:3b`
 - `plans/hello_world.yaml` — reference plan payload: `action: greet`
 - `plans/system_health.yaml` — reference plan payload: `action: report`
-- `plans/doc_audit.yaml` — reference plan payload: `action: audit` (subagent demo)
+- `plans/doc_audit.yaml` — reference plan payload: `action: audit` (subagent
+  demo)
 - `seed_plan.sh` — publishes a plan JSON event to Redpanda
 - `read_results.sh` — reads result events from the output topic as they arrive
 
@@ -181,9 +183,9 @@ echo '{"name":"my-plan","action":"build","version":"1.0.0","tasks":[{"id":"t1","
 
 ## Event Matching
 
-The `config.yaml` includes commented-out `generic_match` examples. Uncomment
-one to filter which plans XZatoma executes. Non-matching plans are committed
-and skipped without running.
+The `config.yaml` includes commented-out `generic_match` examples. Uncomment one
+to filter which plans XZatoma executes. Non-matching plans are committed and
+skipped without running.
 
 ```yaml
 # Execute only plans with action "report"
@@ -212,6 +214,37 @@ is executed.
 
 ---
 
+## Plan Execution Mode
+
+The `execution_mode` key in the `execution:` config block controls how XZatoma
+runs task-based plans.
+
+| Value         | Behaviour                                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `per_task`    | Default. Each task in `plan.tasks` runs as a separate agent call in a shared session. Context accumulates across tasks. |
+| `single_shot` | Legacy. The full plan is collapsed into one prompt and sent to the agent once.                                          |
+
+```yaml
+execution:
+  execution_mode: per_task # or single_shot
+```
+
+Use `per_task` when:
+
+- Your plan has multiple tasks with dependencies.
+- You want the agent to retain context from earlier tasks.
+- You need per-task outcome logging in the result event.
+
+Use `single_shot` when:
+
+- You need the pre-Phase-1 behaviour for compatibility.
+- Your plan has no structured tasks (only free-form `steps`).
+
+The `XZATOMA_WATCHER_EXECUTION_MODE` environment variable overrides the config
+file value at runtime (`per_task` or `single_shot`).
+
+---
+
 ## The `plans/` Directory
 
 The YAML files under `plans/` are human-readable reference copies of the plan
@@ -237,8 +270,8 @@ python3 -c "import sys, json, yaml; print(json.dumps(yaml.safe_load(sys.stdin)))
 ## Using the Same Topic for Input and Output
 
 Set `topic` and `output_topic` to the same value in the config to create a
-closed loop where plans and results share one topic. No extra `generic_match`
-is needed — result events published by XZatoma are plain JSON (not CloudEvents
+closed loop where plans and results share one topic. No extra `generic_match` is
+needed — result events published by XZatoma are plain JSON (not CloudEvents
 envelopes) and fail to parse at the CloudEvents boundary, so they are silently
 discarded without triggering a new execution:
 

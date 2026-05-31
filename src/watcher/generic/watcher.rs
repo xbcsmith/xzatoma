@@ -26,7 +26,7 @@
 //! system prompt instructs the LLM to call tools immediately without asking
 //! for confirmation.
 
-use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig, WatcherPlanExecutionMode};
 use crate::error::Result;
 use crate::watcher::generic::consumer::{
     GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
@@ -615,9 +615,14 @@ impl GenericWatcher {
             agent.set_transient_system_messages(vec![sp]);
         }
 
-        // Branch: task-based plans use the per-task loop; step-based plans use
-        // the legacy single-shot path.
-        let (success, summary, task_outcomes_opt) = if !task.plan.tasks.is_empty() {
+        // Branch on execution_mode: PerTask runs each task separately in a shared
+        // session; SingleShot collapses everything into one agent.execute call.
+        let use_per_task = matches!(
+            config.watcher.execution.execution_mode,
+            WatcherPlanExecutionMode::PerTask
+        ) && !task.plan.tasks.is_empty();
+
+        let (success, summary, task_outcomes_opt) = if use_per_task {
             let outcomes = execute_tasks_sequentially(&task.plan, &mut agent).await?;
             let overall_success = outcomes.iter().all(|o| o.success);
             let final_summary = agent
@@ -634,13 +639,19 @@ impl GenericWatcher {
                         "id": o.id,
                         "success": o.success,
                         "summary": o.summary,
+                        "iterations": o.iterations,
                     })
                 })
                 .collect();
             (overall_success, final_summary, Some(outcomes_json))
         } else {
-            // Legacy step-based plan: single agent.execute call.
-            match agent.execute(trimmed.to_string()).await {
+            // Single-shot path: use full instruction string (tasks or steps).
+            let instruction = if !task.plan.tasks.is_empty() {
+                task.plan.to_instruction()
+            } else {
+                trimmed.to_string()
+            };
+            match agent.execute(instruction).await {
                 Ok(response) => (true, response, None),
                 Err(e) => (
                     false,
@@ -724,6 +735,7 @@ mod tests {
     use crate::config::{
         AcpConfig, AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig,
         SkillsConfig, WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
+        WatcherPlanExecutionMode,
     };
     use crate::mcp::config::McpConfig;
     use std::collections::HashMap;
@@ -756,6 +768,7 @@ mod tests {
                     allow_dangerous: false,
                     max_concurrent_executions: 1,
                     execution_timeout_secs: 30,
+                    execution_mode: WatcherPlanExecutionMode::PerTask,
                 },
             },
             mcp: McpConfig::default(),
