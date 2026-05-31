@@ -485,6 +485,108 @@ pub async fn load_plan(path: &str) -> Result<Plan> {
     PlanParser::from_file(Path::new(path))
 }
 
+/// Resolve the execution order of plan tasks using a topological sort.
+///
+/// Tasks with no dependencies are scheduled first. Tasks with dependencies
+/// are scheduled after every task they depend on. When multiple independent
+/// tasks exist at the same level, their relative order from the input slice
+/// is preserved.
+///
+/// Uses Kahn's algorithm (BFS) for cycle detection and ordering.
+///
+/// # Arguments
+///
+/// * `tasks` - Slice of [`PlanTask`] values to sort.
+///
+/// # Returns
+///
+/// A `Vec<&PlanTask>` in a valid execution order (all dependencies before
+/// their dependents).
+///
+/// # Errors
+///
+/// Returns `Err(XzatomaError::Tool(...))` when:
+/// - A task's `dependencies` list references an ID that does not exist in
+///   `tasks`.
+/// - A dependency cycle is detected (no valid ordering exists).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::plan::{PlanTask, resolve_task_order};
+///
+/// let tasks = vec![
+///     PlanTask { id: "b".to_string(), description: "second".to_string(), priority: None, dependencies: vec!["a".to_string()] },
+///     PlanTask { id: "a".to_string(), description: "first".to_string(),  priority: None, dependencies: vec![] },
+/// ];
+/// let ordered = resolve_task_order(&tasks).unwrap();
+/// assert_eq!(ordered[0].id, "a");
+/// assert_eq!(ordered[1].id, "b");
+/// ```
+pub fn resolve_task_order(tasks: &[PlanTask]) -> Result<Vec<&PlanTask>> {
+    use std::collections::{HashMap, VecDeque};
+
+    let n = tasks.len();
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    // Map each task ID to its index.
+    let id_to_idx: HashMap<&str, usize> = tasks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.id.as_str(), i))
+        .collect();
+
+    // Validate that every referenced dependency ID exists.
+    for task in tasks {
+        for dep in &task.dependencies {
+            if !id_to_idx.contains_key(dep.as_str()) {
+                return Err(XzatomaError::Tool(format!(
+                    "task '{}' depends on unknown task ID '{}'",
+                    task.id, dep
+                )));
+            }
+        }
+    }
+
+    // Build in-degree counts and a reverse-adjacency list:
+    // dependents[i] = indices of tasks that directly depend on task i.
+    let mut in_degree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![vec![]; n];
+
+    for (i, task) in tasks.iter().enumerate() {
+        for dep in &task.dependencies {
+            let dep_idx = id_to_idx[dep.as_str()];
+            dependents[dep_idx].push(i);
+            in_degree[i] += 1;
+        }
+    }
+
+    // Kahn's algorithm: start with all tasks that have no dependencies.
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+
+    let mut result = Vec::with_capacity(n);
+
+    while let Some(idx) = queue.pop_front() {
+        result.push(&tasks[idx]);
+        for &dep_idx in &dependents[idx] {
+            in_degree[dep_idx] -= 1;
+            if in_degree[dep_idx] == 0 {
+                queue.push_back(dep_idx);
+            }
+        }
+    }
+
+    if result.len() != n {
+        return Err(XzatomaError::Tool(
+            "cycle detected in task dependencies".to_string(),
+        ));
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,5 +915,110 @@ steps:
         let json_str = serde_json::to_string(&plan2).unwrap();
         let plan3: Plan = serde_json::from_str(&json_str).unwrap();
         assert_eq!(plan3.action.as_deref(), Some("deploy"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // resolve_task_order tests
+    // ---------------------------------------------------------------------------
+
+    fn make_task(id: &str, deps: &[&str]) -> PlanTask {
+        PlanTask {
+            id: id.to_string(),
+            description: format!("Task {}", id),
+            priority: None,
+            dependencies: deps.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_resolve_task_order_no_dependencies_preserves_original_order() {
+        let tasks = vec![
+            make_task("a", &[]),
+            make_task("b", &[]),
+            make_task("c", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[1].id, "b");
+        assert_eq!(ordered[2].id, "c");
+    }
+
+    #[test]
+    fn test_resolve_task_order_linear_chain() {
+        let tasks = vec![
+            make_task("c", &["b"]),
+            make_task("b", &["a"]),
+            make_task("a", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[1].id, "b");
+        assert_eq!(ordered[2].id, "c");
+    }
+
+    #[test]
+    fn test_resolve_task_order_diamond_dependency() {
+        // a → b, a → c, b → d, c → d (diamond)
+        let tasks = vec![
+            make_task("d", &["b", "c"]),
+            make_task("b", &["a"]),
+            make_task("c", &["a"]),
+            make_task("a", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        // a must come first, d must come last
+        assert_eq!(ordered.len(), 4);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[3].id, "d");
+        // b and c must appear between a and d
+        let ids: Vec<&str> = ordered.iter().map(|t| t.id.as_str()).collect();
+        let b_pos = ids.iter().position(|&s| s == "b").unwrap();
+        let c_pos = ids.iter().position(|&s| s == "c").unwrap();
+        let d_pos = ids.iter().position(|&s| s == "d").unwrap();
+        assert!(b_pos < d_pos, "b must come before d");
+        assert!(c_pos < d_pos, "c must come before d");
+    }
+
+    #[test]
+    fn test_resolve_task_order_cycle_returns_error() {
+        let tasks = vec![make_task("a", &["b"]), make_task("b", &["a"])];
+        let result = resolve_task_order(&tasks);
+        assert!(result.is_err(), "cycle must return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.to_lowercase().contains("cycle"),
+            "error must mention cycle: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_order_unknown_dependency_returns_error() {
+        let tasks = vec![make_task("a", &["nonexistent"])];
+        let result = resolve_task_order(&tasks);
+        assert!(result.is_err(), "unknown dependency must return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("nonexistent"),
+            "error must name the missing ID: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_order_empty_slice_returns_empty() {
+        let tasks: Vec<PlanTask> = vec![];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert!(ordered.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_task_order_single_task_no_deps() {
+        let tasks = vec![make_task("only", &[])];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].id, "only");
     }
 }

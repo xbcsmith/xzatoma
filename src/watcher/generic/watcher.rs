@@ -28,6 +28,7 @@
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
 use crate::error::Result;
+use crate::tools::plan::Plan;
 use crate::watcher::generic::consumer::{
     GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
 };
@@ -64,6 +65,21 @@ pub enum GenericWatcherError {
     /// Plan execution error.
     #[error("Plan execution error: {0}")]
     Execution(String),
+}
+
+/// The outcome of executing a single plan task through the agent.
+///
+/// Produced by [`GenericWatcher::execute_tasks_sequentially`] for each task
+/// in a task-based plan. On success, `summary` contains the agent's final
+/// response text. On failure, `summary` contains the error message.
+#[derive(Debug, Clone)]
+pub struct TaskOutcome {
+    /// The task identifier from [`crate::tools::plan::PlanTask::id`].
+    pub id: String,
+    /// Whether the agent completed the task without returning an error.
+    pub success: bool,
+    /// Agent response text on success, or error description on failure.
+    pub summary: String,
 }
 
 /// A single classified message outcome for the generic watcher.
@@ -537,6 +553,81 @@ impl GenericWatcher {
         settings
     }
 
+    /// Execute all tasks in a plan sequentially within a single shared agent session.
+    ///
+    /// Tasks are ordered by [`crate::tools::plan::resolve_task_order`] before
+    /// execution. Each task description is sent to `agent.execute` as an
+    /// independent user message; the agent retains conversation history between
+    /// tasks so later tasks can reference outputs from earlier ones.
+    ///
+    /// On task failure the error is recorded as a [`TaskOutcome`] and execution
+    /// continues with the next task — the plan is not aborted on first failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `plan`  - The plan whose `tasks` field will be executed in order.
+    /// * `agent` - The already-constructed watcher agent to drive.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<TaskOutcome>` with one entry per task, in execution order.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if dependency resolution fails (unknown ID or cycle).
+    async fn execute_tasks_sequentially(
+        &self,
+        plan: &Plan,
+        agent: &mut crate::agent::Agent,
+    ) -> Result<Vec<TaskOutcome>> {
+        let ordered = crate::tools::plan::resolve_task_order(&plan.tasks).map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to resolve task order: {}", e))
+        })?;
+
+        let total = ordered.len();
+        let mut outcomes = Vec::with_capacity(total);
+
+        for (idx, task) in ordered.iter().enumerate() {
+            info!(
+                task_id = %task.id,
+                task_index = idx + 1,
+                total_tasks = total,
+                "Starting task execution"
+            );
+
+            let outcome = match agent.execute(task.description.clone()).await {
+                Ok(response) => {
+                    info!(
+                        task_id = %task.id,
+                        success = true,
+                        "Task execution complete"
+                    );
+                    TaskOutcome {
+                        id: task.id.clone(),
+                        success: true,
+                        summary: response,
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        task_id = %task.id,
+                        error = %e,
+                        "Task execution failed; continuing to next task"
+                    );
+                    TaskOutcome {
+                        id: task.id.clone(),
+                        success: false,
+                        summary: format!("Task failed: {}", e),
+                    }
+                }
+            };
+
+            outcomes.push(outcome);
+        }
+
+        Ok(outcomes)
+    }
+
     /// Execute a validated plan task via the standard agent execution path.
     ///
     /// Builds and executes an agent in `ChatMode::Watcher` (autonomous mode)
@@ -555,7 +646,9 @@ impl GenericWatcher {
     /// Returns an error if the task instruction is empty after trimming.
     async fn execute_plan(&self, task: &GenericTask) -> Result<GenericPlanResult> {
         let trimmed = task.instruction.trim();
-        if trimmed.is_empty() {
+        // For step-based plans the instruction is required; task-based plans
+        // execute via execute_tasks_sequentially instead.
+        if trimmed.is_empty() && task.plan.tasks.is_empty() {
             return Err(GenericWatcherError::Execution(
                 "task instruction cannot be empty".to_string(),
             )
@@ -612,14 +705,41 @@ impl GenericWatcher {
             agent.set_transient_system_messages(vec![sp]);
         }
 
-        let execution_result = agent.execute(trimmed.to_string()).await;
-
-        let (success, summary) = match execution_result {
-            Ok(response) => (true, response),
-            Err(e) => (
-                false,
-                format!("Generic watcher plan execution failed: {}", e),
-            ),
+        // Branch: task-based plans use the per-task loop; step-based plans use
+        // the legacy single-shot path.
+        let (success, summary, task_outcomes_opt) = if !task.plan.tasks.is_empty() {
+            let outcomes = self
+                .execute_tasks_sequentially(&task.plan, &mut agent)
+                .await?;
+            let overall_success = outcomes.iter().all(|o| o.success);
+            let final_summary = agent
+                .execute(
+                    "Summarise the results of all tasks completed above in one paragraph."
+                        .to_string(),
+                )
+                .await
+                .unwrap_or_else(|e| format!("Summary generation failed: {}", e));
+            let outcomes_json: Vec<serde_json::Value> = outcomes
+                .iter()
+                .map(|o| {
+                    json!({
+                        "id": o.id,
+                        "success": o.success,
+                        "summary": o.summary,
+                    })
+                })
+                .collect();
+            (overall_success, final_summary, Some(outcomes_json))
+        } else {
+            // Legacy step-based plan: single agent.execute call.
+            match agent.execute(trimmed.to_string()).await {
+                Ok(response) => (true, response, None),
+                Err(e) => (
+                    false,
+                    format!("Generic watcher plan execution failed: {}", e),
+                    None,
+                ),
+            }
         };
 
         let trigger_id = task
@@ -628,10 +748,10 @@ impl GenericWatcher {
             .unwrap_or_else(|| Ulid::new().to_string());
 
         let mut result = GenericPlanResult::new(trigger_id, success, summary);
+        result.task_outcomes = task_outcomes_opt;
         result.plan_output = Some(json!({
-            "mode": "execute",
+            "mode": if task.plan.tasks.is_empty() { "execute_steps" } else { "execute_tasks" },
             "plan_name": task.plan.name,
-            "instruction": trimmed,
             "success": success,
         }));
         Ok(result)

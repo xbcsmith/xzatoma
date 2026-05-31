@@ -88,6 +88,14 @@ pub struct GenericPlanResult {
     /// any JSON-serializable data that helps downstream consumers interpret the result.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plan_output: Option<serde_json::Value>,
+
+    /// Per-task execution outcomes when the plan used task-based execution.
+    ///
+    /// Each entry contains `id` (task ID), `success` (bool), and `summary`
+    /// (agent response or error message) for one task, in execution order.
+    /// This field is absent when the plan used legacy step-based execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_outcomes: Option<Vec<serde_json::Value>>,
 }
 
 impl GenericPlanResult {
@@ -107,7 +115,7 @@ impl GenericPlanResult {
     /// # Returns
     ///
     /// A new `GenericPlanResult` with a generated ULID, `event_type = "result"`,
-    /// and `plan_output = None`.
+    /// `plan_output = None`, and `task_outcomes = None`.
     ///
     /// # Examples
     ///
@@ -133,6 +141,7 @@ impl GenericPlanResult {
             summary,
             timestamp: Utc::now(),
             plan_output: None,
+            task_outcomes: None,
         }
     }
 }
@@ -243,5 +252,57 @@ mod tests {
         let after = Utc::now();
         assert!(result.timestamp >= before);
         assert!(result.timestamp <= after);
+    }
+
+    #[test]
+    fn test_generic_plan_result_task_outcomes_defaults_to_none() {
+        let result = GenericPlanResult::new("t".to_string(), true, "ok".to_string());
+        assert!(result.task_outcomes.is_none());
+    }
+
+    #[test]
+    fn test_generic_plan_result_task_outcomes_omitted_when_none() {
+        let result = GenericPlanResult::new("t".to_string(), true, "ok".to_string());
+        let json_str = serde_json::to_string(&result).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(
+            v.get("task_outcomes").is_none(),
+            "task_outcomes must be omitted when None"
+        );
+    }
+
+    #[test]
+    fn test_generic_plan_result_task_outcomes_roundtrip() {
+        let mut result = GenericPlanResult::new("t".to_string(), true, "done".to_string());
+        result.task_outcomes = Some(vec![
+            serde_json::json!({"id": "t1", "success": true, "summary": "ran ok"}),
+            serde_json::json!({"id": "t2", "success": false, "summary": "failed"}),
+        ]);
+
+        let json_str = serde_json::to_string(&result).unwrap();
+        let restored: GenericPlanResult = serde_json::from_str(&json_str).unwrap();
+
+        let outcomes = restored.task_outcomes.unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0]["id"], "t1");
+        assert!(outcomes[0]["success"].as_bool().unwrap());
+        assert_eq!(outcomes[1]["id"], "t2");
+        assert!(!outcomes[1]["success"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_generic_plan_result_task_outcomes_present_in_json_when_set() {
+        let mut result = GenericPlanResult::new("t".to_string(), true, "ok".to_string());
+        result.task_outcomes = Some(vec![
+            serde_json::json!({"id": "t1", "success": true, "summary": "done"}),
+        ]);
+
+        let json_str = serde_json::to_string(&result).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(
+            v.get("task_outcomes").is_some(),
+            "task_outcomes must appear in JSON when Some"
+        );
+        assert_eq!(v["task_outcomes"].as_array().unwrap().len(), 1);
     }
 }
