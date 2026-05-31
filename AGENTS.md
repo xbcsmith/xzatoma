@@ -6,6 +6,10 @@
 
 ## Critical Rules
 
+## Rule 0: Use the Agent Harness Tools
+
+Use `agent_harness` for all agent interactions
+
 ### Rule 1: File Extensions
 
 - Use `.yaml` for ALL YAML files (NOT `.yml`)

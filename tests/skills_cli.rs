@@ -176,9 +176,9 @@ fn test_skills_list_output_shows_only_valid_visible_skills() {
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("list");
 
     cmd.assert()
@@ -230,9 +230,9 @@ fn test_skills_validate_output_shows_valid_invalid_and_shadowed_diagnostics() {
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("validate");
 
     cmd.assert()
@@ -281,9 +281,9 @@ fn test_skills_show_output_displays_visible_skill_metadata() {
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("show")
         .arg("visible_user_skill");
 
@@ -321,9 +321,9 @@ fn test_skills_show_errors_on_hidden_project_skill() {
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("show")
         .arg("hidden_project_skill");
 
@@ -347,9 +347,9 @@ fn test_skills_paths_output_prints_effective_roots_and_trust_status() {
     let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("add")
         .arg(project_dir.path());
@@ -358,9 +358,9 @@ fn test_skills_paths_output_prints_effective_roots_and_trust_status() {
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
     cmd.current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("paths");
 
     cmd.assert()
@@ -397,9 +397,9 @@ fn test_skills_trust_show_output_prints_trusted_paths() {
     let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("add")
         .arg(project_dir.path());
@@ -409,9 +409,9 @@ fn test_skills_trust_show_output_prints_trusted_paths() {
     let mut show_cmd = common::xzatoma_command().expect("binary should build");
     show_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("show");
 
@@ -444,9 +444,9 @@ fn test_skills_trust_add_output_updates_trust_store_deterministically() {
     let mut first_add = common::xzatoma_command().expect("binary should build");
     first_add
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("add")
         .arg(custom_dir.path());
@@ -464,9 +464,9 @@ fn test_skills_trust_add_output_updates_trust_store_deterministically() {
     let mut second_add = common::xzatoma_command().expect("binary should build");
     second_add
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("add")
         .arg(custom_dir.path());
@@ -493,9 +493,9 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
     let mut add_cmd = common::xzatoma_command().expect("binary should build");
     add_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("add")
         .arg(custom_dir.path());
@@ -505,9 +505,9 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
     let mut remove_cmd = common::xzatoma_command().expect("binary should build");
     remove_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("remove")
         .arg(custom_dir.path());
@@ -527,9 +527,9 @@ fn test_skills_trust_remove_output_updates_trust_store_deterministically() {
     let mut remove_again_cmd = common::xzatoma_command().expect("binary should build");
     remove_again_cmd
         .current_dir(project_dir.path())
+        .arg("skills")
         .arg("--config")
         .arg(&config_path)
-        .arg("skills")
         .arg("trust")
         .arg("remove")
         .arg(custom_dir.path());

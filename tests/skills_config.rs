@@ -1,7 +1,7 @@
 use serial_test::serial;
 use std::fs;
 use tempfile::TempDir;
-use xzatoma::cli::{Cli, Commands, SkillsCommand};
+use xzatoma::cli::{Cli, Commands, CommonArgs, SkillsCommand};
 use xzatoma::config::{Config, SkillsConfig};
 
 struct EnvVarGuard {
@@ -52,19 +52,19 @@ impl Drop for EnvVarGuard {
 
 fn auth_cli() -> Cli {
     Cli {
-        config: Some("config/config.yaml".to_string()),
-        verbose: false,
-        storage_path: None,
-        command: Commands::Auth { provider: None },
+        command: Commands::Auth {
+            common: CommonArgs::default(),
+            provider: None,
+        },
     }
 }
 
 fn skills_cli(command: SkillsCommand) -> Cli {
     Cli {
-        config: Some("config/config.yaml".to_string()),
-        verbose: false,
-        storage_path: None,
-        command: Commands::Skills { command },
+        command: Commands::Skills {
+            common: CommonArgs::default(),
+            command,
+        },
     }
 }
 
@@ -353,7 +353,7 @@ skills:
     );
 
     let cli = auth_cli();
-    let config = Config::load(&config_path, &cli).expect("config should load");
+    let config = Config::load(&config_path, cli.command.common_args()).expect("config should load");
 
     assert!(!config.skills.enabled);
     assert!(!config.skills.project_enabled);
@@ -383,7 +383,7 @@ skills:
     );
 
     let cli = auth_cli();
-    let config = Config::load(&config_path, &cli).expect("config should load");
+    let config = Config::load(&config_path, cli.command.common_args()).expect("config should load");
 
     assert_eq!(config.skills.trust_store_path, None);
 }
@@ -413,7 +413,7 @@ skills:
     );
 
     let cli = auth_cli();
-    let config = Config::load(&config_path, &cli).expect("config should load");
+    let config = Config::load(&config_path, cli.command.common_args()).expect("config should load");
 
     assert!(!config.skills.enabled);
     assert!(!config.skills.project_enabled);
@@ -433,7 +433,8 @@ fn test_config_load_defaults_skills_when_file_missing() {
     let _trust_store = EnvVarGuard::remove("XZATOMA_SKILLS_TRUST_STORE_PATH");
 
     let cli = skills_cli(SkillsCommand::List);
-    let config = Config::load("this-file-should-not-exist.yaml", &cli).expect("config should load");
+    let config = Config::load("this-file-should-not-exist.yaml", cli.command.common_args())
+        .expect("config should load");
 
     assert_eq!(config.skills.enabled, SkillsConfig::default().enabled);
     assert_eq!(

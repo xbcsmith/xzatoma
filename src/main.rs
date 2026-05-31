@@ -33,21 +33,24 @@ async fn main() -> Result<()> {
         _ => (false, None),
     };
 
+    // Clone CommonArgs so cli.command can be moved in the match below.
+    let common = cli.command.common_args().clone();
+
     // Initialise the global tracing subscriber exactly once.
-    init_tracing(cli.verbose, log_json, watch_log_file.as_deref());
+    init_tracing(common.verbose, log_json, watch_log_file.as_deref());
 
     // If the user supplied a storage path on the CLI (or via env),
     // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
     // This keeps callers unchanged while allowing `SqliteStorage::new()` to
     // honor an override.
-    if let Some(db_path) = &cli.storage_path {
+    if let Some(db_path) = &common.storage_path {
         std::env::set_var("XZATOMA_HISTORY_DB", db_path);
         tracing::info!("Using storage DB override from CLI: {}", db_path);
     }
 
     // Load configuration
-    let config_path = cli.config.as_deref().unwrap_or("config/config.yaml");
-    let config = Config::load(config_path, &cli)?;
+    let config_path = common.config.as_deref().unwrap_or("config/config.yaml");
+    let config = Config::load(config_path, &common)?;
 
     // Validate configuration
     config.validate()?;
@@ -60,6 +63,7 @@ async fn main() -> Result<()> {
             safe,
             resume,
             thinking_effort,
+            ..
         } => {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
@@ -88,6 +92,7 @@ async fn main() -> Result<()> {
             prompt,
             allow_dangerous,
             thinking_effort,
+            ..
         } => {
             tracing::info!("Starting plan execution mode");
             if let Some(plan_path) = &plan {
@@ -130,6 +135,7 @@ async fn main() -> Result<()> {
             dry_run,
             brokers,
             match_version,
+            ..
         } => {
             tracing::info!("Starting watcher mode");
             commands::watch::run_watch(
@@ -154,7 +160,7 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Auth { provider } => {
+        Commands::Auth { provider, .. } => {
             // Use CLI `--provider` override when supplied; otherwise fall back to the
             // configured/default provider from `config`.
             let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
@@ -162,7 +168,7 @@ async fn main() -> Result<()> {
             commands::auth::authenticate(config, provider).await?;
             Ok(())
         }
-        Commands::Models { command } => {
+        Commands::Models { command, .. } => {
             tracing::info!("Starting model management command");
             match command {
                 ModelCommand::List {
@@ -196,7 +202,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::History { command } => {
+        Commands::History { command, .. } => {
             tracing::info!("Starting history command");
             commands::history::handle_history(command)?;
             Ok(())
@@ -208,6 +214,7 @@ async fn main() -> Result<()> {
             limit,
             offset,
             tree,
+            ..
         } => {
             tracing::info!("Starting replay command for conversation debugging");
             let args = commands::replay::ReplayArgs {
@@ -221,7 +228,7 @@ async fn main() -> Result<()> {
             commands::replay::run_replay(args).await?;
             Ok(())
         }
-        Commands::Mcp { command } => {
+        Commands::Mcp { command, .. } => {
             tracing::info!("Starting MCP command");
             commands::mcp::handle_mcp(command, config).await?;
             Ok(())
@@ -231,12 +238,13 @@ async fn main() -> Result<()> {
             model,
             allow_dangerous,
             working_dir,
+            ..
         } => {
             commands::agent::handle_agent(provider, model, allow_dangerous, working_dir, config)
                 .await?;
             Ok(())
         }
-        Commands::Acp { command } => {
+        Commands::Acp { command, .. } => {
             tracing::info!("Starting ACP command");
             match &command {
                 AcpCommand::Serve { .. }
@@ -248,7 +256,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Skills { command } => {
+        Commands::Skills { command, .. } => {
             tracing::info!("Starting skills command");
             match command {
                 SkillsCommand::List => {

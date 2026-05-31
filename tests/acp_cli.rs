@@ -63,9 +63,9 @@ fn test_acp_config_command_prints_effective_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("config");
 
     cmd.assert()
@@ -86,9 +86,9 @@ fn test_acp_config_command_reflects_env_overrides() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("config")
         .env("XZATOMA_ACP_HOST", "0.0.0.0")
         .env("XZATOMA_ACP_PORT", "9999")
@@ -117,9 +117,9 @@ fn test_acp_validate_command_succeeds_for_valid_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("validate");
 
     cmd.assert()
@@ -168,9 +168,9 @@ fn test_acp_validate_command_succeeds_for_valid_manifest_json() {
     .expect("manifest should write");
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("validate")
         .arg("--manifest")
         .arg(&manifest_path);
@@ -196,9 +196,9 @@ fn test_acp_validate_command_rejects_invalid_manifest_extension() {
     fs::write(&manifest_path, "not a supported manifest").expect("manifest should write");
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("validate")
         .arg("--manifest")
         .arg(&manifest_path);
@@ -236,9 +236,9 @@ acp:
     let (_temp_dir, config_path) = common::temp_config_file(invalid_config);
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("validate");
 
     cmd.assert().failure().stderr(predicate::str::contains(
@@ -254,9 +254,9 @@ fn test_acp_runs_command_prints_header_when_no_runs_exist() {
     let (_config_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("runs")
         .env("XZATOMA_HISTORY_DB", &db_path);
 
@@ -273,9 +273,9 @@ fn test_acp_runs_command_rejects_zero_limit() {
     let (_config_dir, config_path) = common::temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("runs")
         .arg("--limit")
         .arg("0")
@@ -292,9 +292,9 @@ fn test_acp_config_command_supports_root_compatible_configuration() {
     let (_temp_dir, config_path) = common::temp_config_file(&root_compatible_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("acp")
+        .arg("--config")
         .arg(&config_path)
-        .arg("acp")
         .arg("config");
 
     cmd.assert()

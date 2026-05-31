@@ -224,9 +224,9 @@ mod tests {
 
         // Run the CLI binary, pointing it at our temp DB, and assert output contains expected rows
         let mut cmd = Command::new(xzatoma_binary_path());
-        cmd.arg("--storage-path")
+        cmd.arg("history")
+            .arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())
-            .arg("history")
             .arg("list");
 
         cmd.assert()
@@ -256,9 +256,9 @@ mod tests {
 
         // Run the CLI binary to delete the session
         let mut cmd = Command::new(xzatoma_binary_path());
-        cmd.arg("--storage-path")
+        cmd.arg("history")
+            .arg("--storage-path")
             .arg(db_path.to_string_lossy().to_string())
-            .arg("history")
             .arg("delete")
             .arg("--id")
             .arg(&id);

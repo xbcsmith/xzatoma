@@ -25,26 +25,15 @@ use xzatoma::mcp::server::{McpServerConfig, McpServerTransportConfig};
 // Helper: build a minimal Cli for Config::load calls
 // ---------------------------------------------------------------------------
 
-fn make_cli() -> xzatoma::cli::Cli {
-    use xzatoma::cli::{Cli, Commands};
-    Cli {
-        config: None,
-        verbose: false,
-        storage_path: None,
-        command: Commands::Run {
-            plan: None,
-            prompt: None,
-            allow_dangerous: false,
-            thinking_effort: None,
-        },
-    }
+fn make_common() -> xzatoma::cli::CommonArgs {
+    xzatoma::cli::CommonArgs::default()
 }
 
 /// Load a default `Config` (from a non-existent path so defaults are used)
 /// with env vars applied.
 fn load_default_config() -> xzatoma::error::Result<xzatoma::config::Config> {
-    let cli = make_cli();
-    xzatoma::config::Config::load("/tmp/__xzatoma_nonexistent_config_for_test.yaml", &cli)
+    let common = make_common();
+    xzatoma::config::Config::load("/tmp/__xzatoma_nonexistent_config_for_test.yaml", &common)
 }
 
 // ---------------------------------------------------------------------------

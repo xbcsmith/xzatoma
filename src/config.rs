@@ -1414,7 +1414,7 @@ impl Config {
     /// # Errors
     ///
     /// Returns error if file cannot be read or parsed
-    pub fn load(path: &str, cli: &crate::cli::Cli) -> Result<Self> {
+    pub fn load(path: &str, common: &crate::cli::CommonArgs) -> Result<Self> {
         let mut config = if Path::new(path).exists() {
             Self::from_file(path)?
         } else {
@@ -1423,7 +1423,7 @@ impl Config {
         };
 
         config.apply_env_vars();
-        config.apply_cli_overrides(cli);
+        config.apply_cli_overrides(common);
 
         Ok(config)
     }
@@ -2348,8 +2348,8 @@ impl Config {
         }
     }
 
-    fn apply_cli_overrides(&mut self, cli: &crate::cli::Cli) {
-        if cli.verbose {
+    fn apply_cli_overrides(&mut self, common: &crate::cli::CommonArgs) {
+        if common.verbose {
             tracing::debug!("Verbose mode enabled");
         }
     }
@@ -3640,16 +3640,13 @@ kafka:
 
     #[test]
     fn test_load_nonexistent_file_uses_defaults() {
-        let cli = crate::cli::Cli {
+        let common = crate::cli::CommonArgs {
             config: None,
             verbose: false,
             storage_path: None,
-            command: crate::cli::Commands::Auth {
-                provider: Some("copilot".to_string()),
-            },
         };
 
-        let config = Config::load("nonexistent.yaml", &cli).unwrap();
+        let config = Config::load("nonexistent.yaml", &common).unwrap();
         assert_eq!(config.provider.provider_type, "copilot");
     }
 
