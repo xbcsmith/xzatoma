@@ -33,11 +33,28 @@ pub struct Plan {
     /// allow plan authors to annotate plans for automated dispatch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
-    /// Ordered list of plan steps
+    /// Task-based plan steps (preferred format for the generic watcher).
+    /// When present, takes precedence over `steps` in instruction generation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<PlanTask>,
+    /// Step-based plan steps (legacy format; retained for backward compatibility).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<PlanStep>,
+    /// High-level goal statements for the plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goals: Vec<String>,
+    /// Maximum number of agent iterations allowed for this plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<usize>,
+    /// Whether to allow dangerous terminal operations during execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_dangerous: Option<bool>,
+    /// File paths that the result event should reference upon completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub result_mentions: Vec<String>,
 }
 
-/// A single step in a plan
+/// A single step in a plan (legacy step-based format)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanStep {
     /// Step name/title
@@ -49,32 +66,70 @@ pub struct PlanStep {
     pub context: Option<String>,
 }
 
+/// A single task in a plan (task-based format used by the generic watcher)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlanTask {
+    /// Unique task identifier within the plan
+    pub id: String,
+    /// Full agent instruction for this task
+    pub description: String,
+    /// Optional priority ("low", "medium", "high")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// IDs of tasks that must complete before this task runs
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+}
+
 impl Plan {
-    /// Create a new plan
+    /// Create a new plan with step-based tasks (legacy format).
     pub fn new(name: String, steps: Vec<PlanStep>) -> Self {
         Self {
             name,
             description: None,
             version: None,
             action: None,
+            tasks: Vec::new(),
             steps,
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
         }
     }
 
-    /// Number of steps
-    pub fn step_count(&self) -> usize {
-        self.steps.len()
+    /// Create a new plan with task-based steps (generic watcher format).
+    pub fn new_with_tasks(name: String, tasks: Vec<PlanTask>) -> Self {
+        Self {
+            name,
+            description: None,
+            version: None,
+            action: None,
+            tasks,
+            steps: Vec::new(),
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
+        }
     }
 
-    /// If plan has no steps
+    /// Number of tasks or steps in the plan.
+    pub fn step_count(&self) -> usize {
+        self.tasks.len() + self.steps.len()
+    }
+
+    /// Returns true when the plan has no tasks and no steps.
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty()
+        self.tasks.is_empty() && self.steps.is_empty()
     }
 
     /// Format the plan as an instruction prompt for the agent executor.
     ///
-    /// Produces a human-readable task description containing the plan name and all
-    /// step names and actions in order. This string is used by
+    /// When `tasks` are present they are formatted as numbered task blocks
+    /// with the full task description as the agent instruction. When only
+    /// `steps` are present the legacy step format is used instead. This
+    /// string is used by
     /// [`GenericEventHandler`](crate::watcher::generic::event_handler::GenericEventHandler)
     /// as the prompt passed to the agent when executing a plan received over Kafka.
     ///
@@ -92,10 +147,15 @@ impl Plan {
     ///     description: None,
     ///     version: None,
     ///     action: None,
+    ///     tasks: vec![],
     ///     steps: vec![
     ///         PlanStep::new("build".to_string()).with_action("cargo build --release".to_string()),
     ///         PlanStep::new("deploy".to_string()).with_action("kubectl apply -f deploy.yaml".to_string()),
     ///     ],
+    ///     goals: vec![],
+    ///     max_iterations: None,
+    ///     allow_dangerous: None,
+    ///     result_mentions: vec![],
     /// };
     ///
     /// let instruction = plan.to_instruction();
@@ -104,16 +164,37 @@ impl Plan {
     /// assert!(instruction.contains("kubectl apply -f deploy.yaml"));
     /// ```
     pub fn to_instruction(&self) -> String {
-        let steps_s = self
-            .steps
-            .iter()
-            .map(|s| format!("- {}: {}", s.name, s.action))
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
-            self.name, steps_s
-        )
+        if !self.tasks.is_empty() {
+            let tasks_s = self
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    let deps = if t.dependencies.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (after: {})", t.dependencies.join(", "))
+                    };
+                    format!("Task {}:{} {}\n{}", i + 1, deps, t.id, t.description.trim())
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            format!(
+                "Execute this plan:\n\nName: {}\n\nTasks:\n{}\n",
+                self.name, tasks_s
+            )
+        } else {
+            let steps_s = self
+                .steps
+                .iter()
+                .map(|s| format!("- {}: {}", s.name, s.action))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
+                self.name, steps_s
+            )
+        }
     }
 }
 
@@ -330,23 +411,40 @@ impl PlanParser {
             description,
             version: None,
             action: None,
+            tasks: Vec::new(),
             steps,
+            goals: Vec::new(),
+            max_iterations: None,
+            allow_dangerous: None,
+            result_mentions: Vec::new(),
         };
 
         Self::validate(&plan)?;
         Ok(plan)
     }
 
-    /// Validate a plan instance (structure and content)
+    /// Validate a plan instance (structure and content).
+    ///
+    /// A plan is valid when it has a non-empty name and at least one task
+    /// (task-based format) or one step (legacy step-based format).
     pub fn validate(plan: &Plan) -> Result<()> {
         if plan.name.trim().is_empty() {
             return Err(XzatomaError::Tool("Plan name cannot be empty".to_string()));
         }
 
-        if plan.steps.is_empty() {
+        if plan.tasks.is_empty() && plan.steps.is_empty() {
             return Err(XzatomaError::Tool(
-                "Plan must have at least one step".to_string(),
+                "Plan must have at least one task or step".to_string(),
             ));
+        }
+
+        for task in &plan.tasks {
+            if task.description.trim().is_empty() {
+                return Err(XzatomaError::Tool(format!(
+                    "Task '{}' must have a non-empty description",
+                    task.id
+                )));
+            }
         }
 
         for (i, step) in plan.steps.iter().enumerate() {
@@ -363,6 +461,16 @@ impl PlanParser {
 
         Ok(())
     }
+
+    /// Parse and validate a plan from a `serde_json::Value`.
+    ///
+    /// Used by the generic watcher to deserialize the `data` field of an
+    /// inbound `GenericPlanCloudEvent` directly into a validated `Plan`.
+    pub fn from_value(value: serde_json::Value) -> Result<Plan> {
+        let plan: Plan = serde_json::from_value(value).map_err(XzatomaError::Serialization)?;
+        Self::validate(&plan)?;
+        Ok(plan)
+    }
 }
 
 /// Convenience wrapper that parses YAML plan text
@@ -375,6 +483,108 @@ pub async fn load_plan(path: &str) -> Result<Plan> {
     // In tests and CLI this is a simple wrapper around the sync parser.
     // For now we use blocking IO since parsing is not CPU bound here.
     PlanParser::from_file(Path::new(path))
+}
+
+/// Resolve the execution order of plan tasks using a topological sort.
+///
+/// Tasks with no dependencies are scheduled first. Tasks with dependencies
+/// are scheduled after every task they depend on. When multiple independent
+/// tasks exist at the same level, their relative order from the input slice
+/// is preserved.
+///
+/// Uses Kahn's algorithm (BFS) for cycle detection and ordering.
+///
+/// # Arguments
+///
+/// * `tasks` - Slice of [`PlanTask`] values to sort.
+///
+/// # Returns
+///
+/// A `Vec<&PlanTask>` in a valid execution order (all dependencies before
+/// their dependents).
+///
+/// # Errors
+///
+/// Returns `Err(XzatomaError::Tool(...))` when:
+/// - A task's `dependencies` list references an ID that does not exist in
+///   `tasks`.
+/// - A dependency cycle is detected (no valid ordering exists).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::plan::{PlanTask, resolve_task_order};
+///
+/// let tasks = vec![
+///     PlanTask { id: "b".to_string(), description: "second".to_string(), priority: None, dependencies: vec!["a".to_string()] },
+///     PlanTask { id: "a".to_string(), description: "first".to_string(),  priority: None, dependencies: vec![] },
+/// ];
+/// let ordered = resolve_task_order(&tasks).unwrap();
+/// assert_eq!(ordered[0].id, "a");
+/// assert_eq!(ordered[1].id, "b");
+/// ```
+pub fn resolve_task_order(tasks: &[PlanTask]) -> Result<Vec<&PlanTask>> {
+    use std::collections::{HashMap, VecDeque};
+
+    let n = tasks.len();
+    if n == 0 {
+        return Ok(vec![]);
+    }
+
+    // Map each task ID to its index.
+    let id_to_idx: HashMap<&str, usize> = tasks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.id.as_str(), i))
+        .collect();
+
+    // Validate that every referenced dependency ID exists.
+    for task in tasks {
+        for dep in &task.dependencies {
+            if !id_to_idx.contains_key(dep.as_str()) {
+                return Err(XzatomaError::Tool(format!(
+                    "task '{}' depends on unknown task ID '{}'",
+                    task.id, dep
+                )));
+            }
+        }
+    }
+
+    // Build in-degree counts and a reverse-adjacency list:
+    // dependents[i] = indices of tasks that directly depend on task i.
+    let mut in_degree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![vec![]; n];
+
+    for (i, task) in tasks.iter().enumerate() {
+        for dep in &task.dependencies {
+            let dep_idx = id_to_idx[dep.as_str()];
+            dependents[dep_idx].push(i);
+            in_degree[i] += 1;
+        }
+    }
+
+    // Kahn's algorithm: start with all tasks that have no dependencies.
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
+
+    let mut result = Vec::with_capacity(n);
+
+    while let Some(idx) = queue.pop_front() {
+        result.push(&tasks[idx]);
+        for &dep_idx in &dependents[idx] {
+            in_degree[dep_idx] -= 1;
+            if in_degree[dep_idx] == 0 {
+                queue.push_back(dep_idx);
+            }
+        }
+    }
+
+    if result.len() != n {
+        return Err(XzatomaError::Tool(
+            "cycle detected in task dependencies".to_string(),
+        ));
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -503,34 +713,33 @@ steps:
     #[test]
     fn test_validate_errors() {
         // Missing name
-        let plan = Plan {
-            name: "".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: vec![PlanStep::new("s".to_string()).with_action("a".to_string())],
-        };
-        assert!(PlanParser::validate(&plan).is_err());
+        assert!(PlanParser::validate(&Plan::new(
+            "".to_string(),
+            vec![PlanStep::new("s".to_string()).with_action("a".to_string())]
+        ))
+        .is_err());
 
-        // Missing steps
-        let plan2 = Plan {
-            name: "n".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: Vec::new(),
-        };
-        assert!(PlanParser::validate(&plan2).is_err());
+        // Missing steps and tasks
+        assert!(PlanParser::validate(&Plan::new("n".to_string(), Vec::new())).is_err());
 
-        // Missing action
-        let plan3 = Plan {
-            name: "n".to_string(),
-            description: None,
-            version: None,
-            action: None,
-            steps: vec![PlanStep::new("step".to_string())],
-        };
-        assert!(PlanParser::validate(&plan3).is_err());
+        // Step with no action
+        assert!(PlanParser::validate(&Plan::new(
+            "n".to_string(),
+            vec![PlanStep::new("step".to_string())]
+        ))
+        .is_err());
+
+        // Task with empty description
+        assert!(PlanParser::validate(&Plan::new_with_tasks(
+            "n".to_string(),
+            vec![crate::tools::plan::PlanTask {
+                id: "t1".to_string(),
+                description: "".to_string(),
+                priority: None,
+                dependencies: vec![],
+            }]
+        ))
+        .is_err());
     }
 
     #[tokio::test]
@@ -613,22 +822,63 @@ steps:
             ],
         );
         let instruction = plan.to_instruction();
-        assert!(
-            instruction.contains("Deploy App"),
-            "instruction must contain plan name"
-        );
+        assert!(instruction.contains("Deploy App"), "must contain plan name");
         assert!(
             instruction.contains("cargo build"),
-            "instruction must contain step action"
+            "must contain step action"
         );
         assert!(
             instruction.contains("docker push"),
-            "instruction must contain step action"
+            "must contain step action"
         );
         assert!(
             instruction.contains("Execute this plan"),
-            "instruction must have header"
+            "must have header"
         );
+    }
+
+    #[test]
+    fn test_to_instruction_task_format() {
+        let plan = Plan::new_with_tasks(
+            "Audit".to_string(),
+            vec![PlanTask {
+                id: "check-logs".to_string(),
+                description: "Review the application logs for errors.".to_string(),
+                priority: Some("high".to_string()),
+                dependencies: vec![],
+            }],
+        );
+        let instruction = plan.to_instruction();
+        assert!(instruction.contains("Audit"), "must contain plan name");
+        assert!(instruction.contains("check-logs"), "must contain task id");
+        assert!(
+            instruction.contains("Review the application logs"),
+            "must contain task description"
+        );
+        assert!(instruction.contains("Tasks:"), "must use Tasks header");
+    }
+
+    #[test]
+    fn test_to_instruction_task_with_dependencies() {
+        let plan = Plan::new_with_tasks(
+            "Multi".to_string(),
+            vec![
+                PlanTask {
+                    id: "setup".to_string(),
+                    description: "Prepare environment.".to_string(),
+                    priority: None,
+                    dependencies: vec![],
+                },
+                PlanTask {
+                    id: "run".to_string(),
+                    description: "Execute the job.".to_string(),
+                    priority: None,
+                    dependencies: vec!["setup".to_string()],
+                },
+            ],
+        );
+        let instruction = plan.to_instruction();
+        assert!(instruction.contains("after: setup"), "must show dependency");
     }
 
     #[test]
@@ -663,7 +913,112 @@ steps:
 
         // Round-trip through JSON.
         let json_str = serde_json::to_string(&plan2).unwrap();
-        let plan3: crate::tools::plan::Plan = serde_json::from_str(&json_str).unwrap();
+        let plan3: Plan = serde_json::from_str(&json_str).unwrap();
         assert_eq!(plan3.action.as_deref(), Some("deploy"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // resolve_task_order tests
+    // ---------------------------------------------------------------------------
+
+    fn make_task(id: &str, deps: &[&str]) -> PlanTask {
+        PlanTask {
+            id: id.to_string(),
+            description: format!("Task {}", id),
+            priority: None,
+            dependencies: deps.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_resolve_task_order_no_dependencies_preserves_original_order() {
+        let tasks = vec![
+            make_task("a", &[]),
+            make_task("b", &[]),
+            make_task("c", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[1].id, "b");
+        assert_eq!(ordered[2].id, "c");
+    }
+
+    #[test]
+    fn test_resolve_task_order_linear_chain() {
+        let tasks = vec![
+            make_task("c", &["b"]),
+            make_task("b", &["a"]),
+            make_task("a", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 3);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[1].id, "b");
+        assert_eq!(ordered[2].id, "c");
+    }
+
+    #[test]
+    fn test_resolve_task_order_diamond_dependency() {
+        // a → b, a → c, b → d, c → d (diamond)
+        let tasks = vec![
+            make_task("d", &["b", "c"]),
+            make_task("b", &["a"]),
+            make_task("c", &["a"]),
+            make_task("a", &[]),
+        ];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        // a must come first, d must come last
+        assert_eq!(ordered.len(), 4);
+        assert_eq!(ordered[0].id, "a");
+        assert_eq!(ordered[3].id, "d");
+        // b and c must appear between a and d
+        let ids: Vec<&str> = ordered.iter().map(|t| t.id.as_str()).collect();
+        let b_pos = ids.iter().position(|&s| s == "b").unwrap();
+        let c_pos = ids.iter().position(|&s| s == "c").unwrap();
+        let d_pos = ids.iter().position(|&s| s == "d").unwrap();
+        assert!(b_pos < d_pos, "b must come before d");
+        assert!(c_pos < d_pos, "c must come before d");
+    }
+
+    #[test]
+    fn test_resolve_task_order_cycle_returns_error() {
+        let tasks = vec![make_task("a", &["b"]), make_task("b", &["a"])];
+        let result = resolve_task_order(&tasks);
+        assert!(result.is_err(), "cycle must return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.to_lowercase().contains("cycle"),
+            "error must mention cycle: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_order_unknown_dependency_returns_error() {
+        let tasks = vec![make_task("a", &["nonexistent"])];
+        let result = resolve_task_order(&tasks);
+        assert!(result.is_err(), "unknown dependency must return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("nonexistent"),
+            "error must name the missing ID: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_order_empty_slice_returns_empty() {
+        let tasks: Vec<PlanTask> = vec![];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert!(ordered.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_task_order_single_task_no_deps() {
+        let tasks = vec![make_task("only", &[])];
+        let ordered = resolve_task_order(&tasks).unwrap();
+        assert_eq!(ordered.len(), 1);
+        assert_eq!(ordered[0].id, "only");
     }
 }

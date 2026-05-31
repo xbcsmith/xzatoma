@@ -31,9 +31,57 @@
 use crate::config::KafkaWatcherConfig;
 use crate::error::{Result, XzatomaError};
 use crate::watcher::generic::result_event::GenericPlanResult;
-use crate::watcher::xzepr::consumer::config::{
-    SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
-};
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+enum SecurityProtocol {
+    #[default]
+    Plaintext,
+    Ssl,
+    SaslPlaintext,
+    SaslSsl,
+}
+
+impl SecurityProtocol {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Plaintext => "PLAINTEXT",
+            Self::Ssl => "SSL",
+            Self::SaslPlaintext => "SASL_PLAINTEXT",
+            Self::SaslSsl => "SASL_SSL",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SaslMechanism {
+    Plain,
+    ScramSha256,
+    ScramSha512,
+}
+
+impl SaslMechanism {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Plain => "PLAIN",
+            Self::ScramSha256 => "SCRAM-SHA-256",
+            Self::ScramSha512 => "SCRAM-SHA-512",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SaslConfig {
+    mechanism: SaslMechanism,
+    username: String,
+    password: String,
+}
+
+#[derive(Debug, Clone)]
+struct SslConfig {
+    ca_location: Option<String>,
+    certificate_location: Option<String>,
+    key_location: Option<String>,
+}
 use async_trait::async_trait;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::ClientConfig;

@@ -3,9 +3,11 @@
 #![doc = "XZatoma - Autonomous AI agent CLI"]
 #![doc = "Main entry point for the XZatoma agent application."]
 
+use std::{fs::OpenOptions, path::Path, sync::Arc};
+
 use xzatoma::error::Result;
 
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 // Removed unused grouped imports to satisfy clippy
 
@@ -16,11 +18,23 @@ use xzatoma::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
-    init_tracing();
-
-    // Parse command line arguments
+    // Parse CLI arguments first so logging flags are available before the
+    // subscriber is initialised.
     let cli = Cli::parse_args();
+
+    // Extract Watch-specific logging preferences before consuming cli.
+    // For every other command the defaults (plain stderr, no file) apply.
+    let (log_json, watch_log_file) = match &cli.command {
+        Commands::Watch {
+            json_logs,
+            log_file,
+            ..
+        } => (*json_logs, log_file.clone()),
+        _ => (false, None),
+    };
+
+    // Initialise the global tracing subscriber exactly once.
+    init_tracing(cli.verbose, log_json, watch_log_file.as_deref());
 
     // If the user supplied a storage path on the CLI (or via env),
     // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
@@ -262,13 +276,49 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Initialize tracing subscriber with environment filter
-fn init_tracing() {
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("xzatoma=info"));
+/// Initialize the global tracing subscriber.
+///
+/// Must be called exactly once per process. Calling it a second time will
+/// panic; use `RUST_LOG` to override the log level at runtime instead.
+///
+/// # Arguments
+///
+/// * `verbose` - When `true`, sets the default level to `DEBUG`.
+/// * `json_format` - When `true`, emits NDJSON to stderr instead of the
+///   default human-readable format.
+/// * `log_file` - Optional path to an additional log-file sink. The file
+///   is created (or appended to) in JSON format.
+fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
+    let level = if verbose { "debug" } else { "xzatoma=info" };
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .init();
+    // Open the optional file sink.  Failures are non-fatal: we print a
+    // warning to stderr and continue without the file layer.
+    let file_sink: Option<Arc<std::fs::File>> = log_file.and_then(|path| {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map(Arc::new)
+            .map_err(|e| eprintln!("Warning: failed to open log file '{}': {e}", path.display()))
+            .ok()
+    });
+
+    if json_format {
+        let stderr_layer = fmt::layer().json().with_writer(std::io::stderr);
+        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(stderr_layer)
+            .with(file_layer)
+            .init();
+    } else {
+        let stderr_layer = fmt::layer().with_writer(std::io::stderr);
+        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(stderr_layer)
+            .with(file_layer)
+            .init();
+    }
 }

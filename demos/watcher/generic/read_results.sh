@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # read_results.sh
 #
-# Reads PlanResultEvent messages from the Atoma generic watcher output topic
+# Reads PlanResultEvent messages from the XZatoma generic watcher output topic
 # and pretty-prints each result as it arrives.  Blocks until Ctrl+C.
 #
 # Usage:
@@ -9,19 +9,19 @@
 #
 # Examples:
 #   ./read_results.sh
-#   ./read_results.sh atoma.results
-#   ./read_results.sh atoma.custom-results
+#   ./read_results.sh xzatoma.results
+#   ./read_results.sh xzatoma.custom-results
 #
 # Prerequisites:
 #   - Redpanda container running (from the repository root):
 #       docker compose -f docker-compose.redpanda.yaml up -d
-#   - Atoma running in generic watcher mode:
-#       xzatoma --config config.yaml watch
+#   - XZatoma running in generic watcher mode:
+#       zatoma --config config.yaml watch
 
 set -euo pipefail
 
-TOPIC="${1:-atoma.results}"
-REDPANDA_CONTAINER="redpanda"
+TOPIC="${1:-xzatoma.results}"
+REDPANDA_CONTAINER="${2:-redpanda}"
 INTERNAL_BROKER="localhost:9092"
 
 # ---------------------------------------------------------------------------

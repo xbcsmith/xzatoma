@@ -57,6 +57,7 @@ pub struct Agent {
     config: AgentConfig,
     accumulated_usage: Arc<Mutex<Option<TokenUsage>>>,
     transient_system_messages: Vec<String>,
+    last_iteration_count: usize,
 }
 
 /// Combines reasoning text from two independent sources.
@@ -118,6 +119,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -164,6 +166,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -240,6 +243,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -313,6 +317,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -378,6 +383,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -458,6 +464,7 @@ impl Agent {
             config,
             accumulated_usage: Arc::new(Mutex::new(None)),
             transient_system_messages: Vec::new(),
+            last_iteration_count: 0,
         })
     }
 
@@ -507,6 +514,35 @@ impl Agent {
         let mut observer = NoOpObserver;
         self.execute_with_observer(user_prompt, &token, &mut observer)
             .await
+    }
+
+    /// Returns the number of LLM iterations performed in the most recent `execute` call.
+    ///
+    /// Useful for per-task observability: call this immediately after `agent.execute`
+    /// returns to capture how many provider round-trips the last task required.
+    /// Returns `0` if `execute` has not been called yet.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let tools = ToolRegistry::new();
+    /// # let config = AgentConfig::default();
+    /// # let mut agent = Agent::new(provider, tools, config)?;
+    /// let _ = agent.execute("Do a task").await?;
+    /// let iters = agent.iteration_count();
+    /// println!("Task took {} LLM round-trips", iters);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn iteration_count(&self) -> usize {
+        self.last_iteration_count
     }
 
     /// Executes the agent with an observer and a cancellation token.
@@ -790,6 +826,8 @@ impl Agent {
         observer.on_event(AgentExecutionEvent::ExecutionCompleted {
             response: final_message.clone(),
         });
+
+        self.last_iteration_count = iteration;
 
         info!(
             "Agent execution completed in {} iterations, {} seconds",
@@ -1147,6 +1185,8 @@ impl Agent {
         observer.on_event(AgentExecutionEvent::ExecutionCompleted {
             response: final_message.clone(),
         });
+
+        self.last_iteration_count = iteration;
 
         info!(
             "Agent execution completed in {} iterations, {} seconds",

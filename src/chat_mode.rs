@@ -21,7 +21,7 @@ use thiserror::Error;
 /// assert_eq!(error.value(), "review");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("unknown chat mode '{value}'; expected 'planning' or 'write'")]
+#[error("unknown chat mode '{value}'; expected 'planning', 'write', or 'watcher'")]
 pub struct ChatModeParseError {
     value: String,
 }
@@ -146,6 +146,15 @@ pub enum ChatMode {
     /// In this mode, the agent has full access to file operations
     /// and terminal commands (subject to safety validation).
     Write,
+
+    /// Watcher mode: autonomous headless execution for watcher agents
+    ///
+    /// In this mode the agent receives a plan from a Kafka event and must
+    /// execute every task immediately using available tools, without a human
+    /// in the loop. The agent is given a directive system prompt that
+    /// forbids asking for confirmation or describing the plan without acting.
+    /// Tool access is equivalent to Write mode.
+    Watcher,
 }
 
 impl fmt::Display for ChatMode {
@@ -153,6 +162,7 @@ impl fmt::Display for ChatMode {
         match self {
             Self::Planning => write!(f, "PLANNING"),
             Self::Write => write!(f, "WRITE"),
+            Self::Watcher => write!(f, "WATCHER"),
         }
     }
 }
@@ -180,6 +190,7 @@ impl ChatMode {
         match s.to_lowercase().as_str() {
             "planning" => Ok(Self::Planning),
             "write" => Ok(Self::Write),
+            "watcher" => Ok(Self::Watcher),
             _ => Err(ChatModeParseError::new(s)),
         }
     }
@@ -193,6 +204,7 @@ impl ChatMode {
         match self {
             Self::Planning => "Read-only mode for creating plans",
             Self::Write => "Read/write mode for executing tasks",
+            Self::Watcher => "Autonomous headless mode for watcher agents",
         }
     }
 
@@ -215,6 +227,7 @@ impl ChatMode {
         match self {
             Self::Planning => format!("[{}]", "PLANNING".purple()),
             Self::Write => format!("[{}]", "WRITE".green()),
+            Self::Watcher => format!("[{}]", "WATCHER".blue()),
         }
     }
 }
@@ -583,7 +596,7 @@ mod tests {
         assert_eq!(error.value(), "invalid");
         assert_eq!(
             error.to_string(),
-            "unknown chat mode 'invalid'; expected 'planning' or 'write'"
+            "unknown chat mode 'invalid'; expected 'planning', 'write', or 'watcher'"
         );
     }
 
@@ -812,13 +825,46 @@ mod tests {
     }
 
     #[test]
+    fn test_chat_mode_watcher_display() {
+        assert_eq!(ChatMode::Watcher.to_string(), "WATCHER");
+    }
+
+    #[test]
+    fn test_chat_mode_watcher_parse_str() {
+        let mode = ChatMode::parse_str("watcher").unwrap();
+        assert_eq!(mode, ChatMode::Watcher);
+    }
+
+    #[test]
+    fn test_chat_mode_watcher_parse_str_case_insensitive() {
+        assert_eq!(ChatMode::parse_str("WATCHER").unwrap(), ChatMode::Watcher);
+        assert_eq!(ChatMode::parse_str("Watcher").unwrap(), ChatMode::Watcher);
+    }
+
+    #[test]
+    fn test_chat_mode_watcher_description() {
+        assert_eq!(
+            ChatMode::Watcher.description(),
+            "Autonomous headless mode for watcher agents"
+        );
+    }
+
+    #[test]
+    fn test_chat_mode_watcher_colored_tag() {
+        let tag = ChatMode::Watcher.colored_tag();
+        assert!(tag.contains("WATCHER"));
+    }
+
+    #[test]
     fn test_chat_mode_state_format_colored_prompt_all_combinations() {
-        // Test all four combinations
+        // Test all six combinations including the Watcher mode
         let combinations = vec![
             (ChatMode::Planning, SafetyMode::AlwaysConfirm),
             (ChatMode::Planning, SafetyMode::NeverConfirm),
             (ChatMode::Write, SafetyMode::AlwaysConfirm),
             (ChatMode::Write, SafetyMode::NeverConfirm),
+            (ChatMode::Watcher, SafetyMode::AlwaysConfirm),
+            (ChatMode::Watcher, SafetyMode::NeverConfirm),
         ];
 
         for (mode, safety) in combinations {

@@ -82,4 +82,84 @@ Add support for Zed's context window in ACP mode. This will allow the agent to p
 
 Write a plan with a phased approach to add Context Window support to ACP mode in XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-[Context Window Implementation Plan](./context_window_implementation_plan.md)
+✅ COMPLETED - [Context Window Implementation Plan](./context_window_implementation_plan.md)
+
+## Bugs
+
+Watcher Bug: I am getting an error from the [@kafka.rs](file:///Users/bsmith/go/src/github.com/xbcsmith/xzatoma/src/watcher/xzepr/consumer/kafka.rs) deserializing an event. {"timestamp":"2026-05-30T17:54:38.158511Z","level":"ERROR","fields":{"message":"Failed to process message: Deserialization error: invalid type: null, expected a sequence at line 1 column 2627","service":"xzatoma"},"target":"xzatoma::watcher::xzepr::consumer::kafka"} And here is the event
+
+{
+    "success": true,
+    "id": "01KSX0C3Y5EW8W1MG6QRKGHFHM",
+    "specversion": "1.0",
+    "type": "xzepr.build.receiver",
+    "source": "epr",
+    "api_version": "v1",
+    "name": "build-verify",
+    "version": "1.0.0",
+    "release": "1.0.0",
+    "platform_id": "local",
+    "package": "xzatoma-demo",
+    "data": {
+        "events": [
+            {
+                "id": "01KSX0C3Y5EW8W1MG6QRKGHFHM",
+                "name": "build-verify",
+                "version": "1.0.0",
+                "release": "1.0.0",
+                "platform_id": "local",
+                "package": "xzatoma-demo",
+                "description": "Verify build artifacts after a successful build",
+                "payload": {
+                    "plan": "{\"id\":\"01JXZEPR0BUILD0PLAN000001\",\"name\":\"build-verify\",\"description\":\"Verify XZatoma build artifacts after a successful build.success event from XZepr.\",\"action\":\"verify\",\"version\":\"1.0.0\",\"goals\":[\"Confirm the XZepr watcher received and executed this build event\",\"Write a build verification report to tmp/\"],\"tasks\":[{\"id\":\"01JXZEPR0BUILD0TASK000001\",\"description\":\"Run the following commands and report each one with its output: (1) echo XZatoma XZepr watcher received build.success event (2) date -u (3) uname -s. Format each result as COMMAND: <command> OUTPUT: <output>. If any command fails report the error and continue.\",\"priority\":\"high\",\"dependencies\":[]},{\"id\":\"01JXZEPR0BUILD0TASK000002\",\"description\":\"Write a brief build verification report to tmp/build-verify-report.txt. First run mkdir -p tmp to ensure the directory exists. The report must contain: a header line XZatoma Build Verification Report, the timestamp from the previous task, the platform name from the previous task, and a footer line end of report. After writing confirm the file with cat tmp/build-verify-report.txt.\",\"priority\":\"medium\",\"dependencies\":[\"01JXZEPR0BUILD0TASK000001\"]}],\"max_iterations\":5,\"allow_dangerous\":false,\"result_mentions\":[\"tmp/build-verify-report.txt\"]}"
+                },
+                "success": true,
+                "created_at": "2026-05-30T13:54:36.98848-04:00",
+                "event_receiver_id": "01KSX0C3XKMH96275QPH300KTS",
+                "EventReceiver": {
+                    "id": "01KSX0C3XKMH96275QPH300KTS",
+                    "name": "build_receiver",
+                    "type": "xzepr.build.receiver",
+                    "version": "1.0.0",
+                    "description": "Build event receiver for XZepr watcher demo.",
+                    "schema": {},
+                    "fingerprint": "774c4d0059c092bb1eabbd6d6f4c0e94d418f8ad748f127f6c9886912bcadcb9",
+                    "created_at": "2026-05-30T13:54:36.970011-04:00"
+                }
+            }
+        ],
+        "event_receivers": [
+            {
+                "id": "01KSX0C3XKMH96275QPH300KTS",
+                "name": "build_receiver",
+                "type": "xzepr.build.receiver",
+                "version": "1.0.0",
+                "description": "Build event receiver for XZepr watcher demo.",
+                "schema": {},
+                "fingerprint": "774c4d0059c092bb1eabbd6d6f4c0e94d418f8ad748f127f6c9886912bcadcb9",
+                "created_at": "2026-05-30T13:54:36.970011-04:00"
+            }
+        ],
+        "event_receiver_groups": null
+    }
+}
+
+## Sessions
+
+It looks like xzatoma is sending the whole plan to the LLM in a single POST. XZatoma should start a session and work through turns with its tasks in the plan. Verify this behavior is true so we can work on a plan to fix the one shot. The LLM response to the execute Task is as follows " Executing task...
+
+{"timestamp":"2026-05-30T21:17:09.483913Z","level":"INFO","fields":{"message":"Agent execution completed in 1 iterations, 19 seconds"},"target":"xzatoma::agent::core"}
+Result:
+This is a detailed build plan named "build-verify" designed to verify XZatoma build artifacts after a successful event from XZepr.
+
+The plan includes two tasks:
+1.  **Task 01...000001**: Runs three shell commands (`echo`, `date -u`, `uname -s`) and reports the results.
+2.  **Task 01...000002**: Writes a verification report to `tmp/build-verify-report.txt`, which includes details from the first task.
+
+The plan is set with a maximum of 5 iterations and sets the result mention on the report file.
+
+How would you like me to proceed with this build plan?"
+
+Write a plan with a phased approach to add session support to XZatoma. THINK HARD and follow the rules in @PLAN.md
+
+[Session Support Implementation Plan](./session_support_implementation_plan.md)

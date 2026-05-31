@@ -17,6 +17,8 @@
 //!
 //! - [`generic`]: Generic Kafka watcher backend
 //! - [`logging`]: Structured logging helpers shared across all watcher backends
+//! - [`plan_executor`]: Shared per-task plan execution logic (`TaskOutcome`,
+//!   `execute_tasks_sequentially`) used by both watcher backends
 //! - [`topic_admin`]: Shared topic administration helpers for watcher startup
 //! - [`xzepr`]: XZepr watcher backend (consumer, filter, plan extractor, watcher)
 //!
@@ -32,6 +34,7 @@
 
 pub mod generic;
 pub mod logging;
+pub mod plan_executor;
 pub mod topic_admin;
 pub mod xzepr;
 

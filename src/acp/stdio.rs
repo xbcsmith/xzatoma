@@ -439,7 +439,7 @@ impl AcpStdioServerState {
         let resumed_conversation =
             load_resumable_conversation(self.storage.as_ref(), &workspace_root, &self.config);
 
-        let env = build_agent_environment(&self.config, &workspace_root, true).await?;
+        let env = build_agent_environment(&self.config, &workspace_root, true, None).await?;
         let mut tools = env.tool_registry;
 
         // Connect MCP servers forwarded by Zed in NewSessionRequest.mcp_servers.

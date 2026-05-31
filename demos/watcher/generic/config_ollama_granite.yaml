@@ -1,8 +1,9 @@
 # XZatoma Generic Watcher Demo Configuration
 #
-# Standalone Kafka/Redpanda watcher that consumes plan JSON events from an
-# input topic, executes them via the agent, and publishes result events to an
-# output topic.  No XZepr infrastructure required.
+# Standalone Kafka/Redpanda watcher that consumes CloudEvents 1.0 envelopes
+# containing plan payloads from an input topic, executes them via the agent,
+# and publishes result events to an output topic.  No XZepr infrastructure
+# required.
 #
 # Prerequisites:
 #   docker compose -f docker-compose.redpanda.yaml up -d
@@ -16,7 +17,7 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: granite4:3b
+    model: granite4:3b-h
 
 agent:
   max_turns: 20
@@ -47,10 +48,10 @@ watcher:
     brokers: "localhost:19092"
 
     # Input topic - plan events are consumed from here
-    topic: "atoma.plans"
+    topic: "xzatoma.plans"
 
     # Output topic - PlanResultEvent messages are published here after each execution
-    output_topic: "atoma.results"
+    output_topic: "xzatoma.results"
 
     # Consumer group ID - change this to reset offsets and replay all events
     group_id: "xzatoma-generic-demo"

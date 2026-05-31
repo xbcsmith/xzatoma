@@ -1359,6 +1359,46 @@ pub enum ExecutionMode {
     FullAutonomous,
 }
 
+/// Watcher plan execution mode.
+///
+/// Controls whether the watcher executes task-based plans one task at a time
+/// using a shared agent session (`PerTask`), or collapses the full plan into
+/// a single prompt sent to the agent in one shot (`SingleShot`).
+///
+/// `PerTask` is the default and produces better results with multi-step plans
+/// because the agent retains conversation context between tasks. `SingleShot`
+/// preserves the pre-Phase-1 behaviour for operators who need it.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::WatcherPlanExecutionMode;
+/// use serde_yaml;
+///
+/// let mode: WatcherPlanExecutionMode = serde_yaml::from_str("per_task").unwrap();
+/// assert_eq!(mode, WatcherPlanExecutionMode::PerTask);
+///
+/// let mode: WatcherPlanExecutionMode = serde_yaml::from_str("single_shot").unwrap();
+/// assert_eq!(mode, WatcherPlanExecutionMode::SingleShot);
+/// ```
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WatcherPlanExecutionMode {
+    /// Execute task-based plans one task at a time in a shared agent session.
+    ///
+    /// Each task's description is sent as a separate prompt; the agent
+    /// retains conversation history between tasks. Dependency ordering from
+    /// `PlanTask::dependencies` is respected.
+    #[default]
+    PerTask,
+    /// Collapse the full plan into a single prompt sent to the agent once.
+    ///
+    /// This is the legacy behaviour from before Phase 1. Use it when the
+    /// plan has no structured tasks, or when operator policy requires a
+    /// single-shot execution.
+    SingleShot,
+}
+
 impl Config {
     /// Load configuration from file with environment and CLI overrides
     ///
@@ -1871,6 +1911,28 @@ impl Config {
                         "Invalid value for XZATOMA_WATCHER_EXECUTION_TIMEOUT: {}",
                         timeout
                     );
+                }
+            }
+        }
+
+        if let Ok(mode) = std::env::var("XZATOMA_WATCHER_EXECUTION_MODE") {
+            match mode.to_lowercase().as_str() {
+                "per_task" => {
+                    self.watcher.execution.execution_mode = WatcherPlanExecutionMode::PerTask;
+                    tracing::debug!(
+                        execution_mode = "per_task",
+                        "Env override: XZATOMA_WATCHER_EXECUTION_MODE"
+                    );
+                }
+                "single_shot" => {
+                    self.watcher.execution.execution_mode = WatcherPlanExecutionMode::SingleShot;
+                    tracing::debug!(
+                        execution_mode = "single_shot",
+                        "Env override: XZATOMA_WATCHER_EXECUTION_MODE"
+                    );
+                }
+                _ => {
+                    tracing::warn!("Invalid value for XZATOMA_WATCHER_EXECUTION_MODE: {}", mode);
                 }
             }
         }
@@ -3530,6 +3592,53 @@ kafka:
     }
 
     #[test]
+    fn test_watcher_plan_execution_mode_default_is_per_task() {
+        let mode = WatcherPlanExecutionMode::default();
+        assert_eq!(mode, WatcherPlanExecutionMode::PerTask);
+    }
+
+    #[test]
+    fn test_watcher_plan_execution_mode_per_task_roundtrip() {
+        let mode = WatcherPlanExecutionMode::PerTask;
+        let yaml = serde_yaml::to_string(&mode).unwrap();
+        assert!(yaml.contains("per_task"));
+        let restored: WatcherPlanExecutionMode = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored, WatcherPlanExecutionMode::PerTask);
+    }
+
+    #[test]
+    fn test_watcher_plan_execution_mode_single_shot_roundtrip() {
+        let mode = WatcherPlanExecutionMode::SingleShot;
+        let yaml = serde_yaml::to_string(&mode).unwrap();
+        assert!(yaml.contains("single_shot"));
+        let restored: WatcherPlanExecutionMode = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(restored, WatcherPlanExecutionMode::SingleShot);
+    }
+
+    #[test]
+    fn test_watcher_execution_config_default_execution_mode_is_per_task() {
+        let config = WatcherExecutionConfig::default();
+        assert_eq!(config.execution_mode, WatcherPlanExecutionMode::PerTask);
+    }
+
+    #[test]
+    fn test_watcher_execution_config_execution_mode_roundtrip() {
+        let config = WatcherExecutionConfig {
+            allow_dangerous: false,
+            max_concurrent_executions: 1,
+            execution_timeout_secs: 300,
+            execution_mode: WatcherPlanExecutionMode::SingleShot,
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(yaml.contains("single_shot"));
+        let restored: WatcherExecutionConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            restored.execution_mode,
+            WatcherPlanExecutionMode::SingleShot
+        );
+    }
+
+    #[test]
     fn test_load_nonexistent_file_uses_defaults() {
         let cli = crate::cli::Cli {
             config: None,
@@ -5087,9 +5196,11 @@ pub struct KafkaWatcherConfig {
     /// Topic to consume from
     pub topic: String,
 
-    /// Output topic for publishing plan execution results (Generic watcher only).
+    /// Output topic for publishing plan execution results.
     ///
-    /// If `None`, results are published back to the input `topic`.
+    /// When set, both watcher backends publish result events to this topic.
+    /// If `None` and `watcher_type` is `generic`, results are published back
+    /// to the input `topic`. For the XZepr watcher, the same fallback applies.
     #[serde(default)]
     pub output_topic: Option<String>,
 
@@ -5245,6 +5356,14 @@ pub struct WatcherExecutionConfig {
     /// Execution timeout in seconds
     #[serde(default = "default_execution_timeout")]
     pub execution_timeout_secs: u64,
+
+    /// Plan execution mode for task-based plans.
+    ///
+    /// `per_task` (default) executes each task in sequence in a shared agent
+    /// session, preserving context between tasks. `single_shot` collapses the
+    /// full plan into a single prompt, which matches the pre-Phase-1 behaviour.
+    #[serde(default = "default_watcher_plan_execution_mode")]
+    pub execution_mode: WatcherPlanExecutionMode,
 }
 
 /// Default watcher consumer group ID
@@ -5282,6 +5401,11 @@ fn default_execution_timeout() -> u64 {
     300
 }
 
+/// Default watcher plan execution mode
+fn default_watcher_plan_execution_mode() -> WatcherPlanExecutionMode {
+    WatcherPlanExecutionMode::PerTask
+}
+
 impl Default for WatcherLoggingConfig {
     fn default() -> Self {
         Self {
@@ -5299,6 +5423,7 @@ impl Default for WatcherExecutionConfig {
             allow_dangerous: false,
             max_concurrent_executions: default_max_concurrent(),
             execution_timeout_secs: default_execution_timeout(),
+            execution_mode: default_watcher_plan_execution_mode(),
         }
     }
 }

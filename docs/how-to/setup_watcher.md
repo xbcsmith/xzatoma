@@ -52,15 +52,16 @@ you want to filter on XZepr-specific fields such as:
 
 ### Use `generic` when
 
-Choose `generic` when your upstream producer emits generic JSON plan-event
-messages and you want to match on:
+Choose `generic` when your upstream producer emits standard **CloudEvents 1.0**
+envelopes containing a plan in the `data` field, and you want to match on:
 
 - `action`
 - `name`
 - `version`
 
-The generic watcher expects events in the `GenericPlanEvent` format described
-later in this guide.
+The generic watcher requires CloudEvents 1.0 format (see Producer Example
+below). It has no XZepr-specific fields and works with any CloudEvents-capable
+producer.
 
 ## Basic Watcher Setup
 
@@ -165,14 +166,10 @@ watcher:
     group_id: "xzatoma-generic-watcher"
 ```
 
-This is safe because:
-
-- input events must use `event_type: "plan"`
-- result events always use `event_type: "result"`
-- the generic watcher rejects any event where `event_type != "plan"`
-
-That means the watcher can consume its own result messages and immediately skip
-them without re-triggering execution.
+This is safe because result events published by the watcher are plain JSON (not
+CloudEvents envelopes). When consumed back, they fail to parse at the
+CloudEvents boundary and are silently discarded as `InvalidPayload` without
+triggering a new execution.
 
 ### Separate output topic
 
@@ -235,8 +232,8 @@ watcher:
 
 ### Accept-all mode
 
-If you omit all generic match fields, every event with `event_type: "plan"` is
-accepted:
+If you omit all generic match fields, every valid CloudEvents message whose
+`data` parses as a Plan is accepted:
 
 ```yaml
 watcher:
@@ -250,40 +247,66 @@ watcher:
 This is valid, but it is usually better to configure at least one match field in
 production.
 
-## GenericPlanEvent Producer Example
+## Generic Watcher Producer Example
 
-A producer can trigger the generic watcher by publishing a JSON message like
-this:
+The generic watcher requires **standard CloudEvents 1.0** format. A producer
+publishes a JSON object with these attributes and the plan in the `data` field:
 
 ```json
 {
   "id": "01JTEST0000000000000000001",
-  "event_type": "plan",
-  "name": "service-a",
-  "version": "v1.2.3",
-  "action": "deploy",
-  "plan": {
-    "name": "Deploy service-a",
-    "steps": [
+  "specversion": "1.0",
+  "type": "xzatoma.plan.execute",
+  "source": "my-ci-system",
+  "time": "2026-01-24T12:00:00Z",
+  "datacontenttype": "application/json",
+  "data": {
+    "name": "service-a",
+    "version": "v1.2.3",
+    "action": "deploy",
+    "tasks": [
       {
-        "name": "apply manifests",
-        "action": "kubectl apply -f manifests/"
+        "id": "apply-manifests",
+        "description": "Apply Kubernetes manifests: kubectl apply -f manifests/"
       }
     ]
-  },
-  "timestamp": "2026-01-24T12:00:00Z",
-  "metadata": {
-    "environment": "staging"
   }
 }
 ```
 
-Important notes:
+Required CloudEvents attributes: `id`, `specversion` (`"1.0"`), `type`,
+`source`, `data`.
 
-- `event_type` must be exactly `"plan"`
-- `plan` may be a string, object, or array
-- `action`, `name`, and `version` are optional unless required by your watcher
-  configuration
+The `data` field must contain a valid Plan. Plans support two formats:
+
+**Task-based** (preferred for the generic watcher):
+
+```json
+{
+  "name": "deploy",
+  "action": "deploy",
+  "tasks": [
+    { "id": "step-1", "description": "Full agent instruction for this step." }
+  ]
+}
+```
+
+**Step-based** (legacy format, backward compatible):
+
+```json
+{
+  "name": "deploy",
+  "steps": [{ "name": "apply", "action": "kubectl apply -f manifests/" }]
+}
+```
+
+The `action`, `name`, and `version` fields inside `data` are used by
+`generic_match` for filtering. They are optional unless required by your matcher
+configuration.
+
+> **Contrast with XZepr**: The XZepr watcher uses a different CloudEvents schema
+> with extensions (`success`, `api_version`, `platform_id`, `release`,
+> `package`) that are XZepr-specific and absent from the generic format.
 
 ## CLI Options
 
@@ -417,6 +440,70 @@ In dry-run mode, the watcher still:
 
 But it does not execute the embedded plan.
 
+## Plan Execution Model
+
+XZatoma supports two execution modes for task-based plans. Configure the mode in
+the `execution:` block of your watcher config.
+
+### per_task (default)
+
+Each task in `plan.tasks` is sent to the agent as a separate prompt within a
+shared session. The agent retains conversation history between tasks, so later
+tasks can reference outputs produced by earlier ones. Task execution order
+respects the `dependencies` field via a topological sort.
+
+```yaml
+watcher:
+  execution:
+    execution_mode: per_task
+```
+
+Use `per_task` when:
+
+- The plan has multiple tasks with dependencies.
+- Later tasks need context from earlier task outputs.
+- You want structured per-task outcome data in the result event.
+
+### single_shot (legacy)
+
+The full plan is collapsed into a single numbered prompt and sent to the agent
+once. This is the pre-Phase-1 behaviour. Use it when your plan has no structured
+tasks, only free-form `steps`, or when backward-compatible single-shot execution
+is required by your operator policy.
+
+```yaml
+watcher:
+  execution:
+    execution_mode: single_shot
+```
+
+### Runtime override
+
+Override the configured mode at runtime with the
+`XZATOMA_WATCHER_EXECUTION_MODE` environment variable:
+
+```bash
+export XZATOMA_WATCHER_EXECUTION_MODE=single_shot
+xzatoma watch --config config.yaml
+```
+
+Accepted values: `per_task`, `single_shot`.
+
+### Per-task outcome data
+
+When `execution_mode` is `per_task` and the plan has tasks, the result event
+includes a `task_outcomes` array. Each entry records the task `id`, whether it
+succeeded, a summary of the agent response, and the number of LLM iterations:
+
+```json
+{
+  "task_outcomes": [
+    { "id": "setup", "success": true, "summary": "...", "iterations": 2 },
+    { "id": "build", "success": true, "summary": "...", "iterations": 3 }
+  ]
+}
+```
+
 ## Troubleshooting
 
 ### Kafka configuration is required
@@ -431,14 +518,18 @@ If you see a startup error about missing Kafka configuration:
 Check the following:
 
 - `watcher_type` is set to `generic`
-- incoming payload uses `event_type: "plan"`
-- your `action`, `name`, or `version` values actually match the configured regex
-- the event fields are present when required by your matcher
+- the incoming message is a valid **CloudEvents 1.0** JSON object with `id`,
+  `specversion`, `type`, `source`, and `data` fields
+- `data` contains a valid Plan (has a `name` field and at least one `task` or
+  `step`)
+- your `action`, `name`, or `version` values in the Plan `data` actually match
+  the configured regex
 
 ### Generic watcher appears to ignore result messages
 
-That is expected behavior. Result events use `event_type: "result"` and are
-silently discarded by the generic watcher to prevent same-topic loops.
+That is expected behavior. Result events published by the watcher are not
+CloudEvents envelopes — they fail parsing at the CloudEvents boundary and are
+silently discarded as `InvalidPayload` to prevent same-topic re-trigger loops.
 
 ### XZepr watcher does not process expected events
 
@@ -460,6 +551,29 @@ Increase logging verbosity:
 ```bash
 export XZATOMA_WATCHER_LOG_LEVEL="debug"
 xzatoma watch --config config/watcher.yaml --dry-run
+```
+
+### Agent completes in 1 iteration without using tools
+
+If you see agent execution log lines indicating only 1 iteration and no tool
+calls, check two things:
+
+1. **Execution mode**: confirm `execution_mode: per_task` is set in
+   `watcher.execution`. The default is `per_task` but an explicit `single_shot`
+   setting collapses the plan into one prompt where the LLM may describe tasks
+   rather than executing them.
+
+2. **Watcher system prompt**: the watcher uses `ChatMode::Watcher`, which
+   injects an autonomous system prompt telling the LLM to act immediately
+   without confirmation. If you are running a custom provider or model that
+   ignores system prompts, the LLM may default to chat-assistant behaviour and
+   respond with a description instead of tool calls.
+
+To diagnose, enable debug logging and inspect the first system message:
+
+```bash
+export XZATOMA_WATCHER_LOG_LEVEL=debug
+xzatoma watch --config config.yaml --dry-run
 ```
 
 ### Payload debugging

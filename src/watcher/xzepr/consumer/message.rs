@@ -32,7 +32,7 @@
 //! ```
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 
 /// CloudEvents 1.0.1 message from XZepr.
@@ -87,16 +87,24 @@ pub struct CloudEventMessage {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CloudEventData {
     /// Events in this message.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub events: Vec<EventEntity>,
 
     /// Event receivers in this message.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub event_receivers: Vec<EventReceiverEntity>,
 
     /// Event receiver groups in this message.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_as_default")]
     pub event_receiver_groups: Vec<EventReceiverGroupEntity>,
+}
+
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Event entity from XZepr.
@@ -367,6 +375,58 @@ mod tests {
         assert_eq!(group.group_type, "deployment");
         assert!(group.enabled);
         assert_eq!(group.event_receiver_ids.len(), 2);
+    }
+
+    #[test]
+    fn test_cloud_event_message_deserializes_null_entity_arrays_as_empty() {
+        let json = r#"{
+            "success": true,
+            "id": "01JTEST1234567890123456",
+            "specversion": "1.0.1",
+            "type": "deployment.success",
+            "source": "xzepr.event.receiver.01JTEST1234567890123456",
+            "api_version": "v1",
+            "name": "deployment.success",
+            "version": "1.0.0",
+            "release": "1.0.0-rc.1",
+            "platform_id": "kubernetes",
+            "package": "myapp",
+            "data": {
+                "events": null,
+                "event_receivers": null,
+                "event_receiver_groups": null
+            }
+        }"#;
+
+        let event: CloudEventMessage = serde_json::from_str(json).unwrap();
+
+        assert!(event.data.events.is_empty());
+        assert!(event.data.event_receivers.is_empty());
+        assert!(event.data.event_receiver_groups.is_empty());
+    }
+
+    #[test]
+    fn test_cloud_event_message_defaults_missing_entity_arrays_to_empty() {
+        let json = r#"{
+            "success": true,
+            "id": "01JTEST1234567890123456",
+            "specversion": "1.0.1",
+            "type": "deployment.success",
+            "source": "xzepr.event.receiver.01JTEST1234567890123456",
+            "api_version": "v1",
+            "name": "deployment.success",
+            "version": "1.0.0",
+            "release": "1.0.0-rc.1",
+            "platform_id": "kubernetes",
+            "package": "myapp",
+            "data": {}
+        }"#;
+
+        let event: CloudEventMessage = serde_json::from_str(json).unwrap();
+
+        assert!(event.data.events.is_empty());
+        assert!(event.data.event_receivers.is_empty());
+        assert!(event.data.event_receiver_groups.is_empty());
     }
 
     #[test]

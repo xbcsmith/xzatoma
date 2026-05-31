@@ -22,22 +22,33 @@ The demo runs entirely on localhost. A Redpanda broker supplies the event bus.
 
 In generic watcher mode XZatoma:
 
-1. Subscribes to a Kafka **input topic** (default: `atoma.plans`).
-2. Deserialises each message payload as a `Plan` JSON document.
+1. Subscribes to a Kafka **input topic** (default: `xzatoma.plans`).
+2. Deserialises each message as a standard **CloudEvents 1.0** envelope and
+   extracts the `Plan` from the `data` field.
 3. Optionally filters the plan using a `GenericEventMatcher` (match on `action`,
    `name`, `version`, or combinations).
 4. Executes the plan through the configured AI provider.
 5. Publishes a `PlanResultEvent` JSON to a Kafka **output topic** (default:
-   `atoma.results`; may equal the input topic) for every processed plan,
+   `xzatoma.results`; may equal the input topic) for every processed plan,
    including both success and failure outcomes.
+
+> **Message format**: every message on the input topic must be a valid
+> CloudEvents 1.0 JSON object. The standard attributes (`id`, `specversion`,
+> `type`, `source`) are required; `time` and `subject` are optional. The plan
+> payload lives in the `data` field. Raw plan JSON without the CloudEvents
+> envelope is rejected. This differs from the **XZepr watcher**, which uses
+> XZepr-specific CloudEvents extensions (`success`, `api_version`,
+> `platform_id`, `package`, `release`) not present here.
 
 This demo includes:
 
 - `config.yaml` — watcher configuration using Ollama `granite4:3b`
-- `config_ollama_granite.yaml` — watcher configuration using Ollama `granite4:3b`
+- `config_ollama_granite.yaml` — watcher configuration using Ollama
+  `granite4:3b`
 - `plans/hello_world.yaml` — reference plan payload: `action: greet`
 - `plans/system_health.yaml` — reference plan payload: `action: report`
-- `plans/doc_audit.yaml` — reference plan payload: `action: audit` (subagent demo)
+- `plans/doc_audit.yaml` — reference plan payload: `action: audit` (subagent
+  demo)
 - `seed_plan.sh` — publishes a plan JSON event to Redpanda
 - `read_results.sh` — reads result events from the output topic as they arrive
 
@@ -89,7 +100,7 @@ Open a terminal, change to `demos/watcher/generic/`, and run:
 xzatoma --config config.yaml watch
 ```
 
-XZatoma connects to Redpanda, subscribes to `atoma.plans`, and waits for plan
+XZatoma connects to Redpanda, subscribes to `xzatoma.plans`, and waits for plan
 events. The startup banner shows the input and output topics.
 
 ### Step 3: Open a results terminal
@@ -100,7 +111,7 @@ Open a second terminal, change to `demos/watcher/generic/`, and run:
 ./read_results.sh
 ```
 
-This tails the `atoma.results` topic. Result events appear here as XZatoma
+This tails the `xzatoma.results` topic. Result events appear here as XZatoma
 finishes each plan, using the same JSON structure for success and failure.
 
 ### Step 4: Seed a plan event
@@ -160,10 +171,11 @@ cat tmp/system-health-report.txt
 | `health` | `system-health`     | `report` | Runs system diagnostics, writes `tmp/system-health-report.txt`     |
 | `audit`  | `doc-comment-audit` | `audit`  | Audits `src/` for missing doc comments (requires `pyyaml`)         |
 
-Use `--stdin` to pipe in any plan JSON directly:
+Use `--stdin` to pipe in any plan JSON directly. The script wraps it in a
+CloudEvents 1.0 envelope automatically:
 
 ```bash
-echo '{"name":"my-plan","action":"build","version":"1.0.0","tasks":[{"description":"Run: echo hello"}],"max_iterations":3}' \
+echo '{"name":"my-plan","action":"build","version":"1.0.0","tasks":[{"id":"t1","description":"Run: echo hello"}]}' \
   | ./seed_plan.sh --stdin
 ```
 
@@ -171,9 +183,9 @@ echo '{"name":"my-plan","action":"build","version":"1.0.0","tasks":[{"descriptio
 
 ## Event Matching
 
-The `config.yaml` includes commented-out `generic_match` examples. Uncomment
-one to filter which plans XZatoma executes. Non-matching plans are committed
-and skipped without running.
+The `config.yaml` includes commented-out `generic_match` examples. Uncomment one
+to filter which plans XZatoma executes. Non-matching plans are committed and
+skipped without running.
 
 ```yaml
 # Execute only plans with action "report"
@@ -202,6 +214,37 @@ is executed.
 
 ---
 
+## Plan Execution Mode
+
+The `execution_mode` key in the `execution:` config block controls how XZatoma
+runs task-based plans.
+
+| Value         | Behaviour                                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `per_task`    | Default. Each task in `plan.tasks` runs as a separate agent call in a shared session. Context accumulates across tasks. |
+| `single_shot` | Legacy. The full plan is collapsed into one prompt and sent to the agent once.                                          |
+
+```yaml
+execution:
+  execution_mode: per_task # or single_shot
+```
+
+Use `per_task` when:
+
+- Your plan has multiple tasks with dependencies.
+- You want the agent to retain context from earlier tasks.
+- You need per-task outcome logging in the result event.
+
+Use `single_shot` when:
+
+- You need the pre-Phase-1 behaviour for compatibility.
+- Your plan has no structured tasks (only free-form `steps`).
+
+The `XZATOMA_WATCHER_EXECUTION_MODE` environment variable overrides the config
+file value at runtime (`per_task` or `single_shot`).
+
+---
+
 ## The `plans/` Directory
 
 The YAML files under `plans/` are human-readable reference copies of the plan
@@ -227,19 +270,30 @@ python3 -c "import sys, json, yaml; print(json.dumps(yaml.safe_load(sys.stdin)))
 ## Using the Same Topic for Input and Output
 
 Set `topic` and `output_topic` to the same value in the config to create a
-closed loop where plans and results share one topic. Use a `generic_match` to
-avoid executing result events. Result events have no `action` field:
+closed loop where plans and results share one topic. No extra `generic_match` is
+needed — result events published by XZatoma are plain JSON (not CloudEvents
+envelopes) and fail to parse at the CloudEvents boundary, so they are silently
+discarded without triggering a new execution:
 
 ```yaml
 kafka:
-  topic: "atoma.work"
-  output_topic: "atoma.work"
+  topic: "xzatoma.work"
+  output_topic: "xzatoma.work"
+```
+
+If you still want selective filtering (e.g. to share a topic with other
+producers), add a `generic_match`:
+
+```yaml
+kafka:
+  topic: "xzatoma.work"
+  output_topic: "xzatoma.work"
 generic_match:
   action: "run"
 ```
 
-Only messages with `action: "run"` trigger execution. Result events published
-by XZatoma have no `action` field and are skipped by the matcher.
+Only CloudEvents messages with a Plan whose `action` matches `"run"` trigger
+execution.
 
 ---
 
@@ -267,7 +321,7 @@ rm -rf tmp
 | `config_ollama_granite.yaml` | Ollama   | `granite4:3b` |
 
 Both configs set `watcher_type: generic` and configure the `kafka` section with
-`topic: "atoma.plans"` and `output_topic: "atoma.results"`. Running from
+`topic: "xzatoma.plans"` and `output_topic: "xzatoma.results"`. Running from
 `demos/watcher/generic/` is recommended but not required.
 
 ## Files in This Demo

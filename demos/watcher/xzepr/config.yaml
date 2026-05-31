@@ -15,7 +15,8 @@ provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: granite4:3b
+    # model: granite4:3b
+    model: gemma4:e4b-mlx
 
 agent:
   max_turns: 20
@@ -46,7 +47,8 @@ watcher:
     brokers: "localhost:19092"
 
     # Input topic - XZepr CloudEvents are consumed from here
-    topic: "xzepr.events"
+    # topic: "xzepr.events"
+    topic: "epr.dev.events"
 
     # Output topic - result events are published here after each execution
     output_topic: "xzepr.results"
@@ -77,8 +79,8 @@ watcher:
   #   success_only    - when true, only events with "success": true are processed
   filters:
     event_types:
-      - "deployment.success"
-      - "build.success"
+      - "xzepr.build.receiver"
+      - "xzepr.deploy.receiver"
     success_only: true
 
   logging:
@@ -87,6 +89,6 @@ watcher:
     include_payload: true
 
   execution:
-    allow_dangerous: false
+    allow_dangerous: true
     max_concurrent_executions: 1
     execution_timeout_secs: 300

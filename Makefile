@@ -65,6 +65,9 @@ docs-check: ; $(info $(M) running docs validation scripts...) @ ## Runs document
 	$Q python3 scripts/code_fence_check.py
 	$Q python3 scripts/docs_filename_check.py
 
+release: ; $(info $(M) running cargo release...) @ ## Runs a cargo release
+	$Q $(CARGO) build --release
+
 install: ; $(info $(M) running cargo install...) @ ## Runs a cargo install
 	$Q $(CARGO) install --path .
 
@@ -82,4 +85,4 @@ help:
 	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
         awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: all build run sdk test clean format check lint install megalint doc help
+.PHONY: all build release run sdk test clean format check lint install megalint doc help

@@ -33,8 +33,9 @@
 //! # async fn main() -> anyhow::Result<()> {
 //! let handler = GenericEventHandler::new(None, None);
 //!
+//! let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"echo hi"}]}}"#;
 //! let msg = RawKafkaMessage {
-//!     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo hi\n".to_string(),
+//!     payload: ce.to_string(),
 //!     topic: "plans.input".to_string(),
 //!     key: Some("corr-123".to_string()),
 //! };
@@ -74,8 +75,9 @@ use tracing::{debug, info};
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
 /// let handler = GenericEventHandler::new(None, None);
+/// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"echo ok"}]}}"#;
 /// let msg = RawKafkaMessage {
-///     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo ok\n".to_string(),
+///     payload: ce.to_string(),
 ///     topic: "t".to_string(),
 ///     key: Some("corr-abc".to_string()),
 /// };
@@ -315,14 +317,12 @@ mod tests {
     use tempfile::tempdir;
 
     // ---------------------------------------------------------------------------
-    // Shared helpers
+    // Shared helpers — CloudEvents 1.0 envelopes
     // ---------------------------------------------------------------------------
 
-    const VALID_YAML: &str = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply\n";
-    const VALID_YAML_WITH_ACTION: &str =
-        "name: deploy\naction: deploy-prod\nsteps:\n  - name: apply\n    action: kubectl apply\n";
-    const VALID_YAML_WITH_VERSION: &str =
-        "name: deploy\nversion: v1.0\nsteps:\n  - name: apply\n    action: kubectl apply\n";
+    const VALID_CE: &str = r#"{"id":"01JTEST000000000000000001","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
+    const VALID_CE_WITH_ACTION: &str = r#"{"id":"01JTEST000000000000000002","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
+    const VALID_CE_WITH_VERSION: &str = r#"{"id":"01JTEST000000000000000003","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","version":"v1.0","steps":[{"name":"apply","action":"kubectl apply"}]}}"#;
 
     fn raw_msg(payload: &str) -> RawKafkaMessage {
         RawKafkaMessage {
@@ -360,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_valid_plan_no_matcher_no_directory() {
         let handler = GenericEventHandler::new(None, None);
-        let task = handler.handle(raw_msg(VALID_YAML)).await.unwrap();
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap();
 
         let task = task.expect("expected Some(task) for a valid plan with no matcher");
         assert_eq!(task.plan.name, "deploy");
@@ -378,7 +378,7 @@ mod tests {
     async fn test_handle_propagates_correlation_key() {
         let handler = GenericEventHandler::new(None, None);
         let task = handler
-            .handle(raw_msg_with_key(VALID_YAML, "corr-key-42"))
+            .handle(raw_msg_with_key(VALID_CE, "corr-key-42"))
             .await
             .unwrap()
             .expect("expected Some(task)");
@@ -404,10 +404,7 @@ mod tests {
     async fn test_handle_matcher_passes() {
         // Matcher configured to accept "deploy-prod"; plan carries that action.
         let handler = GenericEventHandler::new(Some(action_matcher("deploy-prod")), None);
-        let task = handler
-            .handle(raw_msg(VALID_YAML_WITH_ACTION))
-            .await
-            .unwrap();
+        let task = handler.handle(raw_msg(VALID_CE_WITH_ACTION)).await.unwrap();
         assert!(
             task.is_some(),
             "matcher must accept event whose action matches pattern"
@@ -418,10 +415,7 @@ mod tests {
     async fn test_handle_matcher_filters_out() {
         // Matcher configured to accept "rollback.*"; plan carries "deploy-prod".
         let handler = GenericEventHandler::new(Some(action_matcher("rollback.*")), None);
-        let result = handler
-            .handle(raw_msg(VALID_YAML_WITH_ACTION))
-            .await
-            .unwrap();
+        let result = handler.handle(raw_msg(VALID_CE_WITH_ACTION)).await.unwrap();
         assert_eq!(
             result, None,
             "matcher must return Ok(None) for events that do not match"
@@ -438,7 +432,7 @@ mod tests {
         let handler = GenericEventHandler::new(None, Some(dir.path().to_path_buf()));
         // Payload has no version, so only the name-only file can match.
         let task = handler
-            .handle(raw_msg(VALID_YAML))
+            .handle(raw_msg(VALID_CE))
             .await
             .unwrap()
             .expect("expected Some(task)");
@@ -459,9 +453,9 @@ mod tests {
         fs::write(dir.path().join("deploy.yaml"), name_only_yaml).unwrap();
 
         let handler = GenericEventHandler::new(None, Some(dir.path().to_path_buf()));
-        // VALID_YAML_WITH_VERSION sets plan version = "v1.0"
+        // VALID_CE_WITH_VERSION sets plan version = "v1.0"
         let task = handler
-            .handle(raw_msg(VALID_YAML_WITH_VERSION))
+            .handle(raw_msg(VALID_CE_WITH_VERSION))
             .await
             .unwrap()
             .expect("expected Some(task)");
@@ -479,7 +473,7 @@ mod tests {
 
         let handler = GenericEventHandler::new(None, Some(dir.path().to_path_buf()));
         let task = handler
-            .handle(raw_msg(VALID_YAML))
+            .handle(raw_msg(VALID_CE))
             .await
             .unwrap()
             .expect("expected Some(task)");
@@ -499,7 +493,7 @@ mod tests {
         let handler = GenericEventHandler::new(None, None);
         let before = Utc::now();
         let task = handler
-            .handle(raw_msg(VALID_YAML))
+            .handle(raw_msg(VALID_CE))
             .await
             .unwrap()
             .expect("expected Some(task)");
@@ -522,14 +516,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_accept_all_matcher_passes_all_valid_events() {
         let handler = GenericEventHandler::new(Some(accept_all_matcher()), None);
-        let task = handler.handle(raw_msg(VALID_YAML)).await.unwrap();
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap();
         assert!(task.is_some(), "accept-all matcher must pass valid events");
     }
 
     #[tokio::test]
     async fn test_handle_instruction_contains_step_action() {
         let handler = GenericEventHandler::new(None, None);
-        let task = handler.handle(raw_msg(VALID_YAML)).await.unwrap().unwrap();
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap().unwrap();
         assert!(
             task.instruction.contains("kubectl apply"),
             "instruction must include the plan step action"
@@ -539,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_missing_key_sets_correlation_key_to_none() {
         let handler = GenericEventHandler::new(None, None);
-        let task = handler.handle(raw_msg(VALID_YAML)).await.unwrap().unwrap();
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap().unwrap();
         assert!(
             task.correlation_key.is_none(),
             "correlation_key must be None when the Kafka message has no key"
@@ -553,7 +547,7 @@ mod tests {
         fs::write(dir.path().join("deploy.yaml"), "not: valid: plan: syntax:").unwrap();
 
         let handler = GenericEventHandler::new(None, Some(dir.path().to_path_buf()));
-        let result = handler.handle(raw_msg(VALID_YAML)).await;
+        let result = handler.handle(raw_msg(VALID_CE)).await;
         assert!(
             result.is_err(),
             "handler must propagate parse error from disk plan file"
@@ -580,9 +574,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_empty_steps_returns_err() {
+    async fn test_handle_cloud_event_with_empty_steps_returns_err() {
+        let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"no-steps","steps":[]}}"#;
         let handler = GenericEventHandler::new(None, None);
-        let result = handler.handle(raw_msg("name: no-steps\nsteps: []\n")).await;
+        let result = handler.handle(raw_msg(ce)).await;
         assert!(
             result.is_err(),
             "plan with empty steps must fail validation"
@@ -590,10 +585,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_json_payload_works() {
-        let json = r#"{"name":"json-plan","steps":[{"name":"s1","action":"echo json"}]}"#;
+    async fn test_handle_cloud_event_tasks_plan_works() {
+        let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"task-plan","tasks":[{"id":"t1","description":"Run: echo hello"}]}}"#;
         let handler = GenericEventHandler::new(None, None);
-        let task = handler.handle(raw_msg(json)).await.unwrap().unwrap();
-        assert_eq!(task.plan.name, "json-plan");
+        let task = handler.handle(raw_msg(ce)).await.unwrap().unwrap();
+        assert_eq!(task.plan.name, "task-plan");
+        assert_eq!(task.plan.tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_raw_plan_without_envelope_returns_err() {
+        // Raw plan JSON without CloudEvents envelope must be rejected.
+        let raw = r#"{"name":"json-plan","steps":[{"name":"s1","action":"echo json"}]}"#;
+        let handler = GenericEventHandler::new(None, None);
+        let result = handler.handle(raw_msg(raw)).await;
+        assert!(
+            result.is_err(),
+            "raw plan without CloudEvents envelope must fail"
+        );
     }
 }

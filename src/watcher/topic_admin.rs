@@ -14,7 +14,8 @@
 //!
 //! Both watcher backends can use this module:
 //!
-//! - the XZepr watcher ensures its input topic exists
+//! - the XZepr watcher ensures its input topic exists and, when configured,
+//!   also ensures the output topic exists when it differs from the input topic
 //! - the generic watcher ensures its input topic exists and also ensures the
 //!   output topic exists when it differs from the input topic
 //!
@@ -266,13 +267,23 @@ impl WatcherTopicAdmin {
 
     /// Return the topics that should exist for the XZepr watcher.
     ///
-    /// The XZepr watcher consumes only its configured input topic.
+    /// The XZepr watcher always requires the input topic. If an explicit
+    /// `output_topic` is configured and differs from the input topic, that topic
+    /// is also included.
     ///
     /// # Returns
     ///
-    /// A one-element vector containing the input topic.
+    /// A de-duplicated ordered list of topics required by the XZepr watcher.
     pub fn topics_for_xzepr_watcher(&self) -> Vec<String> {
-        vec![self.input_topic.clone()]
+        let mut topics = vec![self.input_topic.clone()];
+
+        if let Some(output) = &self.output_topic {
+            if output != &self.input_topic {
+                topics.push(output.clone());
+            }
+        }
+
+        topics
     }
 
     /// Return the topics that should exist for the generic watcher.
@@ -302,10 +313,21 @@ impl WatcherTopicAdmin {
     ///
     /// A list of topic ensure requests for watcher startup.
     pub fn ensure_requests_for_xzepr_watcher(&self) -> Vec<TopicEnsureRequest> {
-        vec![TopicEnsureRequest {
+        let mut requests = vec![TopicEnsureRequest {
             topic: self.input_topic.clone(),
             purpose: "xzepr watcher input topic".to_string(),
-        }]
+        }];
+
+        if let Some(output) = &self.output_topic {
+            if output != &self.input_topic {
+                requests.push(TopicEnsureRequest {
+                    topic: output.clone(),
+                    purpose: "xzepr watcher output topic".to_string(),
+                });
+            }
+        }
+
+        requests
     }
 
     /// Build the ensure requests required for the generic watcher.
@@ -333,8 +355,9 @@ impl WatcherTopicAdmin {
 
     /// Ensure that XZepr watcher topics exist on the Kafka cluster.
     ///
-    /// Creates the input topic via the Kafka admin client. If the topic
-    /// already exists the operation is treated as success.
+    /// Creates the input topic and, when configured, the output topic via
+    /// the Kafka admin client. Topics that already exist are silently
+    /// accepted.
     ///
     /// # Errors
     ///
@@ -569,6 +592,34 @@ mod tests {
             admin.topics_for_xzepr_watcher(),
             vec!["plans.input".to_string()]
         );
+    }
+
+    #[test]
+    fn test_topics_for_xzepr_watcher_contains_input_and_output_when_distinct() {
+        let mut config = base_kafka_config();
+        config.output_topic = Some("plans.output".to_string());
+
+        let admin = WatcherTopicAdmin::new(&config).unwrap();
+
+        assert_eq!(
+            admin.topics_for_xzepr_watcher(),
+            vec!["plans.input".to_string(), "plans.output".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_ensure_requests_for_xzepr_watcher_include_purposes() {
+        let mut config = base_kafka_config();
+        config.output_topic = Some("plans.output".to_string());
+
+        let admin = WatcherTopicAdmin::new(&config).unwrap();
+        let requests = admin.ensure_requests_for_xzepr_watcher();
+
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].topic, "plans.input");
+        assert_eq!(requests[0].purpose, "xzepr watcher input topic");
+        assert_eq!(requests[1].topic, "plans.output");
+        assert_eq!(requests[1].purpose, "xzepr watcher output topic");
     }
 
     #[test]

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # seed_plan.sh
 #
-# Publishes a Plan JSON event to the Redpanda input topic that the Atoma
+# Publishes a Plan JSON event to the Redpanda input topic that the XZatoma
 # generic watcher is subscribed to.  The plan payload is consumed directly
-# by Atoma; no plan files on disk are required on the watcher side.
+# by XZatoma; no plan files on disk are required on the watcher side.
 #
 # Usage:
 #   ./seed_plan.sh [PRESET]
@@ -35,7 +35,7 @@ set -euo pipefail
 
 PRESET="${1:-hello}"
 
-TOPIC="atoma.plans"
+TOPIC="xzatoma.plans"
 
 # ---------------------------------------------------------------------------
 # Task ID generator - uses ulid CLI when available, falls back to date+random
@@ -48,7 +48,7 @@ gen_id() {
     fi
 }
 
-REDPANDA_CONTAINER="redpanda"
+REDPANDA_CONTAINER="${2:-redpanda}"
 INTERNAL_BROKER="localhost:9092"
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ case "${PRESET}" in
   "tasks": [
     {
       "id": "${TASK_ID_1}",
-      "description": "You are Atoma running in generic watcher mode. Run these three commands and report each one with its output: (1) echo Generic watcher is alive (2) date -u (3) uname -s. Then run mkdir -p tmp and write a brief report to tmp/hello-world-report.txt containing: a header line Atoma Generic Watcher - Hello World, the timestamp from command 2, and the platform from command 3. Finish with cat tmp/hello-world-report.txt to confirm the file was written.",
+      "description": "You are XZatoma running in generic watcher mode. Run these three commands and report each one with its output: (1) echo Generic watcher is alive (2) date -u (3) uname -s. Then run mkdir -p tmp and write a brief report to tmp/hello-world-report.txt containing: a header line XZatoma Generic Watcher - Hello World, the timestamp from command 2, and the platform from command 3. Finish with cat tmp/hello-world-report.txt to confirm the file was written.",
       "priority": "low"
     }
   ],
@@ -146,18 +146,20 @@ ENDJSON
         fi
         _plan_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/plans/doc_audit.yaml"
         PLAN_JSON=$(
-            ATOMA_PLAN_ID="${PLAN_ID}" ATOMA_PLAN_FILE="${_plan_file}" \
+            XZATOMA_PLAN_ID="${PLAN_ID}" XZATOMA_PLAN_FILE="${_plan_file}" \
             python3 -c "
 import json, yaml, os
-with open(os.environ['ATOMA_PLAN_FILE']) as f:
+with open(os.environ['XZATOMA_PLAN_FILE']) as f:
     plan = yaml.safe_load(f)
-plan['id'] = os.environ['ATOMA_PLAN_ID']
+plan['id'] = os.environ['XZATOMA_PLAN_ID']
 print(json.dumps(plan))
 "
         ) || die "Failed to load plans/doc_audit.yaml.  Install pyyaml: pip install pyyaml"
         ;;
 
     --stdin)
+        # Stdin mode accepts a raw plan JSON document (not a CloudEvents envelope).
+        # The plan is wrapped in a CloudEvents envelope by the validation step below.
         PLAN_JSON=$(cat)
         if [ -z "${PLAN_JSON}" ]; then
             die "No input received on stdin.  Pipe a Plan JSON document to this script."
@@ -185,23 +187,48 @@ Use --stdin to pipe a custom plan JSON document."
 esac
 
 # ---------------------------------------------------------------------------
-# Validate and compact the JSON to a single line before publishing.
+# Validate and compact the plan JSON, then wrap it in a standard CloudEvents
+# 1.0 envelope before publishing.
+#
+# The generic watcher requires CloudEvents format — raw plan JSON is rejected.
+# The envelope adds: id (ULID), specversion "1.0", type, source, time, and
+# datacontenttype, with the plan JSON as the `data` field.
 #
 # rpk topic produce is newline-delimited: every newline in stdin becomes a
-# separate Kafka record.  Compacting to one line guarantees the entire plan
-# is delivered as a single message regardless of how the heredoc or stdin
-# payload was formatted.
+# separate Kafka record.  Compacting to one line guarantees the entire
+# envelope is delivered as a single message.
 # ---------------------------------------------------------------------------
+EVENT_ID=$(gen_id)
+EVENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+
 if command -v python3 >/dev/null 2>&1; then
     PLAN_JSON=$(printf '%s' "${PLAN_JSON}" | \
-        python3 -c "import sys, json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null) \
+        python3 -c "
+import sys, json
+plan = json.load(sys.stdin)
+envelope = {
+    'id': '${EVENT_ID}',
+    'specversion': '1.0',
+    'type': 'xzatoma.plan.execute',
+    'source': 'xzatoma.seed-plan',
+    'time': '${EVENT_TIME}',
+    'datacontenttype': 'application/json',
+    'data': plan,
+}
+print(json.dumps(envelope))
+" 2>/dev/null) \
         || die "Plan payload is not valid JSON.  Check the plan content and try again."
 elif command -v jq >/dev/null 2>&1; then
-    PLAN_JSON=$(printf '%s' "${PLAN_JSON}" | jq -c .) \
+    PLAN_DATA=$(printf '%s' "${PLAN_JSON}" | jq -c .) \
         || die "Plan payload is not valid JSON.  Check the plan content and try again."
+    PLAN_JSON=$(jq -cn \
+        --arg id "${EVENT_ID}" \
+        --arg time "${EVENT_TIME}" \
+        --argjson data "${PLAN_DATA}" \
+        '{id: $id, specversion: "1.0", type: "xzatoma.plan.execute", source: "xzatoma.seed-plan", time: $time, datacontenttype: "application/json", data: $data}')
 else
-    warn "Neither python3 nor jq found; skipping JSON validation and compaction."
-    warn "The plan JSON must be a single line or rpk will split it into multiple records."
+    warn "Neither python3 nor jq found; skipping CloudEvents wrapping and JSON validation."
+    warn "The plan JSON must be a single line and must already be a valid CloudEvents envelope."
 fi
 
 # ---------------------------------------------------------------------------

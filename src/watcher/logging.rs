@@ -2,6 +2,15 @@
 //!
 //! Provides JSON-formatted and human-readable logging with optional file output.
 //! Integrates with the tracing ecosystem for structured event logging.
+//!
+//! # Note on subscriber initialisation
+//!
+//! `init_watcher_logging` is intended for use in standalone binaries or tests
+//! that do not already have a global tracing subscriber. When running inside the
+//! main `xzatoma` binary the global subscriber is initialised by `main()` using
+//! the Watch command's `--json-logs` and `--log-file` flags. Calling
+//! `init_watcher_logging` a second time in that context is a no-op rather than
+//! a panic.
 
 use crate::config::WatcherLoggingConfig;
 use crate::error::{Result, XzatomaError};
@@ -11,8 +20,12 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 
 /// Initialize watcher logging based on configuration.
 ///
-/// Sets up structured logging with support for both JSON and human-readable formats,
-/// with optional file output in addition to STDOUT.
+/// Sets up structured logging with support for both JSON and human-readable
+/// formats, with optional file output in addition to stdout.
+///
+/// If a global tracing subscriber has already been registered (e.g. by the
+/// `xzatoma` binary's `main()`) this function is a no-op and returns `Ok(())`
+/// rather than panicking.
 ///
 /// # Arguments
 ///
@@ -20,7 +33,9 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 ///
 /// # Returns
 ///
-/// Returns success or error if logging initialization fails
+/// Returns `Ok(())` on success or if a subscriber is already registered.
+/// Returns `Err` if the log level filter string is invalid or the log file
+/// cannot be opened.
 ///
 /// # Examples
 ///
@@ -69,9 +84,9 @@ pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
                 .with_span_list(true)
                 .with_writer(Arc::new(file));
 
-            registry.with(stdout_layer).with(file_layer).init();
+            registry.with(stdout_layer).with(file_layer).try_init().ok();
         } else {
-            registry.with(stdout_layer).init();
+            registry.with(stdout_layer).try_init().ok();
         }
     } else {
         // Human-readable formatting
@@ -92,9 +107,9 @@ pub fn init_watcher_logging(config: &WatcherLoggingConfig) -> Result<()> {
                 .with_level(true)
                 .with_writer(Arc::new(file));
 
-            registry.with(stdout_layer).with(file_layer).init();
+            registry.with(stdout_layer).with(file_layer).try_init().ok();
         } else {
-            registry.with(stdout_layer).init();
+            registry.with(stdout_layer).try_init().ok();
         }
     }
 

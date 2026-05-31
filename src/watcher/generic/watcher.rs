@@ -21,11 +21,12 @@
 //! # Plan execution
 //!
 //! In non-dry-run mode, the instruction derived from the resolved plan is
-//! passed to `crate::commands::run::run_plan_with_options` for execution
-//! through the standard agent plan-execution path. The result captures
-//! actual success/failure status from the execution.
+//! executed by a [`crate::agent::Agent`] constructed in
+//! [`crate::chat_mode::ChatMode::Watcher`] (autonomous) mode. The watcher
+//! system prompt instructs the LLM to call tools immediately without asking
+//! for confirmation.
 
-use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
+use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig, WatcherPlanExecutionMode};
 use crate::error::Result;
 use crate::watcher::generic::consumer::{
     GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
@@ -36,6 +37,7 @@ use crate::watcher::generic::result_event::GenericPlanResult;
 use crate::watcher::generic::result_producer::{
     FakeResultProducer, GenericResultProducer, ResultProducerTrait,
 };
+use crate::watcher::plan_executor::execute_tasks_sequentially;
 
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -538,9 +540,8 @@ impl GenericWatcher {
 
     /// Execute a validated plan task via the standard agent execution path.
     ///
-    /// Delegates to `crate::commands::run::run_plan_with_options` with the
-    /// task instruction as the prompt. The execution result (success or
-    /// failure) is captured into a [`GenericPlanResult`].
+    /// Builds and executes an agent in `ChatMode::Watcher` (autonomous mode)
+    /// rather than delegating to `run_plan_with_options`.
     ///
     /// # Arguments
     ///
@@ -555,7 +556,9 @@ impl GenericWatcher {
     /// Returns an error if the task instruction is empty after trimming.
     async fn execute_plan(&self, task: &GenericTask) -> Result<GenericPlanResult> {
         let trimmed = task.instruction.trim();
-        if trimmed.is_empty() {
+        // For step-based plans the instruction is required; task-based plans
+        // execute via execute_tasks_sequentially instead.
+        if trimmed.is_empty() && task.plan.tasks.is_empty() {
             return Err(GenericWatcherError::Execution(
                 "task instruction cannot be empty".to_string(),
             )
@@ -565,30 +568,97 @@ impl GenericWatcher {
         info!(
             plan_name = %task.plan.name,
             bytes = trimmed.len(),
-            "Executing generic watcher plan via run_plan_with_options"
+            "Executing generic watcher plan via Agent in ChatMode::Watcher"
         );
 
         let config = self.config.as_ref().clone();
-        let allow_dangerous = self.config.watcher.execution.allow_dangerous;
 
-        let execution_result = crate::commands::r#run::run_plan_with_options(
-            config,
-            None,
-            Some(trimmed.to_string()),
-            allow_dangerous,
-            None,
+        let working_dir = std::env::current_dir().map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to get working directory: {}", e))
+        })?;
+
+        let env = crate::commands::build_agent_environment(
+            &config,
+            &working_dir,
+            true,
+            Some(crate::chat_mode::ChatMode::Watcher),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to build agent environment: {}", e))
+        })?;
 
-        let (success, summary) = match &execution_result {
-            Ok(()) => (
-                true,
-                "Generic watcher plan execution completed successfully".to_string(),
-            ),
-            Err(e) => (
-                false,
-                format!("Generic watcher plan execution failed: {}", e),
-            ),
+        let provider =
+            crate::providers::create_provider(&config.provider.provider_type, &config.provider)
+                .map_err(|e| {
+                    GenericWatcherError::Execution(format!("failed to create provider: {}", e))
+                })?;
+
+        let mut agent = crate::agent::Agent::new_with_mode(
+            provider,
+            env.tool_registry,
+            config.agent.clone(),
+            crate::chat_mode::ChatMode::Watcher,
+            crate::chat_mode::SafetyMode::NeverConfirm,
+        )
+        .map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to create watcher agent: {}", e))
+        })?;
+
+        if let Some(d) = &env.skill_disclosure {
+            agent.conversation_mut().add_system_message(d.clone());
+        }
+
+        if let Ok(Some(sp)) =
+            crate::commands::build_active_skill_prompt_injection(&env.active_skill_registry)
+        {
+            agent.set_transient_system_messages(vec![sp]);
+        }
+
+        // Branch on execution_mode: PerTask runs each task separately in a shared
+        // session; SingleShot collapses everything into one agent.execute call.
+        let use_per_task = matches!(
+            config.watcher.execution.execution_mode,
+            WatcherPlanExecutionMode::PerTask
+        ) && !task.plan.tasks.is_empty();
+
+        let (success, summary, task_outcomes_opt) = if use_per_task {
+            let outcomes = execute_tasks_sequentially(&task.plan, &mut agent).await?;
+            let overall_success = outcomes.iter().all(|o| o.success);
+            let final_summary = agent
+                .execute(
+                    "Summarise the results of all tasks completed above in one paragraph."
+                        .to_string(),
+                )
+                .await
+                .unwrap_or_else(|e| format!("Summary generation failed: {}", e));
+            let outcomes_json: Vec<serde_json::Value> = outcomes
+                .iter()
+                .map(|o| {
+                    json!({
+                        "id": o.id,
+                        "success": o.success,
+                        "summary": o.summary,
+                        "iterations": o.iterations,
+                    })
+                })
+                .collect();
+            (overall_success, final_summary, Some(outcomes_json))
+        } else {
+            // Single-shot path: use full instruction string (tasks or steps).
+            let instruction = if !task.plan.tasks.is_empty() {
+                task.plan.to_instruction()
+            } else {
+                trimmed.to_string()
+            };
+            match agent.execute(instruction).await {
+                Ok(response) => (true, response, None),
+                Err(e) => (
+                    false,
+                    format!("Generic watcher plan execution failed: {}", e),
+                    None,
+                ),
+            }
         };
 
         let trigger_id = task
@@ -597,10 +667,10 @@ impl GenericWatcher {
             .unwrap_or_else(|| Ulid::new().to_string());
 
         let mut result = GenericPlanResult::new(trigger_id, success, summary);
+        result.task_outcomes = task_outcomes_opt;
         result.plan_output = Some(json!({
-            "mode": "execute",
+            "mode": if task.plan.tasks.is_empty() { "execute_steps" } else { "execute_tasks" },
             "plan_name": task.plan.name,
-            "instruction": trimmed,
             "success": success,
         }));
         Ok(result)
@@ -665,6 +735,7 @@ mod tests {
     use crate::config::{
         AcpConfig, AgentConfig, CopilotConfig, GenericMatchConfig, OllamaConfig, ProviderConfig,
         SkillsConfig, WatcherConfig, WatcherExecutionConfig, WatcherLoggingConfig,
+        WatcherPlanExecutionMode,
     };
     use crate::mcp::config::McpConfig;
     use std::collections::HashMap;
@@ -697,6 +768,7 @@ mod tests {
                     allow_dangerous: false,
                     max_concurrent_executions: 1,
                     execution_timeout_secs: 30,
+                    execution_mode: WatcherPlanExecutionMode::PerTask,
                 },
             },
             mcp: McpConfig::default(),
@@ -705,24 +777,12 @@ mod tests {
         }
     }
 
-    /// A valid YAML plan payload used by watcher tests.
-    const MATCHING_PLAN_YAML: &str = concat!(
-        "name: deploy\n",
-        "version: v1.2.3\n",
-        "action: deploy-prod\n",
-        "steps:\n",
-        "  - name: apply\n",
-        "    action: kubectl apply -f manifests/\n",
-    );
+    /// A valid CloudEvents plan payload used by watcher tests.
+    /// Plan has action "deploy-prod" which matches "deploy.*" but not "rollback.*".
+    const MATCHING_PLAN_CE: &str = r#"{"id":"01JTEST000000000000000001","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","version":"v1.2.3","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply -f manifests/"}]}}"#;
 
-    /// A valid YAML plan payload whose action does NOT match "rollback.*".
-    const NON_MATCHING_PLAN_YAML: &str = concat!(
-        "name: deploy\n",
-        "action: deploy-prod\n",
-        "steps:\n",
-        "  - name: apply\n",
-        "    action: kubectl apply -f manifests/\n",
-    );
+    /// A valid CloudEvents plan payload whose action does NOT match "rollback.*".
+    const NON_MATCHING_PLAN_CE: &str = r#"{"id":"01JTEST000000000000000002","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","action":"deploy-prod","steps":[{"name":"apply","action":"kubectl apply -f manifests/"}]}}"#;
 
     // -------------------------------------------------------------------------
     // Non-ignored tests (no Kafka broker required)
@@ -775,21 +835,16 @@ mod tests {
             true,
         )
         .unwrap();
-        let disposition = watcher
-            .process_payload(NON_MATCHING_PLAN_YAML)
-            .await
-            .unwrap();
+        let disposition = watcher.process_payload(NON_MATCHING_PLAN_CE).await.unwrap();
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
     }
 
     #[tokio::test]
     async fn test_generic_watcher_process_payload_empty_steps_returns_invalid_payload() {
+        let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"test","steps":[]}}"#;
         let watcher =
             GenericWatcher::new(test_config(GenericMatchConfig::default()), true).unwrap();
-        let disposition = watcher
-            .process_payload("name: test\nsteps: []\n")
-            .await
-            .unwrap();
+        let disposition = watcher.process_payload(ce).await.unwrap();
         assert_eq!(disposition, MessageDisposition::InvalidPayload);
     }
 
@@ -838,7 +893,7 @@ mod tests {
         )
         .unwrap();
 
-        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_CE).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::Processed);
 
@@ -864,7 +919,7 @@ mod tests {
         )
         .unwrap();
 
-        let disposition = watcher.process_payload(MATCHING_PLAN_YAML).await.unwrap();
+        let disposition = watcher.process_payload(MATCHING_PLAN_CE).await.unwrap();
 
         assert_eq!(disposition, MessageDisposition::SkippedNoMatch);
         assert!(watcher.published_results().await.is_empty());
@@ -883,7 +938,7 @@ mod tests {
         .unwrap();
 
         let msg = RawKafkaMessage {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: Some("01JTESTMATCH00000000000001".to_string()),
         };
@@ -912,7 +967,7 @@ mod tests {
         .unwrap();
 
         let msg = RawKafkaMessage {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: None,
         };
@@ -983,7 +1038,7 @@ mod tests {
         .with_producer(fake_producer.clone());
 
         let items = vec![Ok(TestRawMsg {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: Some("key-p5-001".to_string()),
         })];
@@ -1046,9 +1101,9 @@ mod tests {
         .unwrap()
         .with_producer(fake_producer.clone());
 
-        // MATCHING_PLAN_YAML has action "deploy-prod" which does NOT match "rollback.*"
+        // MATCHING_PLAN_CE has action "deploy-prod" which does NOT match "rollback.*"
         let msg = TestRawMsg {
-            payload: MATCHING_PLAN_YAML.to_string(),
+            payload: MATCHING_PLAN_CE.to_string(),
             topic: "generic.input".to_string(),
             key: None,
         };
@@ -1092,13 +1147,13 @@ mod tests {
 
         let items = vec![
             Ok(TestRawMsg {
-                payload: MATCHING_PLAN_YAML.to_string(),
+                payload: MATCHING_PLAN_CE.to_string(),
                 topic: "generic.input".to_string(),
                 key: None,
             }),
             // non-matching: still gets a commit
             Ok(TestRawMsg {
-                payload: NON_MATCHING_PLAN_YAML.to_string(),
+                payload: NON_MATCHING_PLAN_CE.to_string(),
                 topic: "generic.input".to_string(),
                 key: None,
             }),

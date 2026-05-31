@@ -70,7 +70,7 @@ cd demos/watcher/xzepr
 ### Step 1: Start the Redpanda stack
 
 ```bash
-docker compose -f docker-compose.redpanda.yaml up -d
+docker compose -f docker-compose.redpanda.yaml up
 ```
 
 Wait a few seconds for Redpanda to become ready. Verify it is up:
