@@ -202,6 +202,7 @@ impl ToolRegistryBuilder {
     /// Automatically selects the appropriate registry based on `mode`.
     /// - Planning: read-only tools only (read_file, list_directory, find_path)
     /// - Write: all tools
+    /// - Watcher: all tools (same as Write; autonomous watcher agents need full access)
     ///
     /// # Returns
     ///
@@ -213,7 +214,7 @@ impl ToolRegistryBuilder {
     pub fn build(&self) -> Result<ToolRegistry> {
         match self.mode {
             ChatMode::Planning => self.build_for_planning(),
-            ChatMode::Write => self.build_for_write(),
+            ChatMode::Write | ChatMode::Watcher => self.build_for_write(),
         }
     }
 
@@ -224,6 +225,7 @@ impl ToolRegistryBuilder {
     /// by the builder's chat mode setting:
     /// - Planning: read-only tools only
     /// - Write: all tools
+    /// - Watcher: all tools (same as Write)
     ///
     /// When subagents are enabled, this method builds the base registry and
     /// leaves dynamic subagent registration to the agent and command layer.

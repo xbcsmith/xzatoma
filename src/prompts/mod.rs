@@ -1,9 +1,10 @@
 //! System prompts for different chat modes
 //!
 //! This module provides mode-specific system prompts that guide the AI agent's
-//! behavior in different operating modes (Planning vs Write).
+//! behavior in different operating modes (Planning, Write, and Watcher).
 
 pub mod planning_prompt;
+pub mod watcher_prompt;
 pub mod write_prompt;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
@@ -79,6 +80,7 @@ pub fn build_system_prompt_with_skill_disclosure(
     let base_prompt = match mode {
         ChatMode::Planning => planning_prompt::generate_planning_prompt(safety),
         ChatMode::Write => write_prompt::generate_write_prompt(safety),
+        ChatMode::Watcher => watcher_prompt::generate_watcher_prompt(safety),
     };
 
     append_skill_disclosure_section(&base_prompt, skill_disclosure)
@@ -250,8 +252,21 @@ mod tests {
     }
 
     #[test]
+    fn test_build_system_prompt_watcher_returns_autonomous_prompt() {
+        let prompt = build_system_prompt(ChatMode::Watcher, SafetyMode::NeverConfirm);
+        assert!(
+            prompt.contains("autonomous"),
+            "watcher prompt must describe autonomous operation"
+        );
+        assert!(
+            prompt.contains("tools"),
+            "watcher prompt must mention tools"
+        );
+    }
+
+    #[test]
     fn test_build_system_prompt_not_empty() {
-        let modes = vec![ChatMode::Planning, ChatMode::Write];
+        let modes = vec![ChatMode::Planning, ChatMode::Write, ChatMode::Watcher];
         let safeties = vec![SafetyMode::AlwaysConfirm, SafetyMode::NeverConfirm];
 
         for mode in modes {

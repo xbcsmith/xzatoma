@@ -546,20 +546,53 @@ impl MessageHandler for WatcherMessageHandler {
 
         // Clone values needed for the spawned task
         let config = self.config.as_ref().clone();
-        let allow_dangerous = self.watcher_config.execution.allow_dangerous;
+        let _allow_dangerous = self.watcher_config.execution.allow_dangerous;
 
         // Spawn plan execution in background task
         let execution_task = tokio::spawn(async move {
             debug!("Plan execution task started");
 
-            crate::commands::r#run::run_plan_with_options(
-                config,
-                None,
-                Some(plan_yaml),
-                allow_dangerous,
-                None,
+            let working_dir = std::env::current_dir().map_err(|e| {
+                crate::error::XzatomaError::Config(format!(
+                    "Failed to get working directory: {}",
+                    e
+                ))
+            })?;
+
+            let env = crate::commands::build_agent_environment(
+                &config,
+                &working_dir,
+                true,
+                Some(crate::chat_mode::ChatMode::Watcher),
             )
-            .await
+            .await?;
+
+            let provider = crate::providers::create_provider(
+                &config.provider.provider_type,
+                &config.provider,
+            )?;
+
+            let mut agent = crate::agent::Agent::new_with_mode(
+                provider,
+                env.tool_registry,
+                config.agent.clone(),
+                crate::chat_mode::ChatMode::Watcher,
+                crate::chat_mode::SafetyMode::NeverConfirm,
+            )?;
+
+            if let Some(disclosure) = &env.skill_disclosure {
+                agent
+                    .conversation_mut()
+                    .add_system_message(disclosure.clone());
+            }
+
+            if let Ok(Some(skill_prompt)) =
+                crate::commands::build_active_skill_prompt_injection(&env.active_skill_registry)
+            {
+                agent.set_transient_system_messages(vec![skill_prompt]);
+            }
+
+            agent.execute(plan_yaml).await.map(|_| ())
         });
 
         // Wait for execution to complete and publish the result

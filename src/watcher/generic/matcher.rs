@@ -67,12 +67,8 @@ use std::sync::Arc;
 /// })
 /// .unwrap();
 ///
-/// let mut event = GenericPlanEvent::new(
-///     "name: deploy\naction: Deploy\nsteps:\n  - name: s1\n    action: run\n",
-///     "input.topic".to_string(),
-///     None,
-/// )
-/// .unwrap();
+/// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","action":"Deploy","steps":[{"name":"s1","action":"run"}]}}"#;
+/// let mut event = GenericPlanEvent::new(ce, "input.topic".to_string(), None).unwrap();
 /// // action is case-insensitively matched; "Deploy" matches pattern "deploy"
 /// assert!(matcher.should_process(&event));
 /// ```
@@ -189,12 +185,8 @@ impl GenericMatcher {
     /// use xzatoma::watcher::generic::{GenericMatcher, GenericPlanEvent};
     ///
     /// let matcher = GenericMatcher::new(GenericMatchConfig::default()).unwrap();
-    /// let event = GenericPlanEvent::new(
-    ///     "name: test\nsteps:\n  - name: s1\n    action: echo test\n",
-    ///     "input.topic".to_string(),
-    ///     None,
-    /// )
-    /// .unwrap();
+    /// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"test","steps":[{"name":"s1","action":"echo test"}]}}"#;
+    /// let event = GenericPlanEvent::new(ce, "input.topic".to_string(), None).unwrap();
     ///
     /// assert!(matcher.should_process(&event));
     /// ```

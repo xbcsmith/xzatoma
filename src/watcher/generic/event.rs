@@ -36,8 +36,8 @@
 //! ```
 //! use xzatoma::watcher::generic::event::GenericPlanEvent;
 //!
-//! let yaml = "name: deploy\nsteps:\n  - name: apply\n    action: kubectl apply -f manifests/\n";
-//! let event = GenericPlanEvent::new(yaml, "input.topic".to_string(), None).unwrap();
+//! let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"apply","action":"kubectl apply -f manifests/"}]}}"#;
+//! let event = GenericPlanEvent::new(ce, "input.topic".to_string(), None).unwrap();
 //! assert_eq!(event.plan.name, "deploy");
 //! assert_eq!(event.source_topic, "input.topic");
 //! ```
@@ -75,9 +75,9 @@ use chrono::{DateTime, Utc};
 /// ```
 /// use xzatoma::watcher::generic::event::GenericPlanEvent;
 ///
-/// let yaml = "name: deploy\nsteps:\n  - name: s1\n    action: run deploy\n";
+/// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"run deploy"}]}}"#;
 /// let event = GenericPlanEvent::new(
-///     yaml,
+///     ce,
 ///     "input.topic".to_string(),
 ///     Some("key-1".to_string()),
 /// )
@@ -150,21 +150,11 @@ impl GenericPlanEvent {
     /// ```
     /// use xzatoma::watcher::generic::event::GenericPlanEvent;
     ///
-    /// let yaml = "name: deploy\nsteps:\n  - name: s1\n    action: run deploy\n";
-    /// let event = GenericPlanEvent::new(yaml, "input.topic".to_string(), None).unwrap();
+    /// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"run deploy"}]}}"#;
+    /// let event = GenericPlanEvent::new(ce, "input.topic".to_string(), None).unwrap();
     /// assert_eq!(event.plan.name, "deploy");
     /// assert_eq!(event.name.as_deref(), Some("deploy"));
     /// ```
-    /// Parse a raw Kafka payload as a standard CloudEvents 1.0 envelope and
-    /// extract the embedded plan from the `data` field.
-    ///
-    /// The payload must be a JSON object that satisfies the `GenericPlanCloudEvent`
-    /// schema (i.e., it must carry `id`, `specversion`, `type`, `source`, and
-    /// `data`). The `data` field is then deserialized and validated as a [`Plan`].
-    ///
-    /// This is intentionally distinct from the XZepr consumer, which expects
-    /// XZepr-specific CloudEvent extensions (`success`, `api_version`,
-    /// `platform_id`, etc.).
     pub fn new(payload: &str, source_topic: String, key: Option<String>) -> Result<Self> {
         let cloud_event: GenericPlanCloudEvent = serde_json::from_str(payload)
             .map_err(|e| XzatomaError::Watcher(format!("Error parsing CloudEvent: {}", e)))?;

@@ -33,8 +33,9 @@
 //! # async fn main() -> anyhow::Result<()> {
 //! let handler = GenericEventHandler::new(None, None);
 //!
+//! let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"echo hi"}]}}"#;
 //! let msg = RawKafkaMessage {
-//!     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo hi\n".to_string(),
+//!     payload: ce.to_string(),
 //!     topic: "plans.input".to_string(),
 //!     key: Some("corr-123".to_string()),
 //! };
@@ -74,8 +75,9 @@ use tracing::{debug, info};
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
 /// let handler = GenericEventHandler::new(None, None);
+/// let ce = r#"{"id":"01J","specversion":"1.0","type":"xzatoma.plan.execute","source":"test","data":{"name":"deploy","steps":[{"name":"s1","action":"echo ok"}]}}"#;
 /// let msg = RawKafkaMessage {
-///     payload: "name: deploy\nsteps:\n  - name: s1\n    action: echo ok\n".to_string(),
+///     payload: ce.to_string(),
 ///     topic: "t".to_string(),
 ///     key: Some("corr-abc".to_string()),
 /// };

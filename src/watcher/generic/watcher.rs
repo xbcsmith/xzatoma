@@ -21,9 +21,10 @@
 //! # Plan execution
 //!
 //! In non-dry-run mode, the instruction derived from the resolved plan is
-//! passed to `crate::commands::run::run_plan_with_options` for execution
-//! through the standard agent plan-execution path. The result captures
-//! actual success/failure status from the execution.
+//! executed by a [`crate::agent::Agent`] constructed in
+//! [`crate::chat_mode::ChatMode::Watcher`] (autonomous) mode. The watcher
+//! system prompt instructs the LLM to call tools immediately without asking
+//! for confirmation.
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig};
 use crate::error::Result;
@@ -538,9 +539,8 @@ impl GenericWatcher {
 
     /// Execute a validated plan task via the standard agent execution path.
     ///
-    /// Delegates to `crate::commands::run::run_plan_with_options` with the
-    /// task instruction as the prompt. The execution result (success or
-    /// failure) is captured into a [`GenericPlanResult`].
+    /// Builds and executes an agent in `ChatMode::Watcher` (autonomous mode)
+    /// rather than delegating to `run_plan_with_options`.
     ///
     /// # Arguments
     ///
@@ -565,26 +565,57 @@ impl GenericWatcher {
         info!(
             plan_name = %task.plan.name,
             bytes = trimmed.len(),
-            "Executing generic watcher plan via run_plan_with_options"
+            "Executing generic watcher plan via Agent in ChatMode::Watcher"
         );
 
         let config = self.config.as_ref().clone();
-        let allow_dangerous = self.config.watcher.execution.allow_dangerous;
 
-        let execution_result = crate::commands::r#run::run_plan_with_options(
-            config,
-            None,
-            Some(trimmed.to_string()),
-            allow_dangerous,
-            None,
+        let working_dir = std::env::current_dir().map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to get working directory: {}", e))
+        })?;
+
+        let env = crate::commands::build_agent_environment(
+            &config,
+            &working_dir,
+            true,
+            Some(crate::chat_mode::ChatMode::Watcher),
         )
-        .await;
+        .await
+        .map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to build agent environment: {}", e))
+        })?;
 
-        let (success, summary) = match &execution_result {
-            Ok(()) => (
-                true,
-                "Generic watcher plan execution completed successfully".to_string(),
-            ),
+        let provider =
+            crate::providers::create_provider(&config.provider.provider_type, &config.provider)
+                .map_err(|e| {
+                    GenericWatcherError::Execution(format!("failed to create provider: {}", e))
+                })?;
+
+        let mut agent = crate::agent::Agent::new_with_mode(
+            provider,
+            env.tool_registry,
+            config.agent.clone(),
+            crate::chat_mode::ChatMode::Watcher,
+            crate::chat_mode::SafetyMode::NeverConfirm,
+        )
+        .map_err(|e| {
+            GenericWatcherError::Execution(format!("failed to create watcher agent: {}", e))
+        })?;
+
+        if let Some(d) = &env.skill_disclosure {
+            agent.conversation_mut().add_system_message(d.clone());
+        }
+
+        if let Ok(Some(sp)) =
+            crate::commands::build_active_skill_prompt_injection(&env.active_skill_registry)
+        {
+            agent.set_transient_system_messages(vec![sp]);
+        }
+
+        let execution_result = agent.execute(trimmed.to_string()).await;
+
+        let (success, summary) = match execution_result {
+            Ok(response) => (true, response),
             Err(e) => (
                 false,
                 format!("Generic watcher plan execution failed: {}", e),

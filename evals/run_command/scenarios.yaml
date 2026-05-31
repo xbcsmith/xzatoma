@@ -50,7 +50,7 @@ scenarios:
       plan_file: "invalid_no_steps.yaml"
     expect:
       outcome: error
-      error_contains: "Plan must have at least one step"
+      error_contains: "Plan must have at least one task or step"
 
   - id: plan_invalid_no_name
     description: "plan with empty name fails validation before reaching provider"
@@ -115,7 +115,7 @@ scenarios:
       plan_file: "invalid_no_steps.json"
     expect:
       outcome: error
-      error_contains: "Plan must have at least one step"
+      error_contains: "Plan must have at least one task or step"
 
   - id: md_simple_plan
     description: "valid single-step Markdown plan parses successfully"
@@ -140,7 +140,7 @@ scenarios:
       plan_file: "invalid_no_steps.md"
     expect:
       outcome: error
-      error_contains: "Plan must have at least one step"
+      error_contains: "Plan must have at least one task or step"
 
   - id: empty_yaml_file
     description: "completely empty YAML file triggers a parse error"

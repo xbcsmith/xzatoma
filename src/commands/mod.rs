@@ -1993,7 +1993,7 @@ pub mod r#run {
 
         // Build tools, skills, and MCP stack via the shared environment builder.
         // The run command is always headless (non-interactive).
-        let env = build_agent_environment(&config, &working_dir, true).await?;
+        let env = build_agent_environment(&config, &working_dir, true, None).await?;
         let tools = env.tool_registry;
         let active_skill_registry = env.active_skill_registry;
         let skill_disclosure = env.skill_disclosure;
