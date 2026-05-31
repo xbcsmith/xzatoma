@@ -30,6 +30,33 @@
 //! XZepr-specific CloudEvents schema with extensions such as `success`,
 //! `api_version`, `platform_id`, `release`, and `package`.
 //!
+//! # Execution model
+//!
+//! The generic watcher supports two plan execution modes, controlled by
+//! `watcher.execution.execution_mode` in the configuration file (or the
+//! `XZATOMA_WATCHER_EXECUTION_MODE` environment variable):
+//!
+//! - **`per_task`** (default): each task in `plan.tasks` is sent to the agent
+//!   as a separate [`Agent::execute`] call within a shared session. Conversation
+//!   history accumulates across tasks so later tasks can reference outputs from
+//!   earlier ones. Task order is determined by a topological sort of
+//!   `PlanTask::dependencies`. Per-task outcomes (`id`, `success`, `summary`,
+//!   `iterations`) are included in the published result event.
+//!
+//! - **`single_shot`**: the full plan is formatted into a numbered list via
+//!   [`Plan::to_instruction`] and sent as a single [`Agent::execute`] call.
+//!   This is the legacy behaviour. Use it for step-based plans (no `tasks`
+//!   field) or when backward-compatible single-shot execution is required.
+//!
+//! In both modes the agent is constructed with [`crate::chat_mode::ChatMode::Watcher`],
+//! which injects an autonomous system prompt instructing the LLM to call tools
+//! immediately without asking for user confirmation.
+//!
+//! Per-task execution is implemented in [`crate::watcher::plan_executor`].
+//!
+//! [`Agent::execute`]: crate::agent::Agent::execute
+//! [`Plan::to_instruction`]: crate::tools::plan::Plan::to_instruction
+//!
 //! # Loop prevention
 //!
 //! The generic watcher prevents same-topic re-trigger loops at the CloudEvents
