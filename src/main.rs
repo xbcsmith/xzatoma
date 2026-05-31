@@ -284,6 +284,33 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Return the default log-level directive string for the given verbosity flag.
+///
+/// This is extracted so that the level-selection logic can be unit-tested
+/// without initialising a tracing subscriber (which may only be done once
+/// per process).
+///
+/// # Arguments
+///
+/// * `verbose` - When `true` returns `"debug"`; when `false` returns
+///   `"xzatoma=info"`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::log_level_str;
+///
+/// assert_eq!(log_level_str(false), "xzatoma=info");
+/// assert_eq!(log_level_str(true),  "debug");
+/// ```
+pub(crate) fn log_level_str(verbose: bool) -> &'static str {
+    if verbose {
+        "debug"
+    } else {
+        "xzatoma=info"
+    }
+}
+
 /// Initialize the global tracing subscriber.
 ///
 /// Must be called exactly once per process. Calling it a second time will
@@ -296,8 +323,8 @@ async fn main() -> Result<()> {
 ///   default human-readable format.
 /// * `log_file` - Optional path to an additional log-file sink. The file
 ///   is created (or appended to) in JSON format.
-fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
-    let level = if verbose { "debug" } else { "xzatoma=info" };
+pub(crate) fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
+    let level = log_level_str(verbose);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     // Open the optional file sink.  Failures are non-fatal: we print a
@@ -328,5 +355,20 @@ fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
             .with(stderr_layer)
             .with(file_layer)
             .init();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_tracing_verbose_false_defaults_to_info() {
+        assert_eq!(log_level_str(false), "xzatoma=info");
+    }
+
+    #[test]
+    fn test_init_tracing_verbose_true_uses_debug() {
+        assert_eq!(log_level_str(true), "debug");
     }
 }
