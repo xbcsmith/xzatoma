@@ -757,6 +757,7 @@ mod tests {
             mcp: crate::mcp::config::McpConfig::default(),
             acp: crate::config::AcpConfig::default(),
             skills: crate::config::SkillsConfig::default(),
+            log: crate::config::LogConfig::default(),
         };
 
         let result = Watcher::new(config, false);

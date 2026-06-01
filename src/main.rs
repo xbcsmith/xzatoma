@@ -36,8 +36,12 @@ async fn main() -> Result<()> {
     // Clone CommonArgs so cli.command can be moved in the match below.
     let common = cli.command.common_args().clone();
 
+    // --verbose maps to debug level for backward compatibility.
+    let debug = common.debug || common.verbose;
+    let trace = common.trace;
+
     // Initialise the global tracing subscriber exactly once.
-    init_tracing(common.verbose, log_json, watch_log_file.as_deref());
+    init_tracing(debug, trace, log_json, watch_log_file.as_deref());
 
     // If the user supplied a storage path on the CLI (or via env),
     // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
@@ -284,27 +288,29 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Return the default log-level directive string for the given verbosity flag.
+/// Return the default log-level directive string for the given level flags.
 ///
 /// This is extracted so that the level-selection logic can be unit-tested
 /// without initialising a tracing subscriber (which may only be done once
 /// per process).
 ///
+/// Precedence: `trace` > `debug` > info default.
+///
 /// # Arguments
 ///
-/// * `verbose` - When `true` returns `"debug"`; when `false` returns
-///   `"xzatoma=info"`.
+/// * `debug` - When `true` and `trace` is `false`, returns `"debug"`.
+/// * `trace` - When `true`, returns `"trace"` regardless of `debug`.
 ///
 /// # Examples
 ///
+/// ```no_run
+/// // log_level_str is pub(crate) in the binary — use the unit tests in this
+/// // module to verify its behaviour rather than a doc example.
 /// ```
-/// use xzatoma::log_level_str;
-///
-/// assert_eq!(log_level_str(false), "xzatoma=info");
-/// assert_eq!(log_level_str(true),  "debug");
-/// ```
-pub(crate) fn log_level_str(verbose: bool) -> &'static str {
-    if verbose {
+pub(crate) fn log_level_str(debug: bool, trace: bool) -> &'static str {
+    if trace {
+        "trace"
+    } else if debug {
         "debug"
     } else {
         "xzatoma=info"
@@ -323,8 +329,8 @@ pub(crate) fn log_level_str(verbose: bool) -> &'static str {
 ///   default human-readable format.
 /// * `log_file` - Optional path to an additional log-file sink. The file
 ///   is created (or appended to) in JSON format.
-pub(crate) fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
-    let level = log_level_str(verbose);
+pub(crate) fn init_tracing(debug: bool, trace: bool, json_format: bool, log_file: Option<&Path>) {
+    let level = log_level_str(debug, trace);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     // Open the optional file sink.  Failures are non-fatal: we print a
@@ -364,11 +370,26 @@ mod tests {
 
     #[test]
     fn test_init_tracing_verbose_false_defaults_to_info() {
-        assert_eq!(log_level_str(false), "xzatoma=info");
+        assert_eq!(log_level_str(false, false), "xzatoma=info");
     }
 
     #[test]
     fn test_init_tracing_verbose_true_uses_debug() {
-        assert_eq!(log_level_str(true), "debug");
+        assert_eq!(log_level_str(true, false), "debug");
+    }
+
+    #[test]
+    fn test_init_tracing_debug_flag_uses_debug() {
+        assert_eq!(log_level_str(true, false), "debug");
+    }
+
+    #[test]
+    fn test_init_tracing_trace_flag_uses_trace() {
+        assert_eq!(log_level_str(false, true), "trace");
+    }
+
+    #[test]
+    fn test_init_tracing_trace_overrides_debug() {
+        assert_eq!(log_level_str(true, true), "trace");
     }
 }

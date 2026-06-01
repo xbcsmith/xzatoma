@@ -774,6 +774,7 @@ mod tests {
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
+            log: crate::config::LogConfig::default(),
         }
     }
 

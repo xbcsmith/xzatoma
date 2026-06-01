@@ -2,6 +2,14 @@
 //!
 //! This module handles loading, parsing, validating, and managing
 //! configuration from files, environment variables, and CLI overrides.
+//!
+//! ## Logging environment variables
+//!
+//! | Variable | Type | Description |
+//! |---|---|---|
+//! | `XZATOMA_DEBUG` | bool | Enable debug-level logging (`1`/`true`/`yes`/`on`) |
+//! | `XZATOMA_TRACE` | bool | Enable trace-level logging; implies debug |
+//! | `RUST_LOG` | filter | Full `tracing` filter string; overrides all flags when set |
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::config::McpConfig;
@@ -31,6 +39,9 @@ pub struct Config {
     /// Skills discovery and parsing configuration
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// Global log subscriber configuration
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 /// Provider configuration
@@ -1399,6 +1410,32 @@ pub enum WatcherPlanExecutionMode {
     SingleShot,
 }
 
+/// Global log subscriber configuration.
+///
+/// Controls the default logging level for the XZatoma process. CLI flags
+/// (`--debug`, `--trace`) take precedence over this config at runtime when
+/// accessed through `main()`. These fields are also useful when `Config` is
+/// consumed as a library.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::LogConfig;
+///
+/// let config = LogConfig::default();
+/// assert!(!config.debug);
+/// assert!(!config.trace);
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LogConfig {
+    /// Enable debug-level logging. Env: `XZATOMA_DEBUG`.
+    #[serde(default)]
+    pub debug: bool,
+    /// Enable trace-level logging. Env: `XZATOMA_TRACE`.
+    #[serde(default)]
+    pub trace: bool,
+}
+
 impl Config {
     /// Load configuration from file with environment and CLI overrides
     ///
@@ -1441,6 +1478,7 @@ impl Config {
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
+            log: LogConfig::default(),
         }
     }
 
@@ -2346,11 +2384,37 @@ impl Config {
                 ),
             }
         }
+
+        // ---------------------------------------------------------------------
+        // Logging environment variable overrides
+        // ---------------------------------------------------------------------
+        if let Ok(debug_val) = std::env::var("XZATOMA_DEBUG") {
+            match parse_env_bool(&debug_val) {
+                Some(value) => {
+                    self.log.debug = value;
+                    tracing::debug!(debug = value, "Env override: XZATOMA_DEBUG");
+                }
+                None => tracing::warn!("Invalid XZATOMA_DEBUG: {}", debug_val),
+            }
+        }
+
+        if let Ok(trace_val) = std::env::var("XZATOMA_TRACE") {
+            match parse_env_bool(&trace_val) {
+                Some(value) => {
+                    self.log.trace = value;
+                    tracing::debug!(trace = value, "Env override: XZATOMA_TRACE");
+                }
+                None => tracing::warn!("Invalid XZATOMA_TRACE: {}", trace_val),
+            }
+        }
     }
 
     fn apply_cli_overrides(&mut self, common: &crate::cli::CommonArgs) {
-        if common.verbose {
-            tracing::debug!("Verbose mode enabled");
+        if common.verbose || common.debug {
+            tracing::debug!("Debug/verbose mode enabled");
+        }
+        if common.trace {
+            tracing::debug!("Trace mode enabled");
         }
     }
 
@@ -3643,6 +3707,8 @@ kafka:
         let common = crate::cli::CommonArgs {
             config: None,
             verbose: false,
+            debug: false,
+            trace: false,
             storage_path: None,
         };
 
@@ -5068,6 +5134,38 @@ agent:
         assert!(cfg.validate().is_ok());
         assert_eq!(cfg.agent.subagent.model, Some("granite3.2:2b".to_string()));
         assert_eq!(cfg.agent.subagent.default_max_turns, 5);
+    }
+
+    // --- Phase 3 LogConfig tests ---
+
+    #[test]
+    fn test_log_config_debug_field_default_false() {
+        let config = LogConfig::default();
+        assert!(!config.debug);
+    }
+
+    #[test]
+    fn test_log_config_trace_field_default_false() {
+        let config = LogConfig::default();
+        assert!(!config.trace);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_debug() {
+        let _debug = EnvVarGuard::set("XZATOMA_DEBUG", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(config.log.debug);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_trace() {
+        let _trace = EnvVarGuard::set("XZATOMA_TRACE", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(config.log.trace);
     }
 }
 

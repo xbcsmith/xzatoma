@@ -42,6 +42,21 @@ pub struct CommonArgs {
     #[arg(short = 'v', long)]
     pub verbose: bool,
 
+    /// Enable debug-level logging.
+    ///
+    /// Equivalent to `RUST_LOG=debug`. Takes precedence over `--verbose`.
+    /// Precedence: `--trace` > `--debug` > `--verbose` > `RUST_LOG` env > info default.
+    #[arg(long, env = "XZATOMA_DEBUG")]
+    pub debug: bool,
+
+    /// Enable trace-level logging.
+    ///
+    /// Equivalent to `RUST_LOG=trace`. Implies `--debug`. Use for LLM
+    /// transcript capture and deep protocol inspection.
+    /// Precedence: `--trace` > `--debug` > `--verbose` > `RUST_LOG` env > info default.
+    #[arg(long, env = "XZATOMA_TRACE")]
+    pub trace: bool,
+
     /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
     #[arg(long, env = "XZATOMA_HISTORY_DB")]
     pub storage_path: Option<String>,
@@ -52,6 +67,8 @@ impl Default for CommonArgs {
         Self {
             config: Some("config/config.yaml".to_string()),
             verbose: false,
+            debug: false,
+            trace: false,
             storage_path: None,
         }
     }
@@ -1811,5 +1828,35 @@ mod tests {
     fn test_nested_subcommand_with_common_flags() {
         let cli = Cli::try_parse_from(["xzatoma", "models", "--config", "x.yaml", "list"]).unwrap();
         assert_eq!(cli.command.common_args().config, Some("x.yaml".to_string()));
+    }
+
+    // --- Phase 3 new tests ---
+
+    #[test]
+    fn test_debug_flag_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--debug"]).unwrap();
+        assert!(cli.command.common_args().debug);
+    }
+
+    #[test]
+    fn test_trace_flag_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "run", "--trace", "--prompt", "x"]).unwrap();
+        assert!(cli.command.common_args().trace);
+    }
+
+    #[test]
+    fn test_debug_and_trace_independent() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--debug"]).unwrap();
+        assert!(cli.command.common_args().debug);
+        assert!(!cli.command.common_args().trace);
+    }
+
+    #[test]
+    fn test_xzatoma_debug_env_sets_flag() {
+        std::env::set_var("XZATOMA_DEBUG", "true");
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let debug = cli.command.common_args().debug;
+        std::env::remove_var("XZATOMA_DEBUG");
+        assert!(debug);
     }
 }
