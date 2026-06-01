@@ -8,6 +8,7 @@
 //! must appear after the subcommand token:
 //! `xzatoma subcommand --config path.yaml`.
 
+use crate::config::LogFormat;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -60,6 +61,22 @@ pub struct CommonArgs {
     /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
     #[arg(long, env = "XZATOMA_HISTORY_DB")]
     pub storage_path: Option<String>,
+
+    /// Override log format for stderr output.
+    ///
+    /// Accepts `plain`, `compact`, or `json`. Overrides `config.log.stderr_format`
+    /// when set. Env: `XZATOMA_LOG_FORMAT`.
+    #[arg(long, env = "XZATOMA_LOG_FORMAT", value_enum)]
+    pub log_format: Option<LogFormat>,
+
+    /// Write a second log stream to the given file path.
+    ///
+    /// The file is created or appended to. Defaults to JSON format unless
+    /// overridden by `XZATOMA_LOG_FILE_FORMAT`.
+    /// Distinct from `--log-file` in the `watch` subcommand, which controls
+    /// per-event watcher output. Env: `XZATOMA_LOG_FILE`.
+    #[arg(id = "global-logfile", long = "logfile", env = "XZATOMA_LOG_FILE")]
+    pub log_file: Option<PathBuf>,
 }
 
 impl Default for CommonArgs {
@@ -70,6 +87,8 @@ impl Default for CommonArgs {
             debug: false,
             trace: false,
             storage_path: None,
+            log_format: None,
+            log_file: None,
         }
     }
 }
@@ -1858,5 +1877,71 @@ mod tests {
         let debug = cli.command.common_args().debug;
         std::env::remove_var("XZATOMA_DEBUG");
         assert!(debug);
+    }
+
+    // --- Phase 4 new tests ---
+
+    #[test]
+    fn test_log_format_json_after_chat_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "json"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, Some(LogFormat::Json));
+    }
+
+    #[test]
+    fn test_log_format_plain_after_chat_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "plain"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, Some(LogFormat::Plain));
+    }
+
+    #[test]
+    fn test_log_format_compact_after_run_subcommand() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--log-format",
+            "compact",
+            "--prompt",
+            "hi",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.command.common_args().log_format,
+            Some(LogFormat::Compact)
+        );
+    }
+
+    #[test]
+    fn test_logfile_after_run_subcommand() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--logfile",
+            "/tmp/x.log",
+            "--prompt",
+            "hi",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.command.common_args().log_file,
+            Some(PathBuf::from("/tmp/x.log"))
+        );
+    }
+
+    #[test]
+    fn test_log_format_defaults_to_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, None);
+    }
+
+    #[test]
+    fn test_logfile_defaults_to_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        assert_eq!(cli.command.common_args().log_file, None);
+    }
+
+    #[test]
+    fn test_log_format_invalid_value_is_rejected() {
+        let result = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "ndjson"]);
+        assert!(result.is_err());
     }
 }

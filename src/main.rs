@@ -7,7 +7,8 @@ use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use xzatoma::error::Result;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use xzatoma::config::LogFormat;
 
 // Removed unused grouped imports to satisfy clippy
 
@@ -22,17 +23,6 @@ async fn main() -> Result<()> {
     // subscriber is initialised.
     let cli = Cli::parse_args();
 
-    // Extract Watch-specific logging preferences before consuming cli.
-    // For every other command the defaults (plain stderr, no file) apply.
-    let (log_json, watch_log_file) = match &cli.command {
-        Commands::Watch {
-            json_logs,
-            log_file,
-            ..
-        } => (*json_logs, log_file.clone()),
-        _ => (false, None),
-    };
-
     // Clone CommonArgs so cli.command can be moved in the match below.
     let common = cli.command.common_args().clone();
 
@@ -40,8 +30,17 @@ async fn main() -> Result<()> {
     let debug = common.debug || common.verbose;
     let trace = common.trace;
 
+    // Derive stderr format from the global --log-format flag, defaulting to plain.
+    let stderr_format = common.log_format.unwrap_or(LogFormat::Plain);
+
     // Initialise the global tracing subscriber exactly once.
-    init_tracing(debug, trace, log_json, watch_log_file.as_deref());
+    init_tracing(
+        debug,
+        trace,
+        stderr_format,
+        LogFormat::Json,
+        common.log_file.as_deref(),
+    );
 
     // If the user supplied a storage path on the CLI (or via env),
     // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
@@ -324,16 +323,23 @@ pub(crate) fn log_level_str(debug: bool, trace: bool) -> &'static str {
 ///
 /// # Arguments
 ///
-/// * `verbose` - When `true`, sets the default level to `DEBUG`.
-/// * `json_format` - When `true`, emits NDJSON to stderr instead of the
-///   default human-readable format.
+/// * `debug` - When `true` and `trace` is `false`, sets the default level to `DEBUG`.
+/// * `trace` - When `true`, sets the default level to `TRACE`.
+/// * `stderr_format` - Output format for the stderr sink.
+/// * `file_format` - Output format for the optional file sink.
 /// * `log_file` - Optional path to an additional log-file sink. The file
-///   is created (or appended to) in JSON format.
-pub(crate) fn init_tracing(debug: bool, trace: bool, json_format: bool, log_file: Option<&Path>) {
+///   is created (or appended to) in the format specified by `file_format`.
+pub(crate) fn init_tracing(
+    debug: bool,
+    trace: bool,
+    stderr_format: LogFormat,
+    file_format: LogFormat,
+    log_file: Option<&Path>,
+) {
     let level = log_level_str(debug, trace);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    // Open the optional file sink.  Failures are non-fatal: we print a
+    // Open the optional file sink. Failures are non-fatal: we print a
     // warning to stderr and continue without the file layer.
     let file_sink: Option<Arc<std::fs::File>> = log_file.and_then(|path| {
         OpenOptions::new()
@@ -345,23 +351,23 @@ pub(crate) fn init_tracing(debug: bool, trace: bool, json_format: bool, log_file
             .ok()
     });
 
-    if json_format {
-        let stderr_layer = fmt::layer().json().with_writer(std::io::stderr);
-        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(stderr_layer)
-            .with(file_layer)
-            .init();
-    } else {
-        let stderr_layer = fmt::layer().with_writer(std::io::stderr);
-        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(stderr_layer)
-            .with(file_layer)
-            .init();
-    }
+    let stderr_layer = match stderr_format {
+        LogFormat::Plain => fmt::layer().with_writer(std::io::stderr).boxed(),
+        LogFormat::Compact => fmt::layer().compact().with_writer(std::io::stderr).boxed(),
+        LogFormat::Json => fmt::layer().json().with_writer(std::io::stderr).boxed(),
+    };
+
+    let file_layer = file_sink.map(|f| match file_format {
+        LogFormat::Plain => fmt::layer().with_writer(f).boxed(),
+        LogFormat::Compact => fmt::layer().compact().with_writer(f).boxed(),
+        LogFormat::Json => fmt::layer().json().with_writer(f).boxed(),
+    });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
 }
 
 #[cfg(test)]

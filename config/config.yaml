@@ -189,6 +189,18 @@ skills:
   #   trust_store_path: ~/.xzatoma/skills_trust.yaml
   #   allow_custom_paths_without_trust: false
   #   strict_frontmatter: true
+# log:
+#   # Format for stderr output. Options: plain | compact | json
+#   # Default: plain
+#   stderr_format: plain
+#
+#   # Format for the optional file sink. Options: plain | compact | json
+#   # Default: json
+#   file_format: json
+#
+#   # Optional path to write logs to a file in addition to stderr.
+#   # file_path: /var/log/xzatoma.log
+
 # MCP (Model Context Protocol) client configuration
 # mcp:
 #   auto_connect: true

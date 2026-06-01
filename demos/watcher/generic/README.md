@@ -5,7 +5,7 @@ process that consumes a plan serialised as a JSON event from a Redpanda topic,
 executes it autonomously through the configured AI provider, and publishes the
 result as a JSON event to an output topic.
 
-The generic watcher requires no XZepr or Janus Gatekeeper API and no receipt
+The generic watcher requires no XZepr API and no event
 infrastructure. The plan is fully contained in each Kafka message; XZatoma
 executes it and posts a compact result event back to Redpanda. Every processed
 plan publishes the same `PlanResultEvent` JSON shape to the results topic,
