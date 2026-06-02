@@ -160,6 +160,15 @@ pub struct KafkaConsumerConfig {
 
     /// Session timeout duration.
     pub session_timeout: Duration,
+
+    /// Broker address family preference passed to rdkafka.
+    ///
+    /// Valid values: `"v4"`, `"v6"`, `"any"`. Defaults to `"v4"`.
+    pub broker_address_family: String,
+
+    /// How long the consumer loop waits for a message before re-checking the
+    /// shutdown flag. Defaults to 1 second.
+    pub poll_interval: Duration,
 }
 
 impl KafkaConsumerConfig {
@@ -192,9 +201,23 @@ impl KafkaConsumerConfig {
             sasl_config: None,
             ssl_config: None,
             auto_offset_reset: "earliest".to_string(),
-            enable_auto_commit: true,
+            enable_auto_commit: false,
             session_timeout: Duration::from_secs(30),
+            broker_address_family: "v4".to_string(),
+            poll_interval: Duration::from_secs(1),
         }
+    }
+
+    /// Sets the broker address family preference.
+    pub fn with_broker_address_family(mut self, family: &str) -> Self {
+        self.broker_address_family = family.to_string();
+        self
+    }
+
+    /// Sets the consumer poll interval.
+    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
+        self.poll_interval = interval;
+        self
     }
 
     /// Sets a custom consumer group ID.
@@ -402,7 +425,7 @@ mod tests {
         assert!(config.sasl_config.is_none());
         assert!(config.ssl_config.is_none());
         assert_eq!(config.auto_offset_reset, "earliest");
-        assert!(config.enable_auto_commit);
+        assert!(!config.enable_auto_commit);
         assert_eq!(config.session_timeout, Duration::from_secs(30));
     }
 

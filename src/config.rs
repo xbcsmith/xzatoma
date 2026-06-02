@@ -1812,6 +1812,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security: None,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
             }
 
@@ -1834,6 +1836,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security: None,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
             }
 
@@ -2077,6 +2081,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
@@ -3730,6 +3736,8 @@ kafka:
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -3753,6 +3761,8 @@ kafka:
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -4511,6 +4521,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
@@ -4543,6 +4555,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
@@ -4601,6 +4615,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         assert!(cfg.validate().is_ok());
@@ -4619,6 +4635,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
         cfg.watcher.generic_match = GenericMatchConfig {
             action: Some("deploy.*".to_string()),
@@ -4642,6 +4660,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
 
@@ -4661,6 +4681,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let err = cfg.validate().unwrap_err().to_string();
@@ -5532,6 +5554,30 @@ pub struct KafkaWatcherConfig {
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
+
+    /// Broker address family preference for rdkafka connections.
+    ///
+    /// Valid values: `"v4"`, `"v6"`, `"any"`. Defaults to `"v4"` to avoid
+    /// `localhost` resolving to `::1` on dual-stack hosts where the broker
+    /// only listens on IPv4. Set to `"v6"` or `"any"` for IPv6 environments.
+    #[serde(default = "default_broker_address_family")]
+    pub broker_address_family: String,
+
+    /// How long (in milliseconds) the consumer loop waits for a message before
+    /// re-checking the shutdown flag. Lower values increase shutdown
+    /// responsiveness at the cost of more idle wakeups. Defaults to `1000`.
+    #[serde(default = "default_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+}
+
+/// Default broker address family for rdkafka connections.
+fn default_broker_address_family() -> String {
+    "v4".to_string()
+}
+
+/// Default consumer poll interval in milliseconds.
+fn default_poll_interval_ms() -> u64 {
+    1000
 }
 
 /// Default number of partitions for auto-created Kafka topics.

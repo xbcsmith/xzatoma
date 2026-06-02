@@ -431,7 +431,7 @@ impl GenericConsumerTrait for RealGenericConsumer {
                 .map_err(|e| {
                     XzatomaError::Watcher(format!("Failed to build commit offset list: {}", e))
                 })?;
-            self.inner.commit(&tpl, CommitMode::Async).map_err(|e| {
+            self.inner.commit(&tpl, CommitMode::Sync).map_err(|e| {
                 XzatomaError::Watcher(format!("Failed to commit Kafka offset: {}", e))
             })?;
             self.pending_commit = None;

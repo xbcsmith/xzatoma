@@ -208,7 +208,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--brokers",
-        default=os.environ.get("XZATOMA_BROKERS", "localhost:9092"),
+        default=os.environ.get("XZATOMA_BROKERS", "localhost:19092"),
         help="Kafka bootstrap brokers",
     )
     return parser.parse_args()

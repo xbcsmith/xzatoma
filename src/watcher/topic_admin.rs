@@ -556,6 +556,8 @@ mod tests {
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         }
     }
 
@@ -787,6 +789,8 @@ mod tests {
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         };
 
         let admin = WatcherTopicAdmin::new(&config).unwrap();

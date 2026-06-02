@@ -426,7 +426,7 @@ impl AcpExecutor {
 
         // Build tools, skills, and MCP stack via the shared environment builder.
         // ACP execution is always headless (non-interactive).
-        let env = build_agent_environment(&self.config, &working_dir, true, None).await?;
+        let env = build_agent_environment(&self.config, &working_dir, true, None, None).await?;
         let mut tools = env.tool_registry;
 
         if let Some(disclosure) = &env.skill_disclosure {

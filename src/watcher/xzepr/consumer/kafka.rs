@@ -38,10 +38,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use futures::StreamExt;
-use rdkafka::consumer::{Consumer, StreamConsumer};
+use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 use rdkafka::ClientConfig;
 use rdkafka::Message;
@@ -190,6 +190,10 @@ impl XzeprConsumer {
                 "security.protocol".to_string(),
                 self.config.security_protocol.as_str().to_string(),
             ),
+            (
+                "broker.address.family".to_string(),
+                self.config.broker_address_family.clone(),
+            ),
         ];
 
         // Add SASL configuration
@@ -238,7 +242,9 @@ impl XzeprConsumer {
     /// Returns `ConsumerError::Kafka` if the consumer cannot be created or
     /// subscription fails.
     fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
-        let client_config = self.build_client_config();
+        let mut client_config = self.build_client_config();
+        // Always disable auto-commit; both loops commit manually after processing.
+        client_config.set("enable.auto.commit", "false");
 
         let consumer: StreamConsumer = client_config
             .create()
@@ -327,38 +333,46 @@ impl XzeprConsumer {
             let message = tokio::select! {
                 biased;
                 msg = stream.next() => msg,
-                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                    debug!(
-                        service = %self.config.service_name,
-                        "No messages received, checking shutdown flag"
-                    );
+                () = tokio::time::sleep(self.config.poll_interval) => {
+                    trace!(service = %self.config.service_name, "No messages received, checking shutdown flag");
                     continue;
                 }
             };
 
             match message {
-                Some(Ok(borrowed_message)) => match borrowed_message.payload_view::<str>() {
-                    Some(Ok(payload)) => {
-                        if let Err(e) = Self::process_message(payload, &*handler).await {
+                Some(Ok(borrowed_message)) => {
+                    match borrowed_message.payload_view::<str>() {
+                        Some(Ok(payload)) => {
+                            if let Err(e) = Self::process_message(payload, &*handler).await {
+                                error!(
+                                    service = %self.config.service_name,
+                                    "Failed to process message: {}", e
+                                );
+                            }
+                        }
+                        Some(Err(e)) => {
                             error!(
                                 service = %self.config.service_name,
-                                "Failed to process message: {}", e
+                                "Error decoding message payload as UTF-8: {}", e
+                            );
+                        }
+                        None => {
+                            debug!(
+                                service = %self.config.service_name,
+                                "Received message with empty payload, skipping"
                             );
                         }
                     }
-                    Some(Err(e)) => {
-                        error!(
+                    // Commit after processing (or skipping) so the offset
+                    // advances regardless of processing outcome.
+                    if let Err(e) = consumer.commit_message(&borrowed_message, CommitMode::Sync) {
+                        warn!(
                             service = %self.config.service_name,
-                            "Error decoding message payload as UTF-8: {}", e
+                            error = %e,
+                            "Failed to commit Kafka offset"
                         );
                     }
-                    None => {
-                        debug!(
-                            service = %self.config.service_name,
-                            "Received message with empty payload, skipping"
-                        );
-                    }
-                },
+                }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(
@@ -429,53 +443,67 @@ impl XzeprConsumer {
             let message = tokio::select! {
                 biased;
                 msg = stream.next() => msg,
-                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                    debug!(
-                        service = %self.config.service_name,
-                        "No messages received, checking shutdown flag"
-                    );
+                () = tokio::time::sleep(self.config.poll_interval) => {
+                    trace!(service = %self.config.service_name, "No messages received, checking shutdown flag");
                     continue;
                 }
             };
 
             match message {
-                Some(Ok(borrowed_message)) => match borrowed_message.payload_view::<str>() {
-                    Some(Ok(payload)) => match serde_json::from_str::<CloudEventMessage>(payload) {
-                        Ok(event) => {
-                            debug!(
-                                event_id = %event.id,
-                                event_type = %event.event_type,
-                                "Sending CloudEvent to channel"
-                            );
-                            if sender.send(event).await.is_err() {
-                                info!(
-                                    service = %self.config.service_name,
-                                    "Channel receiver dropped, stopping consumer"
-                                );
-                                break;
+                Some(Ok(borrowed_message)) => {
+                    let mut receiver_dropped = false;
+                    match borrowed_message.payload_view::<str>() {
+                        Some(Ok(payload)) => {
+                            match serde_json::from_str::<CloudEventMessage>(payload) {
+                                Ok(event) => {
+                                    debug!(
+                                        event_id = %event.id,
+                                        event_type = %event.event_type,
+                                        "Sending CloudEvent to channel"
+                                    );
+                                    if sender.send(event).await.is_err() {
+                                        info!(
+                                            service = %self.config.service_name,
+                                            "Channel receiver dropped, stopping consumer"
+                                        );
+                                        receiver_dropped = true;
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        service = %self.config.service_name,
+                                        "Error parsing CloudEvent: {}", e
+                                    );
+                                    debug!("Raw payload: {}", payload);
+                                }
                             }
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             error!(
                                 service = %self.config.service_name,
-                                "Error parsing CloudEvent: {}", e
+                                "Error decoding message payload as UTF-8: {}", e
                             );
-                            debug!("Raw payload: {}", payload);
                         }
-                    },
-                    Some(Err(e)) => {
-                        error!(
+                        None => {
+                            debug!(
+                                service = %self.config.service_name,
+                                "Received message with empty payload, skipping"
+                            );
+                        }
+                    }
+                    if receiver_dropped {
+                        break;
+                    }
+                    // Commit after delivering (or skipping) so the offset
+                    // advances regardless of parse/send outcome.
+                    if let Err(e) = consumer.commit_message(&borrowed_message, CommitMode::Sync) {
+                        warn!(
                             service = %self.config.service_name,
-                            "Error decoding message payload as UTF-8: {}", e
+                            error = %e,
+                            "Failed to commit Kafka offset"
                         );
                     }
-                    None => {
-                        debug!(
-                            service = %self.config.service_name,
-                            "Received message with empty payload, skipping"
-                        );
-                    }
-                },
+                }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(

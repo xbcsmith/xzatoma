@@ -42,7 +42,7 @@ use crate::tools::ToolRegistry;
 ///
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = Config::default();
-/// let env = build_agent_environment(&config, Path::new("."), true, None).await?;
+/// let env = build_agent_environment(&config, Path::new("."), true, None, None).await?;
 /// // env.tool_registry, env.mcp_manager, etc. are ready to use.
 /// # Ok(())
 /// # }
@@ -92,6 +92,10 @@ pub struct AgentEnvironment {
 ///   `config.agent.chat.default_mode`. Pass `None` to use the config value.
 ///   Watcher callers pass `Some(ChatMode::Watcher)` to obtain a tool registry
 ///   with full write-equivalent access and the autonomous watcher system prompt.
+/// * `override_safety_mode` - When `Some(mode)`, replaces the safety mode
+///   derived from `config.agent.chat.default_safety`. Pass `None` to use the
+///   config value. Watcher callers pass `Some(SafetyMode::NeverConfirm)` so
+///   the tool registry allows unattended command execution.
 ///
 /// # Returns
 ///
@@ -111,7 +115,7 @@ pub struct AgentEnvironment {
 ///
 /// # async fn example() -> xzatoma::error::Result<()> {
 /// let config = Config::default();
-/// let env = build_agent_environment(&config, Path::new("."), true, None).await?;
+/// let env = build_agent_environment(&config, Path::new("."), true, None, None).await?;
 /// assert!(env.mcp_manager.is_none()); // no MCP servers in default config
 /// # Ok(())
 /// # }
@@ -121,16 +125,18 @@ pub async fn build_agent_environment(
     working_dir: &Path,
     headless: bool,
     override_mode: Option<ChatMode>,
+    override_safety_mode: Option<SafetyMode>,
 ) -> Result<AgentEnvironment> {
     // 1. Parse chat mode and safety mode from config.
     let config_chat_mode =
         ChatMode::parse_str(&config.agent.chat.default_mode).unwrap_or(ChatMode::Planning);
-    // Apply caller-supplied override when present.
+    // Apply caller-supplied overrides when present.
     let chat_mode = override_mode.unwrap_or(config_chat_mode);
-    let safety_mode = match config.agent.chat.default_safety.to_lowercase().as_str() {
+    let config_safety_mode = match config.agent.chat.default_safety.to_lowercase().as_str() {
         "yolo" => SafetyMode::NeverConfirm,
         _ => SafetyMode::AlwaysConfirm,
     };
+    let safety_mode = override_safety_mode.unwrap_or(config_safety_mode);
 
     // 2. Build startup skill disclosure text.
     let skill_disclosure = super::build_startup_skill_disclosure(config, working_dir)?;
@@ -199,7 +205,8 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_succeeds_with_default_config() {
         let config = Config::default();
-        let result = build_agent_environment(&config, std::path::Path::new("."), true, None).await;
+        let result =
+            build_agent_environment(&config, std::path::Path::new("."), true, None, None).await;
         assert!(
             result.is_ok(),
             "build_agent_environment should succeed with default config: {:?}",
@@ -210,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_headless_true_no_mcp_manager_by_default() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         // Default config has auto_connect=false so no MCP manager.
@@ -222,7 +229,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_headless_false_no_mcp_manager_by_default() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), false, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), false, None, None)
             .await
             .unwrap();
         assert!(env.mcp_manager.is_none());
@@ -231,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_chat_mode_defaults_to_planning() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         assert_eq!(env.chat_mode, ChatMode::Planning);
@@ -240,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_safety_mode_defaults_to_always_confirm() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         assert_eq!(env.safety_mode, SafetyMode::AlwaysConfirm);
@@ -250,7 +257,7 @@ mod tests {
     async fn test_build_agent_environment_yolo_safety_mode_parses_correctly() {
         let mut config = Config::default();
         config.agent.chat.default_safety = "yolo".to_string();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         assert_eq!(env.safety_mode, SafetyMode::NeverConfirm);
@@ -259,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_tool_registry_is_populated() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         // The tool registry should contain at least the standard tools.
@@ -270,7 +277,7 @@ mod tests {
     async fn test_build_agent_environment_write_mode_parsed_from_config() {
         let mut config = Config::default();
         config.agent.chat.default_mode = "write".to_string();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         assert_eq!(env.chat_mode, ChatMode::Write);
@@ -279,7 +286,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_agent_environment_active_skill_registry_is_initialized() {
         let config = Config::default();
-        let env = build_agent_environment(&config, std::path::Path::new("."), true, None)
+        let env = build_agent_environment(&config, std::path::Path::new("."), true, None, None)
             .await
             .unwrap();
         // The active skill registry should start empty but be accessible.
@@ -296,6 +303,7 @@ mod tests {
             std::path::Path::new("."),
             true,
             Some(ChatMode::Watcher),
+            None,
         )
         .await
         .unwrap();
