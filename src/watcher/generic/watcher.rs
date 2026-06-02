@@ -113,6 +113,8 @@ pub enum MessageDisposition {
 ///     security: None,
 ///     num_partitions: 1,
 ///     replication_factor: 1,
+///     broker_address_family: "v4".to_string(),
+///     poll_interval_ms: 1000,
 /// });
 /// let _watcher = GenericWatcher::new(config, true)?;
 /// # Ok(())
@@ -165,6 +167,8 @@ impl GenericWatcher {
     ///     security: None,
     ///     num_partitions: 1,
     ///     replication_factor: 1,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// });
     ///
     /// let watcher = GenericWatcher::new(config, true);
@@ -249,6 +253,8 @@ impl GenericWatcher {
     ///     security: None,
     ///     num_partitions: 1,
     ///     replication_factor: 1,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// });
     /// let watcher = GenericWatcher::new(config, true)?
     ///     .with_producer(Arc::new(FakeResultProducer::new()));

@@ -35,6 +35,8 @@
 //!     num_partitions: 1,
 //!     replication_factor: 1,
 //!     security: None,
+//!     broker_address_family: "v4".to_string(),
+//!     poll_interval_ms: 1000,
 //! };
 //!
 //! let admin = WatcherTopicAdmin::new(&kafka).unwrap();
@@ -84,6 +86,8 @@ use tracing::info;
 ///     num_partitions: 1,
 ///     replication_factor: 1,
 ///     security: None,
+///     broker_address_family: "v4".to_string(),
+///     poll_interval_ms: 1000,
 /// };
 ///
 /// let admin = WatcherTopicAdmin::new(&kafka).unwrap();
@@ -146,6 +150,8 @@ impl WatcherTopicAdmin {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let admin = WatcherTopicAdmin::new(&kafka).unwrap();
@@ -216,6 +222,8 @@ impl WatcherTopicAdmin {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let admin = WatcherTopicAdmin::new(&kafka).unwrap();
