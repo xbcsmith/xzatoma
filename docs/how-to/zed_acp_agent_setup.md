@@ -18,7 +18,7 @@ You need:
 
 Confirm XZatoma is on your PATH:
 
-```sh
+```bash
 xzatoma --version
 ```
 
@@ -29,6 +29,44 @@ stdout. Any non-JSON bytes on stdout will corrupt the protocol stream and break
 the Zed connection. XZatoma forces all tracing, logging, and diagnostic output
 to stderr automatically in agent mode. Do not set environment variables that
 write additional output to stdout.
+
+## Logging verbosity in Zed
+
+Zed launches XZatoma as a subprocess and passes environment variables from the
+`env` block in your agent server configuration. Because Zed provides env vars
+rather than CLI arguments, use `RUST_LOG` to control log verbosity instead of
+the `--debug` or `--trace` CLI flags:
+
+```json
+{
+  "agent_servers": [
+    {
+      "name": "xzatoma",
+      "command": "xzatoma",
+      "args": ["agent"],
+      "env": {
+        "RUST_LOG": "xzatoma=debug"
+      }
+    }
+  ]
+}
+```
+
+`RUST_LOG=xzatoma=debug` is equivalent to passing `--debug` on the CLI.
+`RUST_LOG=xzatoma=trace` is equivalent to passing `--trace` on the CLI.
+
+For targeted module-level filtering, use the standard `RUST_LOG` module syntax:
+
+```json
+{
+  "env": {
+    "RUST_LOG": "xzatoma::acp=debug,xzatoma::agent=trace"
+  }
+}
+```
+
+When `RUST_LOG` is set explicitly it takes precedence over any `--debug` or
+`--trace` flag that might be present in the `args` array.
 
 ## Step 1: Add XZatoma to Zed agent_servers
 

@@ -546,7 +546,32 @@ If any configured filter does not match, the event is skipped.
 
 ### Logging is not detailed enough
 
-Increase logging verbosity:
+Increase logging verbosity using the `--debug` or `--trace` flag after the
+`watch` subcommand:
+
+```bash
+xzatoma watch --debug --config config/watcher.yaml --dry-run
+xzatoma watch --trace --config config/watcher.yaml --dry-run
+```
+
+`--debug` enables debug-level output for the whole process. `--trace` enables
+trace-level output and is more verbose.
+
+When `RUST_LOG` is set explicitly in the environment, it takes precedence over
+`--debug` and `--trace`. Use `RUST_LOG` for targeted module-level filtering that
+the flags cannot express:
+
+```bash
+RUST_LOG=xzatoma::watcher=debug xzatoma watch --config config/watcher.yaml
+```
+
+Note: the `watcher.logging` block in your config file controls a separate
+per-event watcher file sink (log level and format for watcher output written to
+a file or structured stream). The `--debug` and `--trace` flags control the
+global tracing subscriber for the whole process and are independent of
+`watcher.logging`.
+
+For the legacy environment variable approach:
 
 ```bash
 export XZATOMA_WATCHER_LOG_LEVEL="debug"
@@ -572,8 +597,7 @@ calls, check two things:
 To diagnose, enable debug logging and inspect the first system message:
 
 ```bash
-export XZATOMA_WATCHER_LOG_LEVEL=debug
-xzatoma watch --config config.yaml --dry-run
+xzatoma watch --debug --config config.yaml --dry-run
 ```
 
 ### Payload debugging

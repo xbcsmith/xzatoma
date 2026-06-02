@@ -31,13 +31,13 @@ surfaces. Use `root_compatible` mode when you want ACP-style root paths.
 
 Print the resolved ACP configuration after file and environment overrides:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp config
 ```
 
 If you want to use a specific config file:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- --config config/config.yaml acp config
 ```
 
@@ -67,7 +67,7 @@ Common variables include:
 
 Example:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-4
+```bash
 export XZATOMA_ACP_ENABLED=true
 export XZATOMA_ACP_HOST=127.0.0.1
 export XZATOMA_ACP_PORT=8765
@@ -76,7 +76,7 @@ export XZATOMA_ACP_COMPATIBILITY_MODE=versioned
 
 Then confirm the effective configuration:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp config
 ```
 
@@ -84,19 +84,19 @@ cargo run -- acp config
 
 Start the ACP server with configuration defaults:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp serve
 ```
 
 Start the ACP server with explicit CLI overrides:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp serve --host 127.0.0.1 --port 8765 --base-path /api/v1/acp
 ```
 
 Start the ACP server in root-compatible mode:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp serve --host 127.0.0.1 --port 8765 --root-compatible
 ```
 
@@ -111,25 +111,25 @@ Notes:
 
 If you are using the default versioned layout, verify the ping endpoint:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/ping
 ```
 
 List available agents:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/agents
 ```
 
 Fetch the XZatoma ACP manifest:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/agents/xzatoma
 ```
 
 If you enabled root-compatible mode, use:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-3
+```bash
 curl http://127.0.0.1:8765/ping
 curl http://127.0.0.1:8765/agents
 curl http://127.0.0.1:8765/agents/xzatoma
@@ -139,7 +139,7 @@ curl http://127.0.0.1:8765/agents/xzatoma
 
 Create a synchronous run:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-17
+```bash
 curl -X POST http://127.0.0.1:8765/api/v1/acp/runs \
   -H 'Content-Type: application/json' \
   -d '{
@@ -163,7 +163,7 @@ curl -X POST http://127.0.0.1:8765/api/v1/acp/runs \
 
 Create an asynchronous run:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-17
+```bash
 curl -X POST http://127.0.0.1:8765/api/v1/acp/runs \
   -H 'Content-Type: application/json' \
   -d '{
@@ -187,7 +187,7 @@ curl -X POST http://127.0.0.1:8765/api/v1/acp/runs \
 
 Create a streaming run:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-17
+```bash
 curl -N -X POST http://127.0.0.1:8765/api/v1/acp/runs \
   -H 'Content-Type: application/json' \
   -d '{
@@ -215,32 +215,32 @@ If you are using root-compatible mode, replace `/api/v1/acp/runs` with `/runs`.
 
 Once you have a run ID, fetch its current snapshot:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/runs/<run_id>
 ```
 
 Fetch its event history:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/runs/<run_id>/events
 ```
 
 Fetch the session and associated runs:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 curl http://127.0.0.1:8765/api/v1/acp/sessions/<session_id>
 ```
 
 XZatoma also provides CLI-side run inspection for persisted runs:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-2
+```bash
 cargo run -- acp runs
 cargo run -- acp runs --limit 10
 ```
 
 Filter by session ID:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp runs --session-id <session_id>
 ```
 
@@ -248,13 +248,13 @@ cargo run -- acp runs --session-id <session_id>
 
 Validate ACP configuration only:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp validate
 ```
 
 Validate an ACP manifest document:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp validate --manifest docs/reference/acp_manifest.json
 ```
 
@@ -311,6 +311,30 @@ production use:
 - ACP-facing authentication may still require external hardening or a reverse
   proxy strategy
 
+## Diagnosing the ACP server with verbose logging
+
+Use `--debug` or `--trace` after the `acp serve` subcommand token for verbose
+output. The flags must appear after the subcommand, not before it:
+
+```bash
+# correct
+xzatoma acp serve --debug
+xzatoma acp serve --trace
+
+# incorrect -- flags before subcommand are not accepted
+# xzatoma --debug acp serve
+```
+
+`--debug` enables debug-level output for the whole process. `--trace` enables
+trace-level output and is more verbose.
+
+When `RUST_LOG` is set explicitly in the environment, it takes precedence over
+`--debug` and `--trace`. Use `RUST_LOG` for targeted module-level filtering:
+
+```bash
+RUST_LOG=xzatoma::acp=debug xzatoma acp serve
+```
+
 ## Troubleshooting
 
 ### The server fails to start
@@ -324,7 +348,7 @@ Check for:
 
 Print the resolved configuration first:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-1
+```bash
 cargo run -- acp config
 ```
 
@@ -342,7 +366,7 @@ Check whether you are using:
 Review the payload shape carefully. Start with a text-only user message and a
 known agent name:
 
-```/dev/null/run_xzatoma_as_an_acp_server.sh#L1-16
+```json
 {
   "mode": "sync",
   "agentName": "xzatoma",

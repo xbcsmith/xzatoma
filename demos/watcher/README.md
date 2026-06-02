@@ -1,8 +1,8 @@
 # Watcher Demos
 
-This directory contains two fully self-contained watcher demos for XZatoma.
-Each demo lives in its own subdirectory with its own configuration, scripts,
-Redpanda stack, and README.
+This directory contains two fully self-contained watcher demos for XZatoma. Each
+demo lives in its own subdirectory with its own configuration, scripts, Redpanda
+stack, and README.
 
 ---
 
@@ -24,9 +24,16 @@ each plan autonomously through the configured AI provider, and publishes a
 ```sh
 cd generic
 docker compose -f docker-compose.redpanda.yaml up -d
-xzatoma --config config.yaml watch
+xzatoma watch --config config.yaml
 # In a second terminal:
 ./seed_plan.sh hello
+```
+
+**With debug logging:**
+
+```sh
+xzatoma watch --config config.yaml --debug
+xzatoma watch --config config.yaml --trace --logfile /tmp/xzatoma-watch.log
 ```
 
 ---
@@ -48,9 +55,16 @@ publishes a result event to an output topic.
 ```sh
 cd xzepr
 docker compose -f docker-compose.redpanda.yaml up -d
-xzatoma --config config.yaml watch
+xzatoma watch --config config.yaml
 # In a second terminal:
 ./seed_event.sh build
+```
+
+**With debug logging:**
+
+```sh
+xzatoma watch --config config.yaml --debug
+xzatoma watch --config config.yaml --trace --logfile /tmp/xzatoma-xzepr.log
 ```
 
 ---
