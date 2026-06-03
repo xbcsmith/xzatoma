@@ -44,7 +44,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use ulid::Ulid;
 
 /// Errors that can occur in the generic watcher service.
@@ -113,6 +113,8 @@ pub enum MessageDisposition {
 ///     security: None,
 ///     num_partitions: 1,
 ///     replication_factor: 1,
+///     broker_address_family: "v4".to_string(),
+///     poll_interval_ms: 1000,
 /// });
 /// let _watcher = GenericWatcher::new(config, true)?;
 /// # Ok(())
@@ -165,6 +167,8 @@ impl GenericWatcher {
     ///     security: None,
     ///     num_partitions: 1,
     ///     replication_factor: 1,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// });
     ///
     /// let watcher = GenericWatcher::new(config, true);
@@ -249,6 +253,8 @@ impl GenericWatcher {
     ///     security: None,
     ///     num_partitions: 1,
     ///     replication_factor: 1,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// });
     /// let watcher = GenericWatcher::new(config, true)?
     ///     .with_producer(Arc::new(FakeResultProducer::new()));
@@ -316,8 +322,8 @@ impl GenericWatcher {
             let message = tokio::select! {
                 biased;
                 msg = consumer.next() => msg,
-                () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-                    debug!("No messages received, checking shutdown flag");
+                () = tokio::time::sleep(std::time::Duration::from_millis(self.kafka_config.poll_interval_ms)) => {
+                    trace!("No messages received, checking shutdown flag");
                     continue;
                 }
             };
@@ -529,6 +535,10 @@ impl GenericWatcher {
                 "client.id".to_string(),
                 "xzatoma-generic-watcher".to_string(),
             ),
+            (
+                "broker.address.family".to_string(),
+                self.kafka_config.broker_address_family.clone(),
+            ),
         ];
 
         if let Some(security) = &self.kafka_config.security {
@@ -582,6 +592,7 @@ impl GenericWatcher {
             &working_dir,
             true,
             Some(crate::chat_mode::ChatMode::Watcher),
+            Some(crate::chat_mode::SafetyMode::NeverConfirm),
         )
         .await
         .map_err(|e| {
@@ -760,6 +771,8 @@ mod tests {
                     security: None,
                     num_partitions: 1,
                     replication_factor: 1,
+                    broker_address_family: "v4".to_string(),
+                    poll_interval_ms: 1000,
                 }),
                 generic_match: match_config,
                 filters: Default::default(),
@@ -774,6 +787,7 @@ mod tests {
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
+            log: crate::config::LogConfig::default(),
         }
     }
 
@@ -989,6 +1003,8 @@ mod tests {
             auto_create_topics: true,
             num_partitions: 1,
             replication_factor: 1,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
             security: Some(KafkaSecurityConfig {
                 protocol: "SASL_SSL".to_string(),
                 sasl_mechanism: Some("SCRAM-SHA-256".to_string()),

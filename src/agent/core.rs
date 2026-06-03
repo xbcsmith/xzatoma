@@ -16,7 +16,7 @@ use crate::tools::{ToolRegistry, ToolResult};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::thinking::extract_thinking;
 use super::{ContextInfo, Conversation};
@@ -607,6 +607,8 @@ impl Agent {
 
         self.conversation.add_user_message(user_prompt.into());
 
+        self.log_provider_metadata();
+
         let mut iteration = 0;
 
         loop {
@@ -656,6 +658,19 @@ impl Agent {
 
             let tool_definitions = self.tools.all_definitions();
             let prompt_messages = self.messages_with_transient_system_messages();
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                for (index, msg) in prompt_messages.iter().enumerate() {
+                    let char_count = msg.content.as_deref().map(|c| c.len()).unwrap_or(0);
+                    trace!(
+                        msg_index = index,
+                        msg_role = %msg.role,
+                        msg_char_count = char_count,
+                        msg_content = msg.content.as_deref().unwrap_or(""),
+                        "conversation message"
+                    );
+                }
+            }
 
             observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
 
@@ -711,6 +726,20 @@ impl Agent {
             });
 
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                let tool_call_count = if has_tool_calls {
+                    message.tool_calls.as_ref().map(|tc| tc.len()).unwrap_or(0)
+                } else {
+                    0
+                };
+                trace!(
+                    has_tool_calls = has_tool_calls,
+                    tool_call_count = tool_call_count,
+                    response_chars = message.content.as_deref().map(|c| c.len()).unwrap_or(0),
+                    "provider response summary"
+                );
+            }
 
             observer.on_event(AgentExecutionEvent::ProviderResponseReceived {
                 text: message.content.clone(),
@@ -968,6 +997,8 @@ impl Agent {
             self.conversation.add_message(message);
         }
 
+        self.log_provider_metadata();
+
         let mut iteration = 0;
 
         loop {
@@ -1017,6 +1048,19 @@ impl Agent {
 
             let tool_definitions = self.tools.all_definitions();
             let prompt_messages = self.messages_with_transient_system_messages();
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                for (index, msg) in prompt_messages.iter().enumerate() {
+                    let char_count = msg.content.as_deref().map(|c| c.len()).unwrap_or(0);
+                    trace!(
+                        msg_index = index,
+                        msg_role = %msg.role,
+                        msg_char_count = char_count,
+                        msg_content = msg.content.as_deref().unwrap_or(""),
+                        "conversation message"
+                    );
+                }
+            }
 
             observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
 
@@ -1070,6 +1114,20 @@ impl Agent {
             });
 
             let has_tool_calls = message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty());
+
+            if tracing::enabled!(tracing::Level::TRACE) {
+                let tool_call_count = if has_tool_calls {
+                    message.tool_calls.as_ref().map(|tc| tc.len()).unwrap_or(0)
+                } else {
+                    0
+                };
+                trace!(
+                    has_tool_calls = has_tool_calls,
+                    tool_call_count = tool_call_count,
+                    response_chars = message.content.as_deref().map(|c| c.len()).unwrap_or(0),
+                    "provider response summary"
+                );
+            }
 
             observer.on_event(AgentExecutionEvent::ProviderResponseReceived {
                 text: message.content.clone(),
@@ -1215,6 +1273,12 @@ impl Agent {
     async fn execute_tool_call(&self, tool_call: &ToolCall) -> Result<ToolResult> {
         let tool_name = &tool_call.function.name;
         debug!("Executing tool: {}", tool_name);
+        trace!(
+            tool_name = %tool_name,
+            tool_call_id = %tool_call.id,
+            tool_args_json = %tool_call.function.arguments,
+            "tool call dispatch"
+        );
 
         // Get tool from registry
         let tool_executor = self
@@ -1235,6 +1299,17 @@ impl Agent {
         let result = tool_executor.execute(args).await.map_err(|e| {
             XzatomaError::Tool(format!("Tool '{}' execution failed: {}", tool_name, e))
         })?;
+
+        if tracing::enabled!(tracing::Level::TRACE) {
+            let preview: String = result.output.chars().take(200).collect();
+            trace!(
+                tool_name = %tool_name,
+                tool_call_id = %tool_call.id,
+                tool_result_bytes = result.output.len(),
+                tool_result_preview = %preview,
+                "tool result"
+            );
+        }
 
         // Truncate output if needed
         let max_output_size = self.config.tools.max_output_size;
@@ -1289,6 +1364,41 @@ impl Agent {
         );
 
         Ok(())
+    }
+
+    /// Logs provider model and type at TRACE level.
+    ///
+    /// This method is a no-op when the TRACE level is not enabled, so callers
+    /// may call it unconditionally at the start of execution entry points.
+    /// The provider model name is obtained via [`Provider::get_current_model`]
+    /// which is synchronous and makes no API calls.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use xzatoma::agent::Agent;
+    /// # use xzatoma::config::AgentConfig;
+    /// # use xzatoma::tools::ToolRegistry;
+    /// # async fn example() -> xzatoma::error::Result<()> {
+    /// # use xzatoma::config::CopilotConfig;
+    /// # use xzatoma::providers::CopilotProvider;
+    /// # let provider = CopilotProvider::new(CopilotConfig::default())?;
+    /// # let mut agent = Agent::new(provider, ToolRegistry::new(), AgentConfig::default())?;
+    /// // Called internally at the start of execute_with_observer and
+    /// // execute_provider_messages_with_observer when TRACE is enabled.
+    /// # Ok(())
+    /// # }
+    /// ```
+    fn log_provider_metadata(&self) {
+        if tracing::enabled!(tracing::Level::TRACE) {
+            let model = self.provider.get_current_model();
+            let provider_type = std::any::type_name::<dyn crate::providers::Provider>();
+            trace!(
+                provider_model = %model,
+                provider_type = provider_type,
+                "provider metadata"
+            );
+        }
     }
 
     /// Returns a reference to the conversation
@@ -1487,6 +1597,7 @@ mod tests {
         responses: Vec<Message>,
         call_count: Arc<std::sync::Mutex<usize>>,
         token_usage: Option<TokenUsage>,
+        model: Option<String>,
     }
 
     impl MockProvider {
@@ -1495,6 +1606,7 @@ mod tests {
                 responses,
                 call_count: Arc::new(std::sync::Mutex::new(0)),
                 token_usage: None,
+                model: None,
             }
         }
 
@@ -1503,6 +1615,16 @@ mod tests {
                 responses,
                 call_count: Arc::new(std::sync::Mutex::new(0)),
                 token_usage: Some(usage),
+                model: None,
+            }
+        }
+
+        fn with_model(model: &str) -> Self {
+            Self {
+                responses: vec![Message::assistant("done")],
+                call_count: Arc::new(std::sync::Mutex::new(0)),
+                token_usage: None,
+                model: Some(model.to_string()),
             }
         }
     }
@@ -1514,7 +1636,7 @@ mod tests {
         }
 
         fn current_model(&self) -> Option<&str> {
-            None
+            self.model.as_deref()
         }
 
         fn set_model(&mut self, _model: &str) {}
@@ -2472,5 +2594,27 @@ mod tests {
         } else {
             panic!("expected ContextWindowUpdated variant");
         }
+    }
+
+    // --- Phase 5 new tests ---
+
+    #[tokio::test]
+    async fn test_log_provider_metadata_no_panic_when_model_is_none() {
+        let provider = MockProvider::new(vec![Message::assistant("done")]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let agent = Agent::new(provider, tools, config).unwrap();
+        // MockProvider returns None from current_model(); the helper must not panic.
+        agent.log_provider_metadata();
+    }
+
+    #[tokio::test]
+    async fn test_log_provider_metadata_uses_model_name() {
+        let provider = MockProvider::with_model("test-model");
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+        let agent = Agent::new(provider, tools, config).unwrap();
+        // MockProvider returns Some("test-model"); the helper must not panic.
+        agent.log_provider_metadata();
     }
 }

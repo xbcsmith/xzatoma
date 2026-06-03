@@ -7,7 +7,8 @@ use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use xzatoma::error::Result;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use xzatoma::config::LogFormat;
 
 // Removed unused grouped imports to satisfy clippy
 
@@ -22,32 +23,37 @@ async fn main() -> Result<()> {
     // subscriber is initialised.
     let cli = Cli::parse_args();
 
-    // Extract Watch-specific logging preferences before consuming cli.
-    // For every other command the defaults (plain stderr, no file) apply.
-    let (log_json, watch_log_file) = match &cli.command {
-        Commands::Watch {
-            json_logs,
-            log_file,
-            ..
-        } => (*json_logs, log_file.clone()),
-        _ => (false, None),
-    };
+    // Clone CommonArgs so cli.command can be moved in the match below.
+    let common = cli.command.common_args().clone();
+
+    // --verbose maps to debug level for backward compatibility.
+    let debug = common.debug || common.verbose;
+    let trace = common.trace;
+
+    // Derive stderr format from the global --log-format flag, defaulting to plain.
+    let stderr_format = common.log_format.unwrap_or(LogFormat::Plain);
 
     // Initialise the global tracing subscriber exactly once.
-    init_tracing(cli.verbose, log_json, watch_log_file.as_deref());
+    init_tracing(
+        debug,
+        trace,
+        stderr_format,
+        LogFormat::Json,
+        common.log_file.as_deref(),
+    );
 
     // If the user supplied a storage path on the CLI (or via env),
     // mirror it into XZATOMA_HISTORY_DB so the storage initializer can pick it up.
     // This keeps callers unchanged while allowing `SqliteStorage::new()` to
     // honor an override.
-    if let Some(db_path) = &cli.storage_path {
+    if let Some(db_path) = &common.storage_path {
         std::env::set_var("XZATOMA_HISTORY_DB", db_path);
         tracing::info!("Using storage DB override from CLI: {}", db_path);
     }
 
     // Load configuration
-    let config_path = cli.config.as_deref().unwrap_or("config/config.yaml");
-    let config = Config::load(config_path, &cli)?;
+    let config_path = common.config.as_deref().unwrap_or("config/config.yaml");
+    let config = Config::load(config_path, &common)?;
 
     // Validate configuration
     config.validate()?;
@@ -60,6 +66,7 @@ async fn main() -> Result<()> {
             safe,
             resume,
             thinking_effort,
+            ..
         } => {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
@@ -88,6 +95,7 @@ async fn main() -> Result<()> {
             prompt,
             allow_dangerous,
             thinking_effort,
+            ..
         } => {
             tracing::info!("Starting plan execution mode");
             if let Some(plan_path) = &plan {
@@ -130,6 +138,7 @@ async fn main() -> Result<()> {
             dry_run,
             brokers,
             match_version,
+            ..
         } => {
             tracing::info!("Starting watcher mode");
             commands::watch::run_watch(
@@ -154,7 +163,7 @@ async fn main() -> Result<()> {
             .await?;
             Ok(())
         }
-        Commands::Auth { provider } => {
+        Commands::Auth { provider, .. } => {
             // Use CLI `--provider` override when supplied; otherwise fall back to the
             // configured/default provider from `config`.
             let provider = provider.unwrap_or_else(|| config.provider.provider_type.clone());
@@ -162,7 +171,7 @@ async fn main() -> Result<()> {
             commands::auth::authenticate(config, provider).await?;
             Ok(())
         }
-        Commands::Models { command } => {
+        Commands::Models { command, .. } => {
             tracing::info!("Starting model management command");
             match command {
                 ModelCommand::List {
@@ -196,7 +205,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::History { command } => {
+        Commands::History { command, .. } => {
             tracing::info!("Starting history command");
             commands::history::handle_history(command)?;
             Ok(())
@@ -208,6 +217,7 @@ async fn main() -> Result<()> {
             limit,
             offset,
             tree,
+            ..
         } => {
             tracing::info!("Starting replay command for conversation debugging");
             let args = commands::replay::ReplayArgs {
@@ -221,7 +231,7 @@ async fn main() -> Result<()> {
             commands::replay::run_replay(args).await?;
             Ok(())
         }
-        Commands::Mcp { command } => {
+        Commands::Mcp { command, .. } => {
             tracing::info!("Starting MCP command");
             commands::mcp::handle_mcp(command, config).await?;
             Ok(())
@@ -231,12 +241,13 @@ async fn main() -> Result<()> {
             model,
             allow_dangerous,
             working_dir,
+            ..
         } => {
             commands::agent::handle_agent(provider, model, allow_dangerous, working_dir, config)
                 .await?;
             Ok(())
         }
-        Commands::Acp { command } => {
+        Commands::Acp { command, .. } => {
             tracing::info!("Starting ACP command");
             match &command {
                 AcpCommand::Serve { .. }
@@ -248,7 +259,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Skills { command } => {
+        Commands::Skills { command, .. } => {
             tracing::info!("Starting skills command");
             match command {
                 SkillsCommand::List => {
@@ -276,6 +287,35 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Return the default log-level directive string for the given level flags.
+///
+/// This is extracted so that the level-selection logic can be unit-tested
+/// without initialising a tracing subscriber (which may only be done once
+/// per process).
+///
+/// Precedence: `trace` > `debug` > info default.
+///
+/// # Arguments
+///
+/// * `debug` - When `true` and `trace` is `false`, returns `"debug"`.
+/// * `trace` - When `true`, returns `"trace"` regardless of `debug`.
+///
+/// # Examples
+///
+/// ```no_run
+/// // log_level_str is pub(crate) in the binary — use the unit tests in this
+/// // module to verify its behaviour rather than a doc example.
+/// ```
+pub(crate) fn log_level_str(debug: bool, trace: bool) -> &'static str {
+    if trace {
+        "trace"
+    } else if debug {
+        "debug"
+    } else {
+        "xzatoma=info"
+    }
+}
+
 /// Initialize the global tracing subscriber.
 ///
 /// Must be called exactly once per process. Calling it a second time will
@@ -283,16 +323,23 @@ async fn main() -> Result<()> {
 ///
 /// # Arguments
 ///
-/// * `verbose` - When `true`, sets the default level to `DEBUG`.
-/// * `json_format` - When `true`, emits NDJSON to stderr instead of the
-///   default human-readable format.
+/// * `debug` - When `true` and `trace` is `false`, sets the default level to `DEBUG`.
+/// * `trace` - When `true`, sets the default level to `TRACE`.
+/// * `stderr_format` - Output format for the stderr sink.
+/// * `file_format` - Output format for the optional file sink.
 /// * `log_file` - Optional path to an additional log-file sink. The file
-///   is created (or appended to) in JSON format.
-fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
-    let level = if verbose { "debug" } else { "xzatoma=info" };
+///   is created (or appended to) in the format specified by `file_format`.
+pub(crate) fn init_tracing(
+    debug: bool,
+    trace: bool,
+    stderr_format: LogFormat,
+    file_format: LogFormat,
+    log_file: Option<&Path>,
+) {
+    let level = log_level_str(debug, trace);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-    // Open the optional file sink.  Failures are non-fatal: we print a
+    // Open the optional file sink. Failures are non-fatal: we print a
     // warning to stderr and continue without the file layer.
     let file_sink: Option<Arc<std::fs::File>> = log_file.and_then(|path| {
         OpenOptions::new()
@@ -304,21 +351,51 @@ fn init_tracing(verbose: bool, json_format: bool, log_file: Option<&Path>) {
             .ok()
     });
 
-    if json_format {
-        let stderr_layer = fmt::layer().json().with_writer(std::io::stderr);
-        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(stderr_layer)
-            .with(file_layer)
-            .init();
-    } else {
-        let stderr_layer = fmt::layer().with_writer(std::io::stderr);
-        let file_layer = file_sink.map(|f| fmt::layer().json().with_writer(f));
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(stderr_layer)
-            .with(file_layer)
-            .init();
+    let stderr_layer = match stderr_format {
+        LogFormat::Plain => fmt::layer().with_writer(std::io::stderr).boxed(),
+        LogFormat::Compact => fmt::layer().compact().with_writer(std::io::stderr).boxed(),
+        LogFormat::Json => fmt::layer().json().with_writer(std::io::stderr).boxed(),
+    };
+
+    let file_layer = file_sink.map(|f| match file_format {
+        LogFormat::Plain => fmt::layer().with_writer(f).boxed(),
+        LogFormat::Compact => fmt::layer().compact().with_writer(f).boxed(),
+        LogFormat::Json => fmt::layer().json().with_writer(f).boxed(),
+    });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stderr_layer)
+        .with(file_layer)
+        .init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_tracing_verbose_false_defaults_to_info() {
+        assert_eq!(log_level_str(false, false), "xzatoma=info");
+    }
+
+    #[test]
+    fn test_init_tracing_verbose_true_uses_debug() {
+        assert_eq!(log_level_str(true, false), "debug");
+    }
+
+    #[test]
+    fn test_init_tracing_debug_flag_uses_debug() {
+        assert_eq!(log_level_str(true, false), "debug");
+    }
+
+    #[test]
+    fn test_init_tracing_trace_flag_uses_trace() {
+        assert_eq!(log_level_str(false, true), "trace");
+    }
+
+    #[test]
+    fn test_init_tracing_trace_overrides_debug() {
+        assert_eq!(log_level_str(true, true), "trace");
     }
 }

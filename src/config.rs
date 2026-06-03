@@ -2,6 +2,18 @@
 //!
 //! This module handles loading, parsing, validating, and managing
 //! configuration from files, environment variables, and CLI overrides.
+//!
+//! ## Logging environment variables
+//!
+//! | Variable | Type | Description |
+//! |---|---|---|
+//! | `XZATOMA_DEBUG` | bool | Enable debug-level logging (`1`/`true`/`yes`/`on`) |
+//! | `XZATOMA_TRACE` | bool | Enable trace-level logging; implies debug |
+//! | `RUST_LOG` | filter | Full `tracing` filter string; overrides all flags when set |
+//! | `XZATOMA_LOG_FORMAT` | `plain\|compact\|json` | Override stderr log format |
+//! | `XZATOMA_LOG_STDERR_FORMAT` | `plain\|compact\|json` | Override stderr-only log format (more specific than `XZATOMA_LOG_FORMAT`) |
+//! | `XZATOMA_LOG_FILE_FORMAT` | `plain\|compact\|json` | Override file sink log format |
+//! | `XZATOMA_LOG_FILE` | path | Write an additional log stream to this file path |
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::config::McpConfig;
@@ -31,6 +43,9 @@ pub struct Config {
     /// Skills discovery and parsing configuration
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// Global log subscriber configuration
+    #[serde(default)]
+    pub log: LogConfig,
 }
 
 /// Provider configuration
@@ -1399,6 +1414,89 @@ pub enum WatcherPlanExecutionMode {
     SingleShot,
 }
 
+/// Output format for a log sink (stderr or file).
+///
+/// Controls whether log lines are emitted as human-readable text, compact
+/// single-line text, or newline-delimited JSON.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::LogFormat;
+/// use serde_yaml;
+///
+/// let fmt: LogFormat = serde_yaml::from_str("json").unwrap();
+/// assert_eq!(fmt, LogFormat::Json);
+///
+/// let fmt: LogFormat = serde_yaml::from_str("plain").unwrap();
+/// assert_eq!(fmt, LogFormat::Plain);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    /// Human-readable multi-line format with ANSI colour. Default for stderr.
+    #[default]
+    Plain,
+    /// Single-line compact text without ANSI colour.
+    Compact,
+    /// Newline-delimited JSON. Default for file sinks.
+    Json,
+}
+
+fn default_log_file_format() -> LogFormat {
+    LogFormat::Json
+}
+
+/// Global log subscriber configuration.
+///
+/// Controls the default logging level and output format for the XZatoma
+/// process. CLI flags (`--debug`, `--trace`, `--log-format`, `--logfile`)
+/// take precedence over this config at runtime when accessed through `main()`.
+/// These fields are also useful when `Config` is consumed as a library.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::{LogConfig, LogFormat};
+///
+/// let config = LogConfig::default();
+/// assert!(!config.debug);
+/// assert!(!config.trace);
+/// assert_eq!(config.stderr_format, LogFormat::Plain);
+/// assert_eq!(config.file_format, LogFormat::Json);
+/// assert!(config.file_path.is_none());
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig {
+    /// Enable debug-level logging. Env: `XZATOMA_DEBUG`.
+    #[serde(default)]
+    pub debug: bool,
+    /// Enable trace-level logging. Env: `XZATOMA_TRACE`.
+    #[serde(default)]
+    pub trace: bool,
+    /// Format for stderr output. Env: `XZATOMA_LOG_FORMAT` or `XZATOMA_LOG_STDERR_FORMAT`.
+    #[serde(default)]
+    pub stderr_format: LogFormat,
+    /// Format for the optional file sink. Env: `XZATOMA_LOG_FILE_FORMAT`.
+    #[serde(default = "default_log_file_format")]
+    pub file_format: LogFormat,
+    /// Optional path to write logs to a file in addition to stderr. Env: `XZATOMA_LOG_FILE`.
+    #[serde(default)]
+    pub file_path: Option<std::path::PathBuf>,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            debug: false,
+            trace: false,
+            stderr_format: LogFormat::Plain,
+            file_format: default_log_file_format(),
+            file_path: None,
+        }
+    }
+}
+
 impl Config {
     /// Load configuration from file with environment and CLI overrides
     ///
@@ -1414,7 +1512,7 @@ impl Config {
     /// # Errors
     ///
     /// Returns error if file cannot be read or parsed
-    pub fn load(path: &str, cli: &crate::cli::Cli) -> Result<Self> {
+    pub fn load(path: &str, common: &crate::cli::CommonArgs) -> Result<Self> {
         let mut config = if Path::new(path).exists() {
             Self::from_file(path)?
         } else {
@@ -1423,7 +1521,7 @@ impl Config {
         };
 
         config.apply_env_vars();
-        config.apply_cli_overrides(cli);
+        config.apply_cli_overrides(common);
 
         Ok(config)
     }
@@ -1441,6 +1539,7 @@ impl Config {
             mcp: McpConfig::default(),
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
+            log: LogConfig::default(),
         }
     }
 
@@ -1713,6 +1812,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security: None,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
             }
 
@@ -1735,6 +1836,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security: None,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
             }
 
@@ -1978,6 +2081,8 @@ impl Config {
                     num_partitions: 1,
                     replication_factor: 1,
                     security,
+                    broker_address_family: default_broker_address_family(),
+                    poll_interval_ms: default_poll_interval_ms(),
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
@@ -2346,11 +2451,83 @@ impl Config {
                 ),
             }
         }
+
+        // ---------------------------------------------------------------------
+        // Logging environment variable overrides
+        // ---------------------------------------------------------------------
+        if let Ok(debug_val) = std::env::var("XZATOMA_DEBUG") {
+            match parse_env_bool(&debug_val) {
+                Some(value) => {
+                    self.log.debug = value;
+                    tracing::debug!(debug = value, "Env override: XZATOMA_DEBUG");
+                }
+                None => tracing::warn!("Invalid XZATOMA_DEBUG: {}", debug_val),
+            }
+        }
+
+        if let Ok(trace_val) = std::env::var("XZATOMA_TRACE") {
+            match parse_env_bool(&trace_val) {
+                Some(value) => {
+                    self.log.trace = value;
+                    tracing::debug!(trace = value, "Env override: XZATOMA_TRACE");
+                }
+                None => tracing::warn!("Invalid XZATOMA_TRACE: {}", trace_val),
+            }
+        }
+
+        if let Ok(fmt) = std::env::var("XZATOMA_LOG_FORMAT") {
+            match parse_log_format(&fmt) {
+                Some(value) => {
+                    self.log.stderr_format = value;
+                    tracing::debug!(format = %fmt, "Env override: XZATOMA_LOG_FORMAT");
+                }
+                None => tracing::warn!("Invalid XZATOMA_LOG_FORMAT: {}", fmt),
+            }
+        }
+
+        if let Ok(fmt) = std::env::var("XZATOMA_LOG_STDERR_FORMAT") {
+            match parse_log_format(&fmt) {
+                Some(value) => {
+                    self.log.stderr_format = value;
+                    tracing::debug!(format = %fmt, "Env override: XZATOMA_LOG_STDERR_FORMAT");
+                }
+                None => tracing::warn!("Invalid XZATOMA_LOG_STDERR_FORMAT: {}", fmt),
+            }
+        }
+
+        if let Ok(fmt) = std::env::var("XZATOMA_LOG_FILE_FORMAT") {
+            match parse_log_format(&fmt) {
+                Some(value) => {
+                    self.log.file_format = value;
+                    tracing::debug!(format = %fmt, "Env override: XZATOMA_LOG_FILE_FORMAT");
+                }
+                None => tracing::warn!("Invalid XZATOMA_LOG_FILE_FORMAT: {}", fmt),
+            }
+        }
+
+        if let Ok(path) = std::env::var("XZATOMA_LOG_FILE") {
+            let trimmed = path.trim();
+            self.log.file_path = if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            };
+            tracing::debug!(path = %path, "Env override: XZATOMA_LOG_FILE");
+        }
     }
 
-    fn apply_cli_overrides(&mut self, cli: &crate::cli::Cli) {
-        if cli.verbose {
-            tracing::debug!("Verbose mode enabled");
+    fn apply_cli_overrides(&mut self, common: &crate::cli::CommonArgs) {
+        if common.verbose || common.debug {
+            tracing::debug!("Debug/verbose mode enabled");
+        }
+        if common.trace {
+            tracing::debug!("Trace mode enabled");
+        }
+        if let Some(fmt) = common.log_format {
+            self.log.stderr_format = fmt;
+        }
+        if let Some(ref path) = common.log_file {
+            self.log.file_path = Some(path.clone());
         }
     }
 
@@ -2814,6 +2991,15 @@ fn parse_env_bool(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_log_format(value: &str) -> Option<LogFormat> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "plain" => Some(LogFormat::Plain),
+        "compact" => Some(LogFormat::Compact),
+        "json" => Some(LogFormat::Json),
         _ => None,
     }
 }
@@ -3550,6 +3736,8 @@ kafka:
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -3573,6 +3761,8 @@ kafka:
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -3640,16 +3830,17 @@ kafka:
 
     #[test]
     fn test_load_nonexistent_file_uses_defaults() {
-        let cli = crate::cli::Cli {
+        let common = crate::cli::CommonArgs {
             config: None,
             verbose: false,
+            debug: false,
+            trace: false,
             storage_path: None,
-            command: crate::cli::Commands::Auth {
-                provider: Some("copilot".to_string()),
-            },
+            log_format: None,
+            log_file: None,
         };
 
-        let config = Config::load("nonexistent.yaml", &cli).unwrap();
+        let config = Config::load("nonexistent.yaml", &common).unwrap();
         assert_eq!(config.provider.provider_type, "copilot");
     }
 
@@ -4330,6 +4521,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
@@ -4362,6 +4555,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
@@ -4420,6 +4615,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         assert!(cfg.validate().is_ok());
@@ -4438,6 +4635,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
         cfg.watcher.generic_match = GenericMatchConfig {
             action: Some("deploy.*".to_string()),
@@ -4461,6 +4660,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
 
@@ -4480,6 +4681,8 @@ chat_enabled: true
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let err = cfg.validate().unwrap_err().to_string();
@@ -5072,6 +5275,126 @@ agent:
         assert_eq!(cfg.agent.subagent.model, Some("granite3.2:2b".to_string()));
         assert_eq!(cfg.agent.subagent.default_max_turns, 5);
     }
+
+    // --- Phase 3 LogConfig tests ---
+
+    #[test]
+    fn test_log_config_debug_field_default_false() {
+        let config = LogConfig::default();
+        assert!(!config.debug);
+    }
+
+    #[test]
+    fn test_log_config_trace_field_default_false() {
+        let config = LogConfig::default();
+        assert!(!config.trace);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_debug() {
+        let _debug = EnvVarGuard::set("XZATOMA_DEBUG", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(config.log.debug);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_trace() {
+        let _trace = EnvVarGuard::set("XZATOMA_TRACE", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(config.log.trace);
+    }
+
+    #[test]
+    fn test_log_format_serde_plain() {
+        let fmt: LogFormat = serde_yaml::from_str("plain").unwrap();
+        assert_eq!(fmt, LogFormat::Plain);
+        let serialized = serde_yaml::to_string(&fmt).unwrap();
+        assert!(serialized.trim() == "plain");
+    }
+
+    #[test]
+    fn test_log_format_serde_compact() {
+        let fmt: LogFormat = serde_yaml::from_str("compact").unwrap();
+        assert_eq!(fmt, LogFormat::Compact);
+        let serialized = serde_yaml::to_string(&fmt).unwrap();
+        assert!(serialized.trim() == "compact");
+    }
+
+    #[test]
+    fn test_log_format_serde_json() {
+        let fmt: LogFormat = serde_yaml::from_str("json").unwrap();
+        assert_eq!(fmt, LogFormat::Json);
+        let serialized = serde_yaml::to_string(&fmt).unwrap();
+        assert!(serialized.trim() == "json");
+    }
+
+    #[test]
+    fn test_log_config_default_stderr_format_is_plain() {
+        let config = LogConfig::default();
+        assert_eq!(config.stderr_format, LogFormat::Plain);
+    }
+
+    #[test]
+    fn test_log_config_default_file_format_is_json() {
+        let config = LogConfig::default();
+        assert_eq!(config.file_format, LogFormat::Json);
+    }
+
+    #[test]
+    fn test_log_config_default_file_path_is_none() {
+        let config = LogConfig::default();
+        assert!(config.file_path.is_none());
+    }
+
+    #[test]
+    fn test_log_config_default_debug_and_trace_are_false() {
+        let config = LogConfig::default();
+        assert!(!config.debug);
+        assert!(!config.trace);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_format() {
+        let _fmt = EnvVarGuard::set("XZATOMA_LOG_FORMAT", "json");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.log.stderr_format, LogFormat::Json);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_stderr_format() {
+        let _fmt = EnvVarGuard::set("XZATOMA_LOG_STDERR_FORMAT", "compact");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.log.stderr_format, LogFormat::Compact);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_file_format() {
+        let _fmt = EnvVarGuard::set("XZATOMA_LOG_FILE_FORMAT", "plain");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.log.file_format, LogFormat::Plain);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_log_file_path() {
+        let _path = EnvVarGuard::set("XZATOMA_LOG_FILE", "/tmp/xzatoma_test.log");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(
+            config.log.file_path,
+            Some(std::path::PathBuf::from("/tmp/xzatoma_test.log"))
+        );
+    }
 }
 
 /// Watcher backend type.
@@ -5231,6 +5554,30 @@ pub struct KafkaWatcherConfig {
     /// Security configuration
     #[serde(default)]
     pub security: Option<KafkaSecurityConfig>,
+
+    /// Broker address family preference for rdkafka connections.
+    ///
+    /// Valid values: `"v4"`, `"v6"`, `"any"`. Defaults to `"v4"` to avoid
+    /// `localhost` resolving to `::1` on dual-stack hosts where the broker
+    /// only listens on IPv4. Set to `"v6"` or `"any"` for IPv6 environments.
+    #[serde(default = "default_broker_address_family")]
+    pub broker_address_family: String,
+
+    /// How long (in milliseconds) the consumer loop waits for a message before
+    /// re-checking the shutdown flag. Lower values increase shutdown
+    /// responsiveness at the cost of more idle wakeups. Defaults to `1000`.
+    #[serde(default = "default_poll_interval_ms")]
+    pub poll_interval_ms: u64,
+}
+
+/// Default broker address family for rdkafka connections.
+fn default_broker_address_family() -> String {
+    "v4".to_string()
+}
+
+/// Default consumer poll interval in milliseconds.
+fn default_poll_interval_ms() -> u64 {
+    1000
 }
 
 /// Default number of partitions for auto-created Kafka topics.

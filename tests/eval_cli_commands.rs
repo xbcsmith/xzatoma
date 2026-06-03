@@ -12,8 +12,8 @@
 //!
 //! - **Execution** (`needs_config: true`): commands that must pass
 //!   `Config::load` and `Config::validate` before dispatch. The harness writes
-//!   a minimal config file to a per-scenario temp directory and prepends
-//!   `--config <path>` to the argument list. `XZATOMA_HISTORY_DB` and
+//!   a minimal config file to a per-scenario temp directory and inserts
+//!   `--config <path>` after the subcommand token. `XZATOMA_HISTORY_DB` and
 //!   `XZATOMA_SKILLS_TRUST_STORE_PATH` are also pointed at isolated temp paths
 //!   so every scenario is fully hermetic.
 //!
@@ -182,10 +182,19 @@ fn run_scenario(scenario: &Scenario) -> Result<(), String> {
     let temp_path = temp_dir.path();
     let temp_path_str = temp_path.to_string_lossy().into_owned();
 
-    // Build the final argument list: harness-injected flags come first so they
-    // appear before the subcommand name, which is where clap expects them.
+    // Build the final argument list.  Shared flags (--config, etc.) must appear
+    // after the subcommand token, so the first scenario arg (the subcommand) is
+    // emitted first, then harness flags, then the remaining scenario args.
     let mut final_args: Vec<String> = Vec::new();
     let mut extra_env: Vec<(String, String)> = Vec::new();
+
+    // Emit the subcommand first so shared flags land after it.
+    let args_tail_start = if scenario.needs_config && !scenario.args.is_empty() {
+        final_args.push(scenario.args[0].replace("__TEMP_DIR__", &temp_path_str));
+        1
+    } else {
+        0
+    };
 
     if scenario.needs_config {
         // Write minimal config to temp dir.
@@ -213,8 +222,8 @@ fn run_scenario(scenario: &Scenario) -> Result<(), String> {
         ));
     }
 
-    // Append scenario args, substituting __TEMP_DIR__ where present.
-    for arg in &scenario.args {
+    // Append remaining scenario args, substituting __TEMP_DIR__ where present.
+    for arg in &scenario.args[args_tail_start..] {
         final_args.push(arg.replace("__TEMP_DIR__", &temp_path_str));
     }
 

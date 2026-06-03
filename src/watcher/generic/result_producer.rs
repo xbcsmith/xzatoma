@@ -168,6 +168,7 @@ struct ResolvedProducerSettings {
     sasl_config: Option<SaslConfig>,
     ssl_config: Option<SslConfig>,
     request_timeout: Duration,
+    broker_address_family: String,
 }
 
 impl ResolvedProducerSettings {
@@ -232,6 +233,7 @@ impl ResolvedProducerSettings {
             sasl_config,
             ssl_config,
             request_timeout,
+            broker_address_family: config.broker_address_family.clone(),
         })
     }
 
@@ -251,6 +253,10 @@ impl ResolvedProducerSettings {
             ("retries".to_string(), "5".to_string()),
             ("compression.type".to_string(), "snappy".to_string()),
             ("enable.idempotence".to_string(), "true".to_string()),
+            (
+                "broker.address.family".to_string(),
+                self.broker_address_family.clone(),
+            ),
         ];
 
         if let Some(sasl) = &self.sasl_config {
@@ -312,6 +318,8 @@ impl ResolvedProducerSettings {
 ///     num_partitions: 1,
 ///     replication_factor: 1,
 ///     security: None,
+///     broker_address_family: "v4".to_string(),
+///     poll_interval_ms: 1000,
 /// };
 ///
 /// let producer = GenericResultProducer::new(&config).unwrap();
@@ -334,6 +342,8 @@ pub struct GenericResultProducer {
     ssl_config: Option<SslConfig>,
     /// Timeout for Kafka produce requests.
     request_timeout: Duration,
+    /// Broker address family preference passed to rdkafka.
+    broker_address_family: String,
     /// The underlying rdkafka future producer.
     producer: FutureProducer,
 }
@@ -391,6 +401,8 @@ impl GenericResultProducer {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let producer = GenericResultProducer::new(&config).unwrap();
@@ -451,6 +463,7 @@ impl GenericResultProducer {
             sasl_config: settings.sasl_config,
             ssl_config: settings.ssl_config,
             request_timeout: settings.request_timeout,
+            broker_address_family: settings.broker_address_family,
             producer,
         })
     }
@@ -476,6 +489,8 @@ impl GenericResultProducer {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let producer = GenericResultProducer::new(&config).unwrap();
@@ -506,6 +521,8 @@ impl GenericResultProducer {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let producer = GenericResultProducer::new(&config).unwrap();
@@ -541,6 +558,8 @@ impl GenericResultProducer {
     ///     num_partitions: 1,
     ///     replication_factor: 1,
     ///     security: None,
+    ///     broker_address_family: "v4".to_string(),
+    ///     poll_interval_ms: 1000,
     /// };
     ///
     /// let producer = GenericResultProducer::new(&config).unwrap();
@@ -560,6 +579,7 @@ impl GenericResultProducer {
             sasl_config: self.sasl_config.clone(),
             ssl_config: self.ssl_config.clone(),
             request_timeout: self.request_timeout,
+            broker_address_family: self.broker_address_family.clone(),
         }
         .kafka_config()
     }
@@ -1035,6 +1055,8 @@ mod tests {
             num_partitions: 1,
             replication_factor: 1,
             security: None,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         }
     }
 

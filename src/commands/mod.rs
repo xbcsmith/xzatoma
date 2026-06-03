@@ -1993,7 +1993,7 @@ pub mod r#run {
 
         // Build tools, skills, and MCP stack via the shared environment builder.
         // The run command is always headless (non-interactive).
-        let env = build_agent_environment(&config, &working_dir, true, None).await?;
+        let env = build_agent_environment(&config, &working_dir, true, None, None).await?;
         let tools = env.tool_registry;
         let active_skill_registry = env.active_skill_registry;
         let skill_disclosure = env.skill_disclosure;
@@ -2608,6 +2608,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2637,6 +2639,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2673,6 +2677,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
             config.watcher.logging.json_format = false;
 
@@ -2700,6 +2706,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2730,6 +2738,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2758,6 +2768,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2787,6 +2799,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2822,6 +2836,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2851,6 +2867,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2877,6 +2895,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2906,6 +2926,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2935,6 +2957,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -2964,6 +2988,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -3001,6 +3027,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(
@@ -3033,6 +3061,8 @@ pub mod watch {
                 security: None,
                 num_partitions: 1,
                 replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
             });
 
             let result = apply_cli_overrides(

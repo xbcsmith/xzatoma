@@ -3,35 +3,107 @@
 //! This module defines the CLI structure using clap's derive API,
 //! providing commands for chat, plan execution, and authentication.
 //!
-//! Global options such as `--config`, `--verbose`, and `--storage-path` can be
-//! placed before or after the selected subcommand.
+//! Shared options (`--config`, `--verbose`, `--storage-path`) are carried by
+//! [`CommonArgs`], which is flattened into every [`Commands`] variant.  Flags
+//! must appear after the subcommand token:
+//! `xzatoma subcommand --config path.yaml`.
 
+use crate::config::LogFormat;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
+
+/// Shared options that apply to every subcommand.
+///
+/// Each [`Commands`] variant flattens `CommonArgs` so that shared flags appear
+/// after the subcommand token: `xzatoma subcommand --config x.yaml`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::cli::{Cli, CommonArgs};
+/// use clap::Parser;
+///
+/// let cli = Cli::parse_from(["xzatoma", "auth", "--verbose"]);
+/// assert!(cli.command.common_args().verbose);
+/// ```
+#[derive(Args, Debug, Clone)]
+pub struct CommonArgs {
+    /// Path to configuration file
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "config/config.yaml",
+        env = "XZATOMA_CONFIG"
+    )]
+    pub config: Option<String>,
+
+    /// Enable verbose logging.
+    ///
+    /// Deprecated: use `--debug` or `--trace` instead.
+    #[arg(short = 'v', long)]
+    pub verbose: bool,
+
+    /// Enable debug-level logging.
+    ///
+    /// Equivalent to `RUST_LOG=debug`. Takes precedence over `--verbose`.
+    /// Precedence: `--trace` > `--debug` > `--verbose` > `RUST_LOG` env > info default.
+    #[arg(long, env = "XZATOMA_DEBUG")]
+    pub debug: bool,
+
+    /// Enable trace-level logging.
+    ///
+    /// Equivalent to `RUST_LOG=trace`. Implies `--debug`. Use for LLM
+    /// transcript capture and deep protocol inspection.
+    /// Precedence: `--trace` > `--debug` > `--verbose` > `RUST_LOG` env > info default.
+    #[arg(long, env = "XZATOMA_TRACE")]
+    pub trace: bool,
+
+    /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
+    #[arg(long, env = "XZATOMA_HISTORY_DB")]
+    pub storage_path: Option<String>,
+
+    /// Override log format for stderr output.
+    ///
+    /// Accepts `plain`, `compact`, or `json`. Overrides `config.log.stderr_format`
+    /// when set. Env: `XZATOMA_LOG_FORMAT`.
+    #[arg(long, env = "XZATOMA_LOG_FORMAT", value_enum)]
+    pub log_format: Option<LogFormat>,
+
+    /// Write a second log stream to the given file path.
+    ///
+    /// The file is created or appended to. Defaults to JSON format unless
+    /// overridden by `XZATOMA_LOG_FILE_FORMAT`.
+    /// Distinct from `--log-file` in the `watch` subcommand, which controls
+    /// per-event watcher output. Env: `XZATOMA_LOG_FILE`.
+    #[arg(id = "global-logfile", long = "logfile", env = "XZATOMA_LOG_FILE")]
+    pub log_file: Option<PathBuf>,
+}
+
+impl Default for CommonArgs {
+    fn default() -> Self {
+        Self {
+            config: Some("config/config.yaml".to_string()),
+            verbose: false,
+            debug: false,
+            trace: false,
+            storage_path: None,
+            log_format: None,
+            log_file: None,
+        }
+    }
+}
 
 /// XZatoma - Autonomous AI agent CLI.
 ///
 /// Execute tasks through conversation with AI providers using basic file system
 /// and terminal tools.
 ///
-/// Global options such as `--config`, `--verbose`, and `--storage-path` can be
-/// placed before or after the selected subcommand.
+/// Shared options (`--config`, `--verbose`, `--storage-path`) must appear
+/// after the subcommand token: `xzatoma subcommand --flag`.
 #[derive(Parser, Debug, Clone)]
 #[command(name = "xzatoma")]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Path to configuration file
-    #[arg(short, long, global = true, default_value = "config/config.yaml")]
-    pub config: Option<String>,
-
-    /// Enable verbose logging
-    #[arg(short, long, global = true)]
-    pub verbose: bool,
-
-    /// Override the path to the history database (or set env XZATOMA_HISTORY_DB)
-    #[arg(long, global = true, env = "XZATOMA_HISTORY_DB")]
-    pub storage_path: Option<String>,
-
     /// Command to execute
     #[command(subcommand)]
     pub command: Commands,
@@ -42,6 +114,10 @@ pub struct Cli {
 pub enum Commands {
     /// Start interactive chat mode with the agent
     Chat {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Override the provider from config (copilot, ollama)
         #[arg(short, long)]
         provider: Option<String>,
@@ -70,6 +146,10 @@ pub enum Commands {
 
     /// Execute a plan or prompt
     Run {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Path to plan file (YAML format)
         #[arg(short, long)]
         plan: Option<PathBuf>,
@@ -92,6 +172,10 @@ pub enum Commands {
 
     /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
     Agent {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Override the provider from config (copilot, ollama, openai)
         #[arg(long)]
         provider: Option<String>,
@@ -111,6 +195,10 @@ pub enum Commands {
 
     /// Watch Kafka topic for events and execute plans
     Watch {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Kafka topic to watch (overrides config)
         #[arg(short, long)]
         topic: Option<String>,
@@ -170,6 +258,10 @@ pub enum Commands {
 
     /// Authenticate with a provider
     Auth {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Provider to authenticate with (copilot, ollama)
         ///
         /// Use `--provider <name>` to override; if omitted the configured/default
@@ -189,6 +281,10 @@ pub enum Commands {
     ///   xzatoma models list --summary
     ///   xzatoma models info --model gpt-4 --json
     Models {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Model management subcommand
         #[command(subcommand)]
         command: ModelCommand,
@@ -196,6 +292,10 @@ pub enum Commands {
 
     /// Manage conversation history
     History {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// History management subcommand
         #[command(subcommand)]
         command: HistoryCommand,
@@ -203,6 +303,10 @@ pub enum Commands {
 
     /// Replay subagent conversations for debugging
     Replay {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Conversation ID to replay
         #[arg(long, short = 'i')]
         id: Option<String>,
@@ -230,6 +334,10 @@ pub enum Commands {
 
     /// MCP server management commands
     Mcp {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// MCP subcommand to execute
         #[command(subcommand)]
         command: crate::commands::mcp::McpCommands,
@@ -237,6 +345,10 @@ pub enum Commands {
 
     /// ACP server management commands
     Acp {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// ACP subcommand to execute
         #[command(subcommand)]
         command: AcpCommand,
@@ -244,10 +356,50 @@ pub enum Commands {
 
     /// Manage agent skills
     Skills {
+        /// Shared flags (config, verbose, storage-path)
+        #[command(flatten)]
+        common: CommonArgs,
+
         /// Skills subcommand to execute
         #[command(subcommand)]
         command: SkillsCommand,
     },
+}
+
+impl Commands {
+    /// Return the [`CommonArgs`] embedded in the active variant.
+    ///
+    /// This is the sole extraction point used by `main()` and any call site
+    /// that needs shared flags before dispatching to a command handler.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`CommonArgs`] for the active subcommand.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::cli::{Cli, Commands};
+    /// use clap::Parser;
+    ///
+    /// let cli = Cli::parse_from(["xzatoma", "auth", "--verbose"]);
+    /// assert!(cli.command.common_args().verbose);
+    /// ```
+    pub fn common_args(&self) -> &CommonArgs {
+        match self {
+            Commands::Chat { common, .. } => common,
+            Commands::Run { common, .. } => common,
+            Commands::Agent { common, .. } => common,
+            Commands::Watch { common, .. } => common,
+            Commands::Auth { common, .. } => common,
+            Commands::Models { common, .. } => common,
+            Commands::History { common, .. } => common,
+            Commands::Replay { common, .. } => common,
+            Commands::Mcp { common, .. } => common,
+            Commands::Acp { common, .. } => common,
+            Commands::Skills { common, .. } => common,
+        }
+    }
 }
 
 /// Skills management subcommands
@@ -458,10 +610,8 @@ impl Cli {
 impl Default for Cli {
     fn default() -> Self {
         Self {
-            config: Some("config/config.yaml".to_string()),
-            verbose: false,
-            storage_path: None,
             command: Commands::Auth {
+                common: CommonArgs::default(),
                 provider: Some("copilot".to_string()),
             },
         }
@@ -476,11 +626,13 @@ mod tests {
     #[test]
     fn test_cli_default() {
         let cli = Cli::default();
-        assert_eq!(cli.config, Some("config/config.yaml".to_string()));
-        assert!(!cli.verbose);
+        assert_eq!(
+            cli.command.common_args().config,
+            Some("config/config.yaml".to_string())
+        );
+        assert!(!cli.command.common_args().verbose);
 
-        // default command should be `auth` with provider defaulting to "copilot"
-        if let Commands::Auth { provider } = cli.command {
+        if let Commands::Auth { provider, .. } = cli.command {
             assert_eq!(provider, Some("copilot".to_string()));
         } else {
             panic!("Expected default command to be Auth");
@@ -499,6 +651,7 @@ mod tests {
                 model,
                 allow_dangerous,
                 working_dir,
+                ..
             } => {
                 assert!(provider.is_none());
                 assert!(model.is_none());
@@ -607,7 +760,7 @@ mod tests {
         let cli = Cli::parse_from(["xzatoma", "acp", "serve"]);
 
         match cli.command {
-            Commands::Acp { command } => match command {
+            Commands::Acp { command, .. } => match command {
                 AcpCommand::Serve {
                     host,
                     port,
@@ -641,7 +794,7 @@ mod tests {
         ]);
 
         match cli.command {
-            Commands::Acp { command } => match command {
+            Commands::Acp { command, .. } => match command {
                 AcpCommand::Serve {
                     host,
                     port,
@@ -664,7 +817,7 @@ mod tests {
         let cli = Cli::parse_from(["xzatoma", "acp", "config"]);
 
         match cli.command {
-            Commands::Acp { command } => match command {
+            Commands::Acp { command, .. } => match command {
                 AcpCommand::Config => {}
                 other => panic!("expected ACP config command, got {:?}", other),
             },
@@ -685,7 +838,7 @@ mod tests {
         ]);
 
         match cli.command {
-            Commands::Acp { command } => match command {
+            Commands::Acp { command, .. } => match command {
                 AcpCommand::Runs { session_id, limit } => {
                     assert_eq!(session_id.as_deref(), Some("session_123"));
                     assert_eq!(limit, 5);
@@ -707,7 +860,7 @@ mod tests {
         ]);
 
         match cli.command {
-            Commands::Acp { command } => match command {
+            Commands::Acp { command, .. } => match command {
                 AcpCommand::Validate { manifest } => {
                     assert_eq!(
                         manifest,
@@ -739,6 +892,7 @@ mod tests {
             safe: _,
             resume: _,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));
@@ -764,7 +918,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "history", "list"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::History { command } = cli.command {
+        if let Commands::History { command, .. } = cli.command {
             assert!(matches!(command, HistoryCommand::List));
         } else {
             panic!("Expected History command");
@@ -776,7 +930,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "history", "delete", "--id", "session123"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::History { command } = cli.command {
+        if let Commands::History { command, .. } = cli.command {
             if let HistoryCommand::Delete { id } = command {
                 assert_eq!(id, "session123".to_string());
             } else {
@@ -794,6 +948,7 @@ mod tests {
         match cli.command {
             Commands::History {
                 command: HistoryCommand::Show { id, raw, limit },
+                ..
             } => {
                 assert_eq!(id, "abc123");
                 assert!(!raw);
@@ -811,6 +966,7 @@ mod tests {
         match cli.command {
             Commands::History {
                 command: HistoryCommand::Show { id, raw, limit },
+                ..
             } => {
                 assert_eq!(id, "abc123");
                 assert!(raw);
@@ -830,6 +986,7 @@ mod tests {
         match cli.command {
             Commands::History {
                 command: HistoryCommand::Show { id, raw, limit },
+                ..
             } => {
                 assert_eq!(id, "abc123");
                 assert!(!raw);
@@ -843,7 +1000,10 @@ mod tests {
     fn test_cli_parse_storage_path_after_subcommand() {
         let cli = Cli::try_parse_from(["xzatoma", "auth", "--storage-path", "/tmp/my.db"])
             .expect("failed to parse CLI args (storage-path)");
-        assert_eq!(cli.storage_path, Some("/tmp/my.db".to_string()));
+        assert_eq!(
+            cli.command.common_args().storage_path,
+            Some("/tmp/my.db".to_string())
+        );
     }
 
     #[test]
@@ -856,6 +1016,7 @@ mod tests {
             prompt,
             allow_dangerous,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(plan, Some(PathBuf::from("test.yaml")));
@@ -876,6 +1037,7 @@ mod tests {
             prompt,
             allow_dangerous,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(plan, None);
@@ -896,6 +1058,7 @@ mod tests {
             prompt,
             allow_dangerous,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(plan, None);
@@ -927,6 +1090,7 @@ mod tests {
             match_version,
             brokers,
             dry_run,
+            ..
         } = cli.command
         {
             assert_eq!(topic, None);
@@ -1046,7 +1210,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "auth", "--provider", "copilot"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Auth { provider } = cli.command {
+        if let Commands::Auth { provider, .. } = cli.command {
             assert_eq!(provider, Some("copilot".to_string()));
         } else {
             panic!("Expected Auth command");
@@ -1055,11 +1219,10 @@ mod tests {
 
     #[test]
     fn test_cli_parse_auth_without_provider() {
-        // `auth` subcommand without `--provider` should parse (provider left as None)
         let cli = Cli::try_parse_from(["xzatoma", "auth"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Auth { provider } = cli.command {
+        if let Commands::Auth { provider, .. } = cli.command {
             assert_eq!(provider, None);
         } else {
             panic!("Expected Auth command");
@@ -1077,6 +1240,7 @@ mod tests {
             safe,
             resume: _,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(provider, None);
@@ -1098,6 +1262,7 @@ mod tests {
             safe: _,
             resume: _,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(mode, Some("write".to_string()));
@@ -1117,6 +1282,7 @@ mod tests {
             safe,
             resume: _,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert!(safe);
@@ -1170,6 +1336,7 @@ mod tests {
             safe,
             resume: _,
             thinking_effort: _,
+            ..
         } = cli.command
         {
             assert_eq!(provider, Some("ollama".to_string()));
@@ -1186,7 +1353,10 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        assert_eq!(cli.config, Some("custom.yaml".to_string()));
+        assert_eq!(
+            cli.command.common_args().config,
+            Some("custom.yaml".to_string())
+        );
     }
 
     #[test]
@@ -1195,7 +1365,7 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = cli.unwrap();
-        assert!(cli.verbose);
+        assert!(cli.command.common_args().verbose);
     }
 
     #[test]
@@ -1215,7 +1385,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             assert!(matches!(command, ModelCommand::List { .. }));
         } else {
             panic!("Expected Models command");
@@ -1227,7 +1397,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--provider", "ollama"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::List { provider, .. } = command {
                 assert_eq!(provider, Some("ollama".to_string()));
             } else {
@@ -1243,7 +1413,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--json"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::List {
                 provider,
                 json,
@@ -1266,7 +1436,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--summary"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::List {
                 provider,
                 json,
@@ -1289,7 +1459,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list", "--json", "--summary"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::List {
                 provider,
                 json,
@@ -1312,7 +1482,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "list", "-j", "-s"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::List {
                 provider,
                 json,
@@ -1335,7 +1505,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model, provider, ..
             } = command
@@ -1363,7 +1533,7 @@ mod tests {
         ]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model, provider, ..
             } = command
@@ -1383,7 +1553,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "--json"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model,
                 provider,
@@ -1409,7 +1579,7 @@ mod tests {
             Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "--summary"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model,
                 provider,
@@ -1442,7 +1612,7 @@ mod tests {
         ]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model,
                 provider,
@@ -1468,7 +1638,7 @@ mod tests {
             Cli::try_parse_from(["xzatoma", "models", "info", "--model", "gpt-4", "-j", "-s"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Info {
                 model,
                 provider,
@@ -1493,7 +1663,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "current"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             assert!(matches!(command, ModelCommand::Current { .. }));
         } else {
             panic!("Expected Models command");
@@ -1505,7 +1675,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "models", "current", "--provider", "copilot"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Models { command } = cli.command {
+        if let Commands::Models { command, .. } = cli.command {
             if let ModelCommand::Current { provider } = command {
                 assert_eq!(provider, Some("copilot".to_string()));
             } else {
@@ -1529,14 +1699,12 @@ mod tests {
 
         let help = list_cmd.render_long_help().to_string();
 
-        // Verify flags exist
         assert!(help.contains("--json"), "list help missing --json flag");
         assert!(
             help.contains("--summary"),
             "list help missing --summary flag"
         );
 
-        // Verify descriptive text mentions JSON and summary
         assert!(
             help.to_lowercase().contains("json"),
             "list help missing json description"
@@ -1560,14 +1728,12 @@ mod tests {
 
         let help = info_cmd.render_long_help().to_string();
 
-        // Verify flags exist
         assert!(help.contains("--json"), "info help missing --json flag");
         assert!(
             help.contains("--summary"),
             "info help missing --summary flag"
         );
 
-        // Verify descriptive text mentions JSON and summary
         assert!(
             help.to_lowercase().contains("json"),
             "info help missing json description"
@@ -1649,5 +1815,133 @@ mod tests {
         } else {
             panic!("Expected Run command");
         }
+    }
+
+    // --- Phase 1 new tests ---
+
+    #[test]
+    fn test_common_args_config_default() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        assert_eq!(
+            cli.command.common_args().config,
+            Some("config/config.yaml".to_string())
+        );
+    }
+
+    #[test]
+    fn test_common_args_storage_path_env() {
+        std::env::set_var("XZATOMA_HISTORY_DB", "/tmp/x");
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let storage = cli.command.common_args().storage_path.clone();
+        std::env::remove_var("XZATOMA_HISTORY_DB");
+        assert_eq!(storage, Some("/tmp/x".to_string()));
+    }
+
+    #[test]
+    fn test_flag_before_subcommand_is_rejected() {
+        let result = Cli::try_parse_from(["xzatoma", "--config", "x.yaml", "chat"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_nested_subcommand_with_common_flags() {
+        let cli = Cli::try_parse_from(["xzatoma", "models", "--config", "x.yaml", "list"]).unwrap();
+        assert_eq!(cli.command.common_args().config, Some("x.yaml".to_string()));
+    }
+
+    // --- Phase 3 new tests ---
+
+    #[test]
+    fn test_debug_flag_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--debug"]).unwrap();
+        assert!(cli.command.common_args().debug);
+    }
+
+    #[test]
+    fn test_trace_flag_after_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "run", "--trace", "--prompt", "x"]).unwrap();
+        assert!(cli.command.common_args().trace);
+    }
+
+    #[test]
+    fn test_debug_and_trace_independent() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--debug"]).unwrap();
+        assert!(cli.command.common_args().debug);
+        assert!(!cli.command.common_args().trace);
+    }
+
+    #[test]
+    fn test_xzatoma_debug_env_sets_flag() {
+        std::env::set_var("XZATOMA_DEBUG", "true");
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let debug = cli.command.common_args().debug;
+        std::env::remove_var("XZATOMA_DEBUG");
+        assert!(debug);
+    }
+
+    // --- Phase 4 new tests ---
+
+    #[test]
+    fn test_log_format_json_after_chat_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "json"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, Some(LogFormat::Json));
+    }
+
+    #[test]
+    fn test_log_format_plain_after_chat_subcommand() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "plain"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, Some(LogFormat::Plain));
+    }
+
+    #[test]
+    fn test_log_format_compact_after_run_subcommand() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--log-format",
+            "compact",
+            "--prompt",
+            "hi",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.command.common_args().log_format,
+            Some(LogFormat::Compact)
+        );
+    }
+
+    #[test]
+    fn test_logfile_after_run_subcommand() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--logfile",
+            "/tmp/x.log",
+            "--prompt",
+            "hi",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.command.common_args().log_file,
+            Some(PathBuf::from("/tmp/x.log"))
+        );
+    }
+
+    #[test]
+    fn test_log_format_defaults_to_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        assert_eq!(cli.command.common_args().log_format, None);
+    }
+
+    #[test]
+    fn test_logfile_defaults_to_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        assert_eq!(cli.command.common_args().log_file, None);
+    }
+
+    #[test]
+    fn test_log_format_invalid_value_is_rejected() {
+        let result = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "ndjson"]);
+        assert!(result.is_err());
     }
 }

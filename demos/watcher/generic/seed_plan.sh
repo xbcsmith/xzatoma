@@ -277,7 +277,10 @@ Next steps:
   1. If XZatoma is not yet running in generic watcher mode, start it from
      demos/watcher/generic/:
        cd demos/watcher/generic
-       xzatoma --config config.yaml watch
+       xzatoma watch --config config.yaml
+       # Or with debug/trace logging:
+       xzatoma watch --config config.yaml --debug
+       xzatoma watch --config config.yaml --trace --logfile /tmp/xzatoma-generic.log
 
   2. XZatoma should pick up the plan event within a few seconds, execute it,
      and publish a PlanResultEvent to the output topic.

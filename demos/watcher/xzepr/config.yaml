@@ -44,7 +44,7 @@ watcher:
 
   kafka:
     # Redpanda external listener (mapped to localhost:19092 by docker-compose)
-    brokers: "localhost:19092"
+    brokers: "127.0.0.1:19092"
 
     # Input topic - XZepr CloudEvents are consumed from here
     # topic: "xzepr.events"

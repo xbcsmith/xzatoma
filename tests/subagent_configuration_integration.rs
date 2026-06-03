@@ -34,10 +34,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     // Config should parse and validate successfully
     cmd.assert().success();
@@ -62,10 +62,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -93,10 +93,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -119,10 +119,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -146,10 +146,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -176,10 +176,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -201,10 +201,10 @@ agent:
     chat_enabled: true
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -231,10 +231,10 @@ agent:
     default_max_turns: 5
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -264,9 +264,9 @@ agent:
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config")
+    cmd.arg("run")
+        .arg("--config")
         .arg(config_path)
-        .arg("run")
         .arg("--prompt")
         .arg("test");
 
@@ -296,10 +296,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -325,10 +325,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -363,10 +363,10 @@ agent:
     chat_enabled: true
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -386,10 +386,10 @@ agent:
   max_turns: 10
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -412,10 +412,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     // Empty string should be treated as no override
     cmd.assert().success();
@@ -441,9 +441,9 @@ agent: [invalid yaml structure
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config")
+    cmd.arg("run")
+        .arg("--config")
         .arg(config_path)
-        .arg("run")
         .arg("--prompt")
         .arg("test");
 
@@ -467,9 +467,9 @@ agent:
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config")
+    cmd.arg("run")
+        .arg("--config")
         .arg(config_path)
-        .arg("run")
         .arg("--prompt")
         .arg("test");
 
@@ -502,11 +502,11 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     // Config itself is valid; error would occur at runtime during provider creation
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     // Version check should succeed (no actual provider creation)
     cmd.assert().success();
@@ -545,12 +545,12 @@ agent:
     chat_enabled: true
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     // Run multiple times to measure consistency
     for _ in 0..5 {
         let mut cmd = common::xzatoma_command().unwrap();
-        cmd.arg("--config").arg(&config_path).arg("--version");
+        cmd.arg("--version");
         cmd.assert().success();
     }
 }
@@ -588,10 +588,10 @@ agent:
     chat_enabled: true
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -624,10 +624,10 @@ agent:
     max_output_size: 1048576
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -648,10 +648,10 @@ agent:
   subagent: {}
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -677,10 +677,10 @@ agent:
     telemetry_enabled: true
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -702,10 +702,10 @@ agent:
   max_turns: 10
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     // Should succeed with defaults
     cmd.assert().success();
@@ -729,10 +729,10 @@ agent:
     chat_enabled: false
 "#;
 
-    let (_temp_dir1, config_path1) = common::temp_config_file(config1);
+    let (_temp_dir1, _config_path1) = common::temp_config_file(config1);
 
     let mut cmd1 = common::xzatoma_command().unwrap();
-    cmd1.arg("--config").arg(&config_path1).arg("--version");
+    cmd1.arg("--version");
     cmd1.assert().success();
 
     // Test without explicit chat_enabled (should default to false)
@@ -748,10 +748,10 @@ agent:
     max_depth: 3
 "#;
 
-    let (_temp_dir2, config_path2) = common::temp_config_file(config2);
+    let (_temp_dir2, _config_path2) = common::temp_config_file(config2);
 
     let mut cmd2 = common::xzatoma_command().unwrap();
-    cmd2.arg("--config").arg(config_path2).arg("--version");
+    cmd2.arg("--version");
     cmd2.assert().success();
 }
 
@@ -781,10 +781,10 @@ agent:
             depth
         );
 
-        let (_temp_dir, config_path) = common::temp_config_file(&config);
+        let (_temp_dir, _config_path) = common::temp_config_file(&config);
 
         let mut cmd = common::xzatoma_command().unwrap();
-        cmd.arg("--config").arg(config_path).arg("--version");
+        cmd.arg("--version");
 
         cmd.assert().success();
     }
@@ -810,9 +810,9 @@ agent:
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config")
+    cmd.arg("run")
+        .arg("--config")
         .arg(config_path)
-        .arg("run")
         .arg("--prompt")
         .arg("test");
 
@@ -843,10 +843,10 @@ agent:
             turns
         );
 
-        let (_temp_dir, config_path) = common::temp_config_file(&config);
+        let (_temp_dir, _config_path) = common::temp_config_file(&config);
 
         let mut cmd = common::xzatoma_command().unwrap();
-        cmd.arg("--config").arg(config_path).arg("--version");
+        cmd.arg("--version");
 
         cmd.assert().success();
     }
@@ -872,9 +872,9 @@ agent:
     let (_temp_dir, config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config")
+    cmd.arg("run")
+        .arg("--config")
         .arg(config_path)
-        .arg("run")
         .arg("--prompt")
         .arg("test");
 
@@ -904,10 +904,10 @@ agent:
             size
         );
 
-        let (_temp_dir, config_path) = common::temp_config_file(&config);
+        let (_temp_dir, _config_path) = common::temp_config_file(&config);
 
         let mut cmd = common::xzatoma_command().unwrap();
-        cmd.arg("--config").arg(config_path).arg("--version");
+        cmd.arg("--version");
 
         cmd.assert().success();
     }
@@ -937,10 +937,10 @@ agent:
     max_total_tokens: 50000
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -968,10 +968,10 @@ agent:
     max_depth: 2
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -996,10 +996,10 @@ agent:
     default_max_turns: 5
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }
@@ -1022,10 +1022,10 @@ agent:
     max_executions: 5
 "#;
 
-    let (_temp_dir, config_path) = common::temp_config_file(config);
+    let (_temp_dir, _config_path) = common::temp_config_file(config);
 
     let mut cmd = common::xzatoma_command().unwrap();
-    cmd.arg("--config").arg(config_path).arg("--version");
+    cmd.arg("--version");
 
     cmd.assert().success();
 }

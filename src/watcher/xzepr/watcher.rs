@@ -204,7 +204,11 @@ impl Watcher {
         // Build Kafka consumer configuration
         let consumer_config =
             KafkaConsumerConfig::new(&kafka_config.brokers, &kafka_config.topic, "xzatoma")
-                .with_group_id(&kafka_config.group_id);
+                .with_group_id(&kafka_config.group_id)
+                .with_broker_address_family(&kafka_config.broker_address_family)
+                .with_poll_interval(std::time::Duration::from_millis(
+                    kafka_config.poll_interval_ms,
+                ));
 
         // Apply security settings if configured
         let consumer_config = if let Some(security) = &kafka_config.security {
@@ -564,6 +568,7 @@ impl MessageHandler for WatcherMessageHandler {
                 &working_dir,
                 true,
                 Some(crate::chat_mode::ChatMode::Watcher),
+                Some(crate::chat_mode::SafetyMode::NeverConfirm),
             )
             .await?;
 
@@ -757,6 +762,7 @@ mod tests {
             mcp: crate::mcp::config::McpConfig::default(),
             acp: crate::config::AcpConfig::default(),
             skills: crate::config::SkillsConfig::default(),
+            log: crate::config::LogConfig::default(),
         };
 
         let result = Watcher::new(config, false);
@@ -775,6 +781,8 @@ mod tests {
             security: None,
             num_partitions: 1,
             replication_factor: 1,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let result = Watcher::new(config, false);
@@ -799,6 +807,8 @@ mod tests {
             security: None,
             num_partitions: 1,
             replication_factor: 1,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let result = Watcher::new(config, true);
@@ -879,6 +889,8 @@ mod tests {
             security: None,
             num_partitions: 1,
             replication_factor: 1,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let watcher = Watcher::new(config, false).unwrap();
@@ -897,6 +909,8 @@ mod tests {
             security: None,
             num_partitions: 1,
             replication_factor: 1,
+            broker_address_family: "v4".to_string(),
+            poll_interval_ms: 1000,
         });
 
         let watcher = Watcher::new(config, false).unwrap();

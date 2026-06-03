@@ -1,9 +1,9 @@
 # XZepr Watcher Demo
 
-This demo shows XZatoma running in **XZepr watcher mode**: a long-running process
-that consumes XZepr CloudEvents from a Redpanda topic, extracts the embedded plan
-from each event payload, executes it autonomously through the configured AI
-provider, and publishes a result event back to an output topic.
+This demo shows XZatoma running in **XZepr watcher mode**: a long-running
+process that consumes XZepr CloudEvents from a Redpanda topic, extracts the
+embedded plan from each event payload, executes it autonomously through the
+configured AI provider, and publishes a result event back to an output topic.
 
 XZepr is a software supply chain event platform. XZatoma's XZepr watcher bridges
 XZepr's event bus with autonomous AI-driven plan execution: when a qualifying
@@ -34,7 +34,8 @@ In XZepr watcher mode XZatoma:
    - `data.plan` — top-level plan field in data
    - `data` — entire data object treated as the plan
 5. Executes the plan through the configured AI provider.
-6. Publishes a result event to a Kafka **output topic** (default: `xzepr.results`).
+6. Publishes a result event to a Kafka **output topic** (default:
+   `xzepr.results`).
 
 This demo includes:
 
@@ -49,13 +50,13 @@ This demo includes:
 
 ## Prerequisites
 
-| Requirement                                | Notes                                                 |
-| ------------------------------------------ | ----------------------------------------------------- |
-| Docker with Compose                        | Used to run Redpanda                                  |
-| `docker-compose.redpanda.yaml`             | In this demo directory                                |
-| Ollama running at `http://localhost:11434` | `ollama pull granite4:3b`                             |
-| `xzatoma` binary on PATH                   | `cargo build --release && cargo install --path .`     |
-| `jq` (optional)                            | Pretty-prints result events in `read_results.sh`      |
+| Requirement                                | Notes                                             |
+| ------------------------------------------ | ------------------------------------------------- |
+| Docker with Compose                        | Used to run Redpanda                              |
+| `docker-compose.redpanda.yaml`             | In this demo directory                            |
+| Ollama running at `http://localhost:11434` | `ollama pull granite4:3b`                         |
+| `xzatoma` binary on PATH                   | `cargo build --release && cargo install --path .` |
+| `jq` (optional)                            | Pretty-prints result events in `read_results.sh`  |
 
 ---
 
@@ -87,12 +88,31 @@ You can also open the Redpanda Console at `http://localhost:8081`.
 Open a terminal, change to `demos/watcher/xzepr/`, and run:
 
 ```bash
-xzatoma --config config.yaml watch
+xzatoma watch --config config.yaml
 ```
 
 XZatoma connects to Redpanda, subscribes to `xzepr.events`, and waits for
 CloudEvents. The startup banner shows the watcher type, input topic, output
 topic, and active event filters.
+
+To enable diagnostic logging, append `--debug` or `--trace` after the
+subcommand. Use `--logfile` to capture the full log to a file:
+
+```bash
+# Debug-level logging to stderr
+xzatoma watch --config config.yaml --debug
+
+# Trace-level logging (full conversation transcript per message)
+xzatoma watch --config config.yaml --trace
+
+# Debug logging plus JSON file sink
+xzatoma watch --config config.yaml --debug --logfile /tmp/xzatoma-xzepr.log
+
+# Full trace transcript to file, compact text to stderr
+xzatoma watch --config config.yaml --trace --log-format compact --logfile /tmp/xzatoma-trace.log
+```
+
+All logging flags must appear **after** the `watch` subcommand token.
 
 ### Step 3: Open a results terminal
 
@@ -145,10 +165,10 @@ cat tmp/deploy-verify-report.txt
 
 `seed_event.sh` ships two built-in event presets:
 
-| Preset   | Event type           | Plan name      | What it does                                                          |
-| -------- | -------------------- | -------------- | --------------------------------------------------------------------- |
-| `build`  | `build.success`      | `build-verify` | Verifies build environment, writes `tmp/build-verify-report.txt`      |
-| `deploy` | `deployment.success` | `deploy-verify`| Verifies deployment environment, writes `tmp/deploy-verify-report.txt`|
+| Preset   | Event type           | Plan name       | What it does                                                           |
+| -------- | -------------------- | --------------- | ---------------------------------------------------------------------- |
+| `build`  | `build.success`      | `build-verify`  | Verifies build environment, writes `tmp/build-verify-report.txt`       |
+| `deploy` | `deployment.success` | `deploy-verify` | Verifies deployment environment, writes `tmp/deploy-verify-report.txt` |
 
 Use `--stdin` to pipe any CloudEvent JSON directly:
 
@@ -209,9 +229,9 @@ filters:
 
 ## The `events/` Directory
 
-The JSON files under `events/` are XZepr CloudEvent fixtures that `seed_event.sh`
-publishes to Redpanda. Each fixture embeds a complete XZatoma plan in the
-`data.events[0].payload.plan` field as a compact JSON string.
+The JSON files under `events/` are XZepr CloudEvent fixtures that
+`seed_event.sh` publishes to Redpanda. Each fixture embeds a complete XZatoma
+plan in the `data.events[0].payload.plan` field as a compact JSON string.
 
 | File                               | Event type           | Embedded plan   |
 | ---------------------------------- | -------------------- | --------------- |
@@ -299,14 +319,14 @@ The config sets `watcher_type: xzepr` and configures the `kafka` section with
 
 ## Files in This Demo
 
-| File                               | Purpose                                                      |
-| ---------------------------------- | ------------------------------------------------------------ |
-| `config.yaml`                      | XZepr watcher configuration using Ollama `granite4:3b`      |
-| `docker-compose.redpanda.yaml`     | Redpanda single-broker stack for local development           |
-| `seed_event.sh`                    | Publishes a XZepr CloudEvent to the Redpanda input topic     |
-| `read_results.sh`                  | Reads result events from the Redpanda output topic           |
-| `events/build_success_event.json`  | Sample `build.success` CloudEvent fixture                    |
-| `events/deploy_success_event.json` | Sample `deployment.success` CloudEvent fixture               |
+| File                               | Purpose                                                  |
+| ---------------------------------- | -------------------------------------------------------- |
+| `config.yaml`                      | XZepr watcher configuration using Ollama `granite4:3b`   |
+| `docker-compose.redpanda.yaml`     | Redpanda single-broker stack for local development       |
+| `seed_event.sh`                    | Publishes a XZepr CloudEvent to the Redpanda input topic |
+| `read_results.sh`                  | Reads result events from the Redpanda output topic       |
+| `events/build_success_event.json`  | Sample `build.success` CloudEvent fixture                |
+| `events/deploy_success_event.json` | Sample `deployment.success` CloudEvent fixture           |
 
 ---
 

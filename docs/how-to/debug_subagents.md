@@ -1,10 +1,37 @@
 # How to Debug Subagent Executions
 
-This guide explains how to use conversation persistence to debug and analyze subagent executions.
+This guide explains how to use conversation persistence to debug and analyze
+subagent executions.
 
 ## Overview
 
-XZatoma can save all subagent conversations to a persistent database for later inspection, debugging, and analysis. This is useful for understanding what subagents did, how many tokens they consumed, and troubleshooting failed executions.
+XZatoma can save all subagent conversations to a persistent database for later
+inspection, debugging, and analysis. This is useful for understanding what
+subagents did, how many tokens they consumed, and troubleshooting failed
+executions.
+
+## Logging Flags
+
+XZatoma provides `--debug` and `--trace` flags for increasing log verbosity at
+runtime. Flags must appear **after** the subcommand token.
+
+- `--debug` enables debug-level logging (equivalent to `RUST_LOG=debug`):
+
+  ```bash
+  xzatoma chat --debug
+  xzatoma replay --debug --list
+  ```
+
+- `--trace` enables trace-level logging (equivalent to `RUST_LOG=trace`):
+
+  ```bash
+  xzatoma chat --trace
+  xzatoma replay --trace --id <conversation_id>
+  ```
+
+Note: `RUST_LOG` still takes precedence when set explicitly in the environment.
+Use `RUST_LOG=xzatoma::module=level` for targeted module-level filtering without
+affecting other crates.
 
 ## Enable Conversation Persistence
 
@@ -37,7 +64,7 @@ xzatoma replay --list
 
 Example output:
 
-```
+```text
 Conversations (showing 10 starting at 0):
 
 ID:     01ARZ3NDEKTSV4RRFFQ69G5FAV
@@ -66,7 +93,7 @@ xzatoma replay --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 
 Example output:
 
-```
+```text
 === Conversation 01ARZ3NDEKTSV4RRFFQ69G5FAV ===
 Label: analyze_code
 Depth: 1
@@ -103,7 +130,7 @@ xzatoma replay --tree --id 01ARZ3NDEKTSV4RRFFQ69G5FAV
 
 Example output:
 
-```
+```text
 Conversation tree:
 ├─ 01ARZ3NDEKTSV4RRFFQ69G5FAV [root_analysis] (depth=1, turns=7)
   ├─ 01ARZ3NDEKTSV4RRFFQ69G5FAW [code_review] (depth=2, turns=5)
@@ -132,24 +159,29 @@ xzatoma replay --list --db-path /custom/path/conversations.db
 ### Why did subagent fail?
 
 1. Replay the conversation:
+
    ```bash
    xzatoma replay --id <conversation_id>
    ```
 
 2. Look for error messages in the final messages or metadata
 
-3. Check `Status: incomplete` and `Max Turns Reached: true` to see if execution was cut short
+3. Check `Status: incomplete` and `Max Turns Reached: true` to see if execution
+   was cut short
 
 ### Why was output truncated?
 
-Output is truncated when it exceeds `agent.subagent.output_max_size` (default: 4096 bytes).
+Output is truncated when it exceeds `agent.subagent.output_max_size` (default:
+4096 bytes).
 
 1. Check your config:
+
    ```bash
    grep -A 5 "output_max_size" config.yaml
    ```
 
 2. Increase the limit if needed:
+
    ```yaml
    agent:
      subagent:
@@ -167,11 +199,13 @@ xzatoma replay --id <conversation_id> | grep "Tokens"
 ```
 
 Example output:
-```
+
+```text
 Tokens Consumed: 1250
 ```
 
 Use this to:
+
 - Track API costs
 - Identify inefficient subagents
 - Debug token limit issues
@@ -227,7 +261,8 @@ agent:
 
 ## Telemetry Events
 
-When `telemetry_enabled: true`, subagent events are logged with structured fields:
+When `telemetry_enabled: true`, subagent events are logged with structured
+fields:
 
 - `spawn` - Subagent created and starting execution
 - `complete` - Subagent finished successfully
@@ -237,16 +272,17 @@ When `telemetry_enabled: true`, subagent events are logged with structured field
 - `depth_limit` - Cannot spawn due to recursion depth limit
 
 Example log output:
-```
+
+```text
 INFO xzatoma: subagent.event=spawn subagent.label=analyze_code subagent.depth=1 Spawning subagent
 INFO xzatoma: subagent.event=complete subagent.label=analyze_code subagent.depth=1 subagent.turns_used=7 Subagent completed
 ```
 
 ## Next Steps
 
-- Review the [Subagent Architecture](../explanation/subagent_implementation.md) for technical details
-- Check the [API Reference](../reference/subagent_api.md) for input/output formats
-- See [Advanced Patterns](../explanation/advanced_subagent_patterns.md) for complex scenarios
-```
-
-Now let me run the integration tests:
+- Review the [Subagent Architecture](../explanation/subagent_implementation.md)
+  for technical details
+- Check the [API Reference](../reference/subagent_api.md) for input/output
+  formats
+- See [Advanced Patterns](../explanation/advanced_subagent_patterns.md) for
+  complex scenarios

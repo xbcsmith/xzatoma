@@ -6,7 +6,8 @@
 #   args                - list of CLI arguments passed to the xzatoma binary
 #   env                 - optional map of environment variable overrides
 #   needs_config        - if true, test harness provides --config pointing at a minimal
-#                         temporary config file; also sets XZATOMA_HISTORY_DB and
+#                         temporary config file (inserted after the subcommand token);
+#                         also sets XZATOMA_HISTORY_DB and
 #                         XZATOMA_SKILLS_TRUST_STORE_PATH to isolated temp paths
 #   expect
 #     success           - true if exit code must be 0, false if non-zero

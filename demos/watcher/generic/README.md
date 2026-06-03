@@ -5,11 +5,11 @@ process that consumes a plan serialised as a JSON event from a Redpanda topic,
 executes it autonomously through the configured AI provider, and publishes the
 result as a JSON event to an output topic.
 
-The generic watcher requires no XZepr or Janus Gatekeeper API and no receipt
-infrastructure. The plan is fully contained in each Kafka message; XZatoma
-executes it and posts a compact result event back to Redpanda. Every processed
-plan publishes the same `PlanResultEvent` JSON shape to the results topic,
-whether execution succeeds or fails with an error.
+The generic watcher requires no XZepr API and no event infrastructure. The plan
+is fully contained in each Kafka message; XZatoma executes it and posts a
+compact result event back to Redpanda. Every processed plan publishes the same
+`PlanResultEvent` JSON shape to the results topic, whether execution succeeds or
+fails with an error.
 
 The demo runs entirely on localhost. A Redpanda broker supplies the event bus.
 
@@ -97,11 +97,30 @@ docker exec redpanda rpk topic list
 Open a terminal, change to `demos/watcher/generic/`, and run:
 
 ```bash
-xzatoma --config config.yaml watch
+xzatoma watch --config config.yaml
 ```
 
 XZatoma connects to Redpanda, subscribes to `xzatoma.plans`, and waits for plan
 events. The startup banner shows the input and output topics.
+
+To enable diagnostic logging, append `--debug` or `--trace` after the
+subcommand. Use `--logfile` to capture the full log to a file:
+
+```bash
+# Debug-level logging to stderr
+xzatoma watch --config config.yaml --debug
+
+# Trace-level logging (full conversation transcript per message)
+xzatoma watch --config config.yaml --trace
+
+# Debug logging plus JSON file sink
+xzatoma watch --config config.yaml --debug --logfile /tmp/xzatoma-generic.log
+
+# Full trace transcript to file, compact text to stderr
+xzatoma watch --config config.yaml --trace --log-format compact --logfile /tmp/xzatoma-trace.log
+```
+
+All logging flags must appear **after** the `watch` subcommand token.
 
 ### Step 3: Open a results terminal
 

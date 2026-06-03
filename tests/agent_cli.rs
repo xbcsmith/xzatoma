@@ -36,9 +36,9 @@ fn temp_config_file(contents: &str) -> (TempDir, std::path::PathBuf) {
 
 fn spawn_agent(config_path: &std::path::Path) -> Child {
     let mut cmd = StdCommand::new(common::xzatoma_binary_path());
-    cmd.arg("--config")
+    cmd.arg("agent")
+        .arg("--config")
         .arg(config_path)
-        .arg("agent")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -101,9 +101,9 @@ fn test_agent_command_accepts_provider_model_and_allow_dangerous_for_initialize(
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
 
     let mut cmd = StdCommand::new(common::xzatoma_binary_path());
-    cmd.arg("--config")
+    cmd.arg("agent")
+        .arg("--config")
         .arg(&config_path)
-        .arg("agent")
         .arg("--provider")
         .arg("ollama")
         .arg("--model")
@@ -131,9 +131,9 @@ fn test_agent_command_accepts_working_dir_for_initialize() {
     let workspace = TempDir::new().expect("workspace temp dir should be created");
 
     let mut cmd = StdCommand::new(common::xzatoma_binary_path());
-    cmd.arg("--config")
+    cmd.arg("agent")
+        .arg("--config")
         .arg(&config_path)
-        .arg("agent")
         .arg("--working-dir")
         .arg(workspace.path())
         .stdin(Stdio::piped())
@@ -154,9 +154,9 @@ fn test_agent_command_invalid_provider_reports_error_on_stderr_only() {
     let (_temp_dir, config_path) = temp_config_file(&minimal_config_yaml());
 
     let mut cmd = common::xzatoma_command().expect("binary should build");
-    cmd.arg("--config")
+    cmd.arg("agent")
+        .arg("--config")
         .arg(&config_path)
-        .arg("agent")
         .arg("--provider")
         .arg("invalid");
 
