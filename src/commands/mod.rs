@@ -420,6 +420,12 @@ pub mod chat {
             tracing::debug!("system_prompt override provided (length={})", prompt.len());
             config.agent.system_prompt = Some(prompt);
         }
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                system_prompt = ?config.agent.system_prompt,
+                "chat session system prompt state"
+            );
+        }
 
         let provider_type = provider_name
             .as_deref()
@@ -1988,6 +1994,12 @@ pub mod r#run {
         if let Some(sp) = system_prompt {
             tracing::debug!("system_prompt override provided (length={})", sp.len());
             config.agent.system_prompt = Some(sp);
+        }
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                system_prompt = ?config.agent.system_prompt,
+                "run session system prompt state"
+            );
         }
 
         if plan_path.is_none() && prompt.is_none() {

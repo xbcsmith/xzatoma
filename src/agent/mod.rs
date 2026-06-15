@@ -9,6 +9,7 @@ pub mod events;
 pub mod metrics;
 pub mod persistence;
 pub mod quota;
+pub mod system_prompt;
 pub(crate) mod thinking;
 pub use thinking::extract_thinking;
 
@@ -20,3 +21,4 @@ pub use persistence::{
     new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,
 };
 pub use quota::{QuotaLimits, QuotaTracker, QuotaUsage};
+pub use system_prompt::{resolve, ResolvedSystemPrompt, SystemPromptSource};

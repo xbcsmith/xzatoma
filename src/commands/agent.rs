@@ -77,6 +77,12 @@ pub async fn handle_agent(
     if let Some(ref sp) = system_prompt {
         tracing::debug!("system_prompt override provided (length={})", sp.len());
     }
+    if tracing::enabled!(tracing::Level::TRACE) {
+        tracing::trace!(
+            system_prompt = ?system_prompt,
+            "agent session system prompt state"
+        );
+    }
     let options = AcpStdioAgentOptions::new(provider, model, allow_dangerous, working_dir);
     run_stdio_agent(config, options).await
 }
