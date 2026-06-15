@@ -70,8 +70,16 @@ pub async fn handle_acp(command: AcpCommand, mut config: Config) -> Result<()> {
             port,
             base_path,
             root_compatible,
+            system_prompt,
         } => {
-            apply_serve_overrides(&mut config, host, port, base_path, root_compatible);
+            apply_serve_overrides(
+                &mut config,
+                host,
+                port,
+                base_path,
+                root_compatible,
+                system_prompt,
+            );
             config.acp.enabled = true;
             config.validate()?;
             run_server(config).await
@@ -103,6 +111,7 @@ pub async fn handle_acp(command: AcpCommand, mut config: Config) -> Result<()> {
 /// * `port` - Optional ACP bind port override
 /// * `base_path` - Optional ACP versioned base path override
 /// * `root_compatible` - Whether to enable ACP root-compatible routing
+/// * `system_prompt` - Optional system prompt override for all ACP run sessions.
 ///
 /// # Examples
 ///
@@ -117,6 +126,7 @@ pub async fn handle_acp(command: AcpCommand, mut config: Config) -> Result<()> {
 ///     Some(9000),
 ///     Some("/acp".to_string()),
 ///     true,
+///     None,
 /// );
 ///
 /// assert_eq!(config.acp.host, "0.0.0.0");
@@ -132,6 +142,7 @@ pub fn apply_serve_overrides(
     port: Option<u16>,
     base_path: Option<String>,
     root_compatible: bool,
+    system_prompt: Option<String>,
 ) {
     if let Some(host) = host {
         config.acp.host = host;
@@ -147,6 +158,14 @@ pub fn apply_serve_overrides(
 
     if root_compatible {
         config.acp.compatibility_mode = AcpCompatibilityMode::RootCompatible;
+    }
+
+    if let Some(prompt) = system_prompt {
+        tracing::debug!(
+            "ACP serve system_prompt override provided (length={})",
+            prompt.len()
+        );
+        config.agent.system_prompt = Some(prompt);
     }
 }
 
@@ -442,6 +461,7 @@ mod tests {
             Some(9000),
             Some("/acp".to_string()),
             false,
+            None,
         );
 
         assert_eq!(config.acp.host, "0.0.0.0");
@@ -457,7 +477,7 @@ mod tests {
     fn test_apply_serve_overrides_enables_root_compatible_mode() {
         let mut config = Config::default();
 
-        apply_serve_overrides(&mut config, None, None, None, true);
+        apply_serve_overrides(&mut config, None, None, None, true, None);
 
         assert_eq!(
             config.acp.compatibility_mode,
@@ -472,7 +492,7 @@ mod tests {
         let original_port = config.acp.port;
         let original_base_path = config.acp.base_path.clone();
 
-        apply_serve_overrides(&mut config, None, None, None, false);
+        apply_serve_overrides(&mut config, None, None, None, false, None);
 
         assert_eq!(config.acp.host, original_host);
         assert_eq!(config.acp.port, original_port);
@@ -491,5 +511,20 @@ mod tests {
         let config = Config::default();
         let result = validate_acp_manifest_and_config(&config, None);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_apply_serve_overrides_accepts_system_prompt_parameter() {
+        let mut config = Config::default();
+        // system_prompt is accepted; wired to config.acp in Phase 4
+        apply_serve_overrides(
+            &mut config,
+            None,
+            None,
+            None,
+            false,
+            Some("You are helpful.".to_string()),
+        );
+        // No assertion on config yet; just verify it compiles and does not panic
     }
 }

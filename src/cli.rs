@@ -142,6 +142,14 @@ pub enum Commands {
         /// configuration file specifies a level.
         #[arg(long)]
         thinking_effort: Option<String>,
+
+        /// Override the system prompt for this session.
+        ///
+        /// On resumed chat sessions this flag always replaces any stored system
+        /// message. When running a plan the plan's own system_prompt field takes
+        /// precedence over this flag.
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
 
     /// Execute a plan or prompt
@@ -168,6 +176,13 @@ pub enum Commands {
         /// When omitted, the value from the configuration file is used.
         #[arg(long)]
         thinking_effort: Option<String>,
+
+        /// Override the system prompt for this session.
+        ///
+        /// When running a plan file, the plan's own system_prompt field takes
+        /// precedence over this flag.
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
 
     /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
@@ -191,6 +206,10 @@ pub enum Commands {
         /// Fallback workspace root when the ACP client does not provide one
         #[arg(long)]
         working_dir: Option<PathBuf>,
+
+        /// Override the system prompt for this agent session.
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
 
     /// Watch Kafka topic for events and execute plans
@@ -254,6 +273,10 @@ pub enum Commands {
         /// Dry run mode (parse but don't execute plans)
         #[arg(long)]
         dry_run: bool,
+
+        /// Override the system prompt for agent sessions triggered by this watcher.
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
 
     /// Authenticate with a provider
@@ -543,6 +566,10 @@ pub enum AcpCommand {
         /// Enable ACP root-compatible routing
         #[arg(long)]
         root_compatible: bool,
+
+        /// Override the system prompt for all agent runs handled by this server.
+        #[arg(long)]
+        system_prompt: Option<String>,
     },
 
     /// Print the effective ACP configuration after file and environment overrides
@@ -766,6 +793,7 @@ mod tests {
                     port,
                     base_path,
                     root_compatible,
+                    ..
                 } => {
                     assert!(host.is_none());
                     assert!(port.is_none());
@@ -800,6 +828,7 @@ mod tests {
                     port,
                     base_path,
                     root_compatible,
+                    ..
                 } => {
                     assert_eq!(host.as_deref(), Some("0.0.0.0"));
                     assert_eq!(port, Some(9000));
@@ -1943,5 +1972,86 @@ mod tests {
     fn test_log_format_invalid_value_is_rejected() {
         let result = Cli::try_parse_from(["xzatoma", "chat", "--log-format", "ndjson"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_system_prompt_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--system-prompt", "you are a pirate"])
+            .unwrap();
+        match cli.command {
+            Commands::Chat { system_prompt, .. } => {
+                assert_eq!(system_prompt.as_deref(), Some("you are a pirate"));
+            }
+            _ => panic!("expected Chat command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_system_prompt_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        match cli.command {
+            Commands::Chat { system_prompt, .. } => {
+                assert!(system_prompt.is_none());
+            }
+            _ => panic!("expected Chat command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_with_system_prompt_flag() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "run",
+            "--prompt",
+            "hello",
+            "--system-prompt",
+            "act as a pirate",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Run { system_prompt, .. } => {
+                assert_eq!(system_prompt.as_deref(), Some("act as a pirate"));
+            }
+            _ => panic!("expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_system_prompt_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "run", "--prompt", "hi"]).unwrap();
+        match cli.command {
+            Commands::Run { system_prompt, .. } => {
+                assert!(system_prompt.is_none());
+            }
+            _ => panic!("expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_agent_with_system_prompt_flag() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "agent",
+            "--system-prompt",
+            "act as senior engineer",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Agent { system_prompt, .. } => {
+                assert_eq!(system_prompt.as_deref(), Some("act as senior engineer"));
+            }
+            _ => panic!("expected Agent command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_agent_system_prompt_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "agent"]).unwrap();
+        match cli.command {
+            Commands::Agent { system_prompt, .. } => {
+                assert!(system_prompt.is_none());
+            }
+            _ => panic!("expected Agent command"),
+        }
     }
 }

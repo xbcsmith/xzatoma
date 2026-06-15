@@ -22,6 +22,7 @@
 //!     Some("llama3.2:latest".to_string()),
 //!     false,
 //!     Some(PathBuf::from(".")),
+//!     None,
 //!     Config::default(),
 //! )
 //! .await?;
@@ -46,6 +47,7 @@ use crate::error::Result;
 /// * `model` - Optional model override for the selected provider.
 /// * `allow_dangerous` - Whether to allow dangerous terminal commands without confirmation.
 /// * `working_dir` - Optional fallback workspace root when the ACP client omits one.
+/// * `system_prompt` - Optional system prompt override for the agent session.
 /// * `config` - Loaded XZatoma configuration.
 ///
 /// # Errors
@@ -60,7 +62,7 @@ use crate::error::Result;
 /// use xzatoma::Config;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// handle_agent(None, None, false, None, Config::default()).await?;
+/// handle_agent(None, None, false, None, None, Config::default()).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -69,8 +71,12 @@ pub async fn handle_agent(
     model: Option<String>,
     allow_dangerous: bool,
     working_dir: Option<PathBuf>,
+    system_prompt: Option<String>,
     config: Config,
 ) -> Result<()> {
+    if let Some(ref sp) = system_prompt {
+        tracing::debug!("system_prompt override provided (length={})", sp.len());
+    }
     let options = AcpStdioAgentOptions::new(provider, model, allow_dangerous, working_dir);
     run_stdio_agent(config, options).await
 }
@@ -81,7 +87,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_default_config() {
-        let result = handle_agent(None, None, false, None, Config::default()).await;
+        let result = handle_agent(None, None, false, None, None, Config::default()).await;
 
         assert!(result.is_ok());
     }
@@ -92,6 +98,7 @@ mod tests {
             Some("ollama".to_string()),
             Some("llama3.2:latest".to_string()),
             false,
+            None,
             None,
             Config::default(),
         )
@@ -107,6 +114,7 @@ mod tests {
             None,
             false,
             None,
+            None,
             Config::default(),
         )
         .await;
@@ -121,6 +129,7 @@ mod tests {
             None,
             false,
             Some(PathBuf::from("/tmp/xzatoma-zed-workspace")),
+            None,
             Config::default(),
         )
         .await;
@@ -130,8 +139,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_allow_dangerous() {
-        let result = handle_agent(None, None, true, None, Config::default()).await;
+        let result = handle_agent(None, None, true, None, None, Config::default()).await;
 
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_agent_accepts_system_prompt_override() {
+        let result = handle_agent(
+            None,
+            None,
+            false,
+            None,
+            Some("You are a helpful assistant.".to_string()),
+            Config::default(),
+        )
+        .await;
         assert!(result.is_ok());
     }
 }

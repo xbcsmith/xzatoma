@@ -49,6 +49,16 @@ pub struct Plan {
     /// Whether to allow dangerous terminal operations during execution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_dangerous: Option<bool>,
+    /// Optional system prompt to inject at the start of the agent session for this plan.
+    ///
+    /// When set, this prompt is sent as a `role: "system"` message before any
+    /// task instructions. This value takes precedence over all other system
+    /// prompt sources (CLI flags, environment variables, and configuration
+    /// files).
+    ///
+    /// A blank (whitespace-only) value is rejected by `PlanParser::validate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     /// File paths that the result event should reference upon completion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub result_mentions: Vec<String>,
@@ -94,6 +104,7 @@ impl Plan {
             goals: Vec::new(),
             max_iterations: None,
             allow_dangerous: None,
+            system_prompt: None,
             result_mentions: Vec::new(),
         }
     }
@@ -110,6 +121,7 @@ impl Plan {
             goals: Vec::new(),
             max_iterations: None,
             allow_dangerous: None,
+            system_prompt: None,
             result_mentions: Vec::new(),
         }
     }
@@ -155,6 +167,7 @@ impl Plan {
     ///     goals: vec![],
     ///     max_iterations: None,
     ///     allow_dangerous: None,
+    ///     system_prompt: None,
     ///     result_mentions: vec![],
     /// };
     ///
@@ -416,6 +429,7 @@ impl PlanParser {
             goals: Vec::new(),
             max_iterations: None,
             allow_dangerous: None,
+            system_prompt: None,
             result_mentions: Vec::new(),
         };
 
@@ -456,6 +470,14 @@ impl PlanParser {
                     "Step '{}' has no action",
                     step.name
                 )));
+            }
+        }
+
+        if let Some(ref prompt) = plan.system_prompt {
+            if prompt.trim().is_empty() {
+                return Err(XzatomaError::Tool(
+                    "Plan system_prompt cannot be blank".to_string(),
+                ));
             }
         }
 
@@ -1020,5 +1042,69 @@ steps:
         let ordered = resolve_task_order(&tasks).unwrap();
         assert_eq!(ordered.len(), 1);
         assert_eq!(ordered[0].id, "only");
+    }
+
+    #[test]
+    fn test_plan_system_prompt_defaults_none_in_new() {
+        let plan = Plan::new(
+            "test".to_string(),
+            vec![PlanStep::new("s1".to_string()).with_action("do it".to_string())],
+        );
+        assert!(plan.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_plan_system_prompt_defaults_none_in_new_with_tasks() {
+        let plan = Plan::new_with_tasks(
+            "test".to_string(),
+            vec![PlanTask {
+                id: "t1".to_string(),
+                description: "do it".to_string(),
+                priority: None,
+                dependencies: vec![],
+            }],
+        );
+        assert!(plan.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_plan_system_prompt_roundtrip_yaml() {
+        let yaml = "name: Test\nsystem_prompt: \"You are a pirate.\"\nsteps:\n  - name: s1\n    action: echo hi\n";
+        let plan = PlanParser::from_yaml(yaml).unwrap();
+        assert_eq!(plan.system_prompt.as_deref(), Some("You are a pirate."));
+    }
+
+    #[test]
+    fn test_plan_system_prompt_absent_in_yaml_gives_none() {
+        let yaml = "name: Test\nsteps:\n  - name: s1\n    action: echo hi\n";
+        let plan = PlanParser::from_yaml(yaml).unwrap();
+        assert!(plan.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_plan_validate_rejects_blank_system_prompt() {
+        let mut plan = Plan::new(
+            "test".to_string(),
+            vec![PlanStep::new("s1".to_string()).with_action("do it".to_string())],
+        );
+        plan.system_prompt = Some("   ".to_string());
+        assert!(PlanParser::validate(&plan).is_err());
+    }
+
+    #[test]
+    fn test_plan_validate_accepts_nonempty_system_prompt() {
+        let mut plan = Plan::new(
+            "test".to_string(),
+            vec![PlanStep::new("s1".to_string()).with_action("do it".to_string())],
+        );
+        plan.system_prompt = Some("You are helpful.".to_string());
+        assert!(PlanParser::validate(&plan).is_ok());
+    }
+
+    #[test]
+    fn test_plan_system_prompt_roundtrip_json() {
+        let json = r#"{"name":"Test","system_prompt":"Be concise.","steps":[{"name":"s1","action":"echo hi"}]}"#;
+        let plan = PlanParser::parse_string(json).unwrap();
+        assert_eq!(plan.system_prompt.as_deref(), Some("Be concise."));
     }
 }

@@ -361,6 +361,17 @@ pub struct AgentConfig {
     /// Subagent delegation settings
     #[serde(default)]
     pub subagent: SubagentConfig,
+
+    /// Optional user-defined system prompt for this session.
+    ///
+    /// When set, this prompt is injected as a `role: "system"` message at the
+    /// start of every agent session using this configuration. A blank
+    /// (whitespace-only) value is rejected by `Config::validate`.
+    ///
+    /// Configurable via the `XZATOMA_SYSTEM_PROMPT` environment variable or
+    /// the `agent.system_prompt` key in the YAML config file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 fn default_max_turns() -> usize {
@@ -381,6 +392,7 @@ impl Default for AgentConfig {
             terminal: TerminalConfig::default(),
             chat: ChatConfig::default(),
             subagent: SubagentConfig::default(),
+            system_prompt: None,
         }
     }
 }
@@ -1632,6 +1644,12 @@ impl Config {
             }
         }
 
+        if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT") {
+            if !prompt.trim().is_empty() {
+                self.agent.system_prompt = Some(prompt);
+            }
+        }
+
         if let Ok(mode) = std::env::var("XZATOMA_EXECUTION_MODE") {
             self.agent.terminal.default_mode = match mode.to_lowercase().as_str() {
                 "interactive" => ExecutionMode::Interactive,
@@ -2575,6 +2593,14 @@ impl Config {
             return Err(XzatomaError::Config(
                 "timeout_seconds must be greater than 0".to_string(),
             ));
+        }
+
+        if let Some(ref prompt) = self.agent.system_prompt {
+            if prompt.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "agent.system_prompt cannot be blank".to_string(),
+                ));
+            }
         }
 
         if self.agent.conversation.max_tokens == 0 {
@@ -5394,6 +5420,73 @@ agent:
             config.log.file_path,
             Some(std::path::PathBuf::from("/tmp/xzatoma_test.log"))
         );
+    }
+
+    #[test]
+    fn test_agent_config_system_prompt_defaults_none() {
+        let config = AgentConfig::default();
+        assert!(config.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_config_system_prompt_deserializes_from_yaml() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent:
+  system_prompt: "You are a pirate. Speak only in pirate."
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.agent.system_prompt.as_deref(),
+            Some("You are a pirate. Speak only in pirate.")
+        );
+    }
+
+    #[test]
+    fn test_config_system_prompt_absent_in_yaml_gives_none() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent: {}
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.agent.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_config_validation_rejects_blank_system_prompt() {
+        let mut config = Config::default();
+        config.agent.system_prompt = Some("   ".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_accepts_nonempty_system_prompt() {
+        let mut config = Config::default();
+        config.agent.system_prompt = Some("You are helpful.".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_sets_system_prompt() {
+        let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "act as a pirate");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(
+            config.agent.system_prompt.as_deref(),
+            Some("act as a pirate")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_ignores_blank_system_prompt() {
+        let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "   ");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(config.agent.system_prompt.is_none());
     }
 }
 

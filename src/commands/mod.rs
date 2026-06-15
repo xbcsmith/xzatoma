@@ -393,6 +393,7 @@ pub mod chat {
     ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
+    /// * `system_prompt` - Optional system prompt override for this session.
     ///
     /// # Examples
     ///
@@ -401,19 +402,24 @@ pub mod chat {
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None, None).await?;
+    /// // chat::run_chat(Config::default(), None, None, false, None, None, None).await?;
     /// ```
     pub async fn run_chat(
-        config: Config,
+        mut config: Config,
         provider_name: Option<String>,
         mode: Option<String>,
         _safe: bool,
         resume: Option<String>,
         thinking_effort: Option<String>,
+        system_prompt: Option<String>,
     ) -> Result<()> {
         use crate::storage::SqliteStorage;
 
         tracing::info!("Starting interactive chat mode");
+        if let Some(prompt) = system_prompt {
+            tracing::debug!("system_prompt override provided (length={})", prompt.len());
+            config.agent.system_prompt = Some(prompt);
+        }
 
         let provider_type = provider_name
             .as_deref()
@@ -1657,7 +1663,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None, None).await;
+            let res = run_chat(cfg, None, None, false, None, None, None).await;
             assert!(res.is_err());
         }
 
@@ -1954,7 +1960,7 @@ pub mod r#run {
         plan_path: Option<String>,
         prompt: Option<String>,
     ) -> Result<()> {
-        run_plan_with_options(config, plan_path, prompt, false, None).await
+        run_plan_with_options(config, plan_path, prompt, false, None, None).await
     }
 
     /// Run a plan or a prompt via the agent with extra options.
@@ -1969,14 +1975,20 @@ pub mod r#run {
     ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
+    /// * `system_prompt` - Optional system prompt override for this run session.
     pub async fn run_plan_with_options(
-        config: Config,
+        mut config: Config,
         plan_path: Option<String>,
         prompt: Option<String>,
         allow_dangerous: bool,
         thinking_effort: Option<String>,
+        system_prompt: Option<String>,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
+        if let Some(sp) = system_prompt {
+            tracing::debug!("system_prompt override provided (length={})", sp.len());
+            config.agent.system_prompt = Some(sp);
+        }
 
         if plan_path.is_none() && prompt.is_none() {
             return Err(XzatomaError::Config(
@@ -2291,6 +2303,8 @@ pub mod watch {
         pub brokers: Option<String>,
         /// Optional generic matcher version regex override.
         pub match_version: Option<String>,
+        /// Optional system prompt override for agent sessions triggered by this watcher.
+        pub system_prompt: Option<String>,
     }
     use std::path::PathBuf;
 
@@ -2574,6 +2588,12 @@ pub mod watch {
         // Note: dry_run is passed separately to Watcher::new() and not stored in config
         if overrides.dry_run {
             tracing::debug!("Dry-run mode will be enabled for execution");
+        }
+
+        // Override agent system prompt if provided
+        if let Some(ref prompt) = overrides.system_prompt {
+            config.agent.system_prompt = Some(prompt.clone());
+            tracing::debug!("CLI override: Agent system prompt");
         }
 
         Ok(())

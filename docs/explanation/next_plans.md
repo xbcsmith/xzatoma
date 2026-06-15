@@ -144,6 +144,8 @@ Watcher Bug: I am getting an error from the [@kafka.rs](file:///Users/bsmith/go/
     }
 }
 
+✅ COMPLETED -
+
 ## Sessions
 
 It looks like xzatoma is sending the whole plan to the LLM in a single POST. XZatoma should start a session and work through turns with its tasks in the plan. Verify this behavior is true so we can work on a plan to fix the one shot. The LLM response to the execute Task is as follows " Executing task...
@@ -162,4 +164,68 @@ How would you like me to proceed with this build plan?"
 
 Write a plan with a phased approach to add session support to XZatoma. THINK HARD and follow the rules in @PLAN.md
 
-[Session Support Implementation Plan](./session_support_implementation_plan.md)
+✅ COMPLETED - [Session Support Implementation Plan](./session_support_implementation_plan.md)
+
+## Zed ACP
+
+We have several features missing in ACP mode with xzatoma. There is no terminal mode drop down forcing xzatoma to run in "restricted" mode and leaving the user unable to change it. There is no context information in the chat window forcing the user to run the "/context" command to see remaining context window.
+
+terminal_mode: omitted for Zed sessions
+Zed provides a Mode Selector UI that controls the session `terminal_mode` at runtime.
+The selector defaults to "Restricted" for safety.
+
+Mode Selector UI is not showing up so I can change out of "Restricted" mode which means when using xzatoma with Zed I can not change the mode.
+
+Research the ACP code base and determine what the fix should be. Write a plan with a phased approach to add the missing features to "atoma agent" mode. THINK HARD and follow the rules in @PLAN.md
+
+[ACP Features Implementation](./acp_features_implementation.md)
+
+## Dynamic System Prompts
+
+Add support for setting the system prompt during a session to all xzatoma modes that talk to an LLM (chat, agent, run, watcher, serve).
+
+OpenAI
+
+Dynamic Approach via API Payload (Recommended)When using the OpenAI-compatible /v1/chat/completions endpoint, include a message object with the role key explicitly set to "system" as the first item in your messages array. llama-server reads this and auto-formats it to match the model's required prompt architecture.
+
+Example POST Request to `/v1/chat/completions`
+
+```json{
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that speaks strictly like a pirate."
+    },
+    {
+      "role": "user",
+      "content": "What is the capital of France?"
+    }
+  ],
+  "temperature": 0.7
+}
+```
+
+Chat Templates Matter: For the API payload to convert your "role": "system" message into the correct template tokens (like <|begin_of_text|><|start_header_id|>system<|end_header_id|> for Llama 3), ensure your model contains correct GGUF metadata or that you aren't using legacy raw flags
+
+Ollama works in a similar way.
+
+The dynamic chat templates should be configurable through plans, cli flags, env var, and config files. I should be able to craft a plan with a Dynamic System Prompt that will be used as part of the session. The idea is to be able to configure the LLM with a specific role before prompting it to do work improving the output of the session.
+
+In a chat session a user should be able to set the system prompt with a "/system" command followed by the text desired for the system prompt. For example "/system you are a pirate captain. Only answer in pirate speak"
+
+The "--system-prompt" CLI flag should always overwrite the system prompt on resumed chat sessions
+
+When running a plan the plan system prompt always takes precendence over any other method of setting the system prompt.
+
+When running with "--trace" the full system prompt should be logged at the beginning of each session.
+
+Write a plan to add dynamic system templates to all xzatoma modes (chat, agent, run, watcher, serve). THINK HARD and follow the rules in PLAN.md
+
+[Dynamic Chat Templates](./dynamic_chat_templates_implementation.md)
+
+
+## notes
+
+In ACP mode we should be able to see the stream where the model is thinking when thinking mode is available. We should have the same feature in chat mode. We should be able to enable it with "/streaming on" and disable it with "/streaming off". It should also be able to be set with "--streaming" cli flag.
+
+For OpenAI streaming we want to make sure we are using an idle/read timeout for streaming. Basically we want to only fail if no data arrives for N seconds.
