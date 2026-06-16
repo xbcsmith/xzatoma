@@ -41,13 +41,19 @@ use crate::error::Result;
 /// directly; instead, it packages CLI overrides into [`AcpStdioAgentOptions`]
 /// and delegates to [`run_stdio_agent`].
 ///
+/// The `system_prompt` CLI flag is resolved against any value already present in
+/// `config.agent.system_prompt` (e.g. from the `XZATOMA_SYSTEM_PROMPT` env var)
+/// using the standard precedence rule: CLI flag wins. The resolved prompt is
+/// written back into `config.agent.system_prompt` before `run_stdio_agent` is
+/// called so that the ACP stdio session creation path can read it.
+///
 /// # Arguments
 ///
 /// * `provider` - Optional provider override such as `copilot`, `ollama`, or `openai`.
 /// * `model` - Optional model override for the selected provider.
 /// * `allow_dangerous` - Whether to allow dangerous terminal commands without confirmation.
 /// * `working_dir` - Optional fallback workspace root when the ACP client omits one.
-/// * `system_prompt` - Optional system prompt override for the agent session.
+/// * `system_prompt` - Optional system prompt CLI flag override for the agent session.
 /// * `config` - Loaded XZatoma configuration.
 ///
 /// # Errors
@@ -72,16 +78,29 @@ pub async fn handle_agent(
     allow_dangerous: bool,
     working_dir: Option<PathBuf>,
     system_prompt: Option<String>,
-    config: Config,
+    mut config: Config,
 ) -> Result<()> {
-    if let Some(ref sp) = system_prompt {
-        tracing::debug!("system_prompt override provided (length={})", sp.len());
-    }
-    if tracing::enabled!(tracing::Level::TRACE) {
-        tracing::trace!(
-            system_prompt = ?system_prompt,
-            "agent session system prompt state"
+    // Resolve the CLI flag against any config/env value already in config.
+    // CLI flag takes precedence over config.agent.system_prompt.
+    let resolved = crate::agent::resolve(
+        None,
+        system_prompt.as_deref(),
+        config.agent.system_prompt.as_deref(),
+    );
+    if let Some(ref r) = resolved {
+        tracing::debug!(
+            source = ?r.source,
+            length = r.text.len(),
+            "agent command system_prompt resolved"
         );
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                source = ?r.source,
+                system_prompt = %r.text,
+                "agent session system prompt"
+            );
+        }
+        config.agent.system_prompt = Some(r.text.clone());
     }
     let options = AcpStdioAgentOptions::new(provider, model, allow_dangerous, working_dir);
     run_stdio_agent(config, options).await
@@ -162,5 +181,26 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_agent_cli_system_prompt_wins_over_config() {
+        // Verify resolver precedence: CLI flag beats config value.
+        let resolved = crate::agent::resolve(None, Some("from cli"), Some("from config")).unwrap();
+        assert_eq!(resolved.text, "from cli");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::CliFlag);
+    }
+
+    #[test]
+    fn test_handle_agent_config_system_prompt_used_when_no_cli_flag() {
+        // Verify resolver precedence: config value is used when CLI is absent.
+        let resolved = crate::agent::resolve(None, None, Some("from config")).unwrap();
+        assert_eq!(resolved.text, "from config");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::Config);
+    }
+
+    #[test]
+    fn test_handle_agent_no_system_prompt_resolves_to_none() {
+        assert!(crate::agent::resolve(None, None, None).is_none());
     }
 }

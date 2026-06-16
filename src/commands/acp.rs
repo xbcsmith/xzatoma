@@ -165,6 +165,10 @@ pub fn apply_serve_overrides(
             "ACP serve system_prompt override provided (length={})",
             prompt.len()
         );
+        // Write to config.acp.system_prompt (ACP-specific override used by
+        // the executor and stdio session paths) and mirror into
+        // config.agent.system_prompt for any shared code paths.
+        config.acp.system_prompt = Some(prompt.clone());
         config.agent.system_prompt = Some(prompt);
     }
 }
@@ -514,9 +518,8 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_serve_overrides_accepts_system_prompt_parameter() {
+    fn test_apply_serve_overrides_stores_system_prompt_in_acp_and_agent_config() {
         let mut config = Config::default();
-        // system_prompt is accepted; wired to config.acp in Phase 4
         apply_serve_overrides(
             &mut config,
             None,
@@ -525,6 +528,13 @@ mod tests {
             false,
             Some("You are helpful.".to_string()),
         );
-        // No assertion on config yet; just verify it compiles and does not panic
+        assert_eq!(
+            config.acp.system_prompt.as_deref(),
+            Some("You are helpful.")
+        );
+        assert_eq!(
+            config.agent.system_prompt.as_deref(),
+            Some("You are helpful.")
+        );
     }
 }

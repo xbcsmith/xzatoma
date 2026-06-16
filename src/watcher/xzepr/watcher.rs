@@ -585,6 +585,37 @@ impl MessageHandler for WatcherMessageHandler {
                 crate::chat_mode::SafetyMode::NeverConfirm,
             )?;
 
+            // Parse the plan early to extract any plan-level system_prompt for
+            // resolution. The same result is reused for execution below.
+            let plan_parse_result = crate::tools::plan::PlanParser::from_yaml(&plan_yaml);
+
+            // Resolve system prompt: plan system_prompt wins over config/CLI.
+            let plan_sp = plan_parse_result
+                .as_ref()
+                .ok()
+                .and_then(|p| p.system_prompt.as_deref());
+            let resolved_sp =
+                crate::agent::resolve(plan_sp, None, config.agent.system_prompt.as_deref());
+
+            // Inject resolved system prompt before skill disclosure.
+            if let Some(ref resolved) = resolved_sp {
+                tracing::debug!(
+                    source = ?resolved.source,
+                    length = resolved.text.len(),
+                    "Injecting system prompt into XZepr watcher agent session"
+                );
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(
+                        source = ?resolved.source,
+                        system_prompt = %resolved.text,
+                        "XZepr watcher agent session system prompt"
+                    );
+                }
+                agent
+                    .conversation_mut()
+                    .add_system_message(resolved.text.clone());
+            }
+
             if let Some(disclosure) = &env.skill_disclosure {
                 agent
                     .conversation_mut()
@@ -598,7 +629,7 @@ impl MessageHandler for WatcherMessageHandler {
             }
 
             let exec_result: crate::error::Result<(bool, String, Option<Vec<serde_json::Value>>)> =
-                match crate::tools::plan::PlanParser::from_yaml(&plan_yaml) {
+                match plan_parse_result {
                     Ok(plan) => {
                         let use_per_task = matches!(
                             config.watcher.execution.execution_mode,
@@ -923,5 +954,30 @@ mod tests {
         assert!(!config.watcher.execution.allow_dangerous);
         assert_eq!(config.watcher.execution.max_concurrent_executions, 1);
         assert_eq!(config.watcher.execution.execution_timeout_secs, 300);
+    }
+
+    #[test]
+    fn test_xzepr_watcher_system_prompt_resolve_plan_wins_over_config() {
+        // The plan-level system_prompt overrides the config-level one.
+        use crate::agent::resolve;
+        let result = resolve(Some("from the xzepr plan"), None, Some("from config"));
+        let resolved = result.unwrap();
+        assert_eq!(resolved.text, "from the xzepr plan");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::Plan);
+    }
+
+    #[test]
+    fn test_xzepr_watcher_system_prompt_config_used_when_plan_has_none() {
+        use crate::agent::resolve;
+        let result = resolve(None, None, Some("from config"));
+        let resolved = result.unwrap();
+        assert_eq!(resolved.text, "from config");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::Config);
+    }
+
+    #[test]
+    fn test_xzepr_watcher_system_prompt_none_when_no_sources() {
+        use crate::agent::resolve;
+        assert!(resolve(None, None, None).is_none());
     }
 }

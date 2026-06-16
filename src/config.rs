@@ -450,6 +450,20 @@ pub struct AcpConfig {
     /// ACP stdio subprocess configuration for Zed-compatible integrations.
     #[serde(default)]
     pub stdio: AcpStdioConfig,
+
+    /// Optional system prompt override for all ACP run sessions.
+    ///
+    /// When set, this prompt is injected as the first `role: "system"` message
+    /// in every ACP agent session. A blank (whitespace-only) value is rejected
+    /// by `Config::validate`. Settable via the `XZATOMA_SYSTEM_PROMPT`
+    /// environment variable or the `acp.system_prompt` key in the YAML config
+    /// file.
+    ///
+    /// This field takes precedence over `agent.system_prompt` in ACP execution
+    /// contexts. Use `agent.system_prompt` for a global override covering all
+    /// modes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 fn default_acp_enabled() -> bool {
@@ -490,6 +504,7 @@ impl Default for AcpConfig {
             default_run_mode: AcpDefaultRunMode::default(),
             persistence: AcpPersistenceConfig::default(),
             stdio: AcpStdioConfig::default(),
+            system_prompt: None,
         }
     }
 }
@@ -1646,7 +1661,10 @@ impl Config {
 
         if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT") {
             if !prompt.trim().is_empty() {
-                self.agent.system_prompt = Some(prompt);
+                self.agent.system_prompt = Some(prompt.clone());
+                // Mirror into acp.system_prompt so ACP contexts can prefer the
+                // ACP-specific field while XZATOMA_SYSTEM_PROMPT covers all modes.
+                self.acp.system_prompt = Some(prompt);
             }
         }
 
@@ -2836,6 +2854,15 @@ impl Config {
             if token.trim().is_empty() {
                 return Err(XzatomaError::Config(
                     "acp.auth_token cannot be empty when set".to_string(),
+                ));
+            }
+        }
+
+        if let Some(ref sp) = self.acp.system_prompt {
+            if sp.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.system_prompt cannot be blank; remove the field or set a non-empty value"
+                        .to_string(),
                 ));
             }
         }
@@ -5487,6 +5514,80 @@ agent: {}
         let mut config = Config::default();
         config.apply_env_vars();
         assert!(config.agent.system_prompt.is_none());
+        assert!(config.acp.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_acp_config_system_prompt_defaults_none() {
+        let config = AcpConfig::default();
+        assert!(config.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_config_acp_system_prompt_deserializes_from_yaml() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent: {}
+acp:
+  system_prompt: "You are an ACP assistant."
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.acp.system_prompt.as_deref(),
+            Some("You are an ACP assistant.")
+        );
+    }
+
+    #[test]
+    fn test_config_acp_system_prompt_absent_in_yaml_gives_none() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent: {}
+acp: {}
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.acp.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_config_validation_rejects_blank_acp_system_prompt() {
+        let mut config = Config::default();
+        config.acp.system_prompt = Some("   ".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_config_validation_accepts_nonempty_acp_system_prompt() {
+        let mut config = Config::default();
+        config.acp.system_prompt = Some("You are an ACP assistant.".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_sets_acp_system_prompt() {
+        let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "act as a pirate");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.acp.system_prompt.as_deref(), Some("act as a pirate"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_sets_both_agent_and_acp_system_prompt() {
+        let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "you are a senior engineer");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(
+            config.agent.system_prompt.as_deref(),
+            Some("you are a senior engineer")
+        );
+        assert_eq!(
+            config.acp.system_prompt.as_deref(),
+            Some("you are a senior engineer")
+        );
     }
 }
 
