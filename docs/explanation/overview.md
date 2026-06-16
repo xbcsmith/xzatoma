@@ -2,7 +2,11 @@
 
 ## Executive Summary
 
-XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks through conversation with AI providers (GitHub Copilot or Ollama). Think of it as a command-line version of Zed's agent chat - you give it a goal (via interactive prompt or structured plan), and it uses basic file and terminal tools to accomplish it.
+XZatoma is a simple autonomous AI agent CLI written in Rust that executes tasks
+through conversation with AI providers (GitHub Copilot or Ollama). Think of it
+as a command-line version of Zed's agent chat - you give it a goal (via
+interactive prompt or structured plan), and it uses basic file and terminal
+tools to accomplish it.
 
 ## Vision
 
@@ -19,32 +23,44 @@ To provide a simple, powerful AI agent that can:
 
 1. **Multi-Provider AI Integration**
 
-  - GitHub Copilot support with OAuth authentication
-  - Ollama support for local models
-  - Simple provider abstraction
+- GitHub Copilot support with OAuth authentication
+- Ollama support for local models
+- Simple provider abstraction
 
-2. **Autonomous Agent**
+1. **Autonomous Agent**
 
-  - Conversation-based execution loop
-  - Multi-turn tool calling
-  - Handles errors and retries
+- Conversation-based execution loop
+- Multi-turn tool calling
+- Handles errors and retries
 
-3. **Basic Tools**
+1. **Basic Tools**
 
-  - File operations: list, read, write, delete, diff
-  - Terminal execution: run shell commands
-  - Plan parsing: JSON, YAML, Markdown
+- File operations: list, read, write, delete, diff
+- Terminal execution: run shell commands
+- Plan parsing: JSON, YAML, Markdown
 
-4. **Flexible Input**
-  - Interactive chat mode
-  - Structured plan files
-  - One-shot prompts
+1. **Flexible Input**
+
+   - Interactive chat mode
+   - Structured plan files
+   - One-shot prompts
+
+2. **Dynamic System Prompts**
+
+   - Steer the model's persona before any task content is sent.
+   - Configurable via CLI flag (`--system-prompt`), environment variable
+     (`XZATOMA_SYSTEM_PROMPT`), config file (`agent.system_prompt`), or plan
+     file field (`system_prompt`).
+   - Plan file takes highest precedence; CLI flag overrides env var and config.
+   - Interactive `/system <text>` command updates the prompt mid-session.
+   - Applies to all LLM-facing modes: `chat`, `run`, `agent`, `watch`, and
+     `acp serve`.
 
 ## Technical Architecture
 
 ### High-Level Design
 
-```
+```text
 User Input → CLI → Agent Core → AI Provider
            ↓       ↓
           Tools ← ─ ─ ─ ─ ─ ┘
@@ -137,16 +153,16 @@ Done! Created tasks.md with 5 TODO items found.
 goal: "Refactor function names to follow snake_case convention"
 
 context:
- directory: "src/"
+  directory: "src/"
 
 instructions:
- - List all Python files in src/
- - Read each file
- - Identify functions with camelCase names
- - Rename to snake_case
- - Update all references
- - Write updated files
- - Show summary of changes
+  - List all Python files in src/
+  - Read each file
+  - Identify functions with camelCase names
+  - Rename to snake_case
+  - Update all references
+  - Write updated files
+  - Show summary of changes
 ```
 
 ```bash
@@ -218,7 +234,8 @@ XZatoma intentionally does NOT include:
 - Database clients (agent uses terminal)
 - API clients (agent uses terminal with curl)
 
-Instead, the agent uses basic building blocks creatively to accomplish complex tasks. This keeps XZatoma simple while maintaining maximum flexibility.
+Instead, the agent uses basic building blocks creatively to accomplish complex
+tasks. This keeps XZatoma simple while maintaining maximum flexibility.
 
 ## Quality Standards
 
@@ -333,8 +350,7 @@ XZatoma is similar to Zed's agent chat but:
 
 ## Project Status
 
-**Current Phase**: Planning Complete
-**Next Milestone**: Phase 1 - Foundation
+**Current Phase**: Planning Complete **Next Milestone**: Phase 1 - Foundation
 **Target Release**: v1.0.0 (10-14 weeks)
 
 ## Resources
@@ -348,7 +364,8 @@ XZatoma is similar to Zed's agent chat but:
 
 ### External References
 
-- [Zed Editor](https://github.com/zed-industries/zed) - Agent and provider patterns
+- [Zed Editor](https://github.com/zed-industries/zed) - Agent and provider
+  patterns
 - [Goose Project](https://github.com/block/goose) - Agent architecture
 - [Diataxis Framework](https://diataxis.fr/) - Documentation organization
 - [Rust Book](https://doc.rust-lang.org/book/) - Rust language
@@ -378,11 +395,12 @@ XZatoma is intentionally simple:
 - Plan files for structured tasks
 - That's it
 
-The power comes from the AI's ability to use these simple tools creatively to accomplish complex tasks, not from building specialized features into XZatoma itself. This keeps the codebase maintainable, the tool flexible, and the possibilities unlimited.
+The power comes from the AI's ability to use these simple tools creatively to
+accomplish complex tasks, not from building specialized features into XZatoma
+itself. This keeps the codebase maintainable, the tool flexible, and the
+possibilities unlimited.
 
 ---
 
-**Status**: Planning Complete
-**Version**: 0.1.0-planning
-**Last Updated**: 2025-01-07
-**Maintained By**: XZatoma Development Team
+**Status**: Planning Complete **Version**: 0.1.0-planning **Last Updated**:
+2025-01-07 **Maintained By**: XZatoma Development Team
