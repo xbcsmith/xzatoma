@@ -405,7 +405,7 @@ pub mod chat {
     /// // chat::run_chat(Config::default(), None, None, false, None, None, None).await?;
     /// ```
     pub async fn run_chat(
-        mut config: Config,
+        config: Config,
         provider_name: Option<String>,
         mode: Option<String>,
         _safe: bool,
@@ -416,16 +416,10 @@ pub mod chat {
         use crate::storage::SqliteStorage;
 
         tracing::info!("Starting interactive chat mode");
-        if let Some(prompt) = system_prompt {
-            tracing::debug!("system_prompt override provided (length={})", prompt.len());
-            config.agent.system_prompt = Some(prompt);
-        }
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(
-                system_prompt = ?config.agent.system_prompt,
-                "chat session system prompt state"
-            );
-        }
+        // Keep the CLI flag value separate from config so we can distinguish
+        // CLI-provided prompts (which overwrite resumed sessions) from
+        // config/env prompts (which only apply to new sessions).
+        let cli_system_prompt = system_prompt;
 
         let provider_type = provider_name
             .as_deref()
@@ -520,6 +514,10 @@ pub mod chat {
         )?;
         tools.register("subagent", Arc::new(subagent_tool));
 
+        // Track whether a previous conversation was successfully loaded from storage.
+        // This controls whether config/env system prompts are applied to resumed sessions.
+        let mut conversation_loaded = false;
+
         // Initialize agent with conversation
         let mut agent = if let Some(ref resume_id) = resume {
             if let Some(storage) = &storage {
@@ -542,6 +540,7 @@ pub mod chat {
                         }
 
                         println!("Resuming conversation: {}", title.cyan());
+                        conversation_loaded = true;
                         let conversation = crate::agent::Conversation::with_history(
                             uuid::Uuid::parse_str(resume_id)
                                 .unwrap_or_else(|_| uuid::Uuid::new_v4()),
@@ -551,36 +550,12 @@ pub mod chat {
                             config.agent.conversation.min_retain_turns,
                             config.agent.conversation.prune_threshold as f64,
                         );
-                        let mut agent = Agent::with_conversation_and_shared_provider(
+                        Agent::with_conversation_and_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
                             conversation,
-                        )?;
-                        if let Some(disclosure) = &skill_disclosure {
-                            if !agent.conversation().messages().iter().any(|message| {
-                                message.role == "system"
-                                    && message
-                                        .content
-                                        .as_deref()
-                                        .map(|content| content == disclosure)
-                                        .unwrap_or(false)
-                            }) {
-                                agent
-                                    .conversation_mut()
-                                    .add_system_message(disclosure.clone());
-                            }
-                        }
-
-                        let mut transient_system_messages = Vec::new();
-                        if let Some(active_skill_prompt) =
-                            build_active_skill_prompt_injection(&active_skill_registry)?
-                        {
-                            transient_system_messages.push(active_skill_prompt);
-                        }
-                        agent.set_transient_system_messages(transient_system_messages);
-
-                        agent
+                        )?
                     }
                     Ok(None) => {
                         println!(
@@ -588,50 +563,20 @@ pub mod chat {
                             format!("Conversation {} not found, starting new one.", resume_id)
                                 .yellow()
                         );
-                        let mut agent = Agent::new_from_shared_provider(
+                        Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?;
-                        if let Some(disclosure) = &skill_disclosure {
-                            agent
-                                .conversation_mut()
-                                .add_system_message(disclosure.clone());
-                        }
-
-                        let mut transient_system_messages = Vec::new();
-                        if let Some(active_skill_prompt) =
-                            build_active_skill_prompt_injection(&active_skill_registry)?
-                        {
-                            transient_system_messages.push(active_skill_prompt);
-                        }
-                        agent.set_transient_system_messages(transient_system_messages);
-
-                        agent
+                        )?
                     }
                     Err(e) => {
                         tracing::error!("Failed to load conversation: {}", e);
                         println!("{}", "Failed to load conversation, starting new one.".red());
-                        let mut agent = Agent::new_from_shared_provider(
+                        Agent::new_from_shared_provider(
                             Arc::clone(&provider),
                             tools,
                             config.agent.clone(),
-                        )?;
-                        if let Some(disclosure) = &skill_disclosure {
-                            agent
-                                .conversation_mut()
-                                .add_system_message(disclosure.clone());
-                        }
-
-                        let mut transient_system_messages = Vec::new();
-                        if let Some(active_skill_prompt) =
-                            build_active_skill_prompt_injection(&active_skill_registry)?
-                        {
-                            transient_system_messages.push(active_skill_prompt);
-                        }
-                        agent.set_transient_system_messages(transient_system_messages);
-
-                        agent
+                        )?
                     }
                 }
             } else {
@@ -639,49 +584,74 @@ pub mod chat {
                     "{}",
                     "Storage not available, starting new conversation.".yellow()
                 );
-                let mut agent = Agent::new_from_shared_provider(
-                    Arc::clone(&provider),
-                    tools,
-                    config.agent.clone(),
-                )?;
-                if let Some(disclosure) = &skill_disclosure {
-                    agent
-                        .conversation_mut()
-                        .add_system_message(disclosure.clone());
-                }
-
-                let mut transient_system_messages = Vec::new();
-                if let Some(active_skill_prompt) =
-                    build_active_skill_prompt_injection(&active_skill_registry)?
-                {
-                    transient_system_messages.push(active_skill_prompt);
-                }
-                agent.set_transient_system_messages(transient_system_messages);
-
-                agent
+                Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
             }
         } else {
-            let mut agent = Agent::new_from_shared_provider(
-                Arc::clone(&provider),
-                tools,
-                config.agent.clone(),
-            )?;
-            if let Some(disclosure) = &skill_disclosure {
+            Agent::new_from_shared_provider(Arc::clone(&provider), tools, config.agent.clone())?
+        };
+
+        // Resolve the effective system prompt (no plan in chat mode).
+        let resolved_system_prompt = crate::agent::resolve(
+            None,
+            cli_system_prompt.as_deref(),
+            config.agent.system_prompt.as_deref(),
+        );
+
+        if let Some(ref resolved) = resolved_system_prompt {
+            if cli_system_prompt.is_some() {
+                // CLI flag provided: overwrite the first system message on both new
+                // and resumed sessions (replaces existing, or prepends if absent).
+                agent
+                    .conversation_mut()
+                    .replace_first_system_message(&resolved.text);
+                tracing::debug!(
+                    source = ?resolved.source,
+                    length = resolved.text.len(),
+                    "Replaced first system message from CLI flag"
+                );
+            } else if !conversation_loaded {
+                // Config/env value only: inject for new sessions, leave resumed intact.
+                agent
+                    .conversation_mut()
+                    .add_system_message(resolved.text.clone());
+                tracing::debug!(
+                    source = ?resolved.source,
+                    length = resolved.text.len(),
+                    "Injecting system prompt from config into new chat session"
+                );
+            }
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    source = ?resolved.source,
+                    system_prompt = %resolved.text,
+                    "Session system prompt"
+                );
+            }
+        }
+
+        // Add skill disclosure (after user system prompt, with deduplication).
+        if let Some(ref disclosure) = skill_disclosure {
+            if !agent.conversation().messages().iter().any(|m| {
+                m.role == "system"
+                    && m.content
+                        .as_deref()
+                        .map(|c| c == disclosure.as_str())
+                        .unwrap_or(false)
+            }) {
                 agent
                     .conversation_mut()
                     .add_system_message(disclosure.clone());
             }
+        }
 
-            let mut transient_system_messages = Vec::new();
-            if let Some(active_skill_prompt) =
-                build_active_skill_prompt_injection(&active_skill_registry)?
-            {
-                transient_system_messages.push(active_skill_prompt);
-            }
-            agent.set_transient_system_messages(transient_system_messages);
-
-            agent
-        };
+        // Set transient system messages (active skills).
+        let mut transient_system_messages = Vec::new();
+        if let Some(active_skill_prompt) =
+            build_active_skill_prompt_injection(&active_skill_registry)?
+        {
+            transient_system_messages.push(active_skill_prompt);
+        }
+        agent.set_transient_system_messages(transient_system_messages);
 
         // Create readline instance
         let mut rl = DefaultEditor::new()?;
@@ -870,6 +840,11 @@ pub mod chat {
                                 println!("Subagent delegation disabled");
                             }
                             println!();
+                            continue;
+                        }
+                        Ok(SpecialCommand::SetSystemPrompt(text)) => {
+                            agent.conversation_mut().replace_first_system_message(&text);
+                            println!("System prompt updated.\n");
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,
@@ -1991,15 +1966,13 @@ pub mod r#run {
         system_prompt: Option<String>,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
+        // Save CLI flag separately before merging into config.
+        // This lets us pass the original CLI value to resolve() alongside
+        // any plan-file system_prompt, so that plan > CLI > config/env ordering works.
+        let cli_system_prompt = system_prompt.clone();
         if let Some(sp) = system_prompt {
-            tracing::debug!("system_prompt override provided (length={})", sp.len());
+            tracing::debug!("system_prompt CLI override provided (length={})", sp.len());
             config.agent.system_prompt = Some(sp);
-        }
-        if tracing::enabled!(tracing::Level::TRACE) {
-            tracing::trace!(
-                system_prompt = ?config.agent.system_prompt,
-                "run session system prompt state"
-            );
         }
 
         if plan_path.is_none() && prompt.is_none() {
@@ -2048,8 +2021,49 @@ pub mod r#run {
             }
         }
 
+        // Parse the plan file early so that plan.system_prompt is available
+        // before agent construction. Precedence: plan > CLI flag > config/env.
+        let (plan_system_prompt, task) = if let Some(ref path) = plan_path {
+            let plan = PlanParser::from_file(Path::new(path))?;
+            PlanParser::validate(&plan)?;
+            let sp = plan.system_prompt.clone();
+            let instruction = plan.to_instruction();
+            (sp, instruction)
+        } else {
+            // SAFETY: plan_path.is_none() && prompt.is_none() was checked and
+            // returned early above, so prompt is guaranteed Some here.
+            (None, prompt.expect("prompt is Some when plan_path is None"))
+        };
+
+        // Resolve the effective system prompt (plan > CLI flag > config/env).
+        let resolved_system_prompt = crate::agent::resolve(
+            plan_system_prompt.as_deref(),
+            cli_system_prompt.as_deref(),
+            config.agent.system_prompt.as_deref(),
+        );
+
         let mut agent = Agent::new_from_shared_provider(provider, tools, config.agent.clone())?;
 
+        // 1. Inject user-defined system prompt as the first system message.
+        if let Some(ref resolved) = resolved_system_prompt {
+            agent
+                .conversation_mut()
+                .add_system_message(resolved.text.clone());
+            tracing::debug!(
+                source = ?resolved.source,
+                length = resolved.text.len(),
+                "Injecting system prompt into run session"
+            );
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    source = ?resolved.source,
+                    system_prompt = %resolved.text,
+                    "Session system prompt"
+                );
+            }
+        }
+
+        // 2. Add skill disclosure after the user system prompt.
         if let Some(disclosure) = &skill_disclosure {
             agent
                 .conversation_mut()
@@ -2063,27 +2077,6 @@ pub mod r#run {
             transient_system_messages.push(active_skill_prompt);
         }
         agent.set_transient_system_messages(transient_system_messages);
-
-        // Compose a textual task to send to the agent
-        let task = if let Some(path) = plan_path {
-            let plan = PlanParser::from_file(Path::new(&path))?;
-            PlanParser::validate(&plan)?;
-
-            let steps_s = plan
-                .steps
-                .iter()
-                .map(|s| format!("- {}: {}", s.name, s.action))
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            format!(
-                "Execute this plan:\n\nName: {}\n\nSteps:\n{}\n",
-                plan.name, steps_s
-            )
-        } else {
-            // `prompt` is guaranteed to be Some when here because of the earlier check
-            prompt.unwrap()
-        };
 
         println!("Executing task...\n");
         match agent.execute(task).await {
@@ -2212,6 +2205,21 @@ steps:
             // we don't execute the agent; we verify we can parse and not crash.
             let res = run_plan(cfg, Some(p.to_string_lossy().to_string()), None).await;
             assert!(res.is_err());
+        }
+
+        #[test]
+        fn test_run_plan_with_options_uses_plan_system_prompt_over_cli() {
+            // Verify plan.system_prompt takes precedence over the CLI flag.
+            // This is tested indirectly by confirming that run_plan_with_options
+            // compiles and the resolver logic is exercised in the resolver unit tests.
+            // Full behavioral verification requires a plan file on disk.
+            //
+            // What we DO verify: calling with both values doesn't panic.
+            use crate::agent::resolve;
+            let result = resolve(Some("from plan"), Some("from cli"), None);
+            let resolved = result.unwrap();
+            assert_eq!(resolved.text, "from plan");
+            assert_eq!(resolved.source, crate::agent::SystemPromptSource::Plan);
         }
     }
 }

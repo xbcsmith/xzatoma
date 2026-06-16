@@ -306,6 +306,54 @@ impl Conversation {
         self.prune_if_needed();
     }
 
+    /// Replaces the content of the first system message in the conversation.
+    ///
+    /// Locates the first entry whose `role` field equals `"system"` and
+    /// overwrites its `content` field with `text`. Subsequent system messages
+    /// (for example, skill disclosure messages) are left untouched.
+    ///
+    /// If no system message exists yet, a new one is prepended to the message
+    /// list so that it appears before all other messages.
+    ///
+    /// Token counts are recalculated after the operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - The new system prompt text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::Conversation;
+    ///
+    /// let mut conv = Conversation::new(8000, 10, 0.8);
+    /// conv.add_system_message("original prompt");
+    /// conv.add_user_message("hello");
+    ///
+    /// conv.replace_first_system_message("updated prompt");
+    ///
+    /// let system_msgs: Vec<_> = conv
+    ///     .messages()
+    ///     .iter()
+    ///     .filter(|m| m.role == "system")
+    ///     .collect();
+    /// assert_eq!(system_msgs.len(), 1);
+    /// assert_eq!(system_msgs[0].content.as_deref(), Some("updated prompt"));
+    /// // User message is still there
+    /// assert_eq!(conv.messages().iter().filter(|m| m.role == "user").count(), 1);
+    /// ```
+    pub fn replace_first_system_message(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.role == "system") {
+            msg.content = Some(text);
+        } else {
+            // No system message exists; prepend one so it precedes all other messages.
+            let new_msg = Message::system(text);
+            self.messages.insert(0, new_msg);
+        }
+        self.recalculate_tokens();
+    }
+
     /// Adds a generic message to the conversation
     ///
     /// This is a helper for tests and for callers that already have a
@@ -1453,5 +1501,81 @@ mod tests {
         let remaining = status.tokens_remaining();
         assert!(remaining.is_some());
         assert_eq!(remaining.unwrap(), 150);
+    }
+
+    #[test]
+    fn test_replace_first_system_message_updates_existing_system_message() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_system_message("original");
+        conv.add_user_message("hello");
+
+        conv.replace_first_system_message("updated");
+
+        let system_msgs: Vec<_> = conv
+            .messages()
+            .iter()
+            .filter(|m| m.role == "system")
+            .collect();
+        assert_eq!(system_msgs.len(), 1);
+        assert_eq!(system_msgs[0].content.as_deref(), Some("updated"));
+    }
+
+    #[test]
+    fn test_replace_first_system_message_only_replaces_first_when_multiple_exist() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_system_message("first system");
+        conv.add_system_message("second system");
+        conv.add_user_message("hello");
+
+        conv.replace_first_system_message("replaced first");
+
+        let system_msgs: Vec<_> = conv
+            .messages()
+            .iter()
+            .filter(|m| m.role == "system")
+            .collect();
+        assert_eq!(system_msgs.len(), 2);
+        assert_eq!(system_msgs[0].content.as_deref(), Some("replaced first"));
+        assert_eq!(system_msgs[1].content.as_deref(), Some("second system"));
+    }
+
+    #[test]
+    fn test_replace_first_system_message_prepends_when_no_system_message_exists() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_user_message("hello");
+
+        conv.replace_first_system_message("new system prompt");
+
+        assert_eq!(conv.messages()[0].role, "system");
+        assert_eq!(
+            conv.messages()[0].content.as_deref(),
+            Some("new system prompt")
+        );
+        assert_eq!(conv.messages()[1].role, "user");
+    }
+
+    #[test]
+    fn test_replace_first_system_message_on_empty_conversation_prepends() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.replace_first_system_message("sole prompt");
+
+        assert_eq!(conv.messages().len(), 1);
+        assert_eq!(conv.messages()[0].role, "system");
+        assert_eq!(conv.messages()[0].content.as_deref(), Some("sole prompt"));
+    }
+
+    #[test]
+    fn test_replace_first_system_message_preserves_user_messages() {
+        let mut conv = Conversation::new(8000, 10, 0.8);
+        conv.add_system_message("sys");
+        conv.add_user_message("user msg 1");
+        conv.add_user_message("user msg 2");
+
+        conv.replace_first_system_message("new sys");
+
+        assert_eq!(
+            conv.messages().iter().filter(|m| m.role == "user").count(),
+            2
+        );
     }
 }
