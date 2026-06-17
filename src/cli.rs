@@ -2054,4 +2054,62 @@ mod tests {
             _ => panic!("expected Agent command"),
         }
     }
+
+    #[test]
+    fn test_cli_parse_watch_with_system_prompt_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--system-prompt", "you are a watcher"])
+            .unwrap();
+        match cli.command {
+            Commands::Watch { system_prompt, .. } => {
+                assert_eq!(system_prompt.as_deref(), Some("you are a watcher"));
+            }
+            _ => panic!("expected Watch command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_system_prompt_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch"]).unwrap();
+        match cli.command {
+            Commands::Watch { system_prompt, .. } => {
+                assert!(system_prompt.is_none());
+            }
+            _ => panic!("expected Watch command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_acp_serve_with_system_prompt_flag() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "acp",
+            "serve",
+            "--system-prompt",
+            "act as acp agent",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Acp { command, .. } => match command {
+                AcpCommand::Serve { system_prompt, .. } => {
+                    assert_eq!(system_prompt.as_deref(), Some("act as acp agent"));
+                }
+                _ => panic!("expected AcpCommand::Serve"),
+            },
+            _ => panic!("expected Acp command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_acp_serve_system_prompt_defaults_none() {
+        let cli = Cli::try_parse_from(["xzatoma", "acp", "serve"]).unwrap();
+        match cli.command {
+            Commands::Acp { command, .. } => match command {
+                AcpCommand::Serve { system_prompt, .. } => {
+                    assert!(system_prompt.is_none());
+                }
+                _ => panic!("expected AcpCommand::Serve"),
+            },
+            _ => panic!("expected Acp command"),
+        }
+    }
 }

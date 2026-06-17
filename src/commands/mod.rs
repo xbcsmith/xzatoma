@@ -3120,6 +3120,37 @@ pub mod watch {
                 .contains("Failed to read filter config file"));
         }
 
+        #[test]
+        fn test_apply_cli_overrides_system_prompt() {
+            let mut config = Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test.topic".to_string(),
+                output_topic: None,
+                group_id: "test-group".to_string(),
+                auto_create_topics: false,
+                security: None,
+                num_partitions: 1,
+                replication_factor: 1,
+                broker_address_family: "v4".to_string(),
+                poll_interval_ms: 1000,
+            });
+
+            let result = apply_cli_overrides(
+                &mut config,
+                &WatchCliOverrides {
+                    system_prompt: Some("act as a watcher agent".to_string()),
+                    ..WatchCliOverrides::default()
+                },
+            );
+
+            assert!(result.is_ok());
+            assert_eq!(
+                config.agent.system_prompt,
+                Some("act as a watcher agent".to_string())
+            );
+        }
+
         #[tokio::test]
         async fn test_run_watch_xzepr_missing_kafka_returns_error() {
             let mut config = Config::default();
