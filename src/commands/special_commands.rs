@@ -108,6 +108,13 @@ pub enum SpecialCommand {
     /// Use `/subagents on` to enable, `/subagents off` to disable, or `/subagents` to toggle.
     ToggleSubagents(bool), // true = enable, false = disable
 
+    /// Set or replace the active system prompt for this chat session.
+    ///
+    /// Replaces the first system message in the conversation history.
+    /// Skill disclosure messages that follow it are not affected.
+    /// Use `/system <text>` to provide the new prompt text.
+    SetSystemPrompt(String),
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -152,6 +159,7 @@ pub enum SpecialCommand {
 /// Other commands:
 /// - `/status` - Show current mode and safety status
 /// - `/help` - Show help information
+/// - `/system <text>` - Set the active system prompt
 /// - `exit` or `quit` - Exit the session
 ///
 /// # Examples
@@ -354,6 +362,24 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             })
         }
 
+        // Set system prompt: preserve original case of the prompt text
+        "/system" => Err(CommandError::MissingArgument {
+            command: "/system".to_string(),
+            usage: "/system <text>".to_string(),
+        }),
+        input if input.starts_with("/system ") => {
+            // Use `trimmed` (not `lower`) to preserve the original case of the text
+            let text = trimmed[8..].trim();
+            if text.is_empty() {
+                Err(CommandError::MissingArgument {
+                    command: "/system".to_string(),
+                    usage: "/system <text>".to_string(),
+                })
+            } else {
+                Ok(SpecialCommand::SetSystemPrompt(text.to_string()))
+            }
+        }
+
         // Exit commands
         "exit" | "quit" | "/exit" | "/quit" => Ok(SpecialCommand::Exit),
 
@@ -424,6 +450,10 @@ CONTEXT WINDOW MANAGEMENT:
   /context info              - Show context window usage and token statistics
   /context summary           - Summarize conversation and reset context window
   /context summary -m MODEL  - Summarize using a specific model (for cost optimization)
+
+SYSTEM PROMPT:
+  /system <text>  - Replace the active system prompt for this session
+                    (replaces the first system message; skill disclosures are kept)
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -1159,5 +1189,71 @@ mod tests {
         } else {
             panic!("Expected UnsupportedArgument error");
         }
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_with_text() {
+        let cmd = parse_special_command("/system you are a pirate captain").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::SetSystemPrompt("you are a pirate captain".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_preserves_original_case() {
+        let cmd = parse_special_command("/system You Are A Helpful ASSISTANT").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::SetSystemPrompt("You Are A Helpful ASSISTANT".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_empty_returns_missing_argument_error() {
+        let result = parse_special_command("/system");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommandError::MissingArgument { command, .. } => {
+                assert_eq!(command, "/system");
+            }
+            other => panic!("expected MissingArgument, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_whitespace_only_text_returns_missing_argument_error() {
+        let result = parse_special_command("/system   ");
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CommandError::MissingArgument { command, .. } => {
+                assert_eq!(command, "/system");
+            }
+            other => panic!("expected MissingArgument, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_with_leading_whitespace_after_command() {
+        // "/system  text" (two spaces) -- trimmed text is "text"
+        let cmd = parse_special_command("/system  only speak in pirate").unwrap();
+        // The text after "/system " (one space, 8 chars total) is " only speak in pirate",
+        // and .trim() removes the leading space.
+        assert_eq!(
+            cmd,
+            SpecialCommand::SetSystemPrompt("only speak in pirate".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_set_system_prompt_multiword_text() {
+        let cmd =
+            parse_special_command("/system act as a senior Rust engineer reviewing code").unwrap();
+        assert_eq!(
+            cmd,
+            SpecialCommand::SetSystemPrompt(
+                "act as a senior Rust engineer reviewing code".to_string()
+            )
+        );
     }
 }

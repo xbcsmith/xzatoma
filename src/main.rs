@@ -66,6 +66,7 @@ async fn main() -> Result<()> {
             safe,
             resume,
             thinking_effort,
+            system_prompt,
             ..
         } => {
             tracing::info!("Starting interactive chat mode");
@@ -84,10 +85,22 @@ async fn main() -> Result<()> {
             if let Some(ref e) = thinking_effort {
                 tracing::debug!("Using thinking effort: {}", e);
             }
+            if let Some(ref sp) = system_prompt {
+                tracing::debug!("Using system prompt override (length={})", sp.len());
+            }
 
             // Delegate to the chat command handler
             // Moves `config` into the handler (match arms are exclusive)
-            commands::chat::run_chat(config, provider, mode, safe, resume, thinking_effort).await?;
+            commands::chat::run_chat(
+                config,
+                provider,
+                mode,
+                safe,
+                resume,
+                thinking_effort,
+                system_prompt,
+            )
+            .await?;
             Ok(())
         }
         Commands::Run {
@@ -95,6 +108,7 @@ async fn main() -> Result<()> {
             prompt,
             allow_dangerous,
             thinking_effort,
+            system_prompt,
             ..
         } => {
             tracing::info!("Starting plan execution mode");
@@ -110,6 +124,9 @@ async fn main() -> Result<()> {
             if let Some(ref e) = thinking_effort {
                 tracing::debug!("Using thinking effort: {}", e);
             }
+            if let Some(ref sp) = system_prompt {
+                tracing::debug!("Using system prompt override (length={})", sp.len());
+            }
 
             // Convert plan PathBuf to String before passing it to the command handler.
             let plan_str = plan.map(|p| p.to_string_lossy().to_string());
@@ -119,6 +136,7 @@ async fn main() -> Result<()> {
                 prompt,
                 allow_dangerous,
                 thinking_effort,
+                system_prompt,
             )
             .await?;
             Ok(())
@@ -138,6 +156,7 @@ async fn main() -> Result<()> {
             dry_run,
             brokers,
             match_version,
+            system_prompt,
             ..
         } => {
             tracing::info!("Starting watcher mode");
@@ -158,6 +177,7 @@ async fn main() -> Result<()> {
                     dry_run,
                     brokers,
                     match_version,
+                    system_prompt,
                 },
             )
             .await?;
@@ -241,10 +261,18 @@ async fn main() -> Result<()> {
             model,
             allow_dangerous,
             working_dir,
+            system_prompt,
             ..
         } => {
-            commands::agent::handle_agent(provider, model, allow_dangerous, working_dir, config)
-                .await?;
+            commands::agent::handle_agent(
+                provider,
+                model,
+                allow_dangerous,
+                working_dir,
+                system_prompt,
+                config,
+            )
+            .await?;
             Ok(())
         }
         Commands::Acp { command, .. } => {

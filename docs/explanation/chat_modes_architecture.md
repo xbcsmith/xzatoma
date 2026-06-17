@@ -1,15 +1,20 @@
 # Chat Modes Architecture
 
-This document explains the design and implementation of XZatoma's chat mode system, which provides two complementary operating modes (Planning and Write) with safety controls.
+This document explains the design and implementation of XZatoma's chat mode
+system, which provides two complementary operating modes (Planning and Write)
+with safety controls.
 
 ## Overview
 
-The chat modes system is built on a simple but powerful principle: **give the user fine-grained control over what the AI agent can do**. This is achieved through two independent control dimensions:
+The chat modes system is built on a simple but powerful principle: **give the
+user fine-grained control over what the AI agent can do**. This is achieved
+through two independent control dimensions:
 
 1. **Chat Mode** - What tools are available (read-only vs read/write)
 2. **Safety Mode** - Whether operations require confirmation
 
 Together, these create four distinct configurations:
+
 - **Planning + Safe** - Analyze with confirmations
 - **Planning + YOLO** - Analyze without interruptions
 - **Write + Safe** - Execute with safety net
@@ -29,6 +34,7 @@ pub enum ChatMode {
 ```
 
 **Planning Mode Characteristics:**
+
 - Can read files and directories
 - Can create analysis documents and plans
 - Cannot modify, delete, or create files
@@ -36,6 +42,7 @@ pub enum ChatMode {
 - No command execution
 
 **Write Mode Characteristics:**
+
 - Can read, create, update, and delete files
 - Can execute terminal commands
 - Can run arbitrary programs
@@ -51,6 +58,7 @@ pub struct ChatModeState {
 ```
 
 Tracks the current mode configuration during a session. Provides methods for:
+
 - Switching between modes
 - Formatting prompts with mode indicators
 - Generating status displays
@@ -67,12 +75,14 @@ pub enum SafetyMode {
 ```
 
 **Safe Mode (AlwaysConfirm):**
+
 - Dangerous operations require explicit confirmation
 - Prevents accidental destructive actions
 - Slows down execution but provides safety net
 - Recommended for beginners and important files
 
 **YOLO Mode (NeverConfirm):**
+
 - Operations execute immediately
 - Faster execution, no interruptions
 - Higher risk of unintended consequences
@@ -80,7 +90,8 @@ pub enum SafetyMode {
 
 ### 3. Tool Registry Filtering
 
-The core mechanism for enforcing modes is the **mode-aware tool registry**. Different tools are available based on the current chat mode.
+The core mechanism for enforcing modes is the **mode-aware tool registry**.
+Different tools are available based on the current chat mode.
 
 #### ToolRegistryBuilder
 
@@ -115,14 +126,14 @@ impl ToolRegistryBuilder {
 
 #### Tool Availability Matrix
 
-| Tool | Planning | Write |
-|------|----------|-------|
-| List Files | ✓ | ✓ |
-| Read Files | ✓ | ✓ |
-| Write Files | ✗ | ✓ |
-| Delete Files | ✗ | ✓ |
-| Terminal | ✗ | ✓ |
-| Plan Parser | ✓ | ✓ |
+| Tool         | Planning | Write |
+| ------------ | -------- | ----- |
+| List Files   | ✓        | ✓     |
+| Read Files   | ✓        | ✓     |
+| Write Files  | ✗        | ✓     |
+| Delete Files | ✗        | ✓     |
+| Terminal     | ✗        | ✓     |
+| Plan Parser  | ✓        | ✓     |
 
 ### 4. Mode-Specific System Prompts
 
@@ -131,32 +142,37 @@ Each chat mode receives a different system prompt that guides the AI's behavior.
 #### Planning Mode Prompt
 
 The planning prompt instructs the agent to:
+
 - Focus on analysis and understanding
 - Create comprehensive plans
 - Output in YAML or Markdown format
 - Not attempt write operations
 - Recommend safe execution approaches
 
-Key instruction: *"You are in PLANNING mode and can only read files and create plans. Never attempt to modify files or execute commands."*
+Key instruction: _"You are in PLANNING mode and can only read files and create
+plans. Never attempt to modify files or execute commands."_
 
 #### Write Mode Prompt
 
 The write prompt instructs the agent to:
+
 - Execute plans confidently
 - Use all available tools
 - Follow safety mode instructions for confirmations
 - Verify changes with tests
 - Report progress clearly
 
-Key instruction: *"You are in WRITE mode and can modify files and execute commands. Follow the Safety Mode guidelines for confirmations."*
+Key instruction: _"You are in WRITE mode and can modify files and execute
+commands. Follow the Safety Mode guidelines for confirmations."_
 
 ### 5. Interactive Mode Switching
 
-Users can switch between modes at any time during a chat session. The system preserves conversation history across mode switches.
+Users can switch between modes at any time during a chat session. The system
+preserves conversation history across mode switches.
 
 #### Mode Switch Flow
 
-```
+```text
 Current Agent State:
 ├── Conversation History (preserved)
 ├── Tool Registry (rebuilt)
@@ -175,36 +191,59 @@ Mode Switch:
 #### Conversation Preservation
 
 When switching modes:
+
 - All messages in the conversation are retained
 - Tool results from previous operations are remembered
 - Context from earlier discussions influences future responses
 - Agent can refer to previous decisions and analysis
 
 This allows natural workflows:
+
 1. **Planning Phase**: Explore and analyze in Planning mode
 2. **Implementation Phase**: Execute changes in Write mode
 3. **Review Phase**: Switch back to Planning mode for verification
 
 ### 6. Special Commands Parser
 
-Interactive mode provides special commands for controlling the session, implemented in `special_commands.rs`.
+Interactive mode provides special commands for controlling the session,
+implemented in `special_commands.rs`.
 
 ```rust
 pub enum SpecialCommand {
-  SwitchMode(ChatMode),   // /mode planning, /write
-  SwitchSafety(SafetyMode), // /safe, /yolo
-  ShowStatus,        // /status
-  Help,           // /help
-  Exit,           // exit, quit
-  None,           // Regular agent prompt
+  SwitchMode(ChatMode),        // /mode planning, /write
+  SwitchSafety(SafetyMode),    // /safe, /yolo
+  SetSystemPrompt(String),     // /system <text>
+  ShowStatus,                  // /status
+  Help,                        // /help
+  Exit,                        // exit, quit
+  None,                        // Regular agent prompt
 }
 ```
 
 Commands are:
+
 - Case-insensitive
 - Prefixed with `/`
 - Have multiple aliases for convenience
 - Integrated into the interactive readline loop
+
+#### `/system` Command
+
+The `/system <text>` command replaces the active system prompt mid-session
+without restarting:
+
+```text
+[PLANNING][SAFE] >> /system You are a concise code reviewer. Be brief.
+System prompt updated.
+```
+
+- Replaces the first `role: system` message in the conversation history
+  in-place. If no system message exists yet, one is prepended.
+- Skill disclosure messages (subsequent system messages added by active skills)
+  are left untouched.
+- An empty `/system` (no text, or whitespace only) returns an error:
+  `Usage: /system <text>`.
+- The change takes effect immediately for the next user turn.
 
 ### 7. UI/UX Components
 
@@ -212,7 +251,7 @@ Commands are:
 
 Displayed when starting interactive chat:
 
-```
+```text
 ╔══════════════════════════════════════════════════════════════╗
 ║     XZatoma Interactive Chat Mode - Welcome!       ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -227,7 +266,7 @@ Type '/help' for available commands, 'exit' to quit
 
 Shown when user types `/status`:
 
-```
+```text
 ╔══════════════════════════════════════════════════════════════╗
 ║           XZatoma Session Status          ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -243,7 +282,7 @@ Prompt Format:   [WRITE][SAFE] >>
 
 Every prompt line shows the current configuration:
 
-```
+```text
 [PLANNING][SAFE] >>
 [WRITE][YOLO] >>
 ```
@@ -254,7 +293,7 @@ This provides constant visibility into what the agent can and cannot do.
 
 ### Session Initialization
 
-```
+```text
 User Request
   ↓
 Parse CLI Arguments (mode, safety)
@@ -274,7 +313,7 @@ Enter Interactive Loop
 
 ### User Input Processing
 
-```
+```text
 User Types Input
   ↓
 Check if Special Command
@@ -294,7 +333,7 @@ Loop
 
 ### Mode Switch Flow
 
-```
+```text
 User Types: /mode write
   ↓
 Parse Special Command
@@ -316,63 +355,79 @@ Continue with new mode
 
 ### Decision 1: Tool-Based Access Control (Not Permission-Based)
 
-**Choice**: Use tool availability to control access rather than runtime permission checks.
+**Choice**: Use tool availability to control access rather than runtime
+permission checks.
 
 **Rationale**:
+
 - Simple to understand and maintain
 - Prevents the agent from even attempting forbidden operations
 - Clear boundaries prevent confusion
 - Aligns with AI safety principles
 
-**Alternative Considered**: Runtime permission checks that allow the agent to attempt operations but block them at execution time. This would be more complex and could lead to confusing error messages.
+**Alternative Considered**: Runtime permission checks that allow the agent to
+attempt operations but block them at execution time. This would be more complex
+and could lead to confusing error messages.
 
 ### Decision 2: Conversation Preservation Across Mode Switches
 
 **Choice**: Preserve entire conversation history when switching modes.
 
 **Rationale**:
+
 - Natural workflow: explore in Planning, implement in Write
 - Agent retains context from earlier analysis
 - No information loss during mode switches
 - Enables iterative refinement
 
-**Alternative Considered**: Clear conversation on mode switch. This would be simpler but would force users to re-explain context.
+**Alternative Considered**: Clear conversation on mode switch. This would be
+simpler but would force users to re-explain context.
 
 ### Decision 3: Orthogonal Chat Mode and Safety Mode
 
-**Choice**: Keep chat mode (Planning/Write) and safety mode (Safe/YOLO) as independent dimensions.
+**Choice**: Keep chat mode (Planning/Write) and safety mode (Safe/YOLO) as
+independent dimensions.
 
 **Rationale**:
+
 - Provides fine-grained control
 - Four configurations cover different use cases
 - Safety mode applies consistently across both chat modes
 - Simpler than hierarchical or nested mode systems
 
-**Alternative Considered**: Single unified mode system (e.g., "ReadSafe", "ReadYOLO", "WriteSafe", "WriteYOLO"). This would be inflexible and harder to extend.
+**Alternative Considered**: Single unified mode system (e.g., "ReadSafe",
+"ReadYOLO", "WriteSafe", "WriteYOLO"). This would be inflexible and harder to
+extend.
 
 ### Decision 4: Special Commands for Mode Switching
 
-**Choice**: Use `/command` syntax for mode switching instead of menu-driven selection.
+**Choice**: Use `/command` syntax for mode switching instead of menu-driven
+selection.
 
 **Rationale**:
+
 - Faster for keyboard-driven users
 - Consistent with common CLI conventions
 - Easily learned and remembered
 - Allows multiple aliases for convenience
 
-**Alternative Considered**: Menu system with numbered options. This would be slower and less convenient for power users.
+**Alternative Considered**: Menu system with numbered options. This would be
+slower and less convenient for power users.
 
 ### Decision 5: Mode-Specific System Prompts
 
-**Choice**: Provide different system prompts for each mode to guide agent behavior.
+**Choice**: Provide different system prompts for each mode to guide agent
+behavior.
 
 **Rationale**:
+
 - Agent understands its constraints and capabilities
 - Guides agent toward appropriate tool usage
 - Prevents agent from attempting forbidden operations
 - Sets appropriate expectations for output format
 
-**Alternative Considered**: No special prompts, rely only on tool availability. This could lead to agent attempts to use unavailable tools and confusing errors.
+**Alternative Considered**: No special prompts, rely only on tool availability.
+This could lead to agent attempts to use unavailable tools and confusing errors.
 
 ## Safety Considerations
 
@@ -391,7 +446,8 @@ Planning mode is designed to be inherently safe because:
 
 Write mode provides safety through:
 
-1. **Safety confirmations**: AlwaysConfirm mode requires confirmation before dangerous ops
+1. **Safety confirmations**: AlwaysConfirm mode requires confirmation before
+   dangerous ops
 2. **Conversation history**: Users can see the agent's reasoning and plans
 3. **Incremental execution**: Users can stop the agent between steps
 4. **Clear warnings**: Mode switches include warnings about risks
@@ -404,16 +460,19 @@ Write mode provides safety through:
 2. **Create a plan**: Have the agent create a detailed plan before executing
 3. **Use Safe mode**: Enable confirmations when working with important files
 4. **Incremental changes**: Make small changes and verify each one
-5. **Review before committing**: Use version control and review changes before committing
+5. **Review before committing**: Use version control and review changes before
+   committing
 
 ## Future Enhancements
 
 ### Planned Improvements
 
-1. **Custom Tool Sets**: Allow users to create custom mode definitions with specific tool combinations
+1. **Custom Tool Sets**: Allow users to create custom mode definitions with
+   specific tool combinations
 2. **Session Persistence**: Save and restore conversation state across sessions
 3. **Audit Logging**: Detailed logs of all tool usage and mode switches
-4. **Confirmation Workflows**: Customizable confirmation dialogs with operation details
+4. **Confirmation Workflows**: Customizable confirmation dialogs with operation
+   details
 5. **Mode Profiles**: Saved mode configurations for different project types
 
 ### Potential Extensions
@@ -428,13 +487,35 @@ Write mode provides safety through:
 ### Relationship to System Prompts
 
 Chat modes work together with system prompts:
-- System prompts tell the agent what it can do
-- Chat mode tools enforce what it actually can do
-- Together they create reliable constraints
+
+- Mode-specific base prompts tell the agent what it can do in the current mode.
+- Chat mode tool restrictions enforce what it actually can do.
+- Together they create reliable constraints.
+
+#### User-Configured System Prompts
+
+In addition to the mode-specific base prompts, users can configure a custom
+system prompt that is injected before any task content. The resolution order
+(highest to lowest priority) is:
+
+1. `--system-prompt` CLI flag
+2. `XZATOMA_SYSTEM_PROMPT` environment variable
+3. `agent.system_prompt` config file field
+
+The resolved prompt is injected as the first `role: system` message in the
+conversation. Mode-specific base prompts are injected as transient messages
+(per-call, not stored), so they do not interfere with the stored user prompt.
+
+In interactive chat the `/system <text>` command replaces the active
+user-defined system prompt mid-session. See the `/system` Command section above
+for details.
+
+For complete configuration reference see `docs/reference/system_prompt.md`.
 
 ### Relationship to Plan Format Detection
 
 The plan format system works with chat modes:
+
 - Planning mode recommends YAML or Markdown output
 - Plan parser validates detected formats
 - Write mode can execute parsed plans
@@ -442,6 +523,7 @@ The plan format system works with chat modes:
 ### Relationship to Provider Abstraction
 
 Chat modes are provider-agnostic:
+
 - Same tool restrictions apply to all providers
 - Each provider gets the same mode-specific system prompt
 - Mode switching works identically across providers
@@ -450,7 +532,7 @@ Chat modes are provider-agnostic:
 
 ### Code Organization
 
-```
+```text
 src/
 ├── chat_mode.rs      # ChatMode, SafetyMode, ChatModeState enums
 ├── commands/
@@ -478,7 +560,8 @@ This ensures clean tool state and prevents tool leakage between modes.
 
 ### System Prompt Injection
 
-When creating an agent, the mode-specific system prompt is injected as the first system message in the conversation. This:
+When creating an agent, the mode-specific system prompt is injected as the first
+system message in the conversation. This:
 
 1. Guides the agent's understanding of available tools
 2. Sets expectations for output format
@@ -514,9 +597,14 @@ When creating an agent, the mode-specific system prompt is injected as the first
 
 ## Conclusion
 
-The chat modes system provides a clean, user-friendly way to give users fine-grained control over what their AI agent can do. By combining orthogonal mode systems (chat mode + safety mode) with tool-based access control and conversation preservation, we create a safe yet powerful system that supports diverse workflows and use cases.
+The chat modes system provides a clean, user-friendly way to give users
+fine-grained control over what their AI agent can do. By combining orthogonal
+mode systems (chat mode + safety mode) with tool-based access control and
+conversation preservation, we create a safe yet powerful system that supports
+diverse workflows and use cases.
 
 The design emphasizes:
+
 - **Safety**: Multiple layers of protection
 - **Simplicity**: Easy to understand and use
 - **Flexibility**: Supports different working styles

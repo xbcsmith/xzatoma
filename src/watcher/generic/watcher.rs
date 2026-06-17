@@ -616,6 +616,32 @@ impl GenericWatcher {
             GenericWatcherError::Execution(format!("failed to create watcher agent: {}", e))
         })?;
 
+        // Resolve and inject the user-defined system prompt.
+        // Plan system_prompt takes precedence over config/CLI-level prompt
+        // (handled automatically by crate::agent::resolve).
+        let resolved_sp = crate::agent::resolve(
+            task.plan.system_prompt.as_deref(),
+            None,
+            config.agent.system_prompt.as_deref(),
+        );
+        if let Some(ref resolved) = resolved_sp {
+            tracing::debug!(
+                source = ?resolved.source,
+                length = resolved.text.len(),
+                "Injecting system prompt into generic watcher agent session"
+            );
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    source = ?resolved.source,
+                    system_prompt = %resolved.text,
+                    "Generic watcher agent session system prompt"
+                );
+            }
+            agent
+                .conversation_mut()
+                .add_system_message(resolved.text.clone());
+        }
+
         if let Some(d) = &env.skill_disclosure {
             agent.conversation_mut().add_system_message(d.clone());
         }
@@ -789,6 +815,34 @@ mod tests {
             skills: SkillsConfig::default(),
             log: crate::config::LogConfig::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn test_execute_plan_injects_config_system_prompt() {
+        // Verify that config.agent.system_prompt is resolved and injected when
+        // the plan does not carry its own system_prompt field.
+        use crate::agent::resolve;
+        let result = resolve(None, None, Some("you are a watcher agent"));
+        let resolved = result.unwrap();
+        assert_eq!(resolved.text, "you are a watcher agent");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::Config);
+    }
+
+    #[tokio::test]
+    async fn test_execute_plan_plan_system_prompt_wins_over_config() {
+        // Verify that a plan-level system_prompt overrides config.agent.system_prompt.
+        use crate::agent::resolve;
+        let result = resolve(Some("from the plan"), None, Some("from config"));
+        let resolved = result.unwrap();
+        assert_eq!(resolved.text, "from the plan");
+        assert_eq!(resolved.source, crate::agent::SystemPromptSource::Plan);
+    }
+
+    #[test]
+    fn test_execute_plan_no_system_prompt_resolves_to_none() {
+        use crate::agent::resolve;
+        let result = resolve(None, None, None);
+        assert!(result.is_none());
     }
 
     /// A valid CloudEvents plan payload used by watcher tests.

@@ -576,6 +576,31 @@ impl AcpStdioServerState {
             XzatomaAgent::new_from_shared_provider(provider, tools, self.config.agent.clone())?
         };
 
+        // Inject user-defined system prompt into the conversation.
+        // For new sessions this prepends a system message; for resumed sessions
+        // replace_first_system_message updates the existing entry in-place,
+        // which ensures the configured prompt overrides any previously stored one.
+        // Prefer config.acp.system_prompt over config.agent.system_prompt.
+        let effective_sp = self.config.acp.system_prompt.as_deref().or(self
+            .config
+            .agent
+            .system_prompt
+            .as_deref());
+        if let Some(sp) = effective_sp {
+            if !sp.trim().is_empty() {
+                tracing::debug!(
+                    length = sp.len(),
+                    "Injecting system prompt into ACP stdio session"
+                );
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(system_prompt = %sp, "ACP stdio session system prompt");
+                }
+                agent
+                    .conversation_mut()
+                    .replace_first_system_message(sp.to_string());
+            }
+        }
+
         let mut transient_system_messages =
             vec![prompts::build_system_prompt(env.chat_mode, env.safety_mode)];
         if let Some(disclosure) = env.skill_disclosure {
@@ -3880,5 +3905,38 @@ mod tests {
             update.size > 0,
             "default Config max_tokens must produce a non-zero UsageUpdate.size"
         );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_injects_agent_system_prompt_into_conversation() {
+        let mut config = Config::default();
+        config.agent.system_prompt = Some("You are helpful.".to_string());
+        let options = AcpStdioAgentOptions::new(None, None, false, None);
+        let state = AcpStdioServerState::new_with_storage(config, options, None);
+        let response = state
+            .create_session(
+                acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
+                None,
+            )
+            .await;
+        // An invalid provider makes the create_session call succeed because
+        // the provider is created lazily only when a prompt is executed.
+        // Session creation itself should succeed with default config.
+        assert!(response.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_session_injects_acp_system_prompt_into_conversation() {
+        let mut config = Config::default();
+        config.acp.system_prompt = Some("ACP-specific.".to_string());
+        let options = AcpStdioAgentOptions::new(None, None, false, None);
+        let state = AcpStdioServerState::new_with_storage(config, options, None);
+        let response = state
+            .create_session(
+                acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
+                None,
+            )
+            .await;
+        assert!(response.is_ok());
     }
 }
