@@ -28,6 +28,14 @@ This plan fixes four features in the `xzatoma agent` (ACP stdio) mode:
    model is an idle/read timeout -- fail only if no bytes arrive within N
    seconds, regardless of total elapsed time.
 
+5. **Chat Mode Streaming** -- The `chat`, `run`, and `agent` terminal modes call
+   `agent.execute()`, which uses a `NoOpObserver` and blocks until the full
+   response arrives. Users cannot see response or reasoning tokens appear as the
+   model generates them. There is no `--streaming` CLI flag, no
+   `/streaming on|off` special command, and no `ChatStreamingObserver` that
+   routes `ReasoningChunkEmitted`, `ThinkingStarted`, and `AssistantTextEmitted`
+   events to the terminal.
+
 ---
 
 ## Current State Analysis
@@ -138,6 +146,33 @@ The correct behavior for SSE streaming is:
 loop in `post_completions_streaming` calls `stream.next().await` with no
 per-iteration deadline. The same gap will exist in the new
 `complete_with_callbacks` streaming path added by Phase 4.
+
+#### Issue 7: Chat mode has no streaming observer
+
+`run_chat` in `src/commands/mod.rs` calls `agent.execute(prompt).await` which
+instantiates a `NoOpObserver` internally. Even after Phase 4 wires
+`complete_with_callbacks` into the agent loop and emits `ReasoningChunkEmitted`,
+`ThinkingStarted`, `ThinkingFinished`, and `AssistantTextEmitted` events, a
+`NoOpObserver` silently discards all of them. The full response is only printed
+after `execute` returns.
+
+Similarly, `run_plan_with_options` in `pub mod run` and the `handle_agent` entry
+point in `src/commands/agent.rs` both call `agent.execute()` with no observer,
+so neither can stream live tokens.
+
+The missing parts are:
+
+1. A `--streaming` flag on the `Chat`, `Agent`, and `Run` CLI sub-commands.
+2. A `ToggleStreaming(bool)` variant in `SpecialCommand` with `/streaming on`
+   and `/streaming off` parser support in `src/commands/special_commands.rs`.
+3. A `streaming_enabled: bool` field on `ChatModeState` that the toggle command
+   and the `--streaming` flag both write.
+4. A `ChatStreamingObserver` struct implementing `AgentObserver` that prints
+   `ThinkingStarted`, per-chunk reasoning text, `ThinkingFinished`, and
+   per-chunk response text to stdout in real time.
+5. Call sites that replace `agent.execute()` with
+   `agent.execute_with_observer()` when `streaming_enabled` is true, and
+   suppress the redundant post-call `println!` of the full response.
 
 #### Issue 9: Context window bar not visible
 
@@ -781,6 +816,299 @@ In `src/providers/openai.rs`:
 
 ---
 
+### Phase 6: Streaming Token Display in Chat Mode
+
+> **Prerequisite**: Phase 4 must be complete. Phase 6 depends on
+> `ReasoningChunkEmitted`, `ThinkingStarted`, `ThinkingFinished`, and
+> `AssistantTextEmitted` being emitted by the agent loop, and on
+> `complete_with_callbacks` being implemented in the OpenAI and Ollama
+> providers.
+
+#### Task 6.1 Add `--streaming` CLI Flag to `Chat`, `Agent`, and `Run`
+
+In `src/cli.rs`, add the following field to `Commands::Chat`, `Commands::Agent`,
+and `Commands::Run`:
+
+```rust
+/// Stream model output tokens to the terminal as they are generated.
+///
+/// When set, reasoning tokens (thinking) are printed with a visual
+/// indicator before the response tokens. Requires the configured
+/// provider to support streaming.
+#[arg(long)]
+streaming: bool,
+```
+
+In `main.rs`, extract the `streaming` field from each matched arm and forward it
+to the corresponding command runner:
+
+- `run_chat(config, ..., streaming, ...)` -- new final parameter.
+- `run_plan_with_options(config, plan, prompt, cli_system_prompt, streaming)` --
+  new final parameter.
+- `handle_agent(plan, system_prompt, streaming)` -- new final parameter.
+
+#### Task 6.2 Add `ToggleStreaming` to `SpecialCommand`
+
+In `src/commands/special_commands.rs`, add the variant:
+
+```rust
+/// Toggle live streaming of model output tokens.
+///
+/// When enabled, response and reasoning tokens are printed to the
+/// terminal as they arrive. When disabled, the full response is
+/// printed only after the model finishes.
+ToggleStreaming(bool),
+```
+
+In `parse_special_command`, add two cases:
+
+```rust
+"/streaming on" | "/streaming enable" => Ok(SpecialCommand::ToggleStreaming(true)),
+"/streaming off" | "/streaming disable" => Ok(SpecialCommand::ToggleStreaming(false)),
+```
+
+If the input is `/streaming` with no argument, or with an unrecognised argument,
+return:
+
+```rust
+Err(CommandError::MissingArgument {
+    command: "/streaming".to_string(),
+    usage: "/streaming <on|off>".to_string(),
+})
+```
+
+Update `print_help` to document the new command alongside the existing special
+commands.
+
+#### Task 6.3 Add `streaming_enabled` to `ChatModeState`
+
+In `src/commands/mod.rs` `pub mod chat`, add a field to `ChatModeState`:
+
+```rust
+/// Whether live token streaming is enabled for this session.
+pub streaming_enabled: bool,
+```
+
+Update `ChatModeState::new` to accept a `streaming: bool` parameter and
+initialise the field from it. The initial value comes from the `--streaming` CLI
+flag forwarded through `run_chat`.
+
+Add a method:
+
+```rust
+/// Enable or disable live token streaming and return the previous state.
+pub fn set_streaming(&mut self, enable: bool) -> bool {
+    let prev = self.streaming_enabled;
+    self.streaming_enabled = enable;
+    prev
+}
+```
+
+#### Task 6.4 Implement `ChatStreamingObserver`
+
+In `src/commands/mod.rs` `pub mod chat`, define:
+
+```rust
+/// Observer that writes streaming model output to stdout in real time.
+///
+/// Used by `run_chat`, `run_plan_with_options`, and `handle_agent` when
+/// `streaming_enabled` is true. Receives `AgentExecutionEvent` emissions
+/// from the agent loop and immediately flushes each chunk to stdout.
+///
+/// After execution, callers MUST check `streamed_any_content()` and skip
+/// their normal `println!` of the full response to avoid printing it twice.
+pub struct ChatStreamingObserver {
+    thinking_active: bool,
+    content_started: bool,
+    streamed_any_content: bool,
+}
+
+impl ChatStreamingObserver {
+    pub fn new() -> Self {
+        Self {
+            thinking_active: false,
+            content_started: false,
+            streamed_any_content: false,
+        }
+    }
+
+    /// Returns true if at least one content or reasoning chunk was printed.
+    pub fn streamed_any_content(&self) -> bool {
+        self.streamed_any_content
+    }
+}
+```
+
+Implement `AgentObserver for ChatStreamingObserver`. In `on_event`, handle:
+
+- `ThinkingStarted` -- if not already in thinking mode, print
+  `"\nThinking...\n"` and set `thinking_active = true`. Flush stdout.
+- `ReasoningChunkEmitted { text }` -- print `text` directly to stdout with
+  `print!("{}", text)` and `use std::io::Write; stdout().flush().ok()`. Set
+  `streamed_any_content = true`.
+- `ThinkingFinished` -- if in thinking mode, print `"\n"` and set
+  `thinking_active = false`. Flush stdout.
+- `AssistantTextEmitted { text }` -- if this is the first content chunk and
+  `thinking_active` was previously true, print `"\n"` (separator after thinking
+  block). Print `text` with `print!` and flush. Set `content_started = true` and
+  `streamed_any_content = true`.
+- All other events -- do nothing (silently accepted).
+
+Note: `ThinkingFinished` is not emitted by all providers. The observer must
+handle the case where `AssistantTextEmitted` arrives while `thinking_active` is
+still true (Ollama tag-based detection may not emit `ThinkingFinished`
+reliably). When that happens, close the thinking block as if `ThinkingFinished`
+had fired before printing the content chunk.
+
+#### Task 6.5 Wire `ChatStreamingObserver` into `run_chat`
+
+In `run_chat` in `src/commands/mod.rs`:
+
+1. Accept `streaming: bool` as a new final parameter. Pass the value to
+   `ChatModeState::new`.
+
+2. In the main prompt-execution block, replace the existing:
+
+   ```rust
+   match agent.execute(augmented_prompt).await {
+       Ok(response) => {
+           println!("\n{}\n", response);
+   ```
+
+   with:
+
+   ```rust
+   let cancellation_token = tokio_util::sync::CancellationToken::new();
+   let mut observer = ChatStreamingObserver::new();
+   let exec_result = if mode_state.streaming_enabled {
+       agent
+           .execute_with_observer(
+               augmented_prompt,
+               &cancellation_token,
+               &mut observer,
+           )
+           .await
+   } else {
+       agent.execute(augmented_prompt).await
+   };
+   match exec_result {
+       Ok(response) => {
+           if !observer.streamed_any_content() {
+               println!("\n{}\n", response);
+           } else {
+               // Chunks already printed; only add a trailing newline if
+               // the last chunk did not end with one.
+               println!();
+           }
+   ```
+
+3. In the `run_chat` main loop, match the new `ToggleStreaming(enable)` arm:
+
+   ```rust
+   Ok(SpecialCommand::ToggleStreaming(enable)) => {
+       let prev = mode_state.set_streaming(enable);
+       if prev != enable {
+           println!(
+               "Streaming {}.",
+               if enable { "enabled" } else { "disabled" }
+           );
+       }
+       continue;
+   }
+   ```
+
+#### Task 6.6 Wire Streaming Flag into `run_plan_with_options` and `handle_agent`
+
+In `pub mod run` in `src/commands/mod.rs`:
+
+- Accept `streaming: bool` as a final parameter to `run_plan_with_options`.
+- Replace `agent.execute(task).await` with the same `if streaming` branch used
+  in Task 6.5. When streaming, use `execute_with_observer` with a
+  `ChatStreamingObserver`; suppress the full response print if
+  `streamed_any_content()` is true.
+
+In `src/commands/agent.rs`:
+
+- Accept `streaming: bool` as a final parameter to `handle_agent`.
+- Replace the internal `agent.execute()` call with the same conditional pattern.
+
+#### Task 6.7 Testing Requirements
+
+In `src/commands/special_commands.rs`:
+
+- `test_parse_streaming_on_returns_toggle_streaming_true` -- verify
+  `/streaming on` parses to `ToggleStreaming(true)`.
+- `test_parse_streaming_off_returns_toggle_streaming_false` -- verify
+  `/streaming off` parses to `ToggleStreaming(false)`.
+- `test_parse_streaming_enable_alias` -- verify `/streaming enable` parses to
+  `ToggleStreaming(true)`.
+- `test_parse_streaming_disable_alias` -- verify `/streaming disable` parses to
+  `ToggleStreaming(false)`.
+- `test_parse_streaming_no_arg_returns_missing_argument_error` -- verify
+  `/streaming` with no argument returns `Err(CommandError::MissingArgument)`.
+- `test_parse_streaming_invalid_arg_returns_missing_argument_error` -- verify
+  `/streaming maybe` returns `Err(CommandError::MissingArgument)`.
+
+In `src/commands/mod.rs` (chat module tests):
+
+- `test_chat_streaming_observer_prints_thinking_start_on_thinking_started` --
+  construct a `ChatStreamingObserver`, call `on_event(ThinkingStarted)`, verify
+  `thinking_active` is set.
+- `test_chat_streaming_observer_streamed_any_content_true_after_reasoning_chunk`
+  -- send a `ReasoningChunkEmitted` event, verify `streamed_any_content()` is
+  `true`.
+- `test_chat_streaming_observer_streamed_any_content_true_after_content_chunk`
+  -- send an `AssistantTextEmitted` event, verify `streamed_any_content()` is
+  `true`.
+- `test_chat_streaming_observer_streamed_any_content_false_initially` -- new
+  observer returns `false` before any events.
+- `test_chat_mode_state_set_streaming_returns_previous_value` -- verify
+  `set_streaming(true)` on a `streaming_enabled = false` state returns `false`.
+
+In `src/cli.rs`:
+
+- `test_cli_parse_chat_with_streaming_flag` -- verify `chat --streaming` sets
+  `streaming = true`.
+- `test_cli_parse_chat_streaming_defaults_false` -- verify `chat` without the
+  flag sets `streaming = false`.
+- `test_cli_parse_agent_with_streaming_flag` -- verify `agent --streaming` sets
+  `streaming = true`.
+- `test_cli_parse_run_with_streaming_flag` -- verify
+  `run --prompt hello --streaming` sets `streaming = true`.
+
+#### Task 6.8 Deliverables
+
+- [ ] `src/cli.rs` -- `streaming: bool` field on `Commands::Chat`,
+      `Commands::Agent`, `Commands::Run`.
+- [ ] `src/commands/special_commands.rs` -- `ToggleStreaming(bool)` variant,
+      `/streaming on|off|enable|disable` parser, `print_help` update.
+- [ ] `src/commands/mod.rs` -- `streaming_enabled` field and `set_streaming`
+      method on `ChatModeState`; `ChatStreamingObserver` struct with
+      `AgentObserver` impl; updated `run_chat` loop with streaming branch;
+      updated `run_plan_with_options` with streaming branch.
+- [ ] `src/commands/agent.rs` -- updated `handle_agent` with streaming branch.
+- [ ] `main.rs` -- `streaming` forwarded from each CLI arm to its runner.
+- [ ] All tests listed in Task 6.7 pass.
+- [ ] `cargo fmt`, `cargo check`, `cargo clippy -- -D warnings`, and
+      `cargo test --all-features` pass with no new failures.
+
+#### Task 6.9 Success Criteria
+
+- `xzatoma chat --streaming` causes response tokens to appear progressively in
+  the terminal as the model generates them.
+- `xzatoma chat --streaming` with a thinking-capable model shows a `Thinking...`
+  header followed by live reasoning tokens before the response tokens begin.
+- `/streaming on` mid-session enables streaming for subsequent prompts;
+  `/streaming off` reverts to the post-complete print.
+- `xzatoma run --streaming --prompt "..."` streams tokens during plan execution.
+- `xzatoma agent --streaming` streams tokens during autonomous execution.
+- Providers that do not support streaming (`supports_streaming() == false`)
+  still print the full response correctly after the call completes, without
+  regression.
+- `cargo test --all-features` passes with all new tests green.
+
+---
+
 ## File Change Summary
 
 | File                                              | Change                                                                                                                                                                                                                |
@@ -795,6 +1123,11 @@ In `src/providers/openai.rs`:
 | `src/config.rs`                                   | Add `stream_idle_timeout_seconds` to `OpenAIConfig`, default function, `Default` impl, env-var override                                                                                                               |
 | `docs/how-to/zed_acp_agent_setup.md`              | Add Mode Selector, Context Window, and Thinking Stream sections                                                                                                                                                       |
 | `docs/reference/acp_configuration.md`             | Document `session_mode` option, note `terminal_execution` removal, document `stream_idle_timeout_seconds`                                                                                                             |
+| `src/cli.rs`                                      | Add `streaming: bool` to `Commands::Chat`, `Commands::Agent`, `Commands::Run`                                                                                                                                         |
+| `src/commands/special_commands.rs`                | Add `ToggleStreaming(bool)` variant, `/streaming on\|off\|enable\|disable` parser, `print_help` entry                                                                                                                 |
+| `src/commands/mod.rs`                             | Add `streaming_enabled` and `set_streaming` to `ChatModeState`; add `ChatStreamingObserver`; update `run_chat` and `run_plan_with_options` streaming branches                                                         |
+| `src/commands/agent.rs`                           | Accept and forward `streaming` flag in `handle_agent`                                                                                                                                                                 |
+| `src/main.rs`                                     | Extract and forward `streaming` from `Chat`, `Agent`, and `Run` CLI arms                                                                                                                                              |
 | `docs/explanation/acp_features_implementation.md` | This plan document                                                                                                                                                                                                    |
 
 ## Key Design Decisions
@@ -880,3 +1213,43 @@ are not available. Using `used_tokens` as a proxy for `total_tokens` provides a
 useful approximation and ensures the context window bar renders. Accurate
 per-turn token tracking can be added when provider responses surface token
 counts (OpenAI already does this; Ollama and Copilot may vary).
+
+### Why use `bool` for `--streaming` instead of an enum?
+
+The flag controls a binary choice: either tokens stream to the terminal as they
+arrive, or the full response is printed after the call completes. A `bool` is
+the simplest correct type. An enum would add no semantic value at this stage. If
+a third mode is needed in future, the flag can be replaced at that time.
+
+### Why default `--streaming` to `false`?
+
+Many terminal environments render partial lines poorly, and some CI or piped
+outputs break on carriage returns embedded in streaming output. Defaulting to
+`false` keeps the existing batch-print behaviour as the safe default. Users who
+want live tokens opt in explicitly. In interactive sessions, `/streaming on` can
+be used without restarting the session.
+
+### Why add `ChatStreamingObserver` in `src/commands/mod.rs` instead of a new file?
+
+The observer is tightly coupled to the chat rendering concerns already in
+`src/commands/mod.rs`. It uses no public API that would make it useful to other
+callers. Keeping it in the same file avoids a new module boundary for a small
+struct that is a rendering detail. If a second caller outside `commands/` needed
+it, moving it to `src/agent/` would be appropriate.
+
+### Why is the special command named `/streaming` instead of `/stream`?
+
+The `--streaming` CLI flag uses the word `streaming`, so the special command
+mirrors it exactly to avoid a discrepancy between the flag and the interactive
+command. Consistency is more important than brevity here because the command is
+not typed frequently enough to make length a concern.
+
+### Why suppress the final `println!` when `streamed_any_content()` is true?
+
+The agent loop returns the full accumulated response as a `String` regardless of
+whether streaming was used. Without suppression the response would be printed
+twice: once token-by-token during streaming, and once in full after
+`execute_with_observer` returns. The `streamed_any_content` guard is the minimal
+check needed to prevent this. Using the observer flag is safer than using
+`streaming_enabled` because it handles the edge case where streaming is enabled
+but the provider emits no chunks and falls back to batch delivery.

@@ -178,7 +178,7 @@ Mode Selector UI is not showing up so I can change out of "Restricted" mode whic
 
 Research the ACP code base and determine what the fix should be. Write a plan with a phased approach to add the missing features to "atoma agent" mode. THINK HARD and follow the rules in @PLAN.md
 
-[ACP Features Implementation](./acp_features_implementation.md)
+✅ COMPLETED - [ACP Features Implementation](./acp_features_implementation.md)
 
 ## Dynamic System Prompts
 
@@ -221,7 +221,7 @@ When running with "--trace" the full system prompt should be logged at the begin
 
 Write a plan to add dynamic system templates to all xzatoma modes (chat, agent, run, watcher, serve). THINK HARD and follow the rules in PLAN.md
 
-[Dynamic Chat Templates](./dynamic_chat_templates_implementation.md)
+✅ COMPLETED - [Dynamic Chat Templates](./dynamic_chat_templates_implementation.md)
 
 
 ## notes
