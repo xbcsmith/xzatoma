@@ -9,7 +9,7 @@
 //! | Config ID              | Values                                              |
 //! |------------------------|-----------------------------------------------------|
 //! | `safety_policy`        | always_confirm, confirm_dangerous, never_confirm    |
-//! | `terminal_execution`   | interactive, restricted_autonomous, full_autonomous |
+//! | `session_mode`         | planning, write, safe, full_autonomous              |
 //! | `tool_routing`         | prefer_ide, prefer_local, require_ide               |
 //! | `vision_input`         | enabled, disabled                                   |
 //! | `subagent_delegation`  | enabled, disabled                                   |
@@ -34,6 +34,9 @@
 use acp_sdk::schema as acp;
 use agent_client_protocol as acp_sdk;
 
+use crate::acp::session_mode::{
+    mode_runtime_effect, MODE_FULL_AUTONOMOUS, MODE_PLANNING, MODE_WRITE,
+};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 
@@ -69,6 +72,14 @@ pub const CONFIG_MAX_TURNS: &str = "max_turns";
 /// model default). Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`,
 /// `"extra_high"`.
 pub const CONFIG_THINKING_EFFORT: &str = "thinking_effort";
+
+/// Config option ID for the session mode selector.
+///
+/// Controls which operating mode the session runs in. The value is one of the
+/// stable mode ID constants: `"planning"`, `"write"`, `"safe"`,
+/// `"full_autonomous"`. Changing this option applies the corresponding chat
+/// mode, safety policy, and terminal execution mode as a unit.
+pub const CONFIG_SESSION_MODE: &str = "session_mode";
 
 // ---------------------------------------------------------------------------
 // ToolRouting
@@ -209,6 +220,12 @@ pub struct ConfigChangeEffect {
     /// `"extra_high"`. When `Some("none")`, callers must pass `None` to
     /// `Provider::set_thinking_effort` to disable reasoning parameters.
     pub thinking_effort: Option<String>,
+    /// New session mode ID if the session mode was changed via `CONFIG_SESSION_MODE`.
+    ///
+    /// When `Some`, callers must also apply the corresponding `safety_mode_str`
+    /// and `terminal_mode` effects, rebuild system prompts, and replace the
+    /// terminal tool.
+    pub session_mode_id: Option<String>,
 }
 
 impl ConfigChangeEffect {
@@ -222,6 +239,7 @@ impl ConfigChangeEffect {
             mcp_enabled: None,
             max_turns: None,
             thinking_effort: None,
+            session_mode_id: None,
         }
     }
 }
@@ -269,6 +287,12 @@ pub struct SessionRuntimeState {
     /// and the model uses its own default. Other accepted values: `"low"`,
     /// `"medium"`, `"high"`, `"extra_high"`.
     pub thinking_effort: String,
+    /// The currently active session mode ID (e.g. `"planning"`, `"write"`).
+    ///
+    /// Mirrors `ActiveSessionState.current_mode_id` in `stdio.rs` so that
+    /// `build_session_config_options` can reflect the selected mode without
+    /// requiring a separate parameter.
+    pub current_mode_id: String,
 }
 
 impl SessionRuntimeState {
@@ -294,6 +318,7 @@ impl SessionRuntimeState {
     ///
     /// let state = SessionRuntimeState::from_config(&Config::default());
     /// assert!(!state.safety_mode_str.is_empty());
+    /// assert!(!state.current_mode_id.is_empty());
     /// ```
     pub fn from_config(config: &Config) -> Self {
         let safety_mode_str = config.agent.chat.default_safety.clone();
@@ -305,6 +330,14 @@ impl SessionRuntimeState {
         // whether the manager attempts connections at session start.
         let mcp_enabled = config.mcp.auto_connect;
         let max_turns = config.agent.max_turns as u32;
+        let current_mode_id = if config.agent.terminal.default_mode == ExecutionMode::FullAutonomous
+        {
+            MODE_FULL_AUTONOMOUS.to_string()
+        } else if config.agent.chat.default_mode == "planning" {
+            MODE_PLANNING.to_string()
+        } else {
+            MODE_WRITE.to_string()
+        };
 
         Self {
             safety_mode_str,
@@ -315,6 +348,7 @@ impl SessionRuntimeState {
             mcp_enabled,
             max_turns,
             thinking_effort: "none".to_string(),
+            current_mode_id,
         }
     }
 }
@@ -351,8 +385,8 @@ pub fn build_session_config_options(
     runtime: &SessionRuntimeState,
 ) -> Vec<acp::SessionConfigOption> {
     vec![
+        build_session_mode_option(&runtime.current_mode_id),
         build_safety_policy_option(runtime),
-        build_terminal_execution_option(runtime),
         build_tool_routing_option(runtime),
         build_vision_input_option(runtime),
         build_subagent_delegation_option(runtime),
@@ -451,10 +485,19 @@ pub fn apply_config_option_change(
             effect.thinking_effort = Some(effort.clone());
             updated.thinking_effort = effort;
         }
+        CONFIG_SESSION_MODE => {
+            let mode_effect = mode_runtime_effect(value_id)?;
+            effect.safety_mode_str = Some(mode_effect.safety_mode_str.clone());
+            effect.terminal_mode = Some(mode_effect.terminal_mode);
+            effect.session_mode_id = Some(value_id.to_string());
+            updated.safety_mode_str = mode_effect.safety_mode_str;
+            updated.terminal_mode = mode_effect.terminal_mode;
+            updated.current_mode_id = value_id.to_string();
+        }
         other => {
             return Err(XzatomaError::Config(format!(
                 "unknown session config option id: '{other}'; expected one of: \
-                 '{CONFIG_SAFETY_POLICY}', '{CONFIG_TERMINAL_EXECUTION}', \
+                 '{CONFIG_SESSION_MODE}', '{CONFIG_SAFETY_POLICY}', \
                  '{CONFIG_TOOL_ROUTING}', '{CONFIG_VISION_INPUT}', \
                  '{CONFIG_SUBAGENT_DELEGATION}', '{CONFIG_MCP_TOOLS}', \
                  '{CONFIG_MAX_TURNS}', '{CONFIG_THINKING_EFFORT}'"
@@ -470,6 +513,23 @@ pub fn apply_config_option_change(
 // Private option builders
 // ---------------------------------------------------------------------------
 
+fn build_session_mode_option(current_mode_id: &str) -> acp::SessionConfigOption {
+    let current = current_mode_id.to_string();
+    let options = vec![
+        acp::SessionConfigSelectOption::new("planning", "Planning"),
+        acp::SessionConfigSelectOption::new("write", "Write"),
+        acp::SessionConfigSelectOption::new("safe", "Safe"),
+        acp::SessionConfigSelectOption::new("full_autonomous", "Full Autonomous"),
+    ];
+    acp::SessionConfigOption::select(CONFIG_SESSION_MODE, "Session Mode", current, options)
+        .description(Some(
+            "Active session mode. Controls which file and terminal operations are \
+         permitted and what confirmation policy is applied."
+                .to_string(),
+        ))
+        .category(Some(acp::SessionConfigOptionCategory::Mode))
+}
+
 fn build_safety_policy_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
     let current = safety_policy_value_id(&runtime.safety_mode_str).to_string();
     let options = vec![
@@ -481,25 +541,6 @@ fn build_safety_policy_option(runtime: &SessionRuntimeState) -> acp::SessionConf
         .description(Some(
             "Controls when XZatoma requests confirmation before executing operations.".to_string(),
         ))
-        .category(Some(acp::SessionConfigOptionCategory::Mode))
-}
-
-fn build_terminal_execution_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
-    let current = terminal_execution_value_id(runtime.terminal_mode);
-    let options = vec![
-        acp::SessionConfigSelectOption::new("interactive", "Interactive"),
-        acp::SessionConfigSelectOption::new("restricted_autonomous", "Restricted Autonomous"),
-        acp::SessionConfigSelectOption::new("full_autonomous", "Full Autonomous"),
-    ];
-    acp::SessionConfigOption::select(
-        CONFIG_TERMINAL_EXECUTION,
-        "Terminal Execution",
-        current,
-        options,
-    )
-    .description(Some(
-        "Controls how terminal commands are validated and executed.".to_string(),
-    ))
 }
 
 fn build_tool_routing_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
@@ -586,14 +627,6 @@ fn safety_policy_value_id(safety_mode_str: &str) -> &'static str {
         "yolo" | "never" | "off" => "never_confirm",
         "confirm_dangerous" | "dangerous" => "confirm_dangerous",
         _ => "always_confirm",
-    }
-}
-
-fn terminal_execution_value_id(mode: ExecutionMode) -> &'static str {
-    match mode {
-        ExecutionMode::Interactive => "interactive",
-        ExecutionMode::RestrictedAutonomous => "restricted_autonomous",
-        ExecutionMode::FullAutonomous => "full_autonomous",
     }
 }
 
@@ -729,7 +762,7 @@ mod tests {
         let options = build_session_config_options(&default_runtime());
         let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
         assert!(ids.contains(&CONFIG_SAFETY_POLICY));
-        assert!(ids.contains(&CONFIG_TERMINAL_EXECUTION));
+        assert!(ids.contains(&CONFIG_SESSION_MODE));
         assert!(ids.contains(&CONFIG_TOOL_ROUTING));
         assert!(ids.contains(&CONFIG_VISION_INPUT));
         assert!(ids.contains(&CONFIG_SUBAGENT_DELEGATION));
@@ -1041,5 +1074,77 @@ mod tests {
             let id = routing.as_value_id();
             assert_eq!(id, id.to_lowercase(), "value id '{id}' must be lowercase");
         }
+    }
+
+    #[test]
+    fn test_session_runtime_state_current_mode_id_defaults_to_planning() {
+        let state = SessionRuntimeState::from_config(&Config::default());
+        // Config::default() uses planning chat mode, which maps to planning session mode.
+        assert_eq!(state.current_mode_id, "planning");
+    }
+
+    #[test]
+    fn test_build_session_config_options_first_option_is_session_mode() {
+        let options = build_session_config_options(&default_runtime());
+        assert!(!options.is_empty(), "options list must not be empty");
+        assert_eq!(
+            options[0].id.0.as_ref(),
+            CONFIG_SESSION_MODE,
+            "first config option must be session_mode"
+        );
+        assert_eq!(
+            options[0].category,
+            Some(acp::SessionConfigOptionCategory::Mode),
+            "session_mode must carry category=Mode"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_safety_policy_has_no_mode_category() {
+        let options = build_session_config_options(&default_runtime());
+        let safety = options
+            .iter()
+            .find(|o| o.id.0.as_ref() == CONFIG_SAFETY_POLICY)
+            .expect("safety_policy must be present");
+        assert_eq!(
+            safety.category, None,
+            "safety_policy must not have category=Mode"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_does_not_include_terminal_execution() {
+        let options = build_session_config_options(&default_runtime());
+        let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
+        assert!(
+            !ids.contains(&CONFIG_TERMINAL_EXECUTION),
+            "terminal_execution must not appear in config options"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_planning() {
+        let runtime = default_runtime();
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_SESSION_MODE, "planning", &runtime).unwrap();
+        assert_eq!(effect.terminal_mode, Some(ExecutionMode::Interactive));
+        assert_eq!(effect.session_mode_id.as_deref(), Some("planning"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_full_autonomous() {
+        let runtime = default_runtime();
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_SESSION_MODE, "full_autonomous", &runtime).unwrap();
+        assert_eq!(effect.terminal_mode, Some(ExecutionMode::FullAutonomous));
+        assert_eq!(effect.safety_mode_str.as_deref(), Some("yolo"));
+        assert_eq!(effect.session_mode_id.as_deref(), Some("full_autonomous"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_unknown_value_returns_error() {
+        let runtime = default_runtime();
+        let result = apply_config_option_change(CONFIG_SESSION_MODE, "turbo_mode", &runtime);
+        assert!(result.is_err(), "unknown mode id must return an error");
     }
 }

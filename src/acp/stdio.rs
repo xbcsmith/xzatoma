@@ -40,10 +40,12 @@ use crate::acp::ide_bridge::{IdeBridge, IdeCapabilities};
 use crate::acp::prompt_input::{
     acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
 };
-use crate::acp::session_config::{build_session_config_options, SessionRuntimeState};
-use crate::acp::session_mode::{
-    build_session_mode_state, mode_runtime_effect, MODE_FULL_AUTONOMOUS, MODE_WRITE,
+use crate::acp::session_config::{
+    build_session_config_options, SessionRuntimeState, CONFIG_SESSION_MODE,
 };
+use crate::acp::session_mode::{build_session_mode_state, mode_runtime_effect};
+#[cfg(test)]
+use crate::acp::session_mode::{MODE_FULL_AUTONOMOUS, MODE_WRITE};
 use crate::acp::tool_notifications::{
     build_tool_call_completion, build_tool_call_failure, build_tool_call_start,
 };
@@ -550,8 +552,6 @@ impl AcpStdioServerState {
             register_ide_tools(&mut tools, Arc::clone(bridge));
         }
 
-        // Determine initial session mode from effective configuration.
-        let current_mode_id = initial_mode_id_from_config(&self.config);
         let runtime_state = SessionRuntimeState::from_config(&self.config);
 
         if tools.get("subagent").is_none() {
@@ -646,7 +646,7 @@ impl AcpStdioServerState {
             Some(model_name.clone()),
         ));
 
-        let mode_state = build_session_mode_state(&current_mode_id);
+        let mode_state = build_session_mode_state(&runtime_state.current_mode_id);
         let config_options = build_session_config_options(&runtime_state);
 
         let active_session = ActiveSessionState {
@@ -661,7 +661,7 @@ impl AcpStdioServerState {
             prompt_worker_handle,
             mcp_manager: env.mcp_manager,
             last_activity: chrono::Utc::now().to_rfc3339(),
-            current_mode_id,
+            current_mode_id: runtime_state.current_mode_id.clone(),
             runtime_state,
             ide_bridge,
         };
@@ -704,7 +704,10 @@ impl AcpStdioServerState {
     /// # Errors
     ///
     /// Returns an error if the session is not found or the mode ID is invalid.
-    async fn set_session_mode(&self, request: acp::SetSessionModeRequest) -> Result<String> {
+    async fn set_session_mode(
+        &self,
+        request: acp::SetSessionModeRequest,
+    ) -> Result<(String, Vec<acp::SessionConfigOption>)> {
         let session = self
             .sessions
             .get(&request.session_id)
@@ -720,6 +723,8 @@ impl AcpStdioServerState {
         session_lock.current_mode_id = mode_id.clone();
         session_lock.runtime_state.safety_mode_str = effect.safety_mode_str.clone();
         session_lock.runtime_state.terminal_mode = effect.terminal_mode;
+        session_lock.runtime_state.current_mode_id = mode_id.clone();
+        let updated_options = build_session_config_options(&session_lock.runtime_state);
         session_lock.last_activity = chrono::Utc::now().to_rfc3339();
 
         // Rebuild transient system messages so the mode constraint is enforced
@@ -757,7 +762,7 @@ impl AcpStdioServerState {
             "ACP session mode changed"
         );
 
-        Ok(mode_id)
+        Ok((mode_id, updated_options))
     }
 
     /// Handles a `SetSessionConfigOptionRequest` from the Zed client.
@@ -775,7 +780,7 @@ impl AcpStdioServerState {
     async fn set_session_config_option(
         &self,
         request: acp::SetSessionConfigOptionRequest,
-    ) -> Result<Vec<acp::SessionConfigOption>> {
+    ) -> Result<(Vec<acp::SessionConfigOption>, Option<String>)> {
         use crate::acp::session_config::apply_config_option_change;
 
         let session = self
@@ -819,6 +824,35 @@ impl AcpStdioServerState {
             session_lock.runtime_state.thinking_effort = effort_str.clone();
         }
 
+        // Capture session_mode side-effect data before releasing the session lock.
+        let mode_side_effects = if let Some(ref new_mode_id) = effect.session_mode_id {
+            tracing::debug!(
+                session_id = %request.session_id,
+                config_id = CONFIG_SESSION_MODE,
+                mode_id = %new_mode_id,
+                "applying session mode side effects from config option change"
+            );
+            session_lock.current_mode_id = new_mode_id.clone();
+            session_lock.runtime_state.current_mode_id = new_mode_id.clone();
+            match crate::acp::session_mode::mode_runtime_effect(new_mode_id) {
+                Ok(mode_eff) => {
+                    let workspace_root = session_lock.workspace_root.clone();
+                    Some((mode_eff, workspace_root))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %request.session_id,
+                        error = %e,
+                        "mode_runtime_effect failed for session_mode config change"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let new_mode_id_for_return = effect.session_mode_id.clone();
+
         // Clone what is needed for the deferred provider call before releasing
         // the session lock. The agent lock must not be acquired while the
         // session lock is held to avoid a lock-ordering inversion with the
@@ -855,7 +889,25 @@ impl AcpStdioServerState {
             }
         }
 
-        Ok(updated_options)
+        // Apply session_mode side effects (same logic as set_session_mode).
+        if let Some((mode_eff, workspace_root)) = mode_side_effects {
+            use crate::chat_mode::{ChatMode, SafetyMode};
+            let chat_mode = ChatMode::parse_str(&mode_eff.chat_mode_str).unwrap_or(ChatMode::Write);
+            let safety_mode = SafetyMode::parse_str(&mode_eff.safety_mode_str)
+                .unwrap_or(SafetyMode::AlwaysConfirm);
+            let system_prompt = crate::prompts::build_system_prompt(chat_mode, safety_mode);
+            let mut agent_lock = agent_handle.lock().await;
+            agent_lock.set_transient_system_messages(vec![system_prompt]);
+            let new_validator = CommandValidator::new(mode_eff.terminal_mode, workspace_root);
+            let new_terminal_tool =
+                TerminalTool::new(new_validator, self.config.agent.terminal.clone())
+                    .with_safety_mode(safety_mode);
+            agent_lock
+                .tools_mut()
+                .register("terminal", Arc::new(new_terminal_tool));
+        }
+
+        Ok((updated_options, new_mode_id_for_return))
     }
 
     /// Handles a `SetSessionModelRequest` from the Zed client.
@@ -1130,15 +1182,23 @@ where
                             -> acp_sdk::Result<()> {
                     let session_id = request.session_id.clone();
                     match state.set_session_mode(request).await {
-                        Ok(new_mode_id) => {
+                        Ok((new_mode_id, updated_options)) => {
                             responder.respond(acp::SetSessionModeResponse::new())?;
                             send_session_update_best_effort(
                                 &cx,
-                                session_id,
+                                session_id.clone(),
                                 acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate::new(
                                     new_mode_id,
                                 )),
                                 "current mode update",
+                            );
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::ConfigOptionUpdate(
+                                    acp::ConfigOptionUpdate::new(updated_options),
+                                ),
+                                "config option update after mode change",
                             );
                         }
                         Err(error) => {
@@ -1159,18 +1219,28 @@ where
                             -> acp_sdk::Result<()> {
                     let session_id = request.session_id.clone();
                     match state.set_session_config_option(request).await {
-                        Ok(updated_options) => {
+                        Ok((updated_options, new_mode_id_opt)) => {
                             let response =
                                 acp::SetSessionConfigOptionResponse::new(updated_options.clone());
                             responder.respond(response)?;
                             send_session_update_best_effort(
                                 &cx,
-                                session_id,
+                                session_id.clone(),
                                 acp::SessionUpdate::ConfigOptionUpdate(
                                     acp::ConfigOptionUpdate::new(updated_options),
                                 ),
                                 "config option update",
                             );
+                            if let Some(new_mode_id) = new_mode_id_opt {
+                                send_session_update_best_effort(
+                                    &cx,
+                                    session_id,
+                                    acp::SessionUpdate::CurrentModeUpdate(
+                                        acp::CurrentModeUpdate::new(new_mode_id),
+                                    ),
+                                    "current mode update from config option change",
+                                );
+                            }
                         }
                         Err(error) => {
                             responder.respond_with_error(acp_internal_error(error))?;
@@ -1394,6 +1464,7 @@ fn current_model_name(config: &Config) -> &str {
 /// When `allow_dangerous` (full-autonomous) is active the mode defaults to
 /// `full_autonomous`. The write mode is used by default because it matches the
 /// standard XZatoma `write` chat mode with safe confirmation policy.
+#[cfg(test)]
 fn initial_mode_id_from_config(config: &Config) -> String {
     use crate::config::ExecutionMode;
     if config.agent.terminal.default_mode == ExecutionMode::FullAutonomous {
@@ -3224,8 +3295,8 @@ mod tests {
                 "safety_policy should be present"
             );
             assert!(
-                ids.contains(&"terminal_execution"),
-                "terminal_execution should be present"
+                ids.contains(&"session_mode"),
+                "session_mode should be present"
             );
             assert!(
                 ids.contains(&"tool_routing"),
@@ -3390,6 +3461,145 @@ mod tests {
             assert!(
                 config_resp.is_err(),
                 "set_session_config_option with invalid value should return an error"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_new_session_response_mode_config_option_is_first() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let config_options = new_session_resp
+                .config_options
+                .as_ref()
+                .expect("config_options should be present");
+            assert!(!config_options.is_empty());
+            assert_eq!(
+                config_options[0].id.0.as_ref(),
+                CONFIG_SESSION_MODE,
+                "first config option must be session_mode"
+            );
+            assert_eq!(
+                config_options[0].category,
+                Some(acp::SessionConfigOptionCategory::Mode),
+                "session_mode must carry category=Mode"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_sends_config_option_update() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(
+                connection
+                    .send_request(acp::SetSessionModeRequest::new(session_id.clone(), "write")),
+            )
+            .await;
+            assert!(
+                set_mode_resp.is_ok(),
+                "set_session_mode to write should succeed"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_config_option_mode_sends_current_mode_update() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let config_resp = receive_response(connection.send_request(
+                acp::SetSessionConfigOptionRequest::new(session_id, "session_mode", "write"),
+            ))
+            .await
+            .expect("set_session_config_option session_mode should succeed");
+
+            let ids: Vec<&str> = config_resp
+                .config_options
+                .iter()
+                .map(|o| o.id.0.as_ref())
+                .collect();
+            assert!(
+                ids.contains(&"session_mode"),
+                "response config options must include session_mode"
+            );
+            let mode_opt = config_resp
+                .config_options
+                .iter()
+                .find(|o| o.id.0.as_ref() == "session_mode")
+                .unwrap();
+            if let acp::SessionConfigKind::Select(ref s) = mode_opt.kind {
+                assert_eq!(
+                    s.current_value.0.as_ref(),
+                    "write",
+                    "session_mode current_value must be updated to write"
+                );
+            } else {
+                panic!("session_mode must be a select option");
+            }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_set_session_mode_full_autonomous_updates_session_mode_option() {
+        run_client_server_test(|connection| async move {
+            let _init = receive_response(
+                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
+            )
+            .await;
+
+            let new_session_resp = receive_response(
+                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
+            )
+            .await
+            .expect("new session should succeed");
+
+            let session_id = new_session_resp.session_id.clone();
+
+            let set_mode_resp = receive_response(connection.send_request(
+                acp::SetSessionModeRequest::new(session_id.clone(), "full_autonomous"),
+            ))
+            .await;
+            assert!(
+                set_mode_resp.is_ok(),
+                "set_session_mode to full_autonomous should succeed"
             );
         })
         .await;
