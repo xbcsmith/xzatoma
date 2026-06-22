@@ -733,6 +733,22 @@ For containerized or managed deployments:
 - use explicit network policy because ACP HTTP authentication is not yet built
   in
 
+## Stdio Session Config Options
+
+The following session-level config options are supported by the stdio ACP
+transport (`xzatoma agent`). They are not part of the HTTP ACP API but are
+documented here for completeness.
+
+### `session_mode`
+
+The `session_mode` option controls the operating mode of a stdio session. It is
+advertised with `category: mode` so that Zed renders it in the mode selector
+dropdown.
+
+Accepted values: `planning`, `write`, `safe`, `full_autonomous`.
+
+For full documentation see `docs/reference/acp_configuration.md`.
+
 ## Related Documents
 
 - `docs/how-to/run_xzatoma_as_an_acp_server.md`

@@ -214,6 +214,115 @@ acp:
     vision_enabled: false
 ```
 
+## Session Mode Selector
+
+XZatoma advertises four session modes to Zed. Use the mode selector dropdown in
+the Zed agent panel to switch between them without restarting the session.
+
+| Mode ID         | Display Name    | File writes | Terminal     | Confirmations |
+| --------------- | --------------- | ----------- | ------------ | ------------- |
+| planning        | Planning        | No          | None         | Always        |
+| write           | Write           | Yes         | Safe only    | Always        |
+| safe            | Safe            | Yes         | Safe only    | Always (Zed)  |
+| full_autonomous | Full Autonomous | Yes         | Unrestricted | Never         |
+
+### Planning
+
+Read-only analysis mode. No file writes or destructive terminal commands are
+permitted. Use this mode to explore, research, and plan work before making
+changes. This is the default mode.
+
+### Write
+
+File editing and safe terminal execution are allowed. Dangerous terminal
+operations require confirmation before proceeding. Use this mode for day-to-day
+coding tasks.
+
+### Safe
+
+Write-capable mode with Zed user approval required for any risky action. All
+potentially destructive operations trigger a confirmation prompt in Zed. Use
+this mode when you want explicit control over every destructive operation.
+
+### Full Autonomous
+
+Unrestricted write and terminal access within configured resource limits. No
+confirmations are requested. Use with care, and only in sandboxed or trusted
+environments.
+
+To switch modes, click the mode selector in the Zed agent panel header and
+choose from the dropdown. The mode change takes effect immediately for the next
+prompt in that session.
+
+You can also change the mode programmatically via the `session_mode` session
+config option. See `docs/reference/acp_configuration.md` for details.
+
+To confirm mode changes are applied, run XZatoma with debug logging:
+
+```json
+{
+  "env": {
+    "RUST_LOG": "xzatoma::acp=debug"
+  }
+}
+```
+
+Mode changes emit `ConfigOptionUpdate` and `CurrentModeUpdate` notifications
+visible in the debug log.
+
+## Context Window Bar
+
+XZatoma reports token usage to Zed so the context window bar in the agent panel
+stays current. Two separate mechanisms keep the bar updated:
+
+1. After every completed prompt turn, XZatoma sends a `UsageUpdate` notification
+   with the current token count and maximum context window size.
+2. `PromptResponse.usage` is populated with the same counts in the response
+   payload.
+
+The bar shows `used / max` tokens. When the bar is nearly full, consider
+starting a new session or reducing the context by summarising earlier
+conversation history.
+
+### What counts as context
+
+XZatoma uses a two-tier approach for token counting:
+
+- Provider-reported usage: when the provider returns token counts in its
+  response (for example, the OpenAI `usage` field), those counts are used
+  directly.
+- Heuristic fallback: when the provider does not return usage, XZatoma uses an
+  internal character-based estimate from the conversation history.
+
+The `total_tokens` figure in the context bar is the most reliable field. The
+`input_tokens` value is set equal to `total_tokens` because XZatoma does not
+split per-turn input versus output counts without provider-level token
+accounting. `output_tokens` is reported as zero.
+
+### Interpreting the bar
+
+| Bar fill | Meaning                                                         |
+| -------- | --------------------------------------------------------------- |
+| < 50%    | Context window is comfortable. Normal operation.                |
+| 50-80%   | Context is filling. Consider pruning or starting a new session. |
+| > 80%    | Context is nearly full. Long prompts may be truncated or fail.  |
+
+### Debugging context window updates
+
+To confirm `UsageUpdate` notifications are being sent, run with debug logging:
+
+```json
+{
+  "env": {
+    "RUST_LOG": "xzatoma::acp=debug"
+  }
+}
+```
+
+Look for log lines containing
+`"ACP stdio: sending initial context window usage update"` at session creation
+and `"post-turn usage update"` after each prompt.
+
 ## Troubleshooting
 
 ### XZatoma does not appear in Zed

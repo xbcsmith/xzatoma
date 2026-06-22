@@ -458,6 +458,40 @@ When true, image content blocks that contain `http://` or `https://` URLs are
 fetched and decoded. Disabled by default to prevent unintended outbound
 requests.
 
+### Session config options
+
+The following session-level config options are advertised to ACP clients (such
+as Zed) via `NewSessionResponse.config_options`. They are not YAML configuration
+fields; they are runtime controls the client sets through the ACP protocol.
+
+#### `session_mode`
+
+- ACP config option ID: `session_mode`
+- Type: select
+- Default: `planning` (or `full_autonomous` when `--allow-dangerous` is passed)
+- Category: `mode` (Zed renders this in the mode selector dropdown)
+
+Controls the operating mode of the session. Changing this option applies a
+corresponding set of safety policy, chat mode, and terminal execution mode
+settings as a unit.
+
+Accepted values:
+
+| Value             | Display Name    | Terminal access | Confirmations |
+| ----------------- | --------------- | --------------- | ------------- |
+| `planning`        | Planning        | None            | Always        |
+| `write`           | Write           | Safe only       | Always        |
+| `safe`            | Safe            | Safe only       | Always (Zed)  |
+| `full_autonomous` | Full Autonomous | Unrestricted    | Never         |
+
+The value can be changed at any point during a session. The change takes effect
+immediately for the next prompt.
+
+**Note**: `terminal_execution` is no longer advertised as a standalone config
+option. Terminal execution mode is controlled exclusively through
+`session_mode`. Clients that previously used `terminal_execution` directly
+should switch to setting `session_mode` instead.
+
 ## Stdio environment variable overrides
 
 The following environment variables override `acp.stdio` fields:
@@ -499,6 +533,11 @@ acp:
     allow_image_file_references: true
     allow_remote_image_urls: false
 ```
+
+Session config options such as `session_mode` are runtime controls set through
+the ACP protocol and are not part of the YAML configuration file. They are
+advertised to the client at session creation via `NewSessionResponse` and can be
+changed during a session using the ACP `session/setConfigOption` request.
 
 ## Related documentation
 
