@@ -376,9 +376,89 @@ pub mod chat {
     //! The agent will use the registered tools (file_ops, etc.) as required.
 
     use super::*;
+    use crate::agent::events::{AgentExecutionEvent, AgentObserver};
     use colored::Colorize;
     use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
+    use tokio_util::sync::CancellationToken;
+
+    /// Observer that writes streaming model output to stdout in real time.
+    ///
+    /// Used by `run_chat`, `run_plan_with_options`, and `handle_agent` when
+    /// `streaming_enabled` is true. Receives `AgentExecutionEvent` emissions
+    /// from the agent loop and immediately flushes each chunk to stdout.
+    ///
+    /// After execution, callers MUST check `streamed_any_content()` and skip
+    /// their normal `println!` of the full response to avoid printing it twice.
+    pub struct ChatStreamingObserver {
+        thinking_active: bool,
+        content_started: bool,
+        streamed_any_content: bool,
+    }
+
+    impl Default for ChatStreamingObserver {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ChatStreamingObserver {
+        /// Create a new observer with all flags reset to false.
+        pub fn new() -> Self {
+            Self {
+                thinking_active: false,
+                content_started: false,
+                streamed_any_content: false,
+            }
+        }
+
+        /// Returns true if at least one content or reasoning chunk was printed to stdout.
+        pub fn streamed_any_content(&self) -> bool {
+            self.streamed_any_content
+        }
+    }
+
+    impl AgentObserver for ChatStreamingObserver {
+        fn on_event(&mut self, event: AgentExecutionEvent) {
+            use std::io::Write;
+            match event {
+                AgentExecutionEvent::ThinkingStarted => {
+                    if !self.thinking_active {
+                        print!("\nThinking...\n");
+                        // SAFETY: stdout().flush() returns an error only if the underlying
+                        // write syscall fails; we accept that risk for best-effort streaming.
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = true;
+                    }
+                }
+                AgentExecutionEvent::ReasoningChunkEmitted { text } => {
+                    print!("{}", text);
+                    std::io::stdout().flush().ok();
+                    self.streamed_any_content = true;
+                }
+                AgentExecutionEvent::ThinkingFinished => {
+                    if self.thinking_active {
+                        println!();
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = false;
+                    }
+                }
+                AgentExecutionEvent::AssistantTextEmitted { text } => {
+                    // If thinking was still active when content starts, close the thinking block.
+                    if self.thinking_active {
+                        println!();
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = false;
+                    }
+                    print!("{}", text);
+                    std::io::stdout().flush().ok();
+                    self.content_started = true;
+                    self.streamed_any_content = true;
+                }
+                _ => {}
+            }
+        }
+    }
 
     /// Start interactive chat mode
     ///
@@ -394,6 +474,9 @@ pub mod chat {
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
     /// * `system_prompt` - Optional system prompt override for this session.
+    /// * `streaming` - When true, response and reasoning tokens are printed
+    ///   progressively to stdout as they arrive. Requires the configured
+    ///   provider to support streaming.
     ///
     /// # Examples
     ///
@@ -402,8 +485,9 @@ pub mod chat {
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None, None, None).await?;
+    /// // chat::run_chat(Config::default(), None, None, false, None, None, None, false).await?;
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_chat(
         config: Config,
         provider_name: Option<String>,
@@ -412,6 +496,7 @@ pub mod chat {
         resume: Option<String>,
         thinking_effort: Option<String>,
         system_prompt: Option<String>,
+        streaming: bool,
     ) -> Result<()> {
         use crate::storage::SqliteStorage;
 
@@ -439,6 +524,7 @@ pub mod chat {
 
         // Default to safe mode (AlwaysConfirm)
         let mut mode_state = ChatModeState::new(initial_mode, SafetyMode::AlwaysConfirm);
+        mode_state.set_streaming(streaming);
 
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
@@ -842,6 +928,16 @@ pub mod chat {
                             println!();
                             continue;
                         }
+                        Ok(SpecialCommand::ToggleStreaming(enable)) => {
+                            let prev = mode_state.set_streaming(enable);
+                            if prev != enable {
+                                println!(
+                                    "Streaming {}.",
+                                    if enable { "enabled" } else { "disabled" }
+                                );
+                            }
+                            continue;
+                        }
                         Ok(SpecialCommand::SetSystemPrompt(text)) => {
                             agent.conversation_mut().replace_first_system_message(&text);
                             println!("System prompt updated.\n");
@@ -1001,9 +1097,26 @@ pub mod chat {
                     }
 
                     // Execute the prompt via the agent
-                    match agent.execute(augmented_prompt).await {
+                    let cancellation_token = CancellationToken::new();
+                    let mut observer = ChatStreamingObserver::new();
+                    let exec_result = if mode_state.streaming_enabled {
+                        agent
+                            .execute_with_observer(
+                                augmented_prompt,
+                                &cancellation_token,
+                                &mut observer,
+                            )
+                            .await
+                    } else {
+                        agent.execute(augmented_prompt).await
+                    };
+                    match exec_result {
                         Ok(response) => {
-                            println!("\n{}\n", response);
+                            if !observer.streamed_any_content() {
+                                println!("\n{}\n", response);
+                            } else {
+                                println!();
+                            }
 
                             // Check context status and display warnings if needed
                             let warning_threshold =
@@ -1644,7 +1757,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None, None, None).await;
+            let res = run_chat(cfg, None, None, false, None, None, None, false).await;
             assert!(res.is_err());
         }
 
@@ -1917,6 +2030,49 @@ pub mod chat {
             assert_eq!(SafetyMode::AlwaysConfirm.to_string(), "SAFE");
             assert_eq!(SafetyMode::NeverConfirm.to_string(), "YOLO");
         }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_false_initially() {
+            let observer = ChatStreamingObserver::new();
+            assert!(!observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_true_after_reasoning_chunk() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ReasoningChunkEmitted {
+                text: "thinking...".to_string(),
+            });
+            assert!(observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_true_after_content_chunk() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::AssistantTextEmitted {
+                text: "Hello".to_string(),
+            });
+            assert!(observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_thinking_active_set_on_thinking_started() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ThinkingStarted);
+            assert!(observer.thinking_active);
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_thinking_cleared_on_thinking_finished() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ThinkingStarted);
+            observer.on_event(AgentExecutionEvent::ThinkingFinished);
+            assert!(!observer.thinking_active);
+        }
     }
 }
 
@@ -1925,7 +2081,9 @@ pub mod chat {
 /// This module provides `run_plan` which runs a plan or a single prompt.
 /// We provide a `run_plan_with_options` helper to support the `allow_dangerous` flag.
 pub mod r#run {
+    use super::chat::ChatStreamingObserver;
     use super::*;
+    use tokio_util::sync::CancellationToken;
 
     /// Run a plan or a prompt via the agent
     ///
@@ -1941,7 +2099,7 @@ pub mod r#run {
         plan_path: Option<String>,
         prompt: Option<String>,
     ) -> Result<()> {
-        run_plan_with_options(config, plan_path, prompt, false, None, None).await
+        run_plan_with_options(config, plan_path, prompt, false, None, None, false).await
     }
 
     /// Run a plan or a prompt via the agent with extra options.
@@ -1957,6 +2115,8 @@ pub mod r#run {
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
     /// * `system_prompt` - Optional system prompt override for this run session.
+    /// * `streaming` - When true, response and reasoning tokens are printed
+    ///   progressively to stdout as they arrive.
     pub async fn run_plan_with_options(
         mut config: Config,
         plan_path: Option<String>,
@@ -1964,6 +2124,7 @@ pub mod r#run {
         allow_dangerous: bool,
         thinking_effort: Option<String>,
         system_prompt: Option<String>,
+        streaming: bool,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
         // Save CLI flag separately before merging into config.
@@ -2079,9 +2240,22 @@ pub mod r#run {
         agent.set_transient_system_messages(transient_system_messages);
 
         println!("Executing task...\n");
-        match agent.execute(task).await {
+        let cancellation_token = CancellationToken::new();
+        let mut observer = ChatStreamingObserver::new();
+        let exec_result = if streaming {
+            agent
+                .execute_with_observer(task, &cancellation_token, &mut observer)
+                .await
+        } else {
+            agent.execute(task).await
+        };
+        match exec_result {
             Ok(response) => {
-                println!("Result:\n{}", response);
+                if !observer.streamed_any_content() {
+                    println!("Result:\n{}", response);
+                } else {
+                    println!();
+                }
                 Ok(())
             }
             Err(e) => {

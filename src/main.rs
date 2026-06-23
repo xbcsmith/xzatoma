@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
             resume,
             thinking_effort,
             system_prompt,
+            streaming,
             ..
         } => {
             tracing::info!("Starting interactive chat mode");
@@ -99,6 +100,7 @@ async fn main() -> Result<()> {
                 resume,
                 thinking_effort,
                 system_prompt,
+                streaming,
             )
             .await?;
             Ok(())
@@ -109,6 +111,7 @@ async fn main() -> Result<()> {
             allow_dangerous,
             thinking_effort,
             system_prompt,
+            streaming,
             ..
         } => {
             tracing::info!("Starting plan execution mode");
@@ -137,6 +140,7 @@ async fn main() -> Result<()> {
                 allow_dangerous,
                 thinking_effort,
                 system_prompt,
+                streaming,
             )
             .await?;
             Ok(())
@@ -262,6 +266,7 @@ async fn main() -> Result<()> {
             allow_dangerous,
             working_dir,
             system_prompt,
+            streaming,
             ..
         } => {
             commands::agent::handle_agent(
@@ -270,6 +275,7 @@ async fn main() -> Result<()> {
                 allow_dangerous,
                 working_dir,
                 system_prompt,
+                streaming,
                 config,
             )
             .await?;

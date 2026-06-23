@@ -332,6 +332,8 @@ pub struct ChatModeState {
     pub safety_mode: SafetyMode,
     /// Whether subagent delegation is enabled in chat mode
     pub subagents_enabled: bool,
+    /// Whether live token streaming is enabled for this session
+    pub streaming_enabled: bool,
 }
 
 impl ChatModeState {
@@ -359,6 +361,7 @@ impl ChatModeState {
             chat_mode,
             safety_mode,
             subagents_enabled: false,
+            streaming_enabled: false,
         }
     }
 
@@ -410,6 +413,33 @@ impl ChatModeState {
     pub fn toggle_subagents(&mut self) -> bool {
         self.subagents_enabled = !self.subagents_enabled;
         self.subagents_enabled
+    }
+
+    /// Enable or disable live token streaming and return the previous state.
+    ///
+    /// # Arguments
+    ///
+    /// * `enable` - `true` to enable streaming, `false` to disable.
+    ///
+    /// # Returns
+    ///
+    /// The previous value of `streaming_enabled` before the change.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode, ChatModeState};
+    ///
+    /// let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+    /// assert!(!state.streaming_enabled);
+    /// let prev = state.set_streaming(true);
+    /// assert!(!prev);
+    /// assert!(state.streaming_enabled);
+    /// ```
+    pub fn set_streaming(&mut self, enable: bool) -> bool {
+        let prev = self.streaming_enabled;
+        self.streaming_enabled = enable;
+        prev
     }
 
     /// Format a prompt string with mode indicators
@@ -691,6 +721,7 @@ mod tests {
         assert_eq!(state.chat_mode, ChatMode::Planning);
         assert_eq!(state.safety_mode, SafetyMode::AlwaysConfirm);
         assert!(!state.subagents_enabled);
+        assert!(!state.streaming_enabled);
     }
 
     #[test]
@@ -877,5 +908,35 @@ mod tests {
             // All should contain the safety name
             assert!(prompt.contains(safety.to_string().as_str()));
         }
+    }
+
+    #[test]
+    fn test_chat_mode_state_streaming_enabled_defaults_false() {
+        let state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        assert!(!state.streaming_enabled);
+    }
+
+    #[test]
+    fn test_chat_mode_state_set_streaming_returns_previous_value() {
+        let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        // Initially false; set_streaming(true) should return false (prev value)
+        let prev = state.set_streaming(true);
+        assert!(!prev, "Previous value should be false");
+        assert!(
+            state.streaming_enabled,
+            "streaming_enabled should now be true"
+        );
+    }
+
+    #[test]
+    fn test_chat_mode_state_set_streaming_disable() {
+        let mut state = ChatModeState::new(ChatMode::Planning, SafetyMode::AlwaysConfirm);
+        state.set_streaming(true);
+        let prev = state.set_streaming(false);
+        assert!(prev, "Previous value should be true");
+        assert!(
+            !state.streaming_enabled,
+            "streaming_enabled should now be false"
+        );
     }
 }

@@ -205,6 +205,89 @@ pub trait Provider: Send + Sync {
         self.complete(messages, tools).await
     }
 
+    /// Complete a conversation with per-chunk streaming callbacks.
+    ///
+    /// Providers that support live streaming SHOULD override this method and call
+    /// `on_reasoning_chunk` for each incremental reasoning token and
+    /// `on_content_chunk` for each incremental content token as the stream is
+    /// consumed. Both callbacks are optional; the provider calls only those that
+    /// are `Some`.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Conversation history
+    /// * `tools` - Available tools for the assistant (as JSON schemas)
+    /// * `on_reasoning_chunk` - Called for each incremental reasoning token.
+    ///   Receives the delta text for that chunk.
+    /// * `on_content_chunk` - Called for each incremental content token.
+    ///   Receives the delta text for that chunk.
+    ///
+    /// # Returns
+    ///
+    /// Returns the fully-assembled [`CompletionResponse`] after all chunks have
+    /// been processed, identical to what `complete` would return.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError` if the underlying provider call fails.
+    ///
+    /// # Default Implementation
+    ///
+    /// The default implementation delegates to `complete` and never fires
+    /// either callback. Providers that do not support streaming inherit this
+    /// no-op default automatically.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xzatoma::providers::{Provider, Message, ModelInfo, CompletionResponse};
+    /// use xzatoma::error::Result;
+    /// use async_trait::async_trait;
+    ///
+    /// struct SimpleProvider;
+    ///
+    /// #[async_trait]
+    /// impl Provider for SimpleProvider {
+    ///     fn is_authenticated(&self) -> bool { true }
+    ///     fn current_model(&self) -> Option<&str> { None }
+    ///     fn set_model(&mut self, _model: &str) {}
+    ///     async fn fetch_models(&self) -> Result<Vec<ModelInfo>> { Ok(vec![]) }
+    ///     async fn complete(
+    ///         &self,
+    ///         _messages: &[Message],
+    ///         _tools: &[serde_json::Value],
+    ///     ) -> Result<CompletionResponse> {
+    ///         Ok(CompletionResponse::new(Message::assistant("hi")))
+    ///     }
+    /// }
+    ///
+    /// # async fn example() {
+    /// let provider = SimpleProvider;
+    /// // Default: neither callback is ever called; complete() is used instead.
+    /// let result = provider.complete_with_callbacks(
+    ///     &[Message::user("hello")],
+    ///     &[],
+    ///     None,
+    ///     None,
+    /// ).await;
+    /// assert!(result.is_ok());
+    /// # }
+    /// ```
+    async fn complete_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        // Suppress unused-variable warnings: callbacks are intentionally ignored
+        // in the default implementation. Providers that support streaming override
+        // this method and use the callbacks.
+        let _ = on_reasoning_chunk;
+        let _ = on_content_chunk;
+        self.complete(messages, tools).await
+    }
+
     /// Get the capabilities of this provider.
     ///
     /// # Returns
@@ -754,6 +837,117 @@ mod tests {
         assert!(
             provider.set_thinking_effort(None).is_ok(),
             "default no-op must return Ok for None effort"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_with_callbacks_default_delegates_to_complete() {
+        // Verify that the default implementation calls complete() and
+        // returns the same result regardless of whether callbacks are provided.
+        struct MockProvider;
+
+        #[async_trait]
+        impl Provider for MockProvider {
+            fn is_authenticated(&self) -> bool {
+                true
+            }
+
+            fn current_model(&self) -> Option<&str> {
+                None
+            }
+
+            fn set_model(&mut self, _model: &str) {}
+
+            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+                Ok(vec![])
+            }
+
+            async fn complete(
+                &self,
+                _messages: &[Message],
+                _tools: &[serde_json::Value],
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant(
+                    "default response",
+                )))
+            }
+        }
+
+        let provider = MockProvider;
+        let messages = vec![Message::user("hi")];
+
+        // Without callbacks
+        let result = provider
+            .complete_with_callbacks(&messages, &[], None, None)
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().message.content.as_deref(),
+            Some("default response")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_with_callbacks_default_does_not_fire_callbacks() {
+        // Verify that the default implementation never calls the provided callbacks.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct MockProvider;
+
+        #[async_trait]
+        impl Provider for MockProvider {
+            fn is_authenticated(&self) -> bool {
+                true
+            }
+
+            fn current_model(&self) -> Option<&str> {
+                None
+            }
+
+            fn set_model(&mut self, _model: &str) {}
+
+            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+                Ok(vec![])
+            }
+
+            async fn complete(
+                &self,
+                _messages: &[Message],
+                _tools: &[serde_json::Value],
+            ) -> Result<CompletionResponse> {
+                Ok(CompletionResponse::new(Message::assistant("response")))
+            }
+        }
+
+        let provider = MockProvider;
+        let messages = vec![Message::user("test")];
+
+        let reasoning_calls = Arc::new(AtomicUsize::new(0));
+        let content_calls = Arc::new(AtomicUsize::new(0));
+        let rc = Arc::clone(&reasoning_calls);
+        let cc = Arc::clone(&content_calls);
+
+        let on_reasoning = move |_text: String| {
+            rc.fetch_add(1, Ordering::SeqCst);
+        };
+        let on_content = move |_text: String| {
+            cc.fetch_add(1, Ordering::SeqCst);
+        };
+
+        let _ = provider
+            .complete_with_callbacks(&messages, &[], Some(&on_reasoning), Some(&on_content))
+            .await;
+
+        assert_eq!(
+            reasoning_calls.load(Ordering::SeqCst),
+            0,
+            "default complete_with_callbacks must not fire on_reasoning_chunk"
+        );
+        assert_eq!(
+            content_calls.load(Ordering::SeqCst),
+            0,
+            "default complete_with_callbacks must not fire on_content_chunk"
         );
     }
 }

@@ -150,6 +150,14 @@ pub enum Commands {
         /// precedence over this flag.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// When set, reasoning tokens (thinking) are printed with a visual
+        /// indicator before the response tokens. Requires the configured
+        /// provider to support streaming.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Execute a plan or prompt
@@ -183,6 +191,13 @@ pub enum Commands {
         /// precedence over this flag.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// When set, response and reasoning tokens are printed progressively.
+        /// Requires the configured provider to support streaming.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
@@ -210,6 +225,13 @@ pub enum Commands {
         /// Override the system prompt for this agent session.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// Note: the agent command uses ACP stdio mode; this flag is accepted
+        /// for API consistency but has no effect on the ACP protocol stream.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Watch Kafka topic for events and execute plans
@@ -2110,6 +2132,47 @@ mod tests {
                 _ => panic!("expected AcpCommand::Serve"),
             },
             _ => panic!("expected Acp command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_streaming_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--streaming"]).unwrap();
+        if let Commands::Chat { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_streaming_defaults_false() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        if let Commands::Chat { streaming, .. } = cli.command {
+            assert!(!streaming);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_with_streaming_flag() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "run", "--prompt", "hello", "--streaming"]).unwrap();
+        if let Commands::Run { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_agent_with_streaming_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "agent", "--streaming"]).unwrap();
+        if let Commands::Agent { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Agent command");
         }
     }
 }

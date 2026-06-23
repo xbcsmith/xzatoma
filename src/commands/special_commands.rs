@@ -115,6 +115,16 @@ pub enum SpecialCommand {
     /// Use `/system <text>` to provide the new prompt text.
     SetSystemPrompt(String),
 
+    /// Toggle live streaming of model output tokens.
+    ///
+    /// When enabled, response and reasoning tokens are printed to the
+    /// terminal as they arrive. When disabled, the full response is
+    /// printed only after the model finishes.
+    ///
+    /// Use `/streaming on` or `/streaming enable` to enable.
+    /// Use `/streaming off` or `/streaming disable` to disable.
+    ToggleStreaming(bool),
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -380,6 +390,20 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             }
         }
 
+        // Streaming toggle commands
+        "/streaming on" | "/streaming enable" => Ok(SpecialCommand::ToggleStreaming(true)),
+        "/streaming off" | "/streaming disable" => Ok(SpecialCommand::ToggleStreaming(false)),
+
+        // Handle /streaming with no argument or invalid argument
+        "/streaming" => Err(CommandError::MissingArgument {
+            command: "/streaming".to_string(),
+            usage: "/streaming <on|off>".to_string(),
+        }),
+        input if input.starts_with("/streaming ") => Err(CommandError::MissingArgument {
+            command: "/streaming".to_string(),
+            usage: "/streaming <on|off>".to_string(),
+        }),
+
         // Exit commands
         "exit" | "quit" | "/exit" | "/quit" => Ok(SpecialCommand::Exit),
 
@@ -454,6 +478,12 @@ CONTEXT WINDOW MANAGEMENT:
 SYSTEM PROMPT:
   /system <text>  - Replace the active system prompt for this session
                     (replaces the first system message; skill disclosures are kept)
+
+STREAMING:
+  /streaming on   - Enable live token streaming to terminal
+  /streaming off  - Disable live token streaming
+  /streaming enable  - Same as /streaming on
+  /streaming disable - Same as /streaming off
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -1255,5 +1285,49 @@ mod tests {
                 "act as a senior Rust engineer reviewing code".to_string()
             )
         );
+    }
+
+    #[test]
+    fn test_parse_streaming_on_returns_toggle_streaming_true() {
+        let result = parse_special_command("/streaming on").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(true));
+    }
+
+    #[test]
+    fn test_parse_streaming_off_returns_toggle_streaming_false() {
+        let result = parse_special_command("/streaming off").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(false));
+    }
+
+    #[test]
+    fn test_parse_streaming_enable_alias() {
+        let result = parse_special_command("/streaming enable").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(true));
+    }
+
+    #[test]
+    fn test_parse_streaming_disable_alias() {
+        let result = parse_special_command("/streaming disable").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(false));
+    }
+
+    #[test]
+    fn test_parse_streaming_no_arg_returns_missing_argument_error() {
+        let result = parse_special_command("/streaming");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CommandError::MissingArgument { .. }
+        ));
+    }
+
+    #[test]
+    fn test_parse_streaming_invalid_arg_returns_missing_argument_error() {
+        let result = parse_special_command("/streaming maybe");
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CommandError::MissingArgument { .. }
+        ));
     }
 }

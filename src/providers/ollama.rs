@@ -391,6 +391,169 @@ impl OllamaProvider {
         Ok(models)
     }
 
+    /// Complete a conversation using Ollama streaming with per-chunk callbacks.
+    ///
+    /// Sends the request with `stream: true`, parses newline-delimited JSON
+    /// chunks, and calls the appropriate callback for each partial content
+    /// token. Think-tag models (DeepSeek-R1, Qwen3) that embed `<think>` and
+    /// `</think>` markers in their output are handled by a simple state machine:
+    /// content between the tags is routed to `on_reasoning_chunk` and content
+    /// outside the tags is routed to `on_content_chunk`.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Conversation history
+    /// * `tools` - Available tools (as JSON schemas)
+    /// * `on_reasoning_chunk` - Optional callback for incremental reasoning tokens
+    /// * `on_content_chunk` - Optional callback for incremental content tokens
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError` if the HTTP request fails or a stream parse error
+    /// occurs.
+    async fn complete_streaming_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        use futures::StreamExt;
+
+        let (url, model) = {
+            let config = self.config.read().map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
+            })?;
+            (format!("{}/api/chat", config.host), config.model.clone())
+        };
+
+        if messages_contain_image_content(messages)
+            && !crate::providers::ollama_model_supports_vision(&model)
+        {
+            return Err(XzatomaError::Provider(format!(
+                "Ollama model '{}' does not support image input",
+                model
+            )));
+        }
+
+        let ollama_request = OllamaRequest {
+            model,
+            messages: self.convert_messages(messages),
+            tools: self.convert_tools(tools),
+            stream: true,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&ollama_request)
+            .send()
+            .await
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat:stream".to_string(),
+                source: source.into(),
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat:stream".to_string(),
+                status,
+                response: error_text,
+            });
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut line_buf: Vec<u8> = Vec::new();
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let mut in_think_block = false;
+        let mut prompt_eval_count = 0usize;
+        let mut eval_count = 0usize;
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.map_err(|e| {
+                XzatomaError::Provider(format!("Error reading Ollama stream: {}", e))
+            })?;
+
+            for byte in chunk {
+                if byte == b'\n' {
+                    let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                    line_buf.clear();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<OllamaResponse>(&line) {
+                        Ok(chunk_resp) => {
+                            if chunk_resp.done {
+                                prompt_eval_count = chunk_resp.prompt_eval_count;
+                                eval_count = chunk_resp.eval_count;
+                                break;
+                            }
+
+                            // Each streaming chunk contains one incremental delta.
+                            // ProviderMessage.content is a String with serde default,
+                            // so empty content signals a no-content chunk.
+                            let delta = chunk_resp.message.content.clone();
+
+                            if delta.is_empty() {
+                                continue;
+                            }
+
+                            // Simple think-tag state machine. The tags are typically
+                            // emitted as whole tokens by the model, so split-tag edge
+                            // cases are uncommon but handled with prefix detection.
+                            process_ollama_think_chunk(
+                                &delta,
+                                &mut in_think_block,
+                                &mut content_acc,
+                                &mut reasoning_acc,
+                                on_reasoning_chunk,
+                                on_content_chunk,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "Failed to parse Ollama stream chunk: {} (line: {:?})",
+                                e,
+                                line
+                            );
+                        }
+                    }
+                } else {
+                    line_buf.push(byte);
+                }
+            }
+        }
+
+        // Build the final response from accumulated content and reasoning.
+        let message = if content_acc.is_empty() && reasoning_acc.is_empty() {
+            Message::assistant("")
+        } else {
+            Message::assistant(&content_acc)
+        };
+
+        let response = if prompt_eval_count > 0 || eval_count > 0 {
+            CompletionResponse::with_usage(message, TokenUsage::new(prompt_eval_count, eval_count))
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        let response = if !reasoning_acc.is_empty() {
+            response.set_reasoning(reasoning_acc)
+        } else {
+            response
+        };
+
+        Ok(response)
+    }
+
     /// Get model details from Ollama's /api/show endpoint
     async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
         let host = self
@@ -493,6 +656,92 @@ impl OllamaProvider {
         }
 
         Ok(model_info)
+    }
+}
+
+/// Apply a single streaming delta from Ollama to the state machine for
+/// think-tag detection.
+///
+/// Splits the `delta` around `<think>` and `</think>` markers (or their
+/// `<|thinking|>` / `<|/thinking|>` variants), routes each segment to the
+/// appropriate callback, and accumulates into `content_acc` and
+/// `reasoning_acc` for the final [`CompletionResponse`].
+///
+/// # Arguments
+///
+/// * `delta` - The incremental content from this streaming chunk
+/// * `in_think_block` - Mutable flag tracking whether we are inside a think block
+/// * `content_acc` - Accumulator for clean response content
+/// * `reasoning_acc` - Accumulator for reasoning content
+/// * `on_reasoning_chunk` - Optional callback for reasoning tokens
+/// * `on_content_chunk` - Optional callback for content tokens
+fn process_ollama_think_chunk(
+    delta: &str,
+    in_think_block: &mut bool,
+    content_acc: &mut String,
+    reasoning_acc: &mut String,
+    on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+) {
+    // Opening tags
+    const THINK_OPEN: &[&str] = &["<think>", "<|thinking|>"];
+    // Closing tags
+    const THINK_CLOSE: &[&str] = &["</think>", "<|/thinking|>"];
+
+    let mut remaining = delta;
+
+    while !remaining.is_empty() {
+        if *in_think_block {
+            // Look for a closing tag
+            let close_pos = THINK_CLOSE
+                .iter()
+                .filter_map(|tag| remaining.find(tag).map(|p| (p, *tag)))
+                .min_by_key(|(pos, _)| *pos);
+
+            if let Some((pos, tag)) = close_pos {
+                let before = &remaining[..pos];
+                if !before.is_empty() {
+                    reasoning_acc.push_str(before);
+                    if let Some(cb) = on_reasoning_chunk {
+                        cb(before.to_string());
+                    }
+                }
+                *in_think_block = false;
+                remaining = &remaining[pos + tag.len()..];
+            } else {
+                // Entire remaining delta is reasoning
+                reasoning_acc.push_str(remaining);
+                if let Some(cb) = on_reasoning_chunk {
+                    cb(remaining.to_string());
+                }
+                remaining = "";
+            }
+        } else {
+            // Look for an opening tag
+            let open_pos = THINK_OPEN
+                .iter()
+                .filter_map(|tag| remaining.find(tag).map(|p| (p, *tag)))
+                .min_by_key(|(pos, _)| *pos);
+
+            if let Some((pos, tag)) = open_pos {
+                let before = &remaining[..pos];
+                if !before.is_empty() {
+                    content_acc.push_str(before);
+                    if let Some(cb) = on_content_chunk {
+                        cb(before.to_string());
+                    }
+                }
+                *in_think_block = true;
+                remaining = &remaining[pos + tag.len()..];
+            } else {
+                // Entire remaining delta is content
+                content_acc.push_str(remaining);
+                if let Some(cb) = on_content_chunk {
+                    cb(remaining.to_string());
+                }
+                remaining = "";
+            }
+        }
     }
 }
 
@@ -843,6 +1092,15 @@ impl Provider for OllamaProvider {
         }
     }
 
+    /// Returns `true` because Ollama supports streaming completions.
+    ///
+    /// When `complete_with_callbacks` is called with at least one active
+    /// callback, the provider uses the Ollama streaming API (`stream: true`)
+    /// to deliver per-chunk events.
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     /// Set the active model in memory without any API validation. Callers
     /// that need model-existence validation should call `list_models` before
     /// calling this method.
@@ -850,6 +1108,37 @@ impl Provider for OllamaProvider {
         if let Ok(mut config) = self.config.write() {
             config.model = model.to_string();
         }
+    }
+
+    /// Complete a conversation with per-chunk streaming callbacks.
+    ///
+    /// Enables Ollama streaming and calls `on_content_chunk` for each content
+    /// token. For models that emit `<think>` or `<|thinking|>` tags, those
+    /// tokens are routed to `on_reasoning_chunk` instead.
+    ///
+    /// Falls back to `complete` when neither callback is provided.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the HTTP request fails or a stream
+    /// parse error occurs.
+    async fn complete_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        if on_reasoning_chunk.is_none() && on_content_chunk.is_none() {
+            return self.complete(messages, tools).await;
+        }
+        self.complete_streaming_with_callbacks(
+            messages,
+            tools,
+            on_reasoning_chunk,
+            on_content_chunk,
+        )
+        .await
     }
 }
 
@@ -1366,5 +1655,98 @@ mod tests {
         assert_eq!(converted[1].role, "assistant");
         assert_eq!(converted[2].role, "tool");
         assert_eq!(converted[2].content, "Result");
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_routes_content_outside_think_tags() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let content_calls = std::sync::Mutex::new(Vec::<String>::new());
+        let on_content = |text: String| content_calls.lock().unwrap().push(text);
+
+        process_ollama_think_chunk(
+            "Hello world",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            Some(&on_content),
+        );
+
+        assert_eq!(content_acc, "Hello world");
+        assert_eq!(reasoning_acc, "");
+        assert_eq!(*content_calls.lock().unwrap(), vec!["Hello world"]);
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_routes_reasoning_inside_think_tags() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let reasoning_calls = std::sync::Mutex::new(Vec::<String>::new());
+        let on_reasoning = |text: String| reasoning_calls.lock().unwrap().push(text);
+
+        // Single chunk containing the full think block and trailing content
+        process_ollama_think_chunk(
+            "<think>Let me think</think>Answer",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            Some(&on_reasoning),
+            None,
+        );
+
+        assert_eq!(reasoning_acc, "Let me think");
+        assert_eq!(content_acc, "Answer");
+        assert!(reasoning_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.contains("Let me think")));
+        assert!(
+            !in_think_block,
+            "think block should be closed after </think>"
+        );
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_spans_multiple_calls() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+
+        // Opening tag chunk
+        process_ollama_think_chunk(
+            "<think>",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert!(in_think_block, "should be in think block after opening tag");
+
+        // Reasoning content chunk (inside think block)
+        process_ollama_think_chunk(
+            "reasoning content",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert_eq!(reasoning_acc, "reasoning content");
+
+        // Closing tag chunk
+        process_ollama_think_chunk(
+            "</think>",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert!(!in_think_block, "should exit think block after closing tag");
     }
 }

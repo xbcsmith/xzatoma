@@ -221,6 +221,7 @@ impl Default for OllamaConfig {
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
+///     stream_idle_timeout_seconds: 30,
 ///     reasoning_effort: None,
 /// };
 /// assert_eq!(config.model, "gpt-4o-mini");
@@ -286,6 +287,20 @@ pub struct OpenAIConfig {
     #[serde(default = "default_openai_request_timeout")]
     pub request_timeout_seconds: u64,
 
+    /// Per-chunk idle timeout for SSE streaming.
+    ///
+    /// If no SSE chunk is received within this many seconds, the stream is
+    /// cancelled and an error is returned. This guards against connections
+    /// that are established and HTTP headers received but where the body
+    /// silently stalls.
+    ///
+    /// Defaults to 30 seconds. Increase for very large models on slow
+    /// inference servers.
+    ///
+    /// Set via the `XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT` environment variable.
+    #[serde(default = "default_openai_stream_idle_timeout")]
+    pub stream_idle_timeout_seconds: u64,
+
     /// Reasoning effort level for OpenAI o-series reasoning models.
     ///
     /// Accepted values: `"low"`, `"medium"`, `"high"`. Set to `None` to use
@@ -317,6 +332,10 @@ fn default_openai_request_timeout() -> u64 {
     600
 }
 
+fn default_openai_stream_idle_timeout() -> u64 {
+    30
+}
+
 impl Default for OpenAIConfig {
     fn default() -> Self {
         Self {
@@ -326,6 +345,7 @@ impl Default for OpenAIConfig {
             organization_id: None,
             enable_streaming: default_openai_streaming(),
             request_timeout_seconds: default_openai_request_timeout(),
+            stream_idle_timeout_seconds: default_openai_stream_idle_timeout(),
             reasoning_effort: None,
         }
     }
@@ -1631,6 +1651,14 @@ impl Config {
                 self.provider.openai.request_timeout_seconds = value;
             } else {
                 tracing::warn!("Invalid XZATOMA_OPENAI_REQUEST_TIMEOUT: {}", timeout);
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.openai.stream_idle_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT: {}", timeout);
             }
         }
 
@@ -4268,6 +4296,34 @@ agent: {}
         let mut config = Config::default();
         config.apply_env_vars();
         assert_eq!(config.provider.openai.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_openai_config_default_stream_idle_timeout_is_30() {
+        let config = OpenAIConfig::default();
+        assert_eq!(config.stream_idle_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_stream_idle_timeout() {
+        let yaml = "base_url: http://localhost:8080/v1\nstream_idle_timeout_seconds: 60\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.stream_idle_timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_omits_stream_idle_timeout_uses_default() {
+        let yaml = "model: gpt-4o\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.stream_idle_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_stream_idle_timeout() {
+        let _timeout = EnvVarGuard::set("XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT", "45");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.openai.stream_idle_timeout_seconds, 45);
     }
 
     #[test]
