@@ -2910,7 +2910,20 @@ mod tests {
 
         assert_eq!(session.conversation_uuid(), conversation_id);
         assert_eq!(agent.conversation().title(), "Existing ACP Conversation");
-        assert_eq!(agent.conversation().messages().len(), 2);
+        // Phase 8 injects ACP_PLAN_INSTRUCTION as an additional system message
+        // into every resumed ACP session that does not already contain it.
+        // The two stored messages plus one injected system message = 3.
+        assert_eq!(agent.conversation().messages().len(), 3);
+        assert!(
+            agent.conversation().messages().iter().any(|m| {
+                m.role == "system"
+                    && m.content
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("numbered list of the steps")
+            }),
+            "ACP_PLAN_INSTRUCTION should be present as a system message after rehydration"
+        );
     }
 
     #[test]
