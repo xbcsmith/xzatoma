@@ -697,10 +697,27 @@ impl AcpStdioServerState {
             );
         }
 
-        Ok(acp::NewSessionResponse::new(session_id)
+        let response = acp::NewSessionResponse::new(session_id.clone())
             .models(model_state)
             .modes(mode_state)
-            .config_options(config_options))
+            .config_options(config_options);
+
+        if tracing::enabled!(tracing::Level::TRACE) {
+            match serde_json::to_string(&response) {
+                Ok(json) => tracing::trace!(
+                    session_id = %session_id,
+                    response_json = %json,
+                    "ACP stdio: NewSessionResponse wire format"
+                ),
+                Err(e) => tracing::trace!(
+                    session_id = %session_id,
+                    error = %e,
+                    "ACP stdio: NewSessionResponse serialization failed"
+                ),
+            }
+        }
+
+        Ok(response)
     }
 
     /// Handles a `SetSessionModeRequest` from the Zed client.
@@ -4458,6 +4475,55 @@ mod tests {
         assert_eq!(
             result, 200_000,
             "must return model-b context window, not model-a"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 7 wire-format diagnostic logging tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_new_session_response_is_serializable_to_json() {
+        let runtime = SessionRuntimeState::from_config(&Config::default());
+        let mode_state = build_session_mode_state(&runtime.current_mode_id);
+        let config_options = build_session_config_options(&runtime);
+
+        let session_id = acp::SessionId::new("test-session-wire-format".to_string());
+        let response = acp::NewSessionResponse::new(session_id)
+            .modes(mode_state)
+            .config_options(config_options);
+
+        let json = serde_json::to_string(&response)
+            .expect("NewSessionResponse must be serializable to JSON");
+        assert!(
+            json.contains("test-session-wire-format"),
+            "JSON must contain the session_id value; got: {}",
+            json
+        );
+        assert!(
+            !response
+                .config_options
+                .as_ref()
+                .map(|v| v.is_empty())
+                .unwrap_or(true),
+            "config_options must be non-empty"
+        );
+    }
+
+    #[test]
+    fn test_new_session_response_json_contains_config_options_key() {
+        let runtime = SessionRuntimeState::from_config(&Config::default());
+        let config_options = build_session_config_options(&runtime);
+
+        let session_id = acp::SessionId::new("test-session-config-options".to_string());
+        let response = acp::NewSessionResponse::new(session_id).config_options(config_options);
+
+        let json = serde_json::to_string(&response)
+            .expect("NewSessionResponse must be serializable to JSON");
+        assert!(
+            json.contains("configOptions"),
+            "JSON must contain 'configOptions' key; got: {}",
+            json
         );
     }
 }
