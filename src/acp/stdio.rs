@@ -601,6 +601,21 @@ impl AcpStdioServerState {
             }
         }
 
+        // Inject plan-tracking instruction into every ACP session.
+        // The deduplication guard prevents double-injection for resumed sessions
+        // that already have the instruction in their stored conversation history.
+        if !agent.conversation().messages().iter().any(|m| {
+            m.role == "system"
+                && m.content
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains(ACP_PLAN_INSTRUCTION)
+        }) {
+            agent
+                .conversation_mut()
+                .add_system_message(ACP_PLAN_INSTRUCTION.to_string());
+        }
+
         let mut transient_system_messages =
             vec![prompts::build_system_prompt(env.chat_mode, env.safety_mode)];
         if let Some(disclosure) = env.skill_disclosure {
@@ -2002,6 +2017,15 @@ fn truncate_title(value: &str) -> String {
     }
 }
 
+/// System-prompt fragment that encourages numbered-list plan output.
+///
+/// Prepended to every ACP session so that Zed's plan-checklist panel
+/// shows live step progress for multi-step tasks.
+const ACP_PLAN_INSTRUCTION: &str = "When you have a multi-step task, begin your response with a \
+    numbered list of the steps you will take (e.g., \"1. Read the \
+    file\n2. Edit the function\n3. Run tests\"). \
+    Proceed with execution immediately after the list.";
+
 /// ACP session observer that maps agent execution events to ACP session
 /// notifications sent over the active connection to the Zed client.
 ///
@@ -2019,6 +2043,8 @@ struct AcpSessionObserver {
     /// True when at least one `AssistantTextEmitted` event was sent, used to
     /// avoid double-emitting final text in `ExecutionCompleted`.
     text_emitted: bool,
+    /// Tracks numbered-list plan items extracted from streamed assistant text.
+    plan_tracker: crate::agent::plan_tracker::PlanTracker,
 }
 
 impl AcpSessionObserver {
@@ -2027,6 +2053,7 @@ impl AcpSessionObserver {
             session_id,
             connection,
             text_emitted: false,
+            plan_tracker: crate::agent::plan_tracker::PlanTracker::new(),
         }
     }
 
@@ -2045,14 +2072,20 @@ impl AgentObserver for AcpSessionObserver {
         match event {
             AgentExecutionEvent::AssistantTextEmitted { text } => {
                 self.text_emitted = true;
-                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(text));
+                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(text.clone()));
                 self.send_update(acp::SessionUpdate::AgentMessageChunk(chunk));
+
+                if self.plan_tracker.update(&text) {
+                    let plan = acp::Plan::new(self.plan_tracker.entries().to_vec());
+                    self.send_update(acp::SessionUpdate::Plan(plan));
+                }
             }
             AgentExecutionEvent::ToolCallStarted {
                 id,
                 name,
                 arguments,
             } => {
+                self.plan_tracker.on_tool_call_started();
                 let input: serde_json::Value = serde_json::from_str(&arguments)
                     .unwrap_or_else(|_| serde_json::json!({ "arguments": arguments }));
                 let tool_call_id = acp::ToolCallId::new(id);
@@ -2097,6 +2130,10 @@ impl AgentObserver for AcpSessionObserver {
                 // automatically when AgentMessageChunk events start arriving.
             }
             AgentExecutionEvent::ExecutionCompleted { response } => {
+                if self.plan_tracker.finalize() {
+                    let plan = acp::Plan::new(self.plan_tracker.entries().to_vec());
+                    self.send_update(acp::SessionUpdate::Plan(plan));
+                }
                 // Only emit final text if no streaming text was already sent.
                 if !self.text_emitted && !response.is_empty() {
                     let chunk = acp::ContentChunk::new(acp::ContentBlock::from(response));
@@ -4475,6 +4512,78 @@ mod tests {
         assert_eq!(
             result, 200_000,
             "must return model-b context window, not model-a"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 8: Plan tracking tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_acp_observer_emits_plan_update_on_numbered_list_text() {
+        // Verify that PlanTracker correctly detects numbered list items when
+        // called from the AssistantTextEmitted handler path.
+        // Tests the same logic that AcpSessionObserver.on_event exercises.
+        let mut tracker = crate::agent::plan_tracker::PlanTracker::new();
+        let changed = tracker.update("1. Do thing one\n");
+        assert!(
+            changed,
+            "plan_tracker.update must return true for numbered list text"
+        );
+        assert!(
+            tracker.has_entries(),
+            "plan_tracker must have entries after numbered list text"
+        );
+    }
+
+    #[test]
+    fn test_acp_observer_plan_tracker_stops_on_tool_call_started() {
+        // Verify that after on_tool_call_started(), subsequent AssistantTextEmitted
+        // events with numbered lists do not add entries.
+        let mut tracker = crate::agent::plan_tracker::PlanTracker::new();
+        // Feed an initial item so we have something to compare against.
+        tracker.update("1. Initial step\n");
+        assert_eq!(tracker.entries().len(), 1, "initial entry must be present");
+        // Simulate the tool call boundary.
+        tracker.on_tool_call_started();
+        // Text after the tool call must be ignored.
+        let changed = tracker.update("1. Post-tool step that should be ignored\n");
+        assert!(
+            !changed,
+            "plan_tracker.update must return false after on_tool_call_started"
+        );
+        assert_eq!(
+            tracker.entries().len(),
+            1,
+            "no new entries must be added after tool call boundary"
+        );
+    }
+
+    #[test]
+    fn test_acp_observer_finalize_on_execution_completed() {
+        // Verify that finalize() promotes all entries to Completed, mirroring
+        // what AcpSessionObserver does in the ExecutionCompleted arm.
+        let mut tracker = crate::agent::plan_tracker::PlanTracker::new();
+        tracker.update("1. Step one\n2. Step two\n");
+        let has_entries = tracker.finalize();
+        assert!(
+            has_entries,
+            "finalize must return true when entries are present"
+        );
+        assert!(
+            tracker
+                .entries()
+                .iter()
+                .all(|e| e.status == acp::PlanEntryStatus::Completed),
+            "all entries must have Completed status after finalize"
+        );
+    }
+
+    #[test]
+    fn test_acp_plan_instruction_constant_is_not_empty() {
+        assert!(
+            !ACP_PLAN_INSTRUCTION.is_empty(),
+            "ACP_PLAN_INSTRUCTION must not be empty"
         );
     }
 

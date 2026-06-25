@@ -8,6 +8,7 @@ pub mod core;
 pub mod events;
 pub mod metrics;
 pub mod persistence;
+pub mod plan_tracker;
 pub mod quota;
 pub mod system_prompt;
 pub(crate) mod thinking;
