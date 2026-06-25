@@ -655,7 +655,7 @@ impl AcpStdioServerState {
             conversation_uuid,
             xzatoma_agent,
             provider_name,
-            current_model_name: model_name,
+            current_model_name: model_name.clone(),
             current_cancellation_token,
             prompt_queue,
             prompt_worker_handle,
@@ -670,16 +670,22 @@ impl AcpStdioServerState {
 
         // Send an initial UsageUpdate so Zed can render the context window bar
         // immediately, even before the first prompt is processed.
+        // Prefer the model's actual context window (from the provider's model
+        // listing) over the conversation's configured max_tokens so Zed's bar
+        // denominator matches the real capacity reported by the provider.
         if let Some(conn) = &connection {
             let agent = agent_arc_for_init.lock().await;
-            let max_tokens = agent.conversation().max_tokens() as u64;
+            let config_max_tokens = agent.conversation().max_tokens() as u64;
             let used_tokens = agent
                 .get_context_info(agent.conversation().max_tokens())
                 .used_tokens as u64;
+            let max_tokens =
+                model_context_window_from_state(&model_state, &model_name, config_max_tokens);
             tracing::debug!(
                 session_id = %session_id,
                 used_tokens = %used_tokens,
                 max_tokens = %max_tokens,
+                config_max_tokens = %config_max_tokens,
                 "ACP stdio: sending initial context window usage update"
             );
             let update = acp::UsageUpdate::new(used_tokens, max_tokens);
@@ -1866,6 +1872,41 @@ fn map_models_for_acp(models: Vec<XzatomaModelInfo>) -> Vec<acp::ModelInfo> {
             acp::ModelInfo::new(model.name, model.display_name).meta(Some(meta))
         })
         .collect()
+}
+
+/// Extracts the context window for the current model from an already-fetched
+/// `SessionModelState`, returning the `fallback_tokens` when the model is not
+/// found, has no meta-data, or reports a zero-sized window.
+///
+/// The context window is stored in `meta["contextWindow"]` as a `u64` by
+/// [`map_models_for_acp`]. Models populated through the fallback path
+/// (`acp_model_info_from_current_model`) omit this key, so this function
+/// will correctly fall back to the configured conversation max_tokens for
+/// those cases.
+///
+/// # Arguments
+///
+/// * `model_state` - The `SessionModelState` returned by `advertise_session_models`.
+/// * `current_model_name` - The model name to look up (matched against `model_id`).
+/// * `fallback_tokens` - The value to return when no context window can be found.
+///
+/// # Returns
+///
+/// The model's context window in tokens, or `fallback_tokens` if not available.
+fn model_context_window_from_state(
+    model_state: &acp::SessionModelState,
+    current_model_name: &str,
+    fallback_tokens: u64,
+) -> u64 {
+    model_state
+        .available_models
+        .iter()
+        .find(|m| m.model_id.0.as_ref() == current_model_name)
+        .and_then(|m| m.meta.as_ref())
+        .and_then(|meta| meta.get("contextWindow"))
+        .and_then(|v| v.as_u64())
+        .filter(|&cw| cw > 0)
+        .unwrap_or(fallback_tokens)
 }
 
 fn acp_model_info_from_current_model(
@@ -4355,5 +4396,68 @@ mod tests {
         // The absence of a notification is confirmed by the code path in
         // AcpSessionObserver::on_event for ThinkingFinished, which emits nothing.
         // This test documents the design intent at the API boundary.
+    }
+
+    // -----------------------------------------------------------------------
+    // model_context_window_from_state helper tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_model_context_window_from_state_returns_value_from_meta() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("contextWindow".to_string(), serde_json::json!(262_144u64));
+        let model = acp::ModelInfo::new("llama3:70b".to_string(), "llama3:70b".to_string())
+            .meta(Some(meta));
+        let state = acp::SessionModelState::new("llama3:70b".to_string(), vec![model]);
+        let result = model_context_window_from_state(&state, "llama3:70b", 100_000);
+        assert_eq!(
+            result, 262_144,
+            "context window from meta must override the fallback"
+        );
+    }
+
+    #[test]
+    fn test_model_context_window_from_state_falls_back_when_no_meta() {
+        let model = acp::ModelInfo::new("current-model".to_string(), "Current model".to_string());
+        let state = acp::SessionModelState::new("current-model".to_string(), vec![model]);
+        let result = model_context_window_from_state(&state, "current-model", 100_000);
+        assert_eq!(result, 100_000, "must fall back when model has no meta");
+    }
+
+    #[test]
+    fn test_model_context_window_from_state_falls_back_when_context_window_zero() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("contextWindow".to_string(), serde_json::json!(0u64));
+        let model =
+            acp::ModelInfo::new("old-model".to_string(), "Old model".to_string()).meta(Some(meta));
+        let state = acp::SessionModelState::new("old-model".to_string(), vec![model]);
+        let result = model_context_window_from_state(&state, "old-model", 128_000);
+        assert_eq!(result, 128_000, "zero context window must trigger fallback");
+    }
+
+    #[test]
+    fn test_model_context_window_from_state_falls_back_for_unknown_model() {
+        let model = acp::ModelInfo::new("known-model".to_string(), "Known model".to_string());
+        let state = acp::SessionModelState::new("known-model".to_string(), vec![model]);
+        let result = model_context_window_from_state(&state, "unknown-model", 64_000);
+        assert_eq!(result, 64_000, "unknown model name must trigger fallback");
+    }
+
+    #[test]
+    fn test_model_context_window_from_state_ignores_non_current_models() {
+        let mut meta_a = serde_json::Map::new();
+        meta_a.insert("contextWindow".to_string(), serde_json::json!(32_000u64));
+        let mut meta_b = serde_json::Map::new();
+        meta_b.insert("contextWindow".to_string(), serde_json::json!(200_000u64));
+        let model_a =
+            acp::ModelInfo::new("model-a".to_string(), "Model A".to_string()).meta(Some(meta_a));
+        let model_b =
+            acp::ModelInfo::new("model-b".to_string(), "Model B".to_string()).meta(Some(meta_b));
+        let state = acp::SessionModelState::new("model-b".to_string(), vec![model_a, model_b]);
+        let result = model_context_window_from_state(&state, "model-b", 1_000);
+        assert_eq!(
+            result, 200_000,
+            "must return model-b context window, not model-a"
+        );
     }
 }

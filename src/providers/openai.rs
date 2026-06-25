@@ -536,6 +536,44 @@ pub struct OpenAIProvider {
     model_cache: ModelCache,
 }
 
+/// Returns the context window size for a given OpenAI model ID.
+///
+/// Matches by prefix to handle versioned model identifiers. The fallback is
+/// 128_000 for unlisted or unknown model IDs, matching OpenAI's default
+/// context window for most current GPT-4 variants.
+///
+/// # Arguments
+///
+/// * `id` - The model ID string (e.g. `"gpt-4o"`, `"gpt-4.1-mini"`, `"o3"`)
+///
+/// # Returns
+///
+/// The context window token count for the model, or 128_000 as the default.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::openai::context_window_for_model_id;
+///
+/// assert_eq!(context_window_for_model_id("gpt-4.1"), 1_047_576);
+/// assert_eq!(context_window_for_model_id("o3-mini"), 200_000);
+/// assert_eq!(context_window_for_model_id("gpt-3.5-turbo"), 16_385);
+/// assert_eq!(context_window_for_model_id("unknown-model"), 128_000);
+/// ```
+pub fn context_window_for_model_id(id: &str) -> usize {
+    if id.starts_with("gpt-4.1") {
+        1_047_576
+    } else if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
+        200_000
+    } else if id.starts_with("gpt-4-32k") {
+        32_768
+    } else if id.starts_with("gpt-3.5-turbo-16k") || id.starts_with("gpt-3.5") {
+        16_385
+    } else {
+        128_000
+    }
+}
+
 impl OpenAIProvider {
     /// Create a new OpenAI provider instance.
     ///
@@ -1421,7 +1459,11 @@ impl Provider for OpenAIProvider {
                          falling back to the configured model '{}'",
                         model
                     );
-                    let mut info = ModelInfo::new(model.clone(), model.clone(), 0);
+                    let mut info = ModelInfo::new(
+                        model.clone(),
+                        model.clone(),
+                        context_window_for_model_id(&model),
+                    );
                     for cap in build_capabilities_from_id(&info.name) {
                         info.add_capability(cap);
                     }
@@ -1446,7 +1488,11 @@ impl Provider for OpenAIProvider {
             .into_iter()
             .filter(|entry| !is_non_chat_model(&entry.id))
             .map(|entry| {
-                let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                let mut info = ModelInfo::new(
+                    entry.id.clone(),
+                    entry.id.clone(),
+                    context_window_for_model_id(&entry.id),
+                );
                 for cap in build_capabilities_from_id(&entry.id) {
                     info.add_capability(cap);
                 }
@@ -1511,7 +1557,11 @@ impl Provider for OpenAIProvider {
 
         match response.json::<OpenAIModelEntry>().await {
             Ok(entry) => {
-                let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                let mut info = ModelInfo::new(
+                    entry.id.clone(),
+                    entry.id.clone(),
+                    context_window_for_model_id(&entry.id),
+                );
                 for cap in build_capabilities_from_id(&entry.id) {
                     info.add_capability(cap);
                 }
@@ -3252,19 +3302,80 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_completions_streaming_returns_idle_timeout_error_when_stream_stalls() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
 
+        // Start a TCP server that sends HTTP/1.1 headers immediately but never
+        // sends any body bytes, simulating a stream that stalls after the
+        // connection is established.
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind must succeed");
+        let addr = listener.local_addr().expect("must have local address");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                // Read and discard the HTTP request headers.
+                let mut buf = vec![0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                // Send a valid 200 OK with SSE headers immediately.
+                let headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n";
+                let _ = socket.write_all(headers).await;
+                // Hold the connection open but never write body bytes.
+                // This simulates a stalled SSE stream.
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: format!("http://{}", addr),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 600,
+            // Very short idle timeout so the test runs in ~1 s.
+            stream_idle_timeout_seconds: 1,
+            reasoning_effort: None,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let messages = vec![Message::user("Hello")];
+
+        let result = provider.complete(&messages, &[]).await;
+
+        assert!(
+            result.is_err(),
+            "A stalled SSE stream must return an error, got: {:?}",
+            result.ok()
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("idle timeout"),
+            "Error message must contain 'idle timeout': {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_completions_streaming_succeeds_with_slow_but_active_stream() {
         let server = MockServer::start().await;
 
-        // Respond with SSE headers but no body bytes (simulates a stalled stream).
+        // A valid multi-chunk SSE response. All chunks arrive before the idle
+        // timeout fires (stream_idle_timeout_seconds: 30), so the stream must
+        // succeed and return the fully accumulated content.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Chunk \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"two\"},\"finish_reason\":\"stop\",\"index\":0}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
-                    // No body: the stream will deliver 0 bytes, triggering idle timeout.
-                    .set_body_string(""),
+                    .set_body_string(sse_body),
             )
             .mount(&server)
             .await;
@@ -3276,21 +3387,64 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
-            stream_idle_timeout_seconds: 1,
+            // Generous idle timeout: all chunks arrive well within this window.
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
 
         let result = provider.complete(&messages, &[]).await;
-        // An empty body means stream.next() returns None immediately -- the loop breaks cleanly.
-        // This test verifies the provider does not panic or hang.
-        // If the server sends headers and then closes, the stream ends normally.
-        // For a true stall test we'd need a server that hangs; this validates the path doesn't crash.
+
         assert!(
-            result.is_ok() || result.is_err(),
-            "Provider must return a result (not panic or hang)"
+            result.is_ok(),
+            "A streaming response with active chunks must succeed: {:?}",
+            result.err()
         );
+        let response = result.unwrap();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Chunk one two"),
+            "All chunks must be accumulated in order"
+        );
+        assert_eq!(
+            response.finish_reason,
+            FinishReason::Stop,
+            "Finish reason must be Stop"
+        );
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt4_1_returns_million() {
+        assert_eq!(context_window_for_model_id("gpt-4.1"), 1_047_576);
+        assert_eq!(context_window_for_model_id("gpt-4.1-mini"), 1_047_576);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_o_series_returns_200k() {
+        assert_eq!(context_window_for_model_id("o1-mini"), 200_000);
+        assert_eq!(context_window_for_model_id("o3"), 200_000);
+        assert_eq!(context_window_for_model_id("o4-turbo"), 200_000);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt35_returns_16k() {
+        assert_eq!(context_window_for_model_id("gpt-3.5-turbo"), 16_385);
+        assert_eq!(context_window_for_model_id("gpt-3.5-turbo-16k"), 16_385);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt4_returns_128k() {
+        assert_eq!(context_window_for_model_id("gpt-4"), 128_000);
+        assert_eq!(context_window_for_model_id("gpt-4o"), 128_000);
+        assert_eq!(context_window_for_model_id("gpt-4-turbo"), 128_000);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_unknown_returns_128k() {
+        assert_eq!(context_window_for_model_id("unknown-model"), 128_000);
+        assert_eq!(context_window_for_model_id(""), 128_000);
+        assert_eq!(context_window_for_model_id("claude-3-5-sonnet"), 128_000);
     }
 
     #[test]

@@ -863,7 +863,7 @@ impl Agent {
                             observer.on_event(AgentExecutionEvent::ToolCallCompleted {
                                 id: tool_call.id.clone(),
                                 name: tool_call.function.name.clone(),
-                                output: tool_result.output.clone(),
+                                output: tool_result.to_message(),
                             });
                             self.conversation
                                 .add_tool_result(&tool_call.id, tool_result.to_message());
@@ -1327,7 +1327,7 @@ impl Agent {
                             observer.on_event(AgentExecutionEvent::ToolCallCompleted {
                                 id: tool_call.id.clone(),
                                 name: tool_call.function.name.clone(),
-                                output: tool_result.output.clone(),
+                                output: tool_result.to_message(),
                             });
                             self.conversation
                                 .add_tool_result(&tool_call.id, tool_result.to_message());
@@ -2894,6 +2894,39 @@ mod tests {
     }
 
     // --- Phase 5 new tests ---
+
+    // --- ToolCallCompleted output fix tests ---
+
+    /// Verify that `ToolCallCompleted.output` matches `to_message()` for a successful result.
+    ///
+    /// For a successful `ToolResult`, `to_message()` returns the plain output string,
+    /// so behaviour is unchanged from the previous `output.clone()` path.
+    #[test]
+    fn test_tool_call_completed_output_uses_to_message_for_success() {
+        let result = crate::tools::ToolResult::success("hello world");
+        // For a successful result, to_message() returns the output string directly.
+        assert_eq!(result.to_message(), "hello world");
+        // Confirm parity with the raw output field (no regression for the success path).
+        assert_eq!(result.to_message(), result.output);
+    }
+
+    /// Verify that `ToolCallCompleted.output` uses `to_message()` for a failed result.
+    ///
+    /// For a failed `ToolResult` (e.g. non-zero exit code from the terminal tool),
+    /// `output` is an empty string while the actual content is in `error`.
+    /// Calling `to_message()` surfaces the error text so the tool call card
+    /// in Zed shows the full output rather than an empty string.
+    #[test]
+    fn test_tool_call_completed_output_uses_to_message_for_failure() {
+        let result = crate::tools::ToolResult::error("Exit code 1: command not found");
+        // The raw output field is empty for a failed result.
+        assert!(result.output.is_empty());
+        // to_message() returns the error string prefixed with "Error: ".
+        let msg = result.to_message();
+        assert_eq!(msg, "Error: Exit code 1: command not found");
+        // Crucially, it is not empty - unlike result.output.
+        assert!(!msg.is_empty());
+    }
 
     #[tokio::test]
     async fn test_log_provider_metadata_no_panic_when_model_is_none() {

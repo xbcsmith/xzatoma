@@ -47,6 +47,19 @@ Two changes were made:
 - `src/providers/openai.rs` - `streaming_client` field on `OpenAIProvider`;
   idle-timeout loop in `post_completions_streaming_with_callbacks`
 
+### Tests
+
+| Test name                                                                       | Location                  | What it verifies                                                                                         |
+| ------------------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `test_openai_config_default_stream_idle_timeout_is_30`                          | `src/config.rs`           | `OpenAIConfig::default().stream_idle_timeout_seconds == 30`                                              |
+| `test_openai_config_deserialize_stream_idle_timeout`                            | `src/config.rs`           | Field round-trips through serde_yaml                                                                     |
+| `test_openai_config_deserialize_omits_stream_idle_timeout_uses_default`         | `src/config.rs`           | Omitted field uses default 30                                                                            |
+| `test_apply_env_vars_overrides_openai_stream_idle_timeout`                      | `src/config.rs`           | `XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT` env var overrides field                                             |
+| `test_streaming_client_builds_without_error`                                    | `src/providers/openai.rs` | `OpenAIProvider::new` succeeds with both clients                                                         |
+| `test_stream_idle_timeout_error_message_contains_idle_timeout`                  | `src/providers/openai.rs` | Error message format contains `"idle timeout"` and timeout value                                         |
+| `test_post_completions_streaming_returns_idle_timeout_error_when_stream_stalls` | `src/providers/openai.rs` | Custom TCP server sends headers then pauses; idle timeout fires in ~1 s; error contains `"idle timeout"` |
+| `test_post_completions_streaming_succeeds_with_slow_but_active_stream`          | `src/providers/openai.rs` | Multi-chunk SSE response accumulated correctly within generous idle timeout                              |
+
 ## Phase 6: Streaming Token Display in Chat Mode
 
 ### Overview
