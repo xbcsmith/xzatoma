@@ -26,15 +26,17 @@ use std::path::PathBuf;
 /// let cli = Cli::parse_from(["xzatoma", "auth", "--verbose"]);
 /// assert!(cli.command.common_args().verbose);
 /// ```
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct CommonArgs {
-    /// Path to configuration file
-    #[arg(
-        short = 'c',
-        long,
-        default_value = "config/config.yaml",
-        env = "XZATOMA_CONFIG"
-    )]
+    /// Path to the configuration file.
+    ///
+    /// When omitted, xzatoma searches for a config file in this order:
+    /// 1. `~/.config/xzatoma/config.yaml` (XDG standard user config)
+    /// 2. `config/config.yaml` (project-relative development fallback)
+    ///
+    /// If neither file exists, built-in defaults are used. Set the
+    /// `XZATOMA_CONFIG` environment variable as an alternative to this flag.
+    #[arg(short = 'c', long, env = "XZATOMA_CONFIG")]
     pub config: Option<String>,
 
     /// Enable verbose logging.
@@ -77,20 +79,6 @@ pub struct CommonArgs {
     /// per-event watcher output. Env: `XZATOMA_LOG_FILE`.
     #[arg(id = "global-logfile", long = "logfile", env = "XZATOMA_LOG_FILE")]
     pub log_file: Option<PathBuf>,
-}
-
-impl Default for CommonArgs {
-    fn default() -> Self {
-        Self {
-            config: Some("config/config.yaml".to_string()),
-            verbose: false,
-            debug: false,
-            trace: false,
-            storage_path: None,
-            log_format: None,
-            log_file: None,
-        }
-    }
 }
 
 /// XZatoma - Autonomous AI agent CLI.
@@ -675,10 +663,7 @@ mod tests {
     #[test]
     fn test_cli_default() {
         let cli = Cli::default();
-        assert_eq!(
-            cli.command.common_args().config,
-            Some("config/config.yaml".to_string())
-        );
+        assert_eq!(cli.command.common_args().config, None);
         assert!(!cli.command.common_args().verbose);
 
         if let Commands::Auth { provider, .. } = cli.command {
@@ -1871,12 +1856,45 @@ mod tests {
     // --- Phase 1 new tests ---
 
     #[test]
+    #[serial_test::serial]
     fn test_common_args_config_default() {
+        // Guard: ensure XZATOMA_CONFIG is absent for the duration of this test.
+        let _guard = std::env::var("XZATOMA_CONFIG").ok();
+        unsafe {
+            std::env::remove_var("XZATOMA_CONFIG");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let result = cli.command.common_args().config.clone();
+        // Restore if it was set before.
+        if let Some(prev) = _guard {
+            unsafe {
+                std::env::set_var("XZATOMA_CONFIG", prev);
+            }
+        }
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_common_args_config_explicit_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--config", "/tmp/my.yaml"]).unwrap();
         assert_eq!(
             cli.command.common_args().config,
-            Some("config/config.yaml".to_string())
+            Some("/tmp/my.yaml".to_string())
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_common_args_config_env_var() {
+        unsafe {
+            std::env::set_var("XZATOMA_CONFIG", "/tmp/env.yaml");
+        }
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let cfg = cli.command.common_args().config.clone();
+        unsafe {
+            std::env::remove_var("XZATOMA_CONFIG");
+        }
+        assert_eq!(cfg, Some("/tmp/env.yaml".to_string()));
     }
 
     #[test]

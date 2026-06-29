@@ -52,8 +52,8 @@ async fn main() -> Result<()> {
     }
 
     // Load configuration
-    let config_path = common.config.as_deref().unwrap_or("config/config.yaml");
-    let config = Config::load(config_path, &common)?;
+    let config_path = Config::find_config_path(common.config.as_deref());
+    let config = Config::load(&config_path, &common)?;
 
     // Validate configuration
     config.validate()?;

@@ -3095,6 +3095,59 @@ fn resolve_config_like_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+impl Config {
+    /// Resolve the effective configuration file path.
+    ///
+    /// Searches candidate locations in priority order and returns the first that
+    /// exists, or the last candidate if none exist (so that [`Config::load`] can
+    /// emit a warning and fall back to built-in defaults).
+    ///
+    /// # Search order
+    ///
+    /// 1. `explicit` -- the value of `--config` / `XZATOMA_CONFIG` when provided.
+    /// 2. `~/.config/xzatoma/config.yaml` -- XDG standard user config location.
+    /// 3. `config/config.yaml` -- development/project-relative fallback.
+    ///
+    /// Paths beginning with `~/` are expanded using the `HOME` environment
+    /// variable before the existence check.
+    ///
+    /// # Arguments
+    ///
+    /// * `explicit` - Optional path supplied via `--config` flag or `XZATOMA_CONFIG` env var.
+    ///
+    /// # Returns
+    ///
+    /// The resolved path as an owned `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::Config;
+    ///
+    /// // Explicit path is returned verbatim (after tilde expansion).
+    /// let path = Config::find_config_path(Some("my-config.yaml"));
+    /// assert_eq!(path, "my-config.yaml");
+    ///
+    /// // Without an explicit path, the function does not panic.
+    /// let _path = Config::find_config_path(None);
+    /// ```
+    pub fn find_config_path(explicit: Option<&str>) -> String {
+        // Priority 1: explicit flag or XZATOMA_CONFIG env value.
+        if let Some(p) = explicit {
+            return resolve_config_like_path(p).to_string_lossy().into_owned();
+        }
+
+        // Priority 2: XDG user config directory.
+        let xdg_path = resolve_config_like_path("~/.config/xzatoma/config.yaml");
+        if xdg_path.exists() {
+            return xdg_path.to_string_lossy().into_owned();
+        }
+
+        // Priority 3: development/project-relative fallback.
+        "config/config.yaml".to_string()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self::default_config()
@@ -3509,6 +3562,61 @@ enabled: true
     fn test_resolve_config_like_path_returns_plain_path_when_not_tilde_prefixed() {
         let resolved = resolve_config_like_path("./config/config.yaml");
         assert_eq!(resolved, PathBuf::from("./config/config.yaml"));
+    }
+
+    #[test]
+    fn test_find_config_path_with_explicit_path_returns_it() {
+        let path = Config::find_config_path(Some("/tmp/my-config.yaml"));
+        assert_eq!(path, "/tmp/my-config.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_with_explicit_tilde_path_expands_home() {
+        unsafe {
+            std::env::set_var("HOME", "/tmp/xzatoma-home");
+        }
+        let path = Config::find_config_path(Some("~/custom.yaml"));
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(path, "/tmp/xzatoma-home/custom.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_without_explicit_falls_back_to_dev_path_when_xdg_absent() {
+        // Temporarily point HOME at a directory that has no xzatoma config so
+        // that the XDG candidate does not accidentally exist.
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        let path = Config::find_config_path(None);
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(path, "config/config.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_without_explicit_uses_xdg_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let xdg_dir = tmp.path().join(".config").join("xzatoma");
+        std::fs::create_dir_all(&xdg_dir).expect("dirs should be created");
+        let xdg_file = xdg_dir.join("config.yaml");
+        std::fs::write(&xdg_file, "").expect("file should be written");
+
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        let path = Config::find_config_path(None);
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(
+            path,
+            xdg_file.to_string_lossy().as_ref(),
+            "should return XDG path when it exists"
+        );
     }
 
     #[test]
