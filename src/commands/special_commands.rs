@@ -477,8 +477,29 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
 /// print_help();
 /// ```
 pub fn print_help() {
-    println!(
-        r#"
+    println!("{}", format_help_text());
+}
+
+/// Build the help text for special commands as an owned string.
+///
+/// This is the string-returning equivalent of [`print_help`], used by
+/// callers such as the stdio ACP agent that must not write directly to
+/// stdout (stdout is the JSON-RPC wire channel in that context).
+///
+/// # Returns
+///
+/// Returns the full special-commands help text.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_help_text;
+///
+/// let text = format_help_text();
+/// assert!(text.contains("/help"));
+/// ```
+pub fn format_help_text() -> String {
+    r#"
 Special Commands for Interactive Chat Mode
 ===========================================
 
@@ -551,7 +572,7 @@ NOTES:
   - Mention "subagent", "delegate", or "parallel agent" in your prompt to auto-enable subagents
   - See /mentions for complete mention syntax and examples
 "#
-    );
+    .to_string()
 }
 
 /// Display detailed help for the `/models` command
@@ -613,8 +634,29 @@ NOTES:
 /// print_mention_help();
 /// ```
 pub fn print_mention_help() {
-    println!(
-        r#"
+    println!("{}", format_mention_help_text());
+}
+
+/// Build the context-mention help text as an owned string.
+///
+/// This is the string-returning equivalent of [`print_mention_help`], used
+/// by callers such as the stdio ACP agent that must not write directly to
+/// stdout (stdout is the JSON-RPC wire channel in that context).
+///
+/// # Returns
+///
+/// Returns the full context-mention help text.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_mention_help_text;
+///
+/// let text = format_mention_help_text();
+/// assert!(text.contains("@file"));
+/// ```
+pub fn format_mention_help_text() -> String {
+    r#"
 Context Mentions for XZatoma
 =============================
 
@@ -790,7 +832,7 @@ URL fetch timeout:
 
 For more details, see the user guide: docs/how-to/use_context_mentions.md
 "#
-    );
+    .to_string()
 }
 
 #[cfg(test)]
@@ -1399,5 +1441,27 @@ mod tests {
             result.unwrap_err(),
             CommandError::MissingArgument { .. }
         ));
+    }
+
+    #[test]
+    fn test_format_help_text_matches_print_help_content() {
+        let text = format_help_text();
+        assert!(!text.is_empty());
+        assert!(text.contains("Special Commands for Interactive Chat Mode"));
+        assert!(text.contains("CHAT MODE SWITCHING"));
+        assert!(text.contains("SESSION INFORMATION"));
+        assert!(text.contains("/help"));
+        assert!(text.contains("/mentions"));
+    }
+
+    #[test]
+    fn test_format_mention_help_text_contains_mention_syntax() {
+        let text = format_mention_help_text();
+        assert!(!text.is_empty());
+        assert!(text.contains("Context Mentions for XZatoma"));
+        assert!(text.contains("@file"));
+        assert!(text.contains("@search"));
+        assert!(text.contains("@grep"));
+        assert!(text.contains("@url"));
     }
 }

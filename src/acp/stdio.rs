@@ -53,7 +53,9 @@ use crate::agent::events::{AgentExecutionEvent, AgentObserver};
 
 use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
-use crate::commands::special_commands::{parse_special_command, CommandError, SpecialCommand};
+use crate::commands::special_commands::{
+    format_help_text, format_mention_help_text, parse_special_command, CommandError, SpecialCommand,
+};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
@@ -1137,9 +1139,18 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::None) => return None,
 
         // Phase 2: Informational Commands.
+        //
+        // `ShowStatus`, `ListTools`, `ListSkills`, and `ShowMcpStatus` need
+        // access to live session/agent state that this pure, synchronous
+        // function does not have. [`dispatch_stdio_command`] intercepts those
+        // four variants before falling back to this resolver, so the
+        // placeholder text below is only ever observed by callers that parse
+        // a command outside of a live session (e.g. direct unit tests of this
+        // function). `Help` and `Mentions` require no session state, so they
+        // are fully resolved here.
         Ok(SpecialCommand::ShowStatus) => handle_not_yet_implemented("/status"),
-        Ok(SpecialCommand::Help) => handle_not_yet_implemented("/help"),
-        Ok(SpecialCommand::Mentions) => handle_not_yet_implemented("/mentions"),
+        Ok(SpecialCommand::Help) => format_help_text(),
+        Ok(SpecialCommand::Mentions) => format_mention_help_text(),
         Ok(SpecialCommand::ListTools) => handle_not_yet_implemented("/tools"),
         Ok(SpecialCommand::ListSkills) => handle_not_yet_implemented("/skills"),
         Ok(SpecialCommand::ShowMcpStatus) => handle_not_yet_implemented("/mcp"),
@@ -1191,6 +1202,121 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
     Some(response_text)
 }
 
+/// Formats a compact status block for the active session.
+///
+/// Reports the current session mode, safety policy, active model name, and
+/// whether subagent delegation is enabled, in the same spirit as
+/// [`crate::chat_mode::ChatModeState::status`].
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state to read.
+///
+/// # Returns
+///
+/// Returns a multi-line status string.
+fn handle_status_command(session: &ActiveSessionState) -> String {
+    format!(
+        "Mode: {}\nSafety: {}\nModel: {}\nSubagents: {}",
+        session.current_mode_id,
+        session.runtime_state.safety_mode_str,
+        session.current_model_name,
+        if session.runtime_state.subagents_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    )
+}
+
+/// Formats the list of tools available to the agent in the active session.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose agent's tool registry is
+///   read.
+///
+/// # Returns
+///
+/// Returns a formatted, newline-separated list of tool names, or a graceful
+/// empty-registry message.
+async fn handle_tools_command(session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    let mut names = agent.tools().tool_names();
+    names.sort();
+
+    if names.is_empty() {
+        return "No tools are available in this session.".to_string();
+    }
+
+    let mut lines = vec!["Available tools:".to_string()];
+    lines.extend(names.into_iter().map(|name| format!("- {name}")));
+    lines.join("\n")
+}
+
+/// Formats the list of active skills disclosed to the agent for this
+/// workspace.
+///
+/// The disclosure text is captured as the second transient system message
+/// set during session creation (see `create_session` in this module), which
+/// already renders each visible skill's name, description, scope, and
+/// location.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose agent's transient system
+///   messages are read.
+///
+/// # Returns
+///
+/// Returns the rendered skill disclosure text, or a graceful "no active
+/// skills" message when none were loaded for this workspace.
+async fn handle_skills_command(session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    match agent.transient_system_messages().get(1) {
+        Some(disclosure) if !disclosure.trim().is_empty() => disclosure.clone(),
+        _ => "No active skills for this workspace.".to_string(),
+    }
+}
+
+/// Formats the list of connected MCP servers and the tools they expose.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose MCP manager, if any, is
+///   read.
+///
+/// # Returns
+///
+/// Returns `"No MCP servers configured."` when no MCP manager is present or
+/// no servers are connected; otherwise returns a formatted list of server
+/// IDs, transport types, and exposed tools using the `server__tool` naming
+/// convention.
+async fn handle_mcp_command(session: &ActiveSessionState) -> String {
+    let Some(manager) = session.mcp_manager.as_ref() else {
+        return "No MCP servers configured.".to_string();
+    };
+
+    let manager = manager.read().await;
+    let servers = manager.connected_servers();
+    if servers.is_empty() {
+        return "No MCP servers configured.".to_string();
+    }
+
+    let mut lines = vec!["Connected MCP servers:".to_string()];
+    for entry in servers {
+        let transport = match &entry.config.transport {
+            McpServerTransportConfig::Stdio { .. } => "stdio",
+            McpServerTransportConfig::Http { .. } => "http",
+        };
+        lines.push(format!("- {} ({})", entry.config.id, transport));
+        for tool in &entry.tools {
+            lines.push(format!("  - {}__{}", entry.config.id, tool.name));
+        }
+    }
+    lines.join("\n")
+}
+
 /// Parses `prompt_text` as a special slash command and, when it is one,
 /// handles it locally instead of forwarding it to the LLM.
 ///
@@ -1237,7 +1363,31 @@ pub async fn dispatch_stdio_command(
     session: &Arc<Mutex<ActiveSessionState>>,
     connection: Option<&ConnectionTo<AcpClientRole>>,
 ) -> Option<acp_sdk::Result<acp::PromptResponse>> {
-    let response_text = resolve_special_command_response(prompt_text)?;
+    // `ListTools`, `ListSkills`, `ShowMcpStatus`, and `ShowStatus` need live
+    // session/agent state that `resolve_special_command_response` cannot see
+    // (it is a pure function of `prompt_text` alone). Handle them here, where
+    // the session handle is available, and fall back to the pure resolver for
+    // every other outcome.
+    let response_text = match parse_special_command(prompt_text) {
+        Ok(SpecialCommand::None) => return None,
+        Ok(SpecialCommand::ListTools) => {
+            let session_lock = session.lock().await;
+            handle_tools_command(&session_lock).await
+        }
+        Ok(SpecialCommand::ListSkills) => {
+            let session_lock = session.lock().await;
+            handle_skills_command(&session_lock).await
+        }
+        Ok(SpecialCommand::ShowMcpStatus) => {
+            let session_lock = session.lock().await;
+            handle_mcp_command(&session_lock).await
+        }
+        Ok(SpecialCommand::ShowStatus) => {
+            let session_lock = session.lock().await;
+            handle_status_command(&session_lock)
+        }
+        _ => resolve_special_command_response(prompt_text)?,
+    };
 
     if let Some(connection) = connection {
         let session_id = session.lock().await.session_id().clone();
@@ -2741,6 +2891,17 @@ mod tests {
         let text =
             resolve_special_command_response("/help").expect("/help should resolve to a response");
         assert!(text.contains("/help"));
+        // Phase 2: /help now resolves to the full help text, not a placeholder.
+        assert!(text.contains("Special Commands for Interactive Chat Mode"));
+        assert!(text.contains("CHAT MODE SWITCHING"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_returns_some_for_mentions() {
+        let text = resolve_special_command_response("/mentions")
+            .expect("/mentions should resolve to a response");
+        assert!(text.contains("Context Mentions for XZatoma"));
+        assert!(text.contains("@file"));
     }
 
     #[test]
@@ -2828,6 +2989,171 @@ mod tests {
     #[tokio::test]
     async fn test_build_available_commands_returns_twelve_entries_from_stdio_context() {
         assert_eq!(build_available_commands().len(), 12);
+    }
+
+    #[tokio::test]
+    async fn test_handle_status_command_includes_mode_id() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let session_lock = session.lock().await;
+        let text = handle_status_command(&session_lock);
+
+        assert!(text.contains(&session_lock.current_mode_id));
+        assert!(text.contains("Subagents"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_command_returns_non_empty_string() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let session_lock = session.lock().await;
+        let text = handle_tools_command(&session_lock).await;
+
+        assert!(!text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_tools_command_includes_terminal() {
+        let mut tools = crate::tools::ToolRegistry::new();
+        let validator =
+            CommandValidator::new(ExecutionMode::RestrictedAutonomous, std::env::temp_dir());
+        let terminal_tool = TerminalTool::new(validator, crate::config::TerminalConfig::default());
+        tools.register("terminal", Arc::new(terminal_tool));
+
+        let agent = Arc::new(Mutex::new(
+            XzatomaAgent::new(
+                QueuedPromptMockProvider,
+                tools,
+                crate::config::AgentConfig::default(),
+            )
+            .expect("test agent with terminal tool should be constructed"),
+        ));
+
+        let session_id = acp::SessionId::new(format!("tools-test-{}", Uuid::new_v4()));
+        let (prompt_queue, _prompt_receiver) = mpsc::channel(8);
+        let prompt_worker_handle = tokio::spawn(async {});
+        let (_token_tx, current_cancellation_token) = watch::channel(CancellationToken::new());
+        let runtime_state = SessionRuntimeState::from_config(&Config::default());
+
+        let active_session = ActiveSessionState {
+            session_id,
+            workspace_root: std::env::temp_dir(),
+            conversation_uuid: "tools-test-conversation".to_string(),
+            xzatoma_agent: agent,
+            provider_name: "queued-prompt-test".to_string(),
+            current_model_name: "queued-prompt-test".to_string(),
+            current_cancellation_token,
+            prompt_queue,
+            prompt_worker_handle,
+            mcp_manager: None,
+            last_activity: chrono::Utc::now().to_rfc3339(),
+            current_mode_id: runtime_state.current_mode_id.clone(),
+            runtime_state,
+            ide_bridge: None,
+        };
+
+        let text = handle_tools_command(&active_session).await;
+
+        assert!(text.contains("terminal"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_skills_command_returns_no_active_skills_message_by_default() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let session_lock = session.lock().await;
+        let text = handle_skills_command(&session_lock).await;
+
+        assert!(text.contains("No active skills for this workspace."));
+    }
+
+    #[tokio::test]
+    async fn test_handle_skills_command_returns_disclosure_when_present() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        {
+            let session_lock = session.lock().await;
+            let agent_handle = session_lock.xzatoma_agent.clone();
+            drop(session_lock);
+            let mut agent = agent_handle.lock().await;
+            agent.set_transient_system_messages(vec![
+                "base system prompt".to_string(),
+                "## Available Skills\n- `demo`: a demo skill".to_string(),
+            ]);
+        }
+
+        let session_lock = session.lock().await;
+        let text = handle_skills_command(&session_lock).await;
+
+        assert!(text.contains("Available Skills"));
+        assert!(text.contains("demo"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_mcp_command_returns_no_servers_when_manager_is_none() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let session_lock = session.lock().await;
+        let text = handle_mcp_command(&session_lock).await;
+
+        assert_eq!(text, "No MCP servers configured.");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_routes_tools_to_handler() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/tools", &session, None).await;
+
+        let response = result
+            .expect("/tools should short-circuit")
+            .expect("/tools should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_routes_skills_to_handler() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/skills", &session, None).await;
+
+        let response = result
+            .expect("/skills should short-circuit")
+            .expect("/skills should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_routes_mcp_to_handler() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/mcp", &session, None).await;
+
+        let response = result
+            .expect("/mcp should short-circuit")
+            .expect("/mcp should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_routes_status_to_handler() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/status", &session, None).await;
+
+        let response = result
+            .expect("/status should short-circuit")
+            .expect("/status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
     }
 
     #[tokio::test]
