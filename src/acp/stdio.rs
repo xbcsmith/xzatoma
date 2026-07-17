@@ -53,6 +53,7 @@ use crate::agent::events::{AgentExecutionEvent, AgentObserver};
 
 use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
+use crate::commands::special_commands::{parse_special_command, CommandError, SpecialCommand};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
@@ -1035,6 +1036,23 @@ impl AcpStdioServerState {
         )
         .map_err(|error| acp_validation_error("prompt", error))?;
 
+        let prompt_text = {
+            let text = prompt_input.as_legacy_text();
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        };
+
+        if let Some(prompt_text) = prompt_text.as_deref() {
+            if let Some(result) =
+                dispatch_stdio_command(prompt_text, &session, connection.as_ref()).await
+            {
+                return result;
+            }
+        }
+
         validate_provider_supports_prompt_input(&provider_name, &model_name, &prompt_input)
             .map_err(|error| acp_validation_error("prompt", error))?;
 
@@ -1055,6 +1073,184 @@ impl AcpStdioServerState {
             acp_internal_error(format!("prompt worker dropped response: {}", error))
         })?
     }
+}
+
+/// Returns a placeholder response for a `SpecialCommand` variant whose real
+/// handler has not been implemented yet in the current phase of the ACP chat
+/// commands rollout.
+///
+/// # Arguments
+///
+/// * `command_name` - The user-facing command name (e.g. `"/status"`) shown
+///   in the placeholder text.
+///
+/// # Returns
+///
+/// Returns a formatted string telling the user the command is not yet
+/// implemented in this session.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::acp::stdio::handle_not_yet_implemented;
+///
+/// let text = handle_not_yet_implemented("/status");
+/// assert!(text.contains("/status"));
+/// ```
+pub fn handle_not_yet_implemented(command_name: &str) -> String {
+    format!("{command_name} is not yet implemented in this session.")
+}
+
+/// Parses `prompt_text` as a special slash command and resolves it to the
+/// response text that should be shown to the user, without performing any
+/// session I/O.
+///
+/// This is the pure, synchronous core of [`dispatch_stdio_command`]: it maps
+/// every `SpecialCommand` variant plus the two bare-argument `CommandError`
+/// cases to response text, kept separate from connection/session plumbing so
+/// it can be unit tested directly.
+///
+/// # Arguments
+///
+/// * `prompt_text` - The plain-text portion of the incoming prompt.
+///
+/// # Returns
+///
+/// Returns `None` when `prompt_text` is not a special command
+/// (`parse_special_command` returns `Ok(SpecialCommand::None)`). Returns
+/// `Some(text)` for every other outcome.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::acp::stdio::resolve_special_command_response;
+///
+/// assert!(resolve_special_command_response("hello agent").is_none());
+/// assert!(resolve_special_command_response("/auth")
+///     .expect("/auth is a recognized command")
+///     .contains("not supported in ACP mode"));
+/// ```
+pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
+    let parsed = parse_special_command(prompt_text);
+
+    let response_text = match parsed {
+        Ok(SpecialCommand::None) => return None,
+
+        // Phase 2: Informational Commands.
+        Ok(SpecialCommand::ShowStatus) => handle_not_yet_implemented("/status"),
+        Ok(SpecialCommand::Help) => handle_not_yet_implemented("/help"),
+        Ok(SpecialCommand::Mentions) => handle_not_yet_implemented("/mentions"),
+        Ok(SpecialCommand::ListTools) => handle_not_yet_implemented("/tools"),
+        Ok(SpecialCommand::ListSkills) => handle_not_yet_implemented("/skills"),
+        Ok(SpecialCommand::ShowMcpStatus) => handle_not_yet_implemented("/mcp"),
+
+        // Phase 3: Mode and Safety Text Commands.
+        Ok(SpecialCommand::SwitchMode(_)) => handle_not_yet_implemented("/mode"),
+        Ok(SpecialCommand::SwitchSafety(_)) => handle_not_yet_implemented("/safety"),
+
+        // Phase 4: Model Switch and `/model` Commands.
+        Ok(SpecialCommand::SwitchModel(_)) => handle_not_yet_implemented("/model"),
+        Ok(SpecialCommand::ListModels) => handle_not_yet_implemented("/models"),
+        Ok(SpecialCommand::ModelsHelp) => handle_not_yet_implemented("/models"),
+        Ok(SpecialCommand::ShowModelInfo(_)) => handle_not_yet_implemented("/models"),
+
+        // Phase 5: Context Commands.
+        Ok(SpecialCommand::ContextInfo) => handle_not_yet_implemented("/context"),
+        Ok(SpecialCommand::ContextSummary { .. }) => handle_not_yet_implemented("/summarize"),
+
+        // Phase 6: Subagents Toggle and System Prompt.
+        Ok(SpecialCommand::ToggleSubagents(_)) => handle_not_yet_implemented("/subagents"),
+        Ok(SpecialCommand::SetSystemPrompt(_)) => handle_not_yet_implemented("/system"),
+
+        // Final, permanent behavior: these commands have no ACP-mode
+        // equivalent and are never implemented beyond this fixed message.
+        Ok(SpecialCommand::Auth(_)) => "/auth is not supported in ACP mode. Authentication is \
+            managed by your provider configuration outside the chat session."
+            .to_string(),
+        Ok(SpecialCommand::ToggleStreaming(_)) => "/streaming has no effect over ACP; Zed's \
+            client controls response streaming."
+            .to_string(),
+        Ok(SpecialCommand::Exit) => {
+            "Use Zed's UI to close this session; /exit has no effect over ACP.".to_string()
+        }
+
+        // Bare `/mode` and bare `/model` report as a missing-argument parse
+        // error rather than a distinguishable `Ok` variant; special-case them
+        // here so they still resolve to a locally-handled response instead of
+        // falling through to the generic usage-error text below.
+        Err(CommandError::MissingArgument { ref command, .. }) if command == "/mode" => {
+            handle_not_yet_implemented("/mode")
+        }
+        Err(CommandError::MissingArgument { ref command, .. }) if command == "/model" => {
+            handle_not_yet_implemented("/model")
+        }
+
+        Err(error) => error.to_string(),
+    };
+
+    Some(response_text)
+}
+
+/// Parses `prompt_text` as a special slash command and, when it is one,
+/// handles it locally instead of forwarding it to the LLM.
+///
+/// This is the single dispatch point for every chat-window slash command in
+/// the stdio ACP agent. It is called from [`AcpStdioServerState::enqueue_prompt`]
+/// before the prompt is queued for the provider.
+///
+/// # Arguments
+///
+/// * `prompt_text` - The plain-text portion of the incoming prompt, already
+///   extracted from the multimodal prompt input.
+/// * `session` - The active ACP session the prompt belongs to, used to read
+///   session state and to resolve the session ID for notifications.
+/// * `connection` - The live ACP connection to the Zed client, used to push
+///   the command's response as an `AgentMessageChunk` notification. `None` in
+///   test contexts where no live connection is available.
+///
+/// # Returns
+///
+/// Returns `None` when `prompt_text` is not a special command (`parse_special_command`
+/// returns `Ok(SpecialCommand::None)`); the caller should proceed to queue the
+/// prompt for the LLM as normal.
+///
+/// Returns `Some(Ok(response))` for every other outcome: a recognized
+/// `SpecialCommand` variant, a `CommandError` from an invalid or incomplete
+/// command, or the bare `/mode` and bare `/model` cases that
+/// `parse_special_command` reports as a missing-argument error. The LLM is
+/// never invoked for any of these outcomes.
+///
+/// # Examples
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use tokio::sync::Mutex;
+/// use xzatoma::acp::stdio::dispatch_stdio_command;
+///
+/// # async fn example(session: Arc<Mutex<xzatoma::acp::stdio::ActiveSessionState>>) {
+/// let result = dispatch_stdio_command("hello agent", &session, None).await;
+/// assert!(result.is_none());
+/// # }
+/// ```
+pub async fn dispatch_stdio_command(
+    prompt_text: &str,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+) -> Option<acp_sdk::Result<acp::PromptResponse>> {
+    let response_text = resolve_special_command_response(prompt_text)?;
+
+    if let Some(connection) = connection {
+        let session_id = session.lock().await.session_id().clone();
+        let chunk = acp::ContentChunk::new(acp::ContentBlock::from(response_text));
+        send_session_update_best_effort(
+            connection,
+            session_id,
+            acp::SessionUpdate::AgentMessageChunk(chunk),
+            "dispatch_stdio_command response",
+        );
+    }
+
+    Some(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
 }
 
 struct QueuedPrompt {
@@ -2487,6 +2683,169 @@ mod tests {
             )
             .expect("test agent should be constructed"),
         ))
+    }
+
+    /// Builds and registers a minimal `ActiveSessionState` backed by
+    /// [`QueuedPromptMockProvider`] for `dispatch_stdio_command` and
+    /// `enqueue_prompt` tests, avoiding any real provider network calls.
+    async fn dispatch_test_session(
+        state: &AcpStdioServerState,
+    ) -> (acp::SessionId, Arc<Mutex<ActiveSessionState>>) {
+        let session_id = acp::SessionId::new(format!("dispatch-test-{}", Uuid::new_v4()));
+        let (prompt_queue, _prompt_receiver) = mpsc::channel(8);
+        let prompt_worker_handle = tokio::spawn(async {});
+        let (_token_tx, current_cancellation_token) = watch::channel(CancellationToken::new());
+        let runtime_state = SessionRuntimeState::from_config(&Config::default());
+
+        let active_session = ActiveSessionState {
+            session_id: session_id.clone(),
+            workspace_root: std::env::temp_dir(),
+            conversation_uuid: "dispatch-test-conversation".to_string(),
+            xzatoma_agent: queued_prompt_test_agent(),
+            provider_name: "queued-prompt-test".to_string(),
+            current_model_name: "queued-prompt-test".to_string(),
+            current_cancellation_token,
+            prompt_queue,
+            prompt_worker_handle,
+            mcp_manager: None,
+            last_activity: chrono::Utc::now().to_rfc3339(),
+            current_mode_id: runtime_state.current_mode_id.clone(),
+            runtime_state,
+            ide_bridge: None,
+        };
+
+        state.sessions.insert(active_session).await;
+        let session = state
+            .sessions
+            .get(&session_id)
+            .await
+            .expect("dispatch test session should exist");
+        (session_id, session)
+    }
+
+    fn dispatch_test_state() -> AcpStdioServerState {
+        AcpStdioServerState::new_with_storage(
+            Config::default(),
+            AcpStdioAgentOptions::new(None, None, false, None),
+            None,
+        )
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_returns_none_for_plain_text() {
+        assert!(resolve_special_command_response("hello agent").is_none());
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_returns_some_for_help() {
+        let text =
+            resolve_special_command_response("/help").expect("/help should resolve to a response");
+        assert!(text.contains("/help"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_returns_some_for_invalid_command() {
+        let text = resolve_special_command_response("/notacommand")
+            .expect("unknown command should still resolve to a response");
+        assert!(text.contains("Unknown command"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_auth_returns_not_supported_message() {
+        let text =
+            resolve_special_command_response("/auth").expect("/auth should resolve to a response");
+        assert!(text.contains("not supported in ACP mode"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_streaming_returns_not_supported_message() {
+        let text = resolve_special_command_response("/streaming on")
+            .expect("/streaming on should resolve to a response");
+        assert!(text.contains("has no effect over ACP"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_exit_returns_not_supported_message() {
+        let text_slash =
+            resolve_special_command_response("/exit").expect("/exit should resolve to a response");
+        assert!(text_slash.contains("has no effect over ACP"));
+
+        let text_bare = resolve_special_command_response("exit")
+            .expect("bare exit should resolve to a response");
+        assert!(text_bare.contains("has no effect over ACP"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_bare_mode_does_not_error() {
+        let text = resolve_special_command_response("/mode")
+            .expect("bare /mode should resolve to a response, not a Rust error");
+        assert!(text.contains("/mode"));
+    }
+
+    #[test]
+    fn test_resolve_special_command_response_bare_model_does_not_error() {
+        let text = resolve_special_command_response("/model")
+            .expect("bare /model should resolve to a response, not a Rust error");
+        assert!(text.contains("/model"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_stdio_command_returns_none_for_plain_text() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("hello agent", &session, None).await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_stdio_command_returns_some_for_help() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/help", &session, None).await;
+
+        let response = result
+            .expect("/help should short-circuit")
+            .expect("/help should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_stdio_command_returns_some_for_invalid_command() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/notacommand", &session, None).await;
+
+        let response = result
+            .expect("unknown command should short-circuit")
+            .expect("unknown command should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_build_available_commands_returns_twelve_entries_from_stdio_context() {
+        assert_eq!(build_available_commands().len(), 12);
+    }
+
+    #[tokio::test]
+    async fn test_enqueue_prompt_short_circuits_on_help_command() {
+        let state = dispatch_test_state();
+        let (session_id, _session) = dispatch_test_session(&state).await;
+
+        let request = acp::PromptRequest::new(
+            session_id,
+            vec![acp::ContentBlock::from("/help".to_string())],
+        );
+
+        let response = state
+            .enqueue_prompt(request, None)
+            .await
+            .expect("/help should return a PromptResponse without reaching the provider");
+
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
     }
 
     async fn receive_response<T: JsonRpcResponse + Send>(

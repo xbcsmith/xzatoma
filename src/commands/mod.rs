@@ -821,6 +821,51 @@ pub mod chat {
                             print_status_display(&mode_state, tool_count, conversation_len);
                             continue;
                         }
+                        Ok(SpecialCommand::ListTools) => {
+                            let names = agent.tools().tool_names();
+                            println!("Available tools ({}):", names.len());
+                            for name in &names {
+                                println!("  {name}");
+                            }
+                            println!();
+                            continue;
+                        }
+                        Ok(SpecialCommand::ListSkills) => {
+                            let registry = active_skill_registry.lock().unwrap();
+                            if registry.is_empty() {
+                                println!("No active skills for this workspace.\n");
+                            } else {
+                                println!("Active skills ({}):", registry.len());
+                                for name in registry.names() {
+                                    println!("  {name}");
+                                }
+                                println!();
+                            }
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowMcpStatus) => {
+                            match &mcp_manager {
+                                None => println!("No MCP servers configured.\n"),
+                                Some(manager) => {
+                                    let manager = manager.read().await;
+                                    let servers = manager.connected_servers();
+                                    if servers.is_empty() {
+                                        println!("No MCP servers configured.\n");
+                                    } else {
+                                        println!("Connected MCP servers ({}):", servers.len());
+                                        for server in &servers {
+                                            println!(
+                                                "  {} ({} tools)",
+                                                server.config.id,
+                                                server.tools.len()
+                                            );
+                                        }
+                                        println!();
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         Ok(SpecialCommand::Help) => {
                             print_help();
                             continue;

@@ -52,6 +52,49 @@ pub enum SpecialCommand {
     /// Shows the current chat mode, safety mode, and their descriptions.
     ShowStatus,
 
+    /// Display the list of tools available to the agent in this session
+    ///
+    /// Shows every tool the agent can currently invoke.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/tools").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ListTools);
+    /// ```
+    ListTools,
+
+    /// Display the list of active skills loaded for this workspace
+    ///
+    /// Shows every skill currently disclosed to the agent for this workspace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/skills").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ListSkills);
+    /// ```
+    ListSkills,
+
+    /// Display connected MCP servers and the tools they expose
+    ///
+    /// Shows each connected MCP server along with the tools it makes
+    /// available to the agent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/mcp").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ShowMcpStatus);
+    /// ```
+    ShowMcpStatus,
+
     /// Display help information
     ///
     /// Shows all available special commands and their usage.
@@ -241,6 +284,9 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
 
         // Status and help
         "/status" => Ok(SpecialCommand::ShowStatus),
+        "/tools" => Ok(SpecialCommand::ListTools),
+        "/skills" => Ok(SpecialCommand::ListSkills),
+        "/mcp" => Ok(SpecialCommand::ShowMcpStatus),
         "/help" | "/?" => Ok(SpecialCommand::Help),
         "/mentions" => Ok(SpecialCommand::Mentions),
 
@@ -831,6 +877,30 @@ mod tests {
     fn test_parse_show_status() {
         let cmd = parse_special_command("/status").unwrap();
         assert_eq!(cmd, SpecialCommand::ShowStatus);
+    }
+
+    #[test]
+    fn test_parse_special_command_tools_returns_list_tools() {
+        assert_eq!(
+            parse_special_command("/tools"),
+            Ok(SpecialCommand::ListTools)
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_skills_returns_list_skills() {
+        assert_eq!(
+            parse_special_command("/skills"),
+            Ok(SpecialCommand::ListSkills)
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_mcp_returns_show_mcp_status() {
+        assert_eq!(
+            parse_special_command("/mcp"),
+            Ok(SpecialCommand::ShowMcpStatus)
+        );
     }
 
     #[test]

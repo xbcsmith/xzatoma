@@ -16,6 +16,10 @@
 //! | `/summarize` | None        | Summarize and compact conversation history     |
 //! | `/skills`    | None        | List active skills for the current workspace   |
 //! | `/mcp`       | None        | List connected MCP servers and tools           |
+//! | `/help`      | None        | Show available special commands                |
+//! | `/status`    | None        | Show current mode, safety policy, and model    |
+//! | `/subagents` | Optional    | Enable or disable subagent delegation          |
+//! | `/system`    | Required    | Set or replace the active system prompt        |
 //!
 //! # Examples
 //!
@@ -23,7 +27,7 @@
 //! use xzatoma::acp::available_commands::build_available_commands;
 //!
 //! let commands = build_available_commands();
-//! assert_eq!(commands.len(), 8);
+//! assert_eq!(commands.len(), 12);
 //! assert!(!commands[0].description.is_empty());
 //! ```
 
@@ -39,7 +43,7 @@ use agent_client_protocol as acp_sdk;
 ///
 /// # Returns
 ///
-/// A `Vec<acp::AvailableCommand>` containing all eight XZatoma slash commands
+/// A `Vec<acp::AvailableCommand>` containing all twelve XZatoma slash commands
 /// in display order.
 ///
 /// # Examples
@@ -48,11 +52,13 @@ use agent_client_protocol as acp_sdk;
 /// use xzatoma::acp::available_commands::build_available_commands;
 ///
 /// let commands = build_available_commands();
-/// assert_eq!(commands.len(), 8);
+/// assert_eq!(commands.len(), 12);
 ///
 /// let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
 /// assert!(names.contains(&"/mode"));
 /// assert!(names.contains(&"/mcp"));
+/// assert!(names.contains(&"/help"));
+/// assert!(names.contains(&"/system"));
 /// ```
 pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
     vec![
@@ -64,6 +70,10 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
         build_summarize_command(),
         build_skills_command(),
         build_mcp_command(),
+        build_help_command(),
+        build_status_command(),
+        build_subagents_command(),
+        build_system_command(),
     ]
 }
 
@@ -182,6 +192,50 @@ fn build_mcp_command() -> acp::AvailableCommand {
     )
 }
 
+/// Builds the `/help` command definition.
+///
+/// Takes no arguments. The agent responds with a summary of all available
+/// special commands and how to use them.
+fn build_help_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new("/help", "Show available special commands.")
+}
+
+/// Builds the `/status` command definition.
+///
+/// Takes no arguments. The agent responds with the current operation mode,
+/// safety confirmation policy, and active provider model.
+fn build_status_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new("/status", "Show current mode, safety policy, and model.")
+}
+
+/// Builds the `/subagents` command definition.
+///
+/// Accepts an optional toggle argument. When no argument is provided the
+/// agent reports whether subagent delegation is currently enabled; when a
+/// value is provided the agent enables or disables subagent delegation
+/// accordingly.
+fn build_subagents_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new("/subagents", "Enable or disable subagent delegation.").input(Some(
+        acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+            "Optional toggle: on | off | enable | disable",
+        )),
+    ))
+}
+
+/// Builds the `/system` command definition.
+///
+/// Requires a text argument. The agent replaces the active system prompt for
+/// the remainder of the session with the provided text.
+fn build_system_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new(
+        "/system",
+        "Set or replace the active system prompt for this session.",
+    )
+    .input(Some(acp::AvailableCommandInput::Unstructured(
+        acp::UnstructuredCommandInput::new("Required text: the new system prompt"),
+    )))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -191,9 +245,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_available_commands_returns_eight_entries() {
+    fn test_build_available_commands_returns_twelve_entries() {
         let commands = build_available_commands();
-        assert_eq!(commands.len(), 8);
+        assert_eq!(commands.len(), 12);
     }
 
     #[test]
@@ -211,8 +265,24 @@ mod tests {
                 "/summarize",
                 "/skills",
                 "/mcp",
+                "/help",
+                "/status",
+                "/subagents",
+                "/system",
             ]
         );
+    }
+
+    #[test]
+    fn test_build_available_commands_includes_new_commands() {
+        let commands = build_available_commands();
+        for name in ["/help", "/status", "/subagents", "/system"] {
+            assert!(
+                commands.iter().any(|c| c.name == name),
+                "expected command '{}' to be present",
+                name
+            );
+        }
     }
 
     #[test]
@@ -294,7 +364,15 @@ mod tests {
     #[test]
     fn test_no_arg_commands_have_no_input() {
         let commands = build_available_commands();
-        let no_input_names = ["/tools", "/context", "/summarize", "/skills", "/mcp"];
+        let no_input_names = [
+            "/tools",
+            "/context",
+            "/summarize",
+            "/skills",
+            "/mcp",
+            "/help",
+            "/status",
+        ];
         for name in no_input_names {
             let command = commands.iter().find(|c| c.name == name).unwrap();
             assert!(
@@ -302,6 +380,44 @@ mod tests {
                 "command '{}' should have no input specification",
                 name
             );
+        }
+    }
+
+    #[test]
+    fn test_subagents_command_has_unstructured_input() {
+        let commands = build_available_commands();
+        let subagents = commands.iter().find(|c| c.name == "/subagents").unwrap();
+        assert!(
+            subagents.input.is_some(),
+            "/subagents must have an input specification"
+        );
+        match subagents.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    !input.hint.is_empty(),
+                    "/subagents input hint must not be empty"
+                );
+            }
+            _ => panic!("/subagents input must be Unstructured"),
+        }
+    }
+
+    #[test]
+    fn test_system_command_has_unstructured_input() {
+        let commands = build_available_commands();
+        let system = commands.iter().find(|c| c.name == "/system").unwrap();
+        assert!(
+            system.input.is_some(),
+            "/system must have an input specification"
+        );
+        match system.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    !input.hint.is_empty(),
+                    "/system input hint must not be empty"
+                );
+            }
+            _ => panic!("/system input must be Unstructured"),
         }
     }
 
