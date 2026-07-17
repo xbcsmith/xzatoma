@@ -205,13 +205,13 @@ impl PathValidator {
                 Component::CurDir => {}
                 Component::Normal(part) => {
                     current.push(part);
-                    if let Ok(metadata) = std::fs::symlink_metadata(&current) {
-                        if metadata.file_type().is_symlink() {
-                            return Err(FileUtilsError::SymlinkComponent(format!(
-                                "Path contains symbolic link component while validating {}: {:?}",
-                                target, current
-                            )));
-                        }
+                    if let Ok(metadata) = std::fs::symlink_metadata(&current)
+                        && metadata.file_type().is_symlink()
+                    {
+                        return Err(FileUtilsError::SymlinkComponent(format!(
+                            "Path contains symbolic link component while validating {}: {:?}",
+                            target, current
+                        )));
                     }
                 }
                 Component::ParentDir | Component::RootDir | Component::Prefix(_) => {}
@@ -264,15 +264,15 @@ impl PathValidator {
 /// # });
 /// ```
 pub async fn ensure_parent_dirs(path: &Path) -> Result<(), FileUtilsError> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                FileUtilsError::ParentDirCreation(format!(
-                    "Failed to create parent directories for {:?}: {}",
-                    path, e
-                ))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            FileUtilsError::ParentDirCreation(format!(
+                "Failed to create parent directories for {:?}: {}",
+                path, e
+            ))
+        })?;
     }
     Ok(())
 }

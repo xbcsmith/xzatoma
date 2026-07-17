@@ -31,11 +31,11 @@
 //! assert!(!options.is_empty());
 //! ```
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol as acp_sdk;
 
 use crate::acp::session_mode::{
-    mode_runtime_effect, MODE_FULL_AUTONOMOUS, MODE_PLANNING, MODE_WRITE,
+    MODE_FULL_AUTONOMOUS, MODE_PLANNING, MODE_WRITE, mode_runtime_effect,
 };
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
@@ -631,11 +631,7 @@ fn safety_policy_value_id(safety_mode_str: &str) -> &'static str {
 }
 
 fn bool_to_enabled_disabled(value: bool) -> &'static str {
-    if value {
-        "enabled"
-    } else {
-        "disabled"
-    }
+    if value { "enabled" } else { "disabled" }
 }
 
 fn enabled_disabled_options() -> Vec<acp::SessionConfigSelectOption> {

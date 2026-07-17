@@ -31,7 +31,7 @@
 //! assert!(!commands[0].description.is_empty());
 //! ```
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol as acp_sdk;
 
 /// Builds the list of [`acp::AvailableCommand`] entries advertised to Zed.

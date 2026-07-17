@@ -17,9 +17,9 @@ pub use thinking::extract_thinking;
 pub use conversation::{ContextInfo, ContextStatus, Conversation};
 pub use core::Agent;
 pub use events::{AgentExecutionEvent, AgentObserver, NoOpObserver};
-pub use metrics::{init_metrics_exporter, SubagentMetrics};
+pub use metrics::{SubagentMetrics, init_metrics_exporter};
 pub use persistence::{
-    new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,
+    ConversationMetadata, ConversationRecord, ConversationStore, new_conversation_id, now_rfc3339,
 };
 pub use quota::{QuotaLimits, QuotaTracker, QuotaUsage};
-pub use system_prompt::{resolve, ResolvedSystemPrompt, SystemPromptSource};
+pub use system_prompt::{ResolvedSystemPrompt, SystemPromptSource, resolve};

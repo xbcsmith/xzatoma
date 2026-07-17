@@ -17,11 +17,11 @@ use tokio::sync::RwLock;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
-use crate::mcp::manager::{build_mcp_manager_from_config, McpClientManager};
+use crate::mcp::manager::{McpClientManager, build_mcp_manager_from_config};
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::skills::ActiveSkillRegistry;
-use crate::tools::registry_builder::ToolRegistryBuilder;
 use crate::tools::ToolRegistry;
+use crate::tools::registry_builder::ToolRegistryBuilder;
 
 // ---------------------------------------------------------------------------
 // AgentEnvironment

@@ -3,14 +3,14 @@
 //! Tests the transport-agnostic `JsonRpcClient` and the `start_read_loop`
 //! dispatcher using in-process Tokio channels in place of a real transport.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
+use xzatoma::mcp::client::{JsonRpcClient, start_read_loop};
 use xzatoma::mcp::types::NOTIF_TOOLS_LIST_CHANGED;
 
 // ---------------------------------------------------------------------------

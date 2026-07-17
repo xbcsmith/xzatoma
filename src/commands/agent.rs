@@ -32,7 +32,7 @@
 //! ```
 use std::path::PathBuf;
 
-use crate::acp::stdio::{run_stdio_agent, AcpStdioAgentOptions};
+use crate::acp::stdio::{AcpStdioAgentOptions, run_stdio_agent};
 use crate::config::Config;
 use crate::error::Result;
 

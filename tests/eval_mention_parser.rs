@@ -17,7 +17,7 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::tempdir;
 use xzatoma::mention_parser::{
-    augment_prompt_with_mentions, parse_mentions, Mention, MentionCache,
+    Mention, MentionCache, augment_prompt_with_mentions, parse_mentions,
 };
 
 // ---------------------------------------------------------------------------
@@ -186,15 +186,15 @@ fn run_parse_only(scenario: &Scenario) -> Result<(), String> {
     let (mentions, _cleaned) = parse_mentions(&scenario.input.prompt)
         .map_err(|e| format!("parse_mentions failed unexpectedly: {}", e))?;
 
-    if let Some(expected_count) = scenario.expect.mention_count {
-        if mentions.len() != expected_count {
-            return Err(format!(
-                "expected {} mention(s) but got {}; mentions: {:?}",
-                expected_count,
-                mentions.len(),
-                mentions.iter().map(mention_type_str).collect::<Vec<_>>()
-            ));
-        }
+    if let Some(expected_count) = scenario.expect.mention_count
+        && mentions.len() != expected_count
+    {
+        return Err(format!(
+            "expected {} mention(s) but got {}; mentions: {:?}",
+            expected_count,
+            mentions.len(),
+            mentions.iter().map(mention_type_str).collect::<Vec<_>>()
+        ));
     }
 
     if let Some(ref expected_types) = scenario.expect.mention_types {
@@ -275,13 +275,13 @@ async fn run_augment(scenario: &Scenario) -> Result<(), String> {
     }
 
     // Assert that the errors list is non-empty when the scenario requires it.
-    if let Some(true) = scenario.expect.errors_nonempty {
-        if errors.is_empty() {
-            return Err(format!(
-                "expected errors to be non-empty but the list was empty.\nFull output:\n{}",
-                augmented
-            ));
-        }
+    if let Some(true) = scenario.expect.errors_nonempty
+        && errors.is_empty()
+    {
+        return Err(format!(
+            "expected errors to be non-empty but the list was empty.\nFull output:\n{}",
+            augmented
+        ));
     }
 
     Ok(())

@@ -171,8 +171,8 @@ mod tests {
     use crate::agent::Agent;
     use crate::config::{AgentConfig, WatcherPlanExecutionMode};
     use crate::providers::{CompletionResponse, Message, ModelInfo};
-    use crate::tools::plan::PlanParser;
     use crate::tools::ToolRegistry;
+    use crate::tools::plan::PlanParser;
     use async_trait::async_trait;
 
     #[derive(Clone)]

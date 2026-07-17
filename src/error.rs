@@ -46,7 +46,9 @@ pub enum XzatomaError {
     },
 
     /// Provider returned a non-success HTTP status.
-    #[error("Provider HTTP status error: provider={provider}, endpoint={endpoint}, status={status}, response={response}")]
+    #[error(
+        "Provider HTTP status error: provider={provider}, endpoint={endpoint}, status={status}, response={response}"
+    )]
     ProviderHttpStatus {
         /// Provider name such as `openai`, `ollama`, or `copilot`.
         provider: String,
@@ -251,7 +253,9 @@ pub enum XzatomaError {
     Internal(String),
 
     /// Runtime operation exceeded its configured timeout.
-    #[error("Runtime timeout during {operation}: elapsed {elapsed_seconds}s exceeded limit {timeout_seconds}s")]
+    #[error(
+        "Runtime timeout during {operation}: elapsed {elapsed_seconds}s exceeded limit {timeout_seconds}s"
+    )]
     RuntimeTimeout {
         /// Runtime operation that timed out.
         operation: String,

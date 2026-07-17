@@ -17,8 +17,8 @@ use std::time::Duration;
 use wiremock::matchers::{header, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use xzatoma::mcp::transport::http::HttpTransport;
 use xzatoma::mcp::transport::Transport;
+use xzatoma::mcp::transport::http::HttpTransport;
 
 // ---------------------------------------------------------------------------
 // Helpers

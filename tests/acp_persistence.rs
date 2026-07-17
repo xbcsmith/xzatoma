@@ -1,11 +1,11 @@
-use axum::body::{to_bytes, Body};
-use axum::http::{header, Method, Request, StatusCode};
-use serde_json::{json, Value};
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, StatusCode, header};
+use serde_json::{Value, json};
 use tempfile::tempdir;
 use tower::ServiceExt;
 use xzatoma::acp::executor::AcpExecutor;
 use xzatoma::acp::runtime::{AcpRuntime, AcpRuntimeExecuteMode};
-use xzatoma::acp::server::{build_router, AcpServerState};
+use xzatoma::acp::server::{AcpServerState, build_router};
 use xzatoma::config::Config;
 
 /// Builds a deterministic ACP test configuration.
@@ -379,9 +379,11 @@ async fn test_resume_of_awaiting_run() {
     let events = events_json["events"]
         .as_array()
         .expect("events should be an array");
-    assert!(events
-        .iter()
-        .any(|event| event["event"]["payload"]["event"] == "run.resumed"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event"]["payload"]["event"] == "run.resumed")
+    );
 }
 
 #[tokio::test]
@@ -617,10 +619,12 @@ async fn test_invalid_resume_payload_failure_path() {
 
     let resume_json = response_json(resume_response).await;
     assert_eq!(resume_json["code"], "internal_error");
-    assert!(resume_json["message"]
-        .as_str()
-        .expect("message should be a string")
-        .contains("resume payload cannot be null"));
+    assert!(
+        resume_json["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("resume payload cannot be null")
+    );
 }
 
 #[tokio::test]
@@ -689,10 +693,12 @@ async fn test_cancelling_completed_run_failure_path() {
 
     let cancel_json = response_json(cancel_response).await;
     assert_eq!(cancel_json["code"], "internal_error");
-    assert!(cancel_json["message"]
-        .as_str()
-        .expect("message should be a string")
-        .contains("cannot cancel terminal ACP run"));
+    assert!(
+        cancel_json["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("cannot cancel terminal ACP run")
+    );
 }
 
 #[tokio::test]
@@ -716,8 +722,10 @@ async fn test_loading_missing_session_failure_path() {
 
     let json = response_json(response).await;
     assert_eq!(json["code"], "not_found");
-    assert!(json["message"]
-        .as_str()
-        .expect("message should be a string")
-        .contains("session_missing"));
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("session_missing")
+    );
 }

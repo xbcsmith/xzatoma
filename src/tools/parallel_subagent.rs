@@ -4,11 +4,11 @@
 //! subagent tasks concurrently with configurable concurrency limits,
 //! fail-fast behavior, and comprehensive result aggregation.
 
-use crate::agent::{quota::QuotaTracker, Agent, SubagentMetrics};
+use crate::agent::{Agent, SubagentMetrics, quota::QuotaTracker};
 use crate::config::AgentConfig;
 use crate::error::Result;
 use crate::providers::Provider;
-use crate::tools::{parse_tool_args, ToolExecutor, ToolRegistry, ToolResult};
+use crate::tools::{ToolExecutor, ToolRegistry, ToolResult, parse_tool_args};
 use async_trait::async_trait;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
@@ -234,16 +234,16 @@ impl ToolExecutor for ParallelSubagentTool {
         let batch_metrics = SubagentMetrics::new("parallel_batch".to_string(), self.current_depth);
 
         // Check quota availability before starting parallel execution
-        if let Some(quota_tracker) = &self.quota_tracker {
-            if let Err(e) = quota_tracker.check_and_reserve() {
-                warn!(
-                    parallel.event = "quota_exceeded",
-                    parallel.error = %e,
-                    "Parallel execution quota exceeded"
-                );
-                batch_metrics.record_error("quota_exceeded");
-                return Ok(ToolResult::error(format!("Resource quota exceeded: {}", e)));
-            }
+        if let Some(quota_tracker) = &self.quota_tracker
+            && let Err(e) = quota_tracker.check_and_reserve()
+        {
+            warn!(
+                parallel.event = "quota_exceeded",
+                parallel.error = %e,
+                "Parallel execution quota exceeded"
+            );
+            batch_metrics.record_error("quota_exceeded");
+            return Ok(ToolResult::error(format!("Resource quota exceeded: {}", e)));
         }
 
         // Parse input
@@ -368,16 +368,16 @@ impl ToolExecutor for ParallelSubagentTool {
         batch_metrics.record_completion(successful, total_tokens, batch_status);
 
         // Record quota usage if tracker available
-        if let Some(quota_tracker) = &self.quota_tracker {
-            if let Err(e) = quota_tracker.record_execution(total_tokens) {
-                warn!(
-                    parallel.event = "quota_recording_failed",
-                    parallel.error = %e,
-                    "Failed to record quota usage"
-                );
-                // Log warning but don't fail the execution
-                // All tasks completed successfully
-            }
+        if let Some(quota_tracker) = &self.quota_tracker
+            && let Err(e) = quota_tracker.record_execution(total_tokens)
+        {
+            warn!(
+                parallel.event = "quota_recording_failed",
+                parallel.error = %e,
+                "Failed to record quota usage"
+            );
+            // Log warning but don't fail the execution
+            // All tasks completed successfully
         }
 
         info!(

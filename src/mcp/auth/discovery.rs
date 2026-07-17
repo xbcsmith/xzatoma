@@ -275,29 +275,24 @@ pub async fn fetch_protected_resource_metadata(
     crate::security::validate_public_https_url(resource_url, "MCP resource URL").await?;
 
     // Strategy 1: use the URL embedded in the WWW-Authenticate header.
-    if let Some(header) = www_authenticate {
-        if let Some(meta_url_str) = parse_resource_metadata_url(header) {
-            if let Ok(meta_url) = Url::parse(&meta_url_str) {
-                crate::security::validate_public_https_url(
-                    &meta_url,
-                    "protected resource metadata URL",
-                )
-                .await?;
-                let resp =
-                    http.get(meta_url).send().await.map_err(|e| {
-                        XzatomaError::McpAuth(format!("metadata fetch failed: {e}"))
-                    })?;
+    if let Some(header) = www_authenticate
+        && let Some(meta_url_str) = parse_resource_metadata_url(header)
+        && let Ok(meta_url) = Url::parse(&meta_url_str)
+    {
+        crate::security::validate_public_https_url(&meta_url, "protected resource metadata URL")
+            .await?;
+        let resp = http
+            .get(meta_url)
+            .send()
+            .await
+            .map_err(|e| XzatomaError::McpAuth(format!("metadata fetch failed: {e}")))?;
 
-                if resp.status().is_success() {
-                    let meta: ProtectedResourceMetadata = resp.json().await.map_err(|e| {
-                        XzatomaError::McpAuth(format!(
-                            "failed to parse protected resource metadata: {e}"
-                        ))
-                    })?;
-                    validate_protected_resource_metadata(resource_url, &meta).await?;
-                    return Ok(meta);
-                }
-            }
+        if resp.status().is_success() {
+            let meta: ProtectedResourceMetadata = resp.json().await.map_err(|e| {
+                XzatomaError::McpAuth(format!("failed to parse protected resource metadata: {e}"))
+            })?;
+            validate_protected_resource_metadata(resource_url, &meta).await?;
+            return Ok(meta);
         }
     }
 
@@ -413,12 +408,12 @@ pub(crate) fn validate_authorization_server_metadata(
         ));
     }
 
-    if let Some(grants) = &meta.grant_types_supported {
-        if !grants.iter().any(|value| value == "authorization_code") {
-            return Err(XzatomaError::McpAuth(
-                "authorization server must support authorization_code grant".to_string(),
-            ));
-        }
+    if let Some(grants) = &meta.grant_types_supported
+        && !grants.iter().any(|value| value == "authorization_code")
+    {
+        return Err(XzatomaError::McpAuth(
+            "authorization server must support authorization_code grant".to_string(),
+        ));
     }
 
     let authorization_endpoint = Url::parse(&meta.authorization_endpoint).map_err(|error| {

@@ -18,10 +18,10 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
+use xzatoma::mcp::client::{JsonRpcClient, start_read_loop};
 use xzatoma::mcp::protocol::{McpProtocol, ServerCapabilityFlag};
-use xzatoma::mcp::transport::stdio::StdioTransport;
 use xzatoma::mcp::transport::Transport;
+use xzatoma::mcp::transport::stdio::StdioTransport;
 use xzatoma::mcp::types::{ClientCapabilities, Implementation};
 
 // ---------------------------------------------------------------------------

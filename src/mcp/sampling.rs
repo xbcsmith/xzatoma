@@ -172,10 +172,10 @@ impl SamplingHandler for XzatomaSamplingHandler {
                 .collect();
 
             // Step 3: Prepend system_prompt as a system message if present.
-            if let Some(ref system) = params.system_prompt {
-                if !system.is_empty() {
-                    messages.insert(0, Message::system(system));
-                }
+            if let Some(ref system) = params.system_prompt
+                && !system.is_empty()
+            {
+                messages.insert(0, Message::system(system));
             }
 
             // Ensure there is at least one message so the provider call is

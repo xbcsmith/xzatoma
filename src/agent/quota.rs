@@ -165,24 +165,24 @@ impl QuotaTracker {
         let usage = self.lock_usage()?;
 
         // Check execution limit
-        if let Some(max) = self.limits.max_executions {
-            if usage.executions >= max {
-                return Err(XzatomaError::QuotaExceeded(format!(
-                    "Execution limit reached: {}/{}",
-                    usage.executions, max
-                )));
-            }
+        if let Some(max) = self.limits.max_executions
+            && usage.executions >= max
+        {
+            return Err(XzatomaError::QuotaExceeded(format!(
+                "Execution limit reached: {}/{}",
+                usage.executions, max
+            )));
         }
 
         // Check time limit
-        if let Some(max_time) = self.limits.max_total_time {
-            if usage.start_time.elapsed() >= max_time {
-                return Err(XzatomaError::QuotaExceeded(format!(
-                    "Time limit exceeded: {:?} >= {:?}",
-                    usage.start_time.elapsed(),
-                    max_time
-                )));
-            }
+        if let Some(max_time) = self.limits.max_total_time
+            && usage.start_time.elapsed() >= max_time
+        {
+            return Err(XzatomaError::QuotaExceeded(format!(
+                "Time limit exceeded: {:?} >= {:?}",
+                usage.start_time.elapsed(),
+                max_time
+            )));
         }
 
         Ok(())
@@ -232,13 +232,13 @@ impl QuotaTracker {
         usage.total_tokens += tokens;
 
         // Check token limit
-        if let Some(max) = self.limits.max_total_tokens {
-            if usage.total_tokens > max {
-                return Err(XzatomaError::QuotaExceeded(format!(
-                    "Token limit exceeded: {}/{}",
-                    usage.total_tokens, max
-                )));
-            }
+        if let Some(max) = self.limits.max_total_tokens
+            && usage.total_tokens > max
+        {
+            return Err(XzatomaError::QuotaExceeded(format!(
+                "Token limit exceeded: {}/{}",
+                usage.total_tokens, max
+            )));
         }
 
         Ok(())

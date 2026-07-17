@@ -922,15 +922,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "chat", "--provider", "ollama"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Chat {
-            provider,
-            mode: _,
-            safe: _,
-            resume: _,
-            thinking_effort: _,
-            ..
-        } = cli.command
-        {
+        if let Commands::Chat { provider, .. } = cli.command {
             assert_eq!(provider, Some("ollama".to_string()));
         } else {
             panic!("Expected Chat command");
@@ -1051,7 +1043,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1072,7 +1063,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1093,7 +1083,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1274,8 +1263,6 @@ mod tests {
             provider,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1293,12 +1280,7 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Chat {
-            provider: _,
-            mode,
-            safe: _,
-            resume: _,
-            thinking_effort: _,
-            ..
+            provider: _, mode, ..
         } = cli.command
         {
             assert_eq!(mode, Some("write".to_string()));
@@ -1316,8 +1298,6 @@ mod tests {
             provider: _,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1370,8 +1350,6 @@ mod tests {
             provider,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1899,10 +1877,14 @@ mod tests {
 
     #[test]
     fn test_common_args_storage_path_env() {
-        std::env::set_var("XZATOMA_HISTORY_DB", "/tmp/x");
+        unsafe {
+            std::env::set_var("XZATOMA_HISTORY_DB", "/tmp/x");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
         let storage = cli.command.common_args().storage_path.clone();
-        std::env::remove_var("XZATOMA_HISTORY_DB");
+        unsafe {
+            std::env::remove_var("XZATOMA_HISTORY_DB");
+        }
         assert_eq!(storage, Some("/tmp/x".to_string()));
     }
 
@@ -1941,10 +1923,14 @@ mod tests {
 
     #[test]
     fn test_xzatoma_debug_env_sets_flag() {
-        std::env::set_var("XZATOMA_DEBUG", "true");
+        unsafe {
+            std::env::set_var("XZATOMA_DEBUG", "true");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
         let debug = cli.command.common_args().debug;
-        std::env::remove_var("XZATOMA_DEBUG");
+        unsafe {
+            std::env::remove_var("XZATOMA_DEBUG");
+        }
         assert!(debug);
     }
 

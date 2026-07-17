@@ -6,7 +6,7 @@
 
 use crate::config::Config;
 use crate::error::Result;
-use crate::mcp::manager::{build_mcp_manager_from_config, McpServerState};
+use crate::mcp::manager::{McpServerState, build_mcp_manager_from_config};
 use crate::mcp::server::McpServerTransportConfig;
 
 /// MCP subcommand variants

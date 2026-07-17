@@ -6,11 +6,12 @@
 use xzatoma::mcp::types::{
     BlobResourceContents, CallToolParams, CallToolResponse, ClientCapabilities, ElicitationAction,
     Implementation, InitializeParams, InitializeResponse, JsonRpcError, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, LoggingLevel, McpTool, MessageContent, PaginatedParams,
-    ProgressParams, PromptMessage, ProtocolVersion, ResourceContents, Role, ServerCapabilities,
-    Task, TaskStatus, TaskSupport, TasksListResponse, TextContent, TextResourceContents,
-    ToolAnnotations, ToolChoiceMode, ToolExecution, ToolResponseContent, LATEST_PROTOCOL_VERSION,
-    NOTIF_TOOLS_LIST_CHANGED, PROTOCOL_VERSION_2025_03_26, SUPPORTED_PROTOCOL_VERSIONS,
+    JsonRpcRequest, JsonRpcResponse, LATEST_PROTOCOL_VERSION, LoggingLevel, McpTool,
+    MessageContent, NOTIF_TOOLS_LIST_CHANGED, PROTOCOL_VERSION_2025_03_26, PaginatedParams,
+    ProgressParams, PromptMessage, ProtocolVersion, ResourceContents, Role,
+    SUPPORTED_PROTOCOL_VERSIONS, ServerCapabilities, Task, TaskStatus, TaskSupport,
+    TasksListResponse, TextContent, TextResourceContents, ToolAnnotations, ToolChoiceMode,
+    ToolExecution, ToolResponseContent,
 };
 
 // ---------------------------------------------------------------------------
@@ -215,7 +216,7 @@ fn test_json_rpc_request_id_none_omitted() {
     };
     let val = serde_json::to_value(&req).unwrap();
     // When id is None it should be absent or null; never a meaningful value.
-    assert!(val.get("id").map_or(true, |v| v.is_null()));
+    assert!(val.get("id").is_none_or(|v| v.is_null()));
 }
 
 #[test]
@@ -228,7 +229,7 @@ fn test_json_rpc_response_roundtrip() {
     };
     let val = serde_json::to_value(&resp).unwrap();
     assert_eq!(val["result"]["ok"], true);
-    assert!(val.get("error").map_or(true, |v| v.is_null()));
+    assert!(val.get("error").is_none_or(|v| v.is_null()));
 }
 
 #[test]

@@ -12,7 +12,7 @@
 //! ```no_run
 //! use std::path::Path;
 //! use agent_client_protocol::{Client as AcpClientRole, ConnectionTo};
-//! use agent_client_protocol::schema as acp;
+//! use agent_client_protocol::schema::v1 as acp;
 //! use xzatoma::acp::ide_bridge::{IdeBridge, IdeCapabilities};
 //!
 //! # async fn example(
@@ -34,7 +34,7 @@
 
 use std::path::{Path, PathBuf};
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol::{self as acp_sdk, Client as AcpClientRole, ConnectionTo};
 
 use crate::error::{Result, XzatomaError};
@@ -61,7 +61,7 @@ use crate::error::{Result, XzatomaError};
 /// ```no_run
 /// use std::path::Path;
 /// use agent_client_protocol::{Client as AcpClientRole, ConnectionTo};
-/// use agent_client_protocol::schema as acp;
+/// use agent_client_protocol::schema::v1 as acp;
 /// use xzatoma::acp::ide_bridge::{IdeBridge, IdeCapabilities};
 ///
 /// # async fn example(
@@ -123,7 +123,7 @@ impl IdeCapabilities {
     /// # Examples
     ///
     /// ```
-    /// use agent_client_protocol::schema as acp;
+    /// use agent_client_protocol::schema::v1 as acp;
     /// use xzatoma::acp::ide_bridge::IdeCapabilities;
     ///
     /// let client_caps = acp::ClientCapabilities::new()
@@ -191,7 +191,7 @@ impl IdeBridge {
     ///
     /// ```no_run
     /// use agent_client_protocol::{Client as AcpClientRole, ConnectionTo};
-    /// use agent_client_protocol::schema as acp;
+    /// use agent_client_protocol::schema::v1 as acp;
     /// use xzatoma::acp::ide_bridge::{IdeBridge, IdeCapabilities};
     ///
     /// # fn example(connection: ConnectionTo<AcpClientRole>, session_id: acp::SessionId) {
@@ -220,7 +220,7 @@ impl IdeBridge {
     ///
     /// ```no_run
     /// use agent_client_protocol::{Client as AcpClientRole, ConnectionTo};
-    /// use agent_client_protocol::schema as acp;
+    /// use agent_client_protocol::schema::v1 as acp;
     /// use xzatoma::acp::ide_bridge::{IdeBridge, IdeCapabilities};
     ///
     /// # fn example(connection: ConnectionTo<AcpClientRole>, session_id: acp::SessionId) {
@@ -604,7 +604,7 @@ impl IdeBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_sdk::schema as acp;
+    use acp_sdk::schema::v1 as acp;
 
     // Bridge integration tests that require a live `ConnectionTo<AcpClientRole>` are
     // covered by in-memory protocol tests in `stdio.rs`. Unit tests here focus on

@@ -198,6 +198,8 @@ impl AcpSseEvent {
 /// use xzatoma::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
 /// use xzatoma::Config;
 ///
+/// # let rt = tokio::runtime::Runtime::new().unwrap();
+/// # let _guard = rt.enter();
 /// let runtime = AcpRuntime::new(Config::default());
 /// let run = runtime.create_run(AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
 ///     AcpRole::User,
@@ -210,7 +212,7 @@ impl AcpSseEvent {
 pub fn stream_run_events_sse(
     runtime: AcpRuntime,
     run_id: &str,
-) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
+) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>> + use<>>> {
     let replay = runtime.get_events(run_id)?;
     let subscription = runtime.subscribe(run_id)?;
     let stream = build_sse_stream(replay, subscription);
@@ -391,18 +393,20 @@ pub fn streaming_error<T>(message: impl Into<String>) -> Result<T> {
 mod tests {
     use super::*;
     use crate::acp::runtime::{
-        assistant_text_message, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode,
+        AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode, assistant_text_message,
     };
     use crate::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
 
     fn test_request() -> AcpRuntimeCreateRequest {
-        AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new(
-                "Stream this run".to_string(),
-            ))],
-        )
-        .unwrap()])
+        AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new(
+                    "Stream this run".to_string(),
+                ))],
+            )
+            .unwrap(),
+        ])
         .with_mode(AcpRuntimeExecuteMode::Stream)
     }
 
@@ -420,8 +424,8 @@ mod tests {
         assert!(!sse_event.terminal);
     }
 
-    #[test]
-    fn test_stream_run_events_sse_returns_response_for_existing_run() {
+    #[tokio::test]
+    async fn test_stream_run_events_sse_returns_response_for_existing_run() {
         let runtime = AcpRuntime::new(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
 

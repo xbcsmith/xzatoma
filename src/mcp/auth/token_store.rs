@@ -271,7 +271,7 @@ impl TokenStore {
         let service = Self::service_name(server_id);
         let entry = keyring::Entry::new(&service, server_id).map_err(XzatomaError::Keyring)?;
 
-        match entry.delete_password() {
+        match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(XzatomaError::Keyring(e)),

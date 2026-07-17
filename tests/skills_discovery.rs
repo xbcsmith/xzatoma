@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use xzatoma::config::SkillsConfig;
-use xzatoma::skills::{discover_skills, SkillDiagnosticKind, SkillSourceScope};
+use xzatoma::skills::{SkillDiagnosticKind, SkillSourceScope, discover_skills};
 
 struct HomeEnvGuard {
     original_home: Option<String>,

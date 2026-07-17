@@ -765,12 +765,12 @@ impl Agent {
             // Emit batch reasoning only when streaming callbacks did not already deliver
             // per-chunk events. For non-streaming providers, wrap with ThinkingStarted
             // and ThinkingFinished so Zed opens the thinking panel before content arrives.
-            if !reasoning_was_streamed {
-                if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
-                    observer.on_event(AgentExecutionEvent::ThinkingStarted);
-                    observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
-                    observer.on_event(AgentExecutionEvent::ThinkingFinished);
-                }
+            if !reasoning_was_streamed
+                && let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning)
+            {
+                observer.on_event(AgentExecutionEvent::ThinkingStarted);
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+                observer.on_event(AgentExecutionEvent::ThinkingFinished);
             }
 
             if let Some(usage) = completion_response.usage {
@@ -818,14 +818,11 @@ impl Agent {
 
             // Only emit batch content when streaming callbacks did not already deliver
             // per-chunk AssistantTextEmitted events.
-            if !content_was_streamed {
-                if let Some(text) = &message.content {
-                    if !text.is_empty() {
-                        observer.on_event(AgentExecutionEvent::AssistantTextEmitted {
-                            text: text.clone(),
-                        });
-                    }
-                }
+            if !content_was_streamed
+                && let Some(text) = &message.content
+                && !text.is_empty()
+            {
+                observer.on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
             }
 
             self.conversation.add_message(message.clone());
@@ -1228,12 +1225,12 @@ impl Agent {
             // Emit batch reasoning only when streaming callbacks did not already deliver
             // per-chunk events. For non-streaming providers, wrap with ThinkingStarted
             // and ThinkingFinished so Zed opens the thinking panel before content arrives.
-            if !reasoning_was_streamed {
-                if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
-                    observer.on_event(AgentExecutionEvent::ThinkingStarted);
-                    observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
-                    observer.on_event(AgentExecutionEvent::ThinkingFinished);
-                }
+            if !reasoning_was_streamed
+                && let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning)
+            {
+                observer.on_event(AgentExecutionEvent::ThinkingStarted);
+                observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+                observer.on_event(AgentExecutionEvent::ThinkingFinished);
             }
 
             if let Some(usage) = completion_response.usage {
@@ -1282,14 +1279,11 @@ impl Agent {
 
             // Only emit batch content when streaming callbacks did not already deliver
             // per-chunk AssistantTextEmitted events.
-            if !content_was_streamed {
-                if let Some(text) = &message.content {
-                    if !text.is_empty() {
-                        observer.on_event(AgentExecutionEvent::AssistantTextEmitted {
-                            text: text.clone(),
-                        });
-                    }
-                }
+            if !content_was_streamed
+                && let Some(text) = &message.content
+                && !text.is_empty()
+            {
+                observer.on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
             }
 
             self.conversation.add_message(message.clone());
@@ -2201,10 +2195,12 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
-        assert!(collector
-            .events
-            .iter()
-            .any(|e| e.contains("ExecutionCompleted")));
+        assert!(
+            collector
+                .events
+                .iter()
+                .any(|e| e.contains("ExecutionCompleted"))
+        );
     }
 
     #[tokio::test]

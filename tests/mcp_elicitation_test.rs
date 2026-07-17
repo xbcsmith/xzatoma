@@ -16,7 +16,7 @@
 //! is a pure no-op exported from `xzatoma::mcp::elicitation`.
 
 use xzatoma::config::ExecutionMode;
-use xzatoma::mcp::elicitation::{noop_browser_opener, XzatomaElicitationHandler};
+use xzatoma::mcp::elicitation::{XzatomaElicitationHandler, noop_browser_opener};
 use xzatoma::mcp::protocol::ElicitationHandler;
 use xzatoma::mcp::types::{ElicitationAction, ElicitationCreateParams, ElicitationMode};
 

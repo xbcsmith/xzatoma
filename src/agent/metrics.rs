@@ -24,7 +24,7 @@
 //! metrics.record_completion(5, 1500, "success");
 //! ```
 
-use metrics::{decrement_gauge, histogram, increment_counter, increment_gauge};
+use metrics::{counter, gauge, histogram};
 use std::cell::Cell;
 use std::time::Instant;
 
@@ -81,8 +81,8 @@ impl SubagentMetrics {
     /// assert_eq!(metrics.depth(), 1);
     /// ```
     pub fn new(label: String, depth: usize) -> Self {
-        increment_counter!("subagent_executions_total", "depth" => depth.to_string());
-        increment_gauge!("subagent_active_count", 1.0, "depth" => depth.to_string());
+        counter!("subagent_executions_total", "depth" => depth.to_string()).increment(1);
+        gauge!("subagent_active_count", "depth" => depth.to_string()).increment(1.0);
 
         Self {
             label,
@@ -122,30 +122,31 @@ impl SubagentMetrics {
 
         histogram!(
             "subagent_duration_seconds",
-            duration.as_secs_f64(),
             "depth" => self.depth.to_string(),
             "status" => status.to_string()
-        );
+        )
+        .record(duration.as_secs_f64());
 
         histogram!(
             "subagent_turns_used",
-            turns as f64,
             "depth" => self.depth.to_string()
-        );
+        )
+        .record(turns as f64);
 
         histogram!(
             "subagent_tokens_consumed",
-            tokens as f64,
             "depth" => self.depth.to_string()
-        );
+        )
+        .record(tokens as f64);
 
-        increment_counter!(
+        counter!(
             "subagent_completions_total",
             "depth" => self.depth.to_string(),
             "status" => status.to_string()
-        );
+        )
+        .increment(1);
 
-        decrement_gauge!("subagent_active_count", 1.0, "depth" => self.depth.to_string());
+        gauge!("subagent_active_count", "depth" => self.depth.to_string()).decrement(1.0);
     }
 
     /// Records an error during subagent execution
@@ -172,13 +173,14 @@ impl SubagentMetrics {
         }
         self.recorded.set(true);
 
-        increment_counter!(
+        counter!(
             "subagent_errors_total",
             "depth" => self.depth.to_string(),
             "error_type" => error_type.to_string()
-        );
+        )
+        .increment(1);
 
-        decrement_gauge!("subagent_active_count", 1.0, "depth" => self.depth.to_string());
+        gauge!("subagent_active_count", "depth" => self.depth.to_string()).decrement(1.0);
     }
 
     /// Returns the execution label
@@ -217,7 +219,7 @@ impl Drop for SubagentMetrics {
     /// to maintain accurate gauge values even in case of panics.
     fn drop(&mut self) {
         if !self.recorded.get() {
-            decrement_gauge!("subagent_active_count", 1.0, "depth" => self.depth.to_string());
+            gauge!("subagent_active_count", "depth" => self.depth.to_string()).decrement(1.0);
         }
     }
 }

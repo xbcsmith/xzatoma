@@ -152,10 +152,10 @@ pub async fn get_file_type(path: &Path) -> Result<FileType, FileMetadataError> {
     }
 
     // Check if it's an image file
-    if is_image_file(path) {
-        if let Ok(format) = detect_image_format(path).await {
-            return Ok(FileType::Image(format));
-        }
+    if is_image_file(path)
+        && let Ok(format) = detect_image_format(path).await
+    {
+        return Ok(FileType::Image(format));
     }
 
     Ok(FileType::File)
@@ -308,10 +308,10 @@ async fn detect_image_format(path: &Path) -> Result<ImageFormat, FileMetadataErr
 /// ```
 pub async fn detect_content_type(path: &Path) -> Result<String, FileMetadataError> {
     // Check if it's an image file
-    if is_image_file(path) {
-        if let Ok(format) = detect_image_format(path).await {
-            return Ok(format.mime_type().to_string());
-        }
+    if is_image_file(path)
+        && let Ok(format) = detect_image_format(path).await
+    {
+        return Ok(format.mime_type().to_string());
     }
 
     // Default to generic content type for non-image files

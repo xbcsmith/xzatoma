@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 use xzatoma::skills::trust::{
-    enumerate_skill_resources, resolve_skill_resource_path, SkillResources,
+    SkillResources, enumerate_skill_resources, resolve_skill_resource_path,
 };
 
 fn write_file(path: &Path, contents: &str) {

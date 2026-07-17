@@ -24,7 +24,7 @@ use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xzatoma::mcp::auth::discovery::AuthorizationServerMetadata;
-use xzatoma::mcp::auth::flow::{noop_browser_opener, OAuthFlow, OAuthFlowConfig};
+use xzatoma::mcp::auth::flow::{OAuthFlow, OAuthFlowConfig, noop_browser_opener};
 use xzatoma::mcp::auth::pkce;
 
 // ---------------------------------------------------------------------------

@@ -116,31 +116,31 @@ impl EventFilter {
         }
 
         // Filter by source pattern
-        if let Some(regex) = &self.source_regex {
-            if !regex.is_match(&event.source) {
-                return false;
-            }
+        if let Some(regex) = &self.source_regex
+            && !regex.is_match(&event.source)
+        {
+            return false;
         }
 
         // Filter by platform_id
-        if let Some(platform) = &self.config.platform_id {
-            if &event.platform_id != platform {
-                return false;
-            }
+        if let Some(platform) = &self.config.platform_id
+            && &event.platform_id != platform
+        {
+            return false;
         }
 
         // Filter by package
-        if let Some(package) = &self.config.package {
-            if &event.package != package {
-                return false;
-            }
+        if let Some(package) = &self.config.package
+            && &event.package != package
+        {
+            return false;
         }
 
         // Filter by api_version
-        if let Some(version) = &self.config.api_version {
-            if &event.api_version != version {
-                return false;
-            }
+        if let Some(version) = &self.config.api_version
+            && &event.api_version != version
+        {
+            return false;
         }
 
         true

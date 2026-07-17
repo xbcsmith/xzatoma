@@ -43,13 +43,13 @@
 use std::sync::Arc;
 
 use crate::acp::runtime::{
-    assistant_text_message, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode,
+    AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode, assistant_text_message,
 };
 use crate::agent::Agent;
 use crate::commands::build_agent_environment;
 use crate::config::Config;
 use crate::error::Result;
-use crate::providers::{create_provider, Provider};
+use crate::providers::{Provider, create_provider};
 
 /// ACP executor outcome.
 ///
@@ -464,17 +464,17 @@ impl AcpExecutor {
             .agent
             .system_prompt
             .as_deref());
-        if let Some(sp) = effective_sp {
-            if !sp.trim().is_empty() {
-                tracing::debug!(
-                    length = sp.len(),
-                    "Injecting system prompt into ACP run session"
-                );
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!(system_prompt = %sp, "ACP run session system prompt");
-                }
-                agent.conversation_mut().add_system_message(sp.to_string());
+        if let Some(sp) = effective_sp
+            && !sp.trim().is_empty()
+        {
+            tracing::debug!(
+                length = sp.len(),
+                "Injecting system prompt into ACP run session"
+            );
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(system_prompt = %sp, "ACP run session system prompt");
             }
+            agent.conversation_mut().add_system_message(sp.to_string());
         }
 
         agent.execute(prompt.to_string()).await
@@ -488,13 +488,15 @@ mod tests {
     use crate::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
 
     fn test_request(mode: AcpRuntimeExecuteMode) -> AcpRuntimeCreateRequest {
-        AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new(
-                "Test ACP executor".to_string(),
-            ))],
-        )
-        .unwrap()])
+        AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new(
+                    "Test ACP executor".to_string(),
+                ))],
+            )
+            .unwrap(),
+        ])
         .with_mode(mode)
     }
 
@@ -629,11 +631,13 @@ mod tests {
         let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor =
             AcpExecutor::new_mock_success(config, runtime.clone(), "mock response".to_string());
-        let request = AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
-        )
-        .unwrap()])
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
+            )
+            .unwrap(),
+        ])
         .with_mode(AcpRuntimeExecuteMode::Sync);
         let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
         // Mock executor returns success without hitting LLM; the injection is
@@ -648,11 +652,13 @@ mod tests {
         let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor =
             AcpExecutor::new_mock_success(config, runtime.clone(), "mock response".to_string());
-        let request = AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
-        )
-        .unwrap()])
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
+            )
+            .unwrap(),
+        ])
         .with_mode(AcpRuntimeExecuteMode::Sync);
         let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
         assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
@@ -666,11 +672,13 @@ mod tests {
         let runtime = AcpRuntime::new_in_memory(config.clone());
         let executor =
             AcpExecutor::new_mock_success(config, runtime.clone(), "mock response".to_string());
-        let request = AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
-        )
-        .unwrap()])
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
+            )
+            .unwrap(),
+        ])
         .with_mode(AcpRuntimeExecuteMode::Sync);
         let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
         assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));

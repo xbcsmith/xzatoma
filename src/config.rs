@@ -1687,13 +1687,13 @@ impl Config {
             }
         }
 
-        if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT") {
-            if !prompt.trim().is_empty() {
-                self.agent.system_prompt = Some(prompt.clone());
-                // Mirror into acp.system_prompt so ACP contexts can prefer the
-                // ACP-specific field while XZATOMA_SYSTEM_PROMPT covers all modes.
-                self.acp.system_prompt = Some(prompt);
-            }
+        if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT")
+            && !prompt.trim().is_empty()
+        {
+            self.agent.system_prompt = Some(prompt.clone());
+            // Mirror into acp.system_prompt so ACP contexts can prefer the
+            // ACP-specific field while XZATOMA_SYSTEM_PROMPT covers all modes.
+            self.acp.system_prompt = Some(prompt);
         }
 
         if let Ok(mode) = std::env::var("XZATOMA_EXECUTION_MODE") {
@@ -2641,12 +2641,12 @@ impl Config {
             ));
         }
 
-        if let Some(ref prompt) = self.agent.system_prompt {
-            if prompt.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "agent.system_prompt cannot be blank".to_string(),
-                ));
-            }
+        if let Some(ref prompt) = self.agent.system_prompt
+            && prompt.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "agent.system_prompt cannot be blank".to_string(),
+            ));
         }
 
         if self.agent.conversation.max_tokens == 0 {
@@ -2761,12 +2761,12 @@ impl Config {
                 ));
             }
 
-            if let Some(output_topic) = &kafka.output_topic {
-                if output_topic.trim().is_empty() {
-                    return Err(XzatomaError::Config(
-                        "watcher.kafka.output_topic cannot be empty when set".to_string(),
-                    ));
-                }
+            if let Some(output_topic) = &kafka.output_topic
+                && output_topic.trim().is_empty()
+            {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.output_topic cannot be empty when set".to_string(),
+                ));
             }
 
             if kafka.group_id.trim().is_empty() {
@@ -2878,21 +2878,21 @@ impl Config {
             ));
         }
 
-        if let Some(token) = &self.acp.auth_token {
-            if token.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "acp.auth_token cannot be empty when set".to_string(),
-                ));
-            }
+        if let Some(token) = &self.acp.auth_token
+            && token.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "acp.auth_token cannot be empty when set".to_string(),
+            ));
         }
 
-        if let Some(ref sp) = self.acp.system_prompt {
-            if sp.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "acp.system_prompt cannot be blank; remove the field or set a non-empty value"
-                        .to_string(),
-                ));
-            }
+        if let Some(ref sp) = self.acp.system_prompt
+            && sp.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "acp.system_prompt cannot be blank; remove the field or set a non-empty value"
+                    .to_string(),
+            ));
         }
 
         if self.acp.max_request_bytes == 0 {
@@ -3086,10 +3086,10 @@ fn parse_log_format(value: &str) -> Option<LogFormat> {
 }
 
 fn resolve_config_like_path(path: &str) -> PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(stripped);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
     }
 
     PathBuf::from(path)
@@ -3167,7 +3167,9 @@ mod tests {
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            unsafe {
+                std::env::set_var(key, value);
+            }
             Self { key, original }
         }
     }
@@ -3175,9 +3177,13 @@ mod tests {
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             if let Some(original) = &self.original {
-                std::env::set_var(self.key, original);
+                unsafe {
+                    std::env::set_var(self.key, original);
+                }
             } else {
-                std::env::remove_var(self.key);
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
             }
         }
     }
@@ -3312,17 +3318,21 @@ mod tests {
         config.acp.max_request_bytes = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.max_request_bytes must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.max_request_bytes must be greater than 0")
+        );
 
         let mut config = Config::default();
         config.acp.rate_limit_per_minute = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.rate_limit_per_minute must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.rate_limit_per_minute must be greater than 0")
+        );
     }
 
     #[test]
@@ -3331,9 +3341,11 @@ mod tests {
         config.acp.base_path = "/".to_string();
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.base_path cannot be '/' in versioned compatibility mode"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.base_path cannot be '/' in versioned compatibility mode")
+        );
     }
 
     #[test]
@@ -3351,17 +3363,21 @@ mod tests {
         config.acp.persistence.max_events_per_run = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.persistence.max_events_per_run must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.persistence.max_events_per_run must be greater than 0")
+        );
 
         config.acp.persistence.max_events_per_run = 1000;
         config.acp.persistence.max_completed_runs = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.persistence.max_completed_runs must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.persistence.max_completed_runs must be greater than 0")
+        );
     }
 
     #[test]
@@ -3638,25 +3654,51 @@ enabled: true
             std::env::remove_var("XZATOMA_SKILLS_TRUST_STORE_PATH");
         }
 
-        std::env::set_var("XZATOMA_SKILLS_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_PROJECT_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_USER_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED", "false");
-        std::env::set_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST", "true");
-        std::env::set_var("XZATOMA_SKILLS_STRICT_FRONTMATTER", "false");
-        std::env::set_var(
-            "XZATOMA_SKILLS_ADDITIONAL_PATHS",
-            "/opt/xzatoma/skills:./custom_skills",
-        );
-        std::env::set_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS", "64");
-        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES", "400");
-        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH", "3");
-        std::env::set_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES", "16");
-        std::env::set_var(
-            "XZATOMA_SKILLS_TRUST_STORE_PATH",
-            "~/.xzatoma/custom_skills_trust.yaml",
-        );
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_PROJECT_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_USER_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST", "true");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_STRICT_FRONTMATTER", "false");
+        }
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_SKILLS_ADDITIONAL_PATHS",
+                "/opt/xzatoma/skills:./custom_skills",
+            );
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS", "64");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES", "400");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH", "3");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES", "16");
+        }
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_SKILLS_TRUST_STORE_PATH",
+                "~/.xzatoma/custom_skills_trust.yaml",
+            );
+        }
 
         let mut config = Config::default();
         config.apply_env_vars();
@@ -4633,12 +4675,24 @@ chat_enabled: true
             std::env::remove_var("XZEPR_KAFKA_SASL_PASSWORD");
         }
 
-        std::env::set_var("XZEPR_KAFKA_BROKERS", "test-broker:9092");
-        std::env::set_var("XZEPR_KAFKA_TOPIC", "test-topic");
-        std::env::set_var("XZEPR_KAFKA_GROUP_ID", "test-group");
-        std::env::set_var("XZEPR_KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        std::env::set_var("XZEPR_KAFKA_SASL_USERNAME", "user");
-        std::env::set_var("XZEPR_KAFKA_SASL_PASSWORD", "pass");
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_BROKERS", "test-broker:9092");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_TOPIC", "test-topic");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_GROUP_ID", "test-group");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SASL_USERNAME", "user");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SASL_PASSWORD", "pass");
+        }
 
         let mut cfg = Config::default();
         // apply_env_vars is private but accessible within the test module
@@ -4678,13 +4732,21 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
         }
 
-        std::env::set_var(
-            "XZATOMA_WATCHER_EVENT_TYPES",
-            "deployment.success,ci.pipeline.completed",
-        );
-        std::env::set_var("XZATOMA_WATCHER_LOG_LEVEL", "debug");
-        std::env::set_var("XZATOMA_WATCHER_JSON_LOGS", "false");
-        std::env::set_var("XZATOMA_WATCHER_MAX_CONCURRENT", "3");
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_WATCHER_EVENT_TYPES",
+                "deployment.success,ci.pipeline.completed",
+            );
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_LOG_LEVEL", "debug");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_JSON_LOGS", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_CONCURRENT", "3");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -4709,7 +4771,9 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_TYPE");
         }
 
-        std::env::set_var("XZATOMA_WATCHER_TYPE", "generic");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_TYPE", "generic");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -4742,7 +4806,9 @@ chat_enabled: true
             poll_interval_ms: 1000,
         });
 
-        std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
+        }
         cfg.apply_env_vars();
 
         assert_eq!(
@@ -4776,7 +4842,9 @@ chat_enabled: true
             poll_interval_ms: 1000,
         });
 
-        std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        }
         cfg.apply_env_vars();
 
         assert_eq!(
@@ -4798,9 +4866,15 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_MATCH_VERSION");
         }
 
-        std::env::set_var("XZATOMA_WATCHER_MATCH_ACTION", "deploy.*");
-        std::env::set_var("XZATOMA_WATCHER_MATCH_NAME", "service-a");
-        std::env::set_var("XZATOMA_WATCHER_MATCH_VERSION", "^v1$");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_ACTION", "deploy.*");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_NAME", "service-a");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_VERSION", "^v1$");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -5113,10 +5187,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid subagent provider"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid subagent provider")
+        );
     }
 
     #[test]
@@ -5155,10 +5231,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_depth must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_depth must be greater than 0")
+        );
     }
 
     #[test]
@@ -5217,10 +5295,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("default_max_turns must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("default_max_turns must be greater than 0")
+        );
     }
 
     #[test]
@@ -5240,10 +5320,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot exceed 100"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot exceed 100")
+        );
     }
 
     #[test]
@@ -5282,10 +5364,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("at least 1024 bytes"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least 1024 bytes")
+        );
     }
 
     #[test]

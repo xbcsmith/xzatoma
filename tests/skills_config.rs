@@ -286,9 +286,11 @@ fn test_skills_config_validation_rejects_catalog_max_entries_above_discovered_li
     };
 
     let error = config.validate().expect_err("validation should fail");
-    assert!(error
-        .to_string()
-        .contains("skills.catalog_max_entries must be less than or equal"));
+    assert!(
+        error
+            .to_string()
+            .contains("skills.catalog_max_entries must be less than or equal")
+    );
 }
 
 #[test]
@@ -302,9 +304,11 @@ fn test_skills_config_validation_rejects_empty_additional_path_entry() {
     };
 
     let error = config.validate().expect_err("validation should fail");
-    assert!(error
-        .to_string()
-        .contains("skills.additional_paths cannot contain empty entries"));
+    assert!(
+        error
+            .to_string()
+            .contains("skills.additional_paths cannot contain empty entries")
+    );
 }
 
 #[test]
@@ -318,9 +322,11 @@ fn test_skills_config_validation_rejects_empty_trust_store_path_when_set() {
     };
 
     let error = config.validate().expect_err("validation should fail");
-    assert!(error
-        .to_string()
-        .contains("skills.trust_store_path cannot be empty when set"));
+    assert!(
+        error
+            .to_string()
+            .contains("skills.trust_store_path cannot be empty when set")
+    );
 }
 
 #[test]

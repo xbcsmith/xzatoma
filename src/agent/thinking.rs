@@ -145,7 +145,7 @@ pub fn extract_thinking(input: &str) -> (String, Option<String>) {
         for (open, close) in TAGS {
             if let Some(rel) = find_ascii_case_insensitive(&input[pos..], open) {
                 let abs = pos + rel;
-                let is_earlier = earliest.map_or(true, |(best, _, _)| abs < best);
+                let is_earlier = earliest.is_none_or(|(best, _, _)| abs < best);
                 if is_earlier {
                     earliest = Some((abs, open.len(), close));
                 }

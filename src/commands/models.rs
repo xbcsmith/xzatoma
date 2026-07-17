@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::providers;
 use crate::providers::{ModelInfo, ModelInfoSummary};
-use prettytable::{row, Table};
+use prettytable::{Table, row};
 use serde_json;
 
 /// List available models from a provider
@@ -565,12 +565,12 @@ pub fn render_model_summary_detailed(model: &ModelInfoSummary) -> String {
 
 /// Output model info in JSON format (basic data)
 fn output_model_info_json(model: &ModelInfo, provider_type: &str) -> Result<()> {
-    if provider_type == "ollama" {
-        if let Some(raw) = &model.raw_data {
-            let json = serialize_pretty(raw).map_err(XzatomaError::Serialization)?;
-            println!("{}", json);
-            return Ok(());
-        }
+    if provider_type == "ollama"
+        && let Some(raw) = &model.raw_data
+    {
+        let json = serialize_pretty(raw).map_err(XzatomaError::Serialization)?;
+        println!("{}", json);
+        return Ok(());
     }
     let json = serialize_pretty(model).map_err(XzatomaError::Serialization)?;
     println!("{}", json);
@@ -671,9 +671,11 @@ mod tests {
         let parsed: Vec<ModelInfo> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].name, model.name);
-        assert!(parsed[0]
-            .capabilities
-            .contains(&ModelCapability::FunctionCalling));
+        assert!(
+            parsed[0]
+                .capabilities
+                .contains(&ModelCapability::FunctionCalling)
+        );
     }
 
     #[test]

@@ -270,34 +270,34 @@ pub fn parse_frontmatter_map(frontmatter: &str) -> Result<BTreeMap<String, Strin
 
     let mut parsed = BTreeMap::new();
 
-    if let Some(value) = mapping.get(serde_yaml::Value::String("name".to_string())) {
-        if let Some(value) = yaml_value_to_string(value)? {
-            parsed.insert("name".to_string(), value);
-        }
+    if let Some(value) = mapping.get(serde_yaml::Value::String("name".to_string()))
+        && let Some(value) = yaml_value_to_string(value)?
+    {
+        parsed.insert("name".to_string(), value);
     }
 
-    if let Some(value) = mapping.get(serde_yaml::Value::String("description".to_string())) {
-        if let Some(value) = yaml_value_to_string(value)? {
-            parsed.insert("description".to_string(), value);
-        }
+    if let Some(value) = mapping.get(serde_yaml::Value::String("description".to_string()))
+        && let Some(value) = yaml_value_to_string(value)?
+    {
+        parsed.insert("description".to_string(), value);
     }
 
-    if let Some(value) = mapping.get(serde_yaml::Value::String("license".to_string())) {
-        if let Some(value) = yaml_value_to_string(value)? {
-            parsed.insert("license".to_string(), value);
-        }
+    if let Some(value) = mapping.get(serde_yaml::Value::String("license".to_string()))
+        && let Some(value) = yaml_value_to_string(value)?
+    {
+        parsed.insert("license".to_string(), value);
     }
 
-    if let Some(value) = mapping.get(serde_yaml::Value::String("compatibility".to_string())) {
-        if let Some(value) = yaml_value_to_string_or_sequence(value, "compatibility")? {
-            parsed.insert("compatibility".to_string(), value);
-        }
+    if let Some(value) = mapping.get(serde_yaml::Value::String("compatibility".to_string()))
+        && let Some(value) = yaml_value_to_string_or_sequence(value, "compatibility")?
+    {
+        parsed.insert("compatibility".to_string(), value);
     }
 
-    if let Some(value) = mapping.get(serde_yaml::Value::String("allowed-tools".to_string())) {
-        if let Some(value) = yaml_value_to_string_or_sequence(value, "allowed-tools")? {
-            parsed.insert("allowed-tools".to_string(), value);
-        }
+    if let Some(value) = mapping.get(serde_yaml::Value::String("allowed-tools".to_string()))
+        && let Some(value) = yaml_value_to_string_or_sequence(value, "allowed-tools")?
+    {
+        parsed.insert("allowed-tools".to_string(), value);
     }
 
     if let Some(value) = mapping.get(serde_yaml::Value::String("metadata".to_string())) {
@@ -420,7 +420,7 @@ fn yaml_value_to_string(value: &serde_yaml::Value) -> Result<Option<String>> {
         _ => {
             return Err(XzatomaError::Config(
                 "Expected a scalar YAML value in skill frontmatter".to_string(),
-            ))
+            ));
         }
     };
 

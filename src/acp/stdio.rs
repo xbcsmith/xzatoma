@@ -28,7 +28,7 @@ use agent_client_protocol::{
     self as acp_sdk, Agent as AcpAgentRole, Client as AcpClientRole, ConnectTo as AcpConnectTo,
     ConnectionTo, Dispatch, Responder,
 };
-use tokio::sync::{mpsc, oneshot, watch, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 #[cfg(not(test))]
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -41,11 +41,11 @@ use crate::acp::prompt_input::{
     acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
 };
 use crate::acp::session_config::{
-    build_session_config_options, SessionRuntimeState, CONFIG_SESSION_MODE,
+    CONFIG_SESSION_MODE, SessionRuntimeState, build_session_config_options,
 };
-use crate::acp::session_mode::{build_session_mode_state, mode_runtime_effect};
 #[cfg(test)]
 use crate::acp::session_mode::{MODE_FULL_AUTONOMOUS, MODE_WRITE};
+use crate::acp::session_mode::{build_session_mode_state, mode_runtime_effect};
 use crate::acp::tool_notifications::{
     build_tool_call_completion, build_tool_call_failure, build_tool_call_start,
 };
@@ -54,7 +54,7 @@ use crate::agent::events::{AgentExecutionEvent, AgentObserver};
 use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
 use crate::commands::special_commands::{
-    format_help_text, format_mention_help_text, parse_special_command, CommandError, SpecialCommand,
+    CommandError, SpecialCommand, format_help_text, format_mention_help_text, parse_special_command,
 };
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
@@ -62,16 +62,17 @@ use crate::mcp::manager::McpClientManager;
 use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::prompts;
+#[cfg(test)]
+use crate::providers::ModelInfo as XzatomaModelInfo;
 use crate::providers::{
-    create_provider_with_override, Message, ModelCapability, ModelInfo as XzatomaModelInfo,
-    MultimodalPromptInput, PromptInputError, Provider,
+    Message, MultimodalPromptInput, PromptInputError, Provider, create_provider_with_override,
 };
 use crate::storage::{PublicStoredAcpStdioSession, SqliteStorage};
+use crate::tools::SubagentTool;
 use crate::tools::ide_tools::register_ide_tools;
 use crate::tools::terminal::{CommandValidator, TerminalTool};
-use crate::tools::SubagentTool;
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 
 /// Runtime options for the ACP stdio agent command.
 ///
@@ -451,70 +452,69 @@ impl AcpStdioServerState {
         // These are per-project servers from the user's Zed settings, not from
         // XZatoma's own config.yaml. Individual connection failures are logged
         // and skipped so they do not abort session creation.
-        if !request.mcp_servers.is_empty() {
-            if let Some(ref manager_arc) = env.mcp_manager {
-                for acp_server in &request.mcp_servers {
-                    let cfg = match convert_acp_mcp_server(acp_server) {
-                        Ok(cfg) => cfg,
-                        Err(error) => {
-                            tracing::warn!(
-                                workspace = %workspace_root.display(),
-                                error = %error,
-                                "Skipping Zed-forwarded MCP server: failed to convert config"
-                            );
-                            continue;
-                        }
-                    };
-
-                    // Skip duplicates: check against already-connected servers.
-                    {
-                        let manager_guard = manager_arc.read().await;
-                        if manager_guard
-                            .connected_servers()
-                            .iter()
-                            .any(|e| e.config.id == cfg.id)
-                        {
-                            tracing::debug!(
-                                server_id = %cfg.id,
-                                "Skipping Zed-forwarded MCP server: already connected"
-                            );
-                            continue;
-                        }
+        if !request.mcp_servers.is_empty()
+            && let Some(ref manager_arc) = env.mcp_manager
+        {
+            for acp_server in &request.mcp_servers {
+                let cfg = match convert_acp_mcp_server(acp_server) {
+                    Ok(cfg) => cfg,
+                    Err(error) => {
+                        tracing::warn!(
+                            workspace = %workspace_root.display(),
+                            error = %error,
+                            "Skipping Zed-forwarded MCP server: failed to convert config"
+                        );
+                        continue;
                     }
+                };
 
-                    let server_id = cfg.id.clone();
-                    {
-                        let mut manager_guard = manager_arc.write().await;
-                        if let Err(error) = manager_guard.connect(cfg).await {
-                            tracing::warn!(
-                                server_id = %server_id,
-                                workspace = %workspace_root.display(),
-                                error = %error,
-                                "Failed to connect Zed-forwarded MCP server; skipping"
-                            );
-                            continue;
-                        }
-                    }
-
-                    tracing::info!(
-                        server_id = %server_id,
-                        workspace = %workspace_root.display(),
-                        "Connected Zed-forwarded MCP server"
-                    );
-                }
-
-                // Register tools from any newly connected Zed-forwarded servers.
-                let execution_mode = self.config.agent.terminal.default_mode;
-                if let Err(error) =
-                    register_mcp_tools(&mut tools, Arc::clone(manager_arc), execution_mode, true)
-                        .await
+                // Skip duplicates: check against already-connected servers.
                 {
-                    tracing::warn!(
-                        workspace = %workspace_root.display(),
-                        error = %error,
-                        "Failed to register tools from Zed-forwarded MCP servers"
-                    );
+                    let manager_guard = manager_arc.read().await;
+                    if manager_guard
+                        .connected_servers()
+                        .iter()
+                        .any(|e| e.config.id == cfg.id)
+                    {
+                        tracing::debug!(
+                            server_id = %cfg.id,
+                            "Skipping Zed-forwarded MCP server: already connected"
+                        );
+                        continue;
+                    }
                 }
+
+                let server_id = cfg.id.clone();
+                {
+                    let mut manager_guard = manager_arc.write().await;
+                    if let Err(error) = manager_guard.connect(cfg).await {
+                        tracing::warn!(
+                            server_id = %server_id,
+                            workspace = %workspace_root.display(),
+                            error = %error,
+                            "Failed to connect Zed-forwarded MCP server; skipping"
+                        );
+                        continue;
+                    }
+                }
+
+                tracing::info!(
+                    server_id = %server_id,
+                    workspace = %workspace_root.display(),
+                    "Connected Zed-forwarded MCP server"
+                );
+            }
+
+            // Register tools from any newly connected Zed-forwarded servers.
+            let execution_mode = self.config.agent.terminal.default_mode;
+            if let Err(error) =
+                register_mcp_tools(&mut tools, Arc::clone(manager_arc), execution_mode, true).await
+            {
+                tracing::warn!(
+                    workspace = %workspace_root.display(),
+                    error = %error,
+                    "Failed to register tools from Zed-forwarded MCP servers"
+                );
             }
         }
 
@@ -528,9 +528,6 @@ impl AcpStdioServerState {
         // Create the session ID early so it can be used by the IDE bridge and
         // passed through to the agent, storage, and prompt worker consistently.
         let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
-
-        let model_state =
-            advertise_session_models(provider.as_ref(), &self.config, &model_name).await;
 
         // Build IDE bridge when client advertised IDE capabilities and a connection is available.
         let ide_bridge = {
@@ -589,19 +586,19 @@ impl AcpStdioServerState {
             .agent
             .system_prompt
             .as_deref());
-        if let Some(sp) = effective_sp {
-            if !sp.trim().is_empty() {
-                tracing::debug!(
-                    length = sp.len(),
-                    "Injecting system prompt into ACP stdio session"
-                );
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!(system_prompt = %sp, "ACP stdio session system prompt");
-                }
-                agent
-                    .conversation_mut()
-                    .replace_first_system_message(sp.to_string());
+        if let Some(sp) = effective_sp
+            && !sp.trim().is_empty()
+        {
+            tracing::debug!(
+                length = sp.len(),
+                "Injecting system prompt into ACP stdio session"
+            );
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(system_prompt = %sp, "ACP stdio session system prompt");
             }
+            agent
+                .conversation_mut()
+                .replace_first_system_message(sp.to_string());
         }
 
         // Inject plan-tracking instruction into every ACP session.
@@ -628,8 +625,8 @@ impl AcpStdioServerState {
 
         let conversation_uuid = agent.conversation().id().to_string();
 
-        if let Some(storage) = &self.storage {
-            if let Err(error) = persist_initial_stdio_session(
+        if let Some(storage) = &self.storage
+            && let Err(error) = persist_initial_stdio_session(
                 storage,
                 &session_id,
                 &workspace_root,
@@ -637,14 +634,14 @@ impl AcpStdioServerState {
                 &provider_name,
                 Some(model_name.as_str()),
                 &mut agent,
-            ) {
-                tracing::warn!(
-                    session_id = %session_id,
-                    conversation_id = %conversation_uuid,
-                    error = %error,
-                    "Failed to persist ACP stdio session mapping"
-                );
-            }
+            )
+        {
+            tracing::warn!(
+                session_id = %session_id,
+                conversation_id = %conversation_uuid,
+                error = %error,
+                "Failed to persist ACP stdio session mapping"
+            );
         }
 
         let xzatoma_agent = Arc::new(Mutex::new(agent));
@@ -697,8 +694,13 @@ impl AcpStdioServerState {
             let used_tokens = agent
                 .get_context_info(agent.conversation().max_tokens())
                 .used_tokens as u64;
-            let max_tokens =
-                model_context_window_from_state(&model_state, &model_name, config_max_tokens);
+            let max_tokens = resolve_current_model_context_window(
+                agent.provider(),
+                &self.config,
+                &model_name,
+                config_max_tokens,
+            )
+            .await;
             tracing::debug!(
                 session_id = %session_id,
                 used_tokens = %used_tokens,
@@ -716,7 +718,6 @@ impl AcpStdioServerState {
         }
 
         let response = acp::NewSessionResponse::new(session_id.clone())
-            .models(model_state)
             .modes(mode_state)
             .config_options(config_options);
 
@@ -839,7 +840,17 @@ impl AcpStdioServerState {
             })?;
 
         let config_id = request.config_id.0.as_ref().to_string();
-        let value_id = request.value.0.as_ref().to_string();
+        let value_id = request
+            .value
+            .as_value_id()
+            .map(|value| value.0.to_string())
+            .or_else(|| {
+                request
+                    .value
+                    .as_bool()
+                    .map(|enabled| if enabled { "enabled" } else { "disabled" }.to_string())
+            })
+            .unwrap_or_default();
 
         let mut session_lock = session.lock().await;
         let (effect, updated_options) =
@@ -957,45 +968,6 @@ impl AcpStdioServerState {
         Ok((updated_options, new_mode_id_for_return))
     }
 
-    /// Handles a `SetSessionModelRequest` from the Zed client.
-    ///
-    /// Updates the current model name in session state so subsequent prompts and
-    /// persistence operations use the newly selected model. Because the live
-    /// provider is wrapped in `Arc<dyn Provider>` without interior mutability,
-    /// the provider itself is not rebuilt in-flight; the change is effective for
-    /// persistence and display immediately and for inference on the next session.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The incoming model selection request.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the session is not found.
-    async fn set_session_model(&self, request: acp::SetSessionModelRequest) -> Result<()> {
-        let session = self
-            .sessions
-            .get(&request.session_id)
-            .await
-            .ok_or_else(|| {
-                XzatomaError::Internal(format!("unknown ACP session: {}", request.session_id))
-            })?;
-
-        let model_id = request.model_id.0.as_ref().to_string();
-
-        let mut session_lock = session.lock().await;
-        session_lock.current_model_name = model_id.clone();
-        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
-
-        tracing::info!(
-            session_id = %request.session_id,
-            model_id = %model_id,
-            "ACP session model changed (takes effect on next session restart for inference)"
-        );
-
-        Ok(())
-    }
-
     async fn enqueue_prompt(
         &self,
         request: acp::PromptRequest,
@@ -1021,14 +993,14 @@ impl AcpStdioServerState {
             )
         };
 
-        if let Some(storage) = &self.storage {
-            if let Err(error) = storage.touch_acp_stdio_session(request.session_id.0.as_ref()) {
-                tracing::warn!(
-                    session_id = %request.session_id,
-                    error = %error,
-                    "Failed to update ACP stdio session activity"
-                );
-            }
+        if let Some(storage) = &self.storage
+            && let Err(error) = storage.touch_acp_stdio_session(request.session_id.0.as_ref())
+        {
+            tracing::warn!(
+                session_id = %request.session_id,
+                error = %error,
+                "Failed to update ACP stdio session activity"
+            );
         }
 
         let prompt_input = acp_content_blocks_to_prompt_input(
@@ -1047,12 +1019,11 @@ impl AcpStdioServerState {
             }
         };
 
-        if let Some(prompt_text) = prompt_text.as_deref() {
-            if let Some(result) =
+        if let Some(prompt_text) = prompt_text.as_deref()
+            && let Some(result) =
                 dispatch_stdio_command(prompt_text, &session, connection.as_ref()).await
-            {
-                return result;
-            }
+        {
+            return result;
         }
 
         validate_provider_supports_prompt_input(&provider_name, &model_name, &prompt_input)
@@ -1641,26 +1612,6 @@ where
             },
             acp_sdk::on_receive_request!(),
         )
-        .on_receive_request(
-            {
-                let state = Arc::clone(&state);
-                async move |request: acp::SetSessionModelRequest,
-                            responder: Responder<acp::SetSessionModelResponse>,
-                            _connection: ConnectionTo<AcpClientRole>|
-                            -> acp_sdk::Result<()> {
-                    match state.set_session_model(request).await {
-                        Ok(()) => {
-                            responder.respond(acp::SetSessionModelResponse::new())?;
-                        }
-                        Err(error) => {
-                            responder.respond_with_error(acp_internal_error(error))?;
-                        }
-                    }
-                    Ok(())
-                }
-            },
-            acp_sdk::on_receive_request!(),
-        )
         .on_receive_notification(
             {
                 let state = Arc::clone(&state);
@@ -1827,11 +1778,13 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
         .auth_methods(Vec::new())
 }
 
-fn negotiate_protocol_version(requested: &acp::ProtocolVersion) -> acp::ProtocolVersion {
-    if requested <= &acp::ProtocolVersion::LATEST {
-        requested.clone()
+fn negotiate_protocol_version(
+    requested: &acp_sdk::schema::ProtocolVersion,
+) -> acp_sdk::schema::ProtocolVersion {
+    if requested <= &acp_sdk::schema::ProtocolVersion::LATEST {
+        *requested
     } else {
-        acp::ProtocolVersion::LATEST
+        acp_sdk::schema::ProtocolVersion::LATEST
     }
 }
 
@@ -2151,56 +2104,60 @@ fn persist_initial_stdio_session(
     })
 }
 
-async fn advertise_session_models(
+/// Resolves the context window (in tokens) for the current model.
+///
+/// Attempts a provider model listing (subject to a timeout and per-provider
+/// eligibility check) to find the current model's reported context window.
+/// Falls back to `fallback_tokens` when listing is unsupported, disabled,
+/// fails, times out, or does not report a positive context window for the
+/// current model.
+///
+/// The ACP protocol no longer has a model-listing/selection surface (removed
+/// upstream in `agent-client-protocol` 1.x); this function only feeds the
+/// initial `UsageUpdate`'s context-window denominator.
+async fn resolve_current_model_context_window(
     provider: &dyn Provider,
     config: &Config,
     current_model_name: &str,
-) -> acp::SessionModelState {
+    fallback_tokens: u64,
+) -> u64 {
     let provider_capabilities = provider.get_provider_capabilities();
-    let available_models = if provider_capabilities.supports_model_listing
-        && should_attempt_stdio_model_listing(config)
+    if !provider_capabilities.supports_model_listing || !should_attempt_stdio_model_listing(config)
     {
-        match tokio::time::timeout(
-            Duration::from_secs(config.acp.stdio.model_list_timeout_seconds),
-            provider.list_models(),
-        )
-        .await
-        {
-            Ok(Ok(models)) => models,
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    provider = %config.provider.provider_type,
-                    error = %error,
-                    "ACP stdio model listing failed; falling back to current model"
-                );
-                Vec::new()
-            }
-            Err(_elapsed) => {
-                tracing::warn!(
-                    provider = %config.provider.provider_type,
-                    timeout_seconds = config.acp.stdio.model_list_timeout_seconds,
-                    "ACP stdio model listing timed out; falling back to current model"
-                );
-                Vec::new()
-            }
-        }
-    } else {
-        Vec::new()
-    };
-
-    let mut advertised = map_models_for_acp(available_models);
-    if !advertised
-        .iter()
-        .any(|model| model.model_id.0.as_ref() == current_model_name)
-    {
-        advertised.push(acp_model_info_from_current_model(
-            current_model_name,
-            config,
-            provider,
-        ));
+        return fallback_tokens;
     }
 
-    acp::SessionModelState::new(current_model_name.to_string(), advertised)
+    let models = match tokio::time::timeout(
+        Duration::from_secs(config.acp.stdio.model_list_timeout_seconds),
+        provider.list_models(),
+    )
+    .await
+    {
+        Ok(Ok(models)) => models,
+        Ok(Err(error)) => {
+            tracing::warn!(
+                provider = %config.provider.provider_type,
+                error = %error,
+                "ACP stdio model listing failed; falling back to configured max_tokens"
+            );
+            return fallback_tokens;
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                provider = %config.provider.provider_type,
+                timeout_seconds = config.acp.stdio.model_list_timeout_seconds,
+                "ACP stdio model listing timed out; falling back to configured max_tokens"
+            );
+            return fallback_tokens;
+        }
+    };
+
+    models
+        .into_iter()
+        .find(|model| model.name == current_model_name)
+        .map(|model| model.context_window as u64)
+        .filter(|&cw| cw > 0)
+        .unwrap_or(fallback_tokens)
 }
 
 fn should_attempt_stdio_model_listing(config: &Config) -> bool {
@@ -2215,120 +2172,16 @@ fn should_attempt_stdio_model_listing(config: &Config) -> bool {
     }
 }
 
-fn map_models_for_acp(models: Vec<XzatomaModelInfo>) -> Vec<acp::ModelInfo> {
-    models
-        .into_iter()
-        .map(|model| {
-            let mut meta = serde_json::Map::new();
-            meta.insert(
-                "contextWindow".to_string(),
-                serde_json::json!(model.context_window),
-            );
-            meta.insert(
-                "supportsTools".to_string(),
-                serde_json::json!(
-                    model.supports_tools
-                        || model.supports_capability(ModelCapability::FunctionCalling)
-                ),
-            );
-            meta.insert(
-                "supportsVision".to_string(),
-                serde_json::json!(model.supports_capability(ModelCapability::Vision)),
-            );
-            meta.insert(
-                "supportsStreaming".to_string(),
-                serde_json::json!(
-                    model.supports_streaming
-                        || model.supports_capability(ModelCapability::Streaming)
-                ),
-            );
-            meta.insert(
-                "providerSpecific".to_string(),
-                serde_json::json!(model.provider_specific),
-            );
-
-            acp::ModelInfo::new(model.name, model.display_name).meta(Some(meta))
-        })
-        .collect()
-}
-
-/// Extracts the context window for the current model from an already-fetched
-/// `SessionModelState`, returning the `fallback_tokens` when the model is not
-/// found, has no meta-data, or reports a zero-sized window.
-///
-/// The context window is stored in `meta["contextWindow"]` as a `u64` by
-/// [`map_models_for_acp`]. Models populated through the fallback path
-/// (`acp_model_info_from_current_model`) omit this key, so this function
-/// will correctly fall back to the configured conversation max_tokens for
-/// those cases.
-///
-/// # Arguments
-///
-/// * `model_state` - The `SessionModelState` returned by `advertise_session_models`.
-/// * `current_model_name` - The model name to look up (matched against `model_id`).
-/// * `fallback_tokens` - The value to return when no context window can be found.
-///
-/// # Returns
-///
-/// The model's context window in tokens, or `fallback_tokens` if not available.
-fn model_context_window_from_state(
-    model_state: &acp::SessionModelState,
-    current_model_name: &str,
-    fallback_tokens: u64,
-) -> u64 {
-    model_state
-        .available_models
-        .iter()
-        .find(|m| m.model_id.0.as_ref() == current_model_name)
-        .and_then(|m| m.meta.as_ref())
-        .and_then(|meta| meta.get("contextWindow"))
-        .and_then(|v| v.as_u64())
-        .filter(|&cw| cw > 0)
-        .unwrap_or(fallback_tokens)
-}
-
-fn acp_model_info_from_current_model(
-    current_model_name: &str,
-    config: &Config,
-    provider: &dyn Provider,
-) -> acp::ModelInfo {
-    let capabilities = provider.get_provider_capabilities();
-    let mut meta = serde_json::Map::new();
-    meta.insert(
-        "provider".to_string(),
-        serde_json::json!(config.provider.provider_type),
-    );
-    meta.insert("supportsTools".to_string(), serde_json::json!(true));
-    meta.insert(
-        "supportsVision".to_string(),
-        serde_json::json!(capabilities.supports_vision),
-    );
-    meta.insert(
-        "supportsStreaming".to_string(),
-        serde_json::json!(capabilities.supports_streaming),
-    );
-
-    acp::ModelInfo::new(
-        current_model_name.to_string(),
-        current_model_name.to_string(),
-    )
-    .description(Some(format!(
-        "Current {} model",
-        config.provider.provider_type
-    )))
-    .meta(Some(meta))
-}
-
 fn persist_conversation_checkpoint(
     storage: &SqliteStorage,
     conversation_uuid: &str,
     agent: &mut XzatomaAgent,
     model_name: Option<&str>,
 ) -> Result<()> {
-    if agent.conversation().title() == "New Conversation" {
-        if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
-            agent.conversation_mut().set_title(title);
-        }
+    if agent.conversation().title() == "New Conversation"
+        && let Some(title) = first_user_prompt_title(agent.conversation().messages())
+    {
+        agent.conversation_mut().set_title(title);
     }
 
     storage.save_conversation(
@@ -2646,22 +2499,21 @@ async fn execute_queued_prompt(
     };
 
     // Persist conversation checkpoint on successful non-cancelled completion.
-    if stop_reason == acp::StopReason::EndTurn {
-        if let Some(storage) = request.storage {
-            if let Err(error) = persist_conversation_checkpoint(
-                storage,
-                request.conversation_uuid,
-                &mut agent,
-                request.model_name,
-            ) {
-                tracing::warn!(
-                    session_id = %request.session_id,
-                    conversation_id = %request.conversation_uuid,
-                    error = %error,
-                    "Failed to persist ACP stdio conversation checkpoint"
-                );
-            }
-        }
+    if stop_reason == acp::StopReason::EndTurn
+        && let Some(storage) = request.storage
+        && let Err(error) = persist_conversation_checkpoint(
+            storage,
+            request.conversation_uuid,
+            &mut agent,
+            request.model_name,
+        )
+    {
+        tracing::warn!(
+            session_id = %request.session_id,
+            conversation_id = %request.conversation_uuid,
+            error = %error,
+            "Failed to persist ACP stdio conversation checkpoint"
+        );
     }
 
     // Send a SessionInfoUpdate with the auto-derived title after EndTurn.
@@ -2670,29 +2522,29 @@ async fn execute_queued_prompt(
     // EndTurn is idempotent: Zed's UI handles repeated title updates gracefully.
     // Also send a UsageUpdate so the context window bar reflects the post-turn
     // token count without waiting for the next prompt.
-    if stop_reason == acp::StopReason::EndTurn {
-        if let Some(conn) = request.connection {
-            if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
-                let info_update = acp::SessionInfoUpdate::new().title(title);
-                send_session_update_best_effort(
-                    conn,
-                    request.session_id.clone(),
-                    acp::SessionUpdate::SessionInfoUpdate(info_update),
-                    "session info update",
-                );
-            }
-
-            let max_tokens = agent.conversation().max_tokens() as u64;
-            let used_tokens = agent
-                .get_context_info(agent.conversation().max_tokens())
-                .used_tokens as u64;
+    if stop_reason == acp::StopReason::EndTurn
+        && let Some(conn) = request.connection
+    {
+        if let Some(title) = first_user_prompt_title(agent.conversation().messages()) {
+            let info_update = acp::SessionInfoUpdate::new().title(title);
             send_session_update_best_effort(
                 conn,
                 request.session_id.clone(),
-                acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(used_tokens, max_tokens)),
-                "post-turn usage update",
+                acp::SessionUpdate::SessionInfoUpdate(info_update),
+                "session info update",
             );
         }
+
+        let max_tokens = agent.conversation().max_tokens() as u64;
+        let used_tokens = agent
+            .get_context_info(agent.conversation().max_tokens())
+            .used_tokens as u64;
+        send_session_update_best_effort(
+            conn,
+            request.session_id.clone(),
+            acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(used_tokens, max_tokens)),
+            "post-turn usage update",
+        );
     }
 
     // Populate PromptResponse.usage with the current context token counts so
@@ -3303,9 +3155,14 @@ mod tests {
 
     #[test]
     fn test_handle_initialize_returns_xzatoma_metadata() {
-        let response = handle_initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1));
+        let response = handle_initialize(acp::InitializeRequest::new(
+            acp_sdk::schema::ProtocolVersion::V1,
+        ));
 
-        assert_eq!(response.protocol_version, acp::ProtocolVersion::V1);
+        assert_eq!(
+            response.protocol_version,
+            acp_sdk::schema::ProtocolVersion::V1
+        );
         let agent_info = match response.agent_info {
             Some(agent_info) => agent_info,
             None => panic!("initialize response should include agent info"),
@@ -3316,7 +3173,9 @@ mod tests {
 
     #[test]
     fn test_handle_initialize_advertises_text_and_vision_prompt_capabilities() {
-        let response = handle_initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1));
+        let response = handle_initialize(acp::InitializeRequest::new(
+            acp_sdk::schema::ProtocolVersion::V1,
+        ));
 
         assert!(response.agent_capabilities.prompt_capabilities.image);
         assert!(
@@ -3371,9 +3230,9 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_request_returns_xzatoma_metadata_over_protocol() {
         run_client_server_test(|connection| async move {
-            let response = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-            )
+            let response = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::V1,
+            )))
             .await;
 
             let response = match response {
@@ -3381,7 +3240,10 @@ mod tests {
                 Err(error) => panic!("initialize should succeed: {}", error),
             };
 
-            assert_eq!(response.protocol_version, acp::ProtocolVersion::V1);
+            assert_eq!(
+                response.protocol_version,
+                acp_sdk::schema::ProtocolVersion::V1
+            );
             let agent_info = match response.agent_info {
                 Some(agent_info) => agent_info,
                 None => panic!("initialize should include agent info"),
@@ -3394,9 +3256,9 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_request_prompt_capabilities_include_vision_over_protocol() {
         run_client_server_test(|connection| async move {
-            let response = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-            )
+            let response = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::V1,
+            )))
             .await;
 
             let response = match response {
@@ -3413,9 +3275,9 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_request_prompt_capabilities_include_embedded_context_over_protocol() {
         run_client_server_test(|connection| async move {
-            let response = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-            )
+            let response = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::V1,
+            )))
             .await;
 
             let response = match response {
@@ -3520,10 +3382,12 @@ mod tests {
 
         assert_eq!(loaded.session_id, response.session_id.0.as_ref());
         assert_eq!(loaded.provider_type, "copilot");
-        assert!(storage
-            .load_conversation(&loaded.conversation_id)
-            .expect("conversation lookup should succeed")
-            .is_some());
+        assert!(
+            storage
+                .load_conversation(&loaded.conversation_id)
+                .expect("conversation lookup should succeed")
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -3751,16 +3615,6 @@ mod tests {
             .expect("session creation should succeed");
 
         assert!(!response.session_id.0.is_empty());
-        assert!(response.models.is_some());
-        assert_eq!(
-            response
-                .models
-                .expect("models should be advertised")
-                .current_model_id
-                .0
-                .as_ref(),
-            current_model_name(&state.config)
-        );
     }
 
     struct FailingModelListProvider;
@@ -3804,31 +3658,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_advertise_session_models_falls_back_to_current_model_when_listing_fails() {
+    async fn test_resolve_current_model_context_window_falls_back_when_listing_fails() {
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
         config.acp.stdio.model_list_timeout_seconds = 1;
 
         let provider = FailingModelListProvider;
-        let model_state = advertise_session_models(&provider, &config, "fallback-model").await;
+        let context_window =
+            resolve_current_model_context_window(&provider, &config, "fallback-model", 42_000)
+                .await;
 
-        assert_eq!(model_state.current_model_id.0.as_ref(), "fallback-model");
-        assert_eq!(model_state.available_models.len(), 1);
-
-        let fallback = &model_state.available_models[0];
-        assert_eq!(fallback.model_id.0.as_ref(), "fallback-model");
-        assert_eq!(fallback.name, "fallback-model");
-
-        let meta = fallback
-            .meta
-            .as_ref()
-            .expect("fallback model should include metadata");
-        assert_eq!(meta.get("provider"), Some(&serde_json::json!("ollama")));
-        assert_eq!(meta.get("supportsVision"), Some(&serde_json::json!(true)));
-        assert_eq!(
-            meta.get("supportsStreaming"),
-            Some(&serde_json::json!(true))
-        );
+        assert_eq!(context_window, 42_000);
     }
 
     #[test]
@@ -3938,9 +3778,9 @@ mod tests {
                 Err(error) => panic!("current dir should be available: {}", error),
             };
 
-            let init_response = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::V1)),
-            )
+            let init_response = receive_response(connection.send_request(
+                acp::InitializeRequest::new(acp_sdk::schema::ProtocolVersion::V1),
+            ))
             .await;
 
             let init_response = match init_response {
@@ -3948,7 +3788,10 @@ mod tests {
                 Err(error) => panic!("initialize should succeed: {}", error),
             };
 
-            assert_eq!(init_response.protocol_version, acp::ProtocolVersion::V1);
+            assert_eq!(
+                init_response.protocol_version,
+                acp_sdk::schema::ProtocolVersion::V1
+            );
 
             let session_response =
                 receive_response(connection.send_request(acp::NewSessionRequest::new(cwd))).await;
@@ -4069,9 +3912,9 @@ mod tests {
     #[tokio::test]
     async fn test_new_session_response_includes_session_modes() {
         run_client_server_test(|connection| async move {
-            let initialize_resp = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let initialize_resp = receive_response(connection.send_request(
+                acp::InitializeRequest::new(acp_sdk::schema::ProtocolVersion::LATEST),
+            ))
             .await;
             assert!(initialize_resp.is_ok(), "initialize should succeed");
 
@@ -4114,9 +3957,9 @@ mod tests {
     #[tokio::test]
     async fn test_new_session_response_includes_config_options() {
         run_client_server_test(|connection| async move {
-            let initialize_resp = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let initialize_resp = receive_response(connection.send_request(
+                acp::InitializeRequest::new(acp_sdk::schema::ProtocolVersion::LATEST),
+            ))
             .await;
             assert!(initialize_resp.is_ok(), "initialize should succeed");
 
@@ -4154,9 +3997,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_changes_current_mode() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4183,9 +4026,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_unknown_session_returns_error() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let set_mode_resp = receive_response(connection.send_request(
@@ -4204,9 +4047,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_invalid_mode_returns_error() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4233,9 +4076,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_config_option_returns_updated_options() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4281,9 +4124,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_config_option_invalid_value_returns_error() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4314,9 +4157,9 @@ mod tests {
     #[tokio::test]
     async fn test_new_session_response_mode_config_option_is_first() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4347,9 +4190,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_sends_config_option_update() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4376,9 +4219,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_config_option_mode_sends_current_mode_update() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4425,9 +4268,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_full_autonomous_updates_session_mode_option() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4451,47 +4294,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_set_session_model_changes_model() {
-        run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
-            .await;
-
-            let new_session_resp = receive_response(
-                connection.send_request(acp::NewSessionRequest::new(std::path::PathBuf::from("."))),
-            )
-            .await
-            .expect("new session should succeed");
-
-            let session_id = new_session_resp.session_id.clone();
-
-            // Use the current model from the advertised list.
-            let models = new_session_resp
-                .models
-                .as_ref()
-                .expect("models should be advertised");
-            let current_model_id = models.current_model_id.0.as_ref().to_string();
-
-            let set_model_resp = receive_response(connection.send_request(
-                acp::SetSessionModelRequest::new(session_id, current_model_id),
-            ))
-            .await;
-
-            assert!(
-                set_model_resp.is_ok(),
-                "set_session_model with current model should succeed"
-            );
-        })
-        .await;
-    }
-
-    #[tokio::test]
     async fn test_set_session_mode_all_valid_modes_succeed() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4521,9 +4328,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4551,9 +4358,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_full_autonomous_to_planning_restricts_terminal() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4589,9 +4396,9 @@ mod tests {
     #[tokio::test]
     async fn test_set_session_mode_does_not_change_terminal_for_unknown_mode() {
         run_client_server_test(|connection| async move {
-            let _init = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
+                acp_sdk::schema::ProtocolVersion::LATEST,
+            )))
             .await;
 
             let new_session_resp = receive_response(
@@ -4820,9 +4627,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_session_with_empty_mcp_servers_list_does_not_error() {
         run_client_server_test(|connection| async move {
-            let initialize_resp = receive_response(
-                connection.send_request(acp::InitializeRequest::new(acp::ProtocolVersion::LATEST)),
-            )
+            let initialize_resp = receive_response(connection.send_request(
+                acp::InitializeRequest::new(acp_sdk::schema::ProtocolVersion::LATEST),
+            ))
             .await;
             assert!(initialize_resp.is_ok(), "initialize should succeed");
 
@@ -5151,62 +4958,121 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // model_context_window_from_state helper tests
+    // resolve_current_model_context_window helper tests
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn test_model_context_window_from_state_returns_value_from_meta() {
-        let mut meta = serde_json::Map::new();
-        meta.insert("contextWindow".to_string(), serde_json::json!(262_144u64));
-        let model = acp::ModelInfo::new("llama3:70b".to_string(), "llama3:70b".to_string())
-            .meta(Some(meta));
-        let state = acp::SessionModelState::new("llama3:70b".to_string(), vec![model]);
-        let result = model_context_window_from_state(&state, "llama3:70b", 100_000);
+    #[derive(Clone)]
+    struct ListingModelProvider {
+        models: Vec<XzatomaModelInfo>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ListingModelProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            None
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<XzatomaModelInfo>> {
+            Ok(self.models.clone())
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<crate::providers::CompletionResponse> {
+            Ok(crate::providers::CompletionResponse::new(
+                Message::assistant("ok"),
+            ))
+        }
+
+        fn get_provider_capabilities(&self) -> crate::providers::ProviderCapabilities {
+            crate::providers::ProviderCapabilities {
+                supports_model_listing: true,
+                supports_model_details: false,
+                supports_model_switching: true,
+                supports_token_counts: false,
+                supports_streaming: true,
+                supports_vision: true,
+            }
+        }
+    }
+
+    fn listing_test_config() -> Config {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config
+    }
+
+    #[tokio::test]
+    async fn test_resolve_current_model_context_window_returns_value_from_listing() {
+        let provider = ListingModelProvider {
+            models: vec![XzatomaModelInfo::new("llama3:70b", "llama3:70b", 262_144)],
+        };
+        let result = resolve_current_model_context_window(
+            &provider,
+            &listing_test_config(),
+            "llama3:70b",
+            100_000,
+        )
+        .await;
         assert_eq!(
             result, 262_144,
-            "context window from meta must override the fallback"
+            "context window from listing must override the fallback"
         );
     }
 
-    #[test]
-    fn test_model_context_window_from_state_falls_back_when_no_meta() {
-        let model = acp::ModelInfo::new("current-model".to_string(), "Current model".to_string());
-        let state = acp::SessionModelState::new("current-model".to_string(), vec![model]);
-        let result = model_context_window_from_state(&state, "current-model", 100_000);
-        assert_eq!(result, 100_000, "must fall back when model has no meta");
-    }
-
-    #[test]
-    fn test_model_context_window_from_state_falls_back_when_context_window_zero() {
-        let mut meta = serde_json::Map::new();
-        meta.insert("contextWindow".to_string(), serde_json::json!(0u64));
-        let model =
-            acp::ModelInfo::new("old-model".to_string(), "Old model".to_string()).meta(Some(meta));
-        let state = acp::SessionModelState::new("old-model".to_string(), vec![model]);
-        let result = model_context_window_from_state(&state, "old-model", 128_000);
+    #[tokio::test]
+    async fn test_resolve_current_model_context_window_falls_back_when_context_window_zero() {
+        let provider = ListingModelProvider {
+            models: vec![XzatomaModelInfo::new("old-model", "Old model", 0)],
+        };
+        let result = resolve_current_model_context_window(
+            &provider,
+            &listing_test_config(),
+            "old-model",
+            128_000,
+        )
+        .await;
         assert_eq!(result, 128_000, "zero context window must trigger fallback");
     }
 
-    #[test]
-    fn test_model_context_window_from_state_falls_back_for_unknown_model() {
-        let model = acp::ModelInfo::new("known-model".to_string(), "Known model".to_string());
-        let state = acp::SessionModelState::new("known-model".to_string(), vec![model]);
-        let result = model_context_window_from_state(&state, "unknown-model", 64_000);
+    #[tokio::test]
+    async fn test_resolve_current_model_context_window_falls_back_for_unknown_model() {
+        let provider = ListingModelProvider {
+            models: vec![XzatomaModelInfo::new("known-model", "Known model", 50_000)],
+        };
+        let result = resolve_current_model_context_window(
+            &provider,
+            &listing_test_config(),
+            "unknown-model",
+            64_000,
+        )
+        .await;
         assert_eq!(result, 64_000, "unknown model name must trigger fallback");
     }
 
-    #[test]
-    fn test_model_context_window_from_state_ignores_non_current_models() {
-        let mut meta_a = serde_json::Map::new();
-        meta_a.insert("contextWindow".to_string(), serde_json::json!(32_000u64));
-        let mut meta_b = serde_json::Map::new();
-        meta_b.insert("contextWindow".to_string(), serde_json::json!(200_000u64));
-        let model_a =
-            acp::ModelInfo::new("model-a".to_string(), "Model A".to_string()).meta(Some(meta_a));
-        let model_b =
-            acp::ModelInfo::new("model-b".to_string(), "Model B".to_string()).meta(Some(meta_b));
-        let state = acp::SessionModelState::new("model-b".to_string(), vec![model_a, model_b]);
-        let result = model_context_window_from_state(&state, "model-b", 1_000);
+    #[tokio::test]
+    async fn test_resolve_current_model_context_window_ignores_non_current_models() {
+        let provider = ListingModelProvider {
+            models: vec![
+                XzatomaModelInfo::new("model-a", "Model A", 32_000),
+                XzatomaModelInfo::new("model-b", "Model B", 200_000),
+            ],
+        };
+        let result = resolve_current_model_context_window(
+            &provider,
+            &listing_test_config(),
+            "model-b",
+            1_000,
+        )
+        .await;
         assert_eq!(
             result, 200_000,
             "must return model-b context window, not model-a"

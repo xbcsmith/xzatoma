@@ -401,20 +401,17 @@ impl McpServerConfig {
                     )));
                 }
 
-                if let Some(oauth_cfg) = oauth {
-                    if let Some(metadata_url) = &oauth_cfg.metadata_url {
-                        let parsed = url::Url::parse(metadata_url).map_err(|error| {
-                            XzatomaError::Config(format!(
-                                "MCP server '{}': oauth.metadata_url must be a valid URL: {}",
-                                self.id, error
-                            ))
-                        })?;
-                        crate::security::validate_public_https_url_sync(
-                            &parsed,
-                            "oauth.metadata_url",
-                        )
+                if let Some(oauth_cfg) = oauth
+                    && let Some(metadata_url) = &oauth_cfg.metadata_url
+                {
+                    let parsed = url::Url::parse(metadata_url).map_err(|error| {
+                        XzatomaError::Config(format!(
+                            "MCP server '{}': oauth.metadata_url must be a valid URL: {}",
+                            self.id, error
+                        ))
+                    })?;
+                    crate::security::validate_public_https_url_sync(&parsed, "oauth.metadata_url")
                         .map_err(|error| XzatomaError::Config(error.to_string()))?;
-                    }
                 }
             }
         }

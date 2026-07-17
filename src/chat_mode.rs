@@ -81,7 +81,9 @@ impl ChatModeParseError {
 /// assert_eq!(error.value(), "reckless");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("unknown safety mode '{value}'; expected one of 'confirm', 'always', 'safe', 'on', 'yolo', 'never', or 'off'")]
+#[error(
+    "unknown safety mode '{value}'; expected one of 'confirm', 'always', 'safe', 'on', 'yolo', 'never', or 'off'"
+)]
 pub struct SafetyModeParseError {
     value: String,
 }

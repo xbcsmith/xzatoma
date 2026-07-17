@@ -490,25 +490,23 @@ impl Conversation {
                         }
                     }
                 }
-            } else if msg.role == "tool" {
-                if let Some(tool_call_id) = &msg.tool_call_id {
-                    // Find assistant messages that reference this tool_call_id
-                    for (a_idx, a_msg) in self.messages.iter().enumerate() {
-                        if a_msg.role == "assistant" {
-                            if let Some(tool_calls) = &a_msg.tool_calls {
-                                if tool_calls.iter().any(|tc| &tc.id == tool_call_id)
-                                    && !prune_indices.contains(&a_idx)
-                                    && a_msg.role != "system"
-                                {
-                                    prune_indices.insert(a_idx);
-                                    stack.push(a_idx);
-                                    tracing::debug!(
-                                        "Pruning assistant with tool_calls to match pruned tool result: {}",
-                                        tool_call_id
-                                    );
-                                }
-                            }
-                        }
+            } else if msg.role == "tool"
+                && let Some(tool_call_id) = &msg.tool_call_id
+            {
+                // Find assistant messages that reference this tool_call_id
+                for (a_idx, a_msg) in self.messages.iter().enumerate() {
+                    if a_msg.role == "assistant"
+                        && let Some(tool_calls) = &a_msg.tool_calls
+                        && tool_calls.iter().any(|tc| &tc.id == tool_call_id)
+                        && !prune_indices.contains(&a_idx)
+                        && a_msg.role != "system"
+                    {
+                        prune_indices.insert(a_idx);
+                        stack.push(a_idx);
+                        tracing::debug!(
+                            "Pruning assistant with tool_calls to match pruned tool result: {}",
+                            tool_call_id
+                        );
                     }
                 }
             }
@@ -605,20 +603,19 @@ impl Conversation {
         }
 
         // Add first and last message excerpts for context
-        if let Some(first) = messages.first() {
-            if let Some(content) = &first.content {
-                let excerpt = truncate_string(content, 100);
-                summary.push_str(&format!("\nFirst message: {}\n", excerpt));
-            }
+        if let Some(first) = messages.first()
+            && let Some(content) = &first.content
+        {
+            let excerpt = truncate_string(content, 100);
+            summary.push_str(&format!("\nFirst message: {}\n", excerpt));
         }
 
-        if messages.len() > 1 {
-            if let Some(last) = messages.last() {
-                if let Some(content) = &last.content {
-                    let excerpt = truncate_string(content, 100);
-                    summary.push_str(&format!("Last message: {}\n", excerpt));
-                }
-            }
+        if messages.len() > 1
+            && let Some(last) = messages.last()
+            && let Some(content) = &last.content
+        {
+            let excerpt = truncate_string(content, 100);
+            summary.push_str(&format!("Last message: {}\n", excerpt));
         }
 
         summary
@@ -984,7 +981,7 @@ impl Conversation {
 /// Uses characters / 4, which approximates GPT tokenization for English text.
 /// For production use, replace with an actual tokenizer library (e.g., tiktoken-rs).
 fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() + 3) / 4
+    text.chars().count().div_ceil(4)
 }
 
 /// Truncates a string to a maximum length, adding ellipsis if truncated
@@ -1243,14 +1240,16 @@ mod tests {
         conv.prune_if_needed();
 
         // Verify tool pair preserved
-        assert!(conv
-            .messages()
-            .iter()
-            .any(|m| m.role == "assistant" && m.tool_calls.is_some()));
-        assert!(conv
-            .messages()
-            .iter()
-            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_retain")));
+        assert!(
+            conv.messages()
+                .iter()
+                .any(|m| m.role == "assistant" && m.tool_calls.is_some())
+        );
+        assert!(
+            conv.messages()
+                .iter()
+                .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_retain"))
+        );
     }
 
     #[test]
@@ -1278,28 +1277,30 @@ mod tests {
         conv.prune_if_needed();
 
         // Verify BOTH assistant and tool messages removed (no orphan)
-        assert!(!conv
-            .messages()
-            .iter()
-            .any(|m| m.tool_call_id.as_deref() == Some("call_prune")));
+        assert!(
+            !conv
+                .messages()
+                .iter()
+                .any(|m| m.tool_call_id.as_deref() == Some("call_prune"))
+        );
 
         // Verify no orphans remain
         for msg in conv.messages() {
-            if msg.role == "tool" {
-                if let Some(tool_call_id) = &msg.tool_call_id {
-                    // Find corresponding assistant
-                    let has_assistant = conv.messages().iter().any(|m| {
-                        m.role == "assistant"
-                            && m.tool_calls
-                                .as_ref()
-                                .is_some_and(|tcs| tcs.iter().any(|tc| &tc.id == tool_call_id))
-                    });
-                    assert!(
-                        has_assistant,
-                        "Orphan tool message found after pruning: {}",
-                        tool_call_id
-                    );
-                }
+            if msg.role == "tool"
+                && let Some(tool_call_id) = &msg.tool_call_id
+            {
+                // Find corresponding assistant
+                let has_assistant = conv.messages().iter().any(|m| {
+                    m.role == "assistant"
+                        && m.tool_calls
+                            .as_ref()
+                            .is_some_and(|tcs| tcs.iter().any(|tc| &tc.id == tool_call_id))
+                });
+                assert!(
+                    has_assistant,
+                    "Orphan tool message found after pruning: {}",
+                    tool_call_id
+                );
             }
         }
     }

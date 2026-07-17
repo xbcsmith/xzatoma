@@ -275,10 +275,10 @@ impl PlanParser {
     pub fn parse_string(content: &str) -> Result<Plan> {
         let trimmed = content.trim();
         // JSON objects start with '{'; try JSON parsing first for those.
-        if trimmed.starts_with('{') {
-            if let Ok(plan) = Self::from_json(content) {
-                return Ok(plan);
-            }
+        if trimmed.starts_with('{')
+            && let Ok(plan) = Self::from_json(content)
+        {
+            return Ok(plan);
         }
         // Default to YAML parsing for all other content (YAML is a superset of JSON,
         // so valid JSON without a leading '{' is also handled here).
@@ -341,11 +341,11 @@ impl PlanParser {
             let trimmed = line.trim();
 
             // Plan title: first H1
-            if let Some(stripped) = trimmed.strip_prefix("# ") {
-                if name.is_empty() {
-                    name = stripped.trim().to_string();
-                    continue;
-                }
+            if let Some(stripped) = trimmed.strip_prefix("# ")
+                && name.is_empty()
+            {
+                name = stripped.trim().to_string();
+                continue;
             }
 
             // Step header H2
@@ -473,12 +473,12 @@ impl PlanParser {
             }
         }
 
-        if let Some(ref prompt) = plan.system_prompt {
-            if prompt.trim().is_empty() {
-                return Err(XzatomaError::Tool(
-                    "Plan system_prompt cannot be blank".to_string(),
-                ));
-            }
+        if let Some(ref prompt) = plan.system_prompt
+            && prompt.trim().is_empty()
+        {
+            return Err(XzatomaError::Tool(
+                "Plan system_prompt cannot be blank".to_string(),
+            ));
         }
 
         Ok(())
@@ -707,11 +707,13 @@ cargo check
         assert_eq!(plan.steps.len(), 2);
         assert_eq!(plan.steps[0].name, "Create project");
         assert!(plan.steps[0].context.is_some());
-        assert!(plan.steps[0]
-            .context
-            .as_ref()
-            .unwrap()
-            .contains("cargo init"));
+        assert!(
+            plan.steps[0]
+                .context
+                .as_ref()
+                .unwrap()
+                .contains("cargo init")
+        );
     }
 
     #[test]
@@ -735,33 +737,39 @@ steps:
     #[test]
     fn test_validate_errors() {
         // Missing name
-        assert!(PlanParser::validate(&Plan::new(
-            "".to_string(),
-            vec![PlanStep::new("s".to_string()).with_action("a".to_string())]
-        ))
-        .is_err());
+        assert!(
+            PlanParser::validate(&Plan::new(
+                "".to_string(),
+                vec![PlanStep::new("s".to_string()).with_action("a".to_string())]
+            ))
+            .is_err()
+        );
 
         // Missing steps and tasks
         assert!(PlanParser::validate(&Plan::new("n".to_string(), Vec::new())).is_err());
 
         // Step with no action
-        assert!(PlanParser::validate(&Plan::new(
-            "n".to_string(),
-            vec![PlanStep::new("step".to_string())]
-        ))
-        .is_err());
+        assert!(
+            PlanParser::validate(&Plan::new(
+                "n".to_string(),
+                vec![PlanStep::new("step".to_string())]
+            ))
+            .is_err()
+        );
 
         // Task with empty description
-        assert!(PlanParser::validate(&Plan::new_with_tasks(
-            "n".to_string(),
-            vec![crate::tools::plan::PlanTask {
-                id: "t1".to_string(),
-                description: "".to_string(),
-                priority: None,
-                dependencies: vec![],
-            }]
-        ))
-        .is_err());
+        assert!(
+            PlanParser::validate(&Plan::new_with_tasks(
+                "n".to_string(),
+                vec![crate::tools::plan::PlanTask {
+                    id: "t1".to_string(),
+                    description: "".to_string(),
+                    priority: None,
+                    dependencies: vec![],
+                }]
+            ))
+            .is_err()
+        );
     }
 
     #[tokio::test]

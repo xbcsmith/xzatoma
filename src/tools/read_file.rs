@@ -4,7 +4,7 @@
 //! Handles image files by returning outline information instead of raw content.
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_metadata, file_utils, parse_tool_args, ToolExecutor, ToolResult};
+use crate::tools::{ToolExecutor, ToolResult, file_metadata, file_utils, parse_tool_args};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};

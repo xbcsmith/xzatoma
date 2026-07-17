@@ -3,7 +3,7 @@ use crate::error::{Result, XzatomaError};
 use crate::providers::Message;
 use crate::storage::SqliteStorage;
 use colored::Colorize;
-use prettytable::{format, Table};
+use prettytable::{Table, format};
 
 /// Handle history commands
 pub fn handle_history(command: HistoryCommand) -> Result<()> {
@@ -249,10 +249,12 @@ mod tests {
             .expect("save failed");
 
         // Ensure the session exists before delete
-        assert!(storage
-            .load_conversation(&id)
-            .expect("load failed")
-            .is_some());
+        assert!(
+            storage
+                .load_conversation(&id)
+                .expect("load failed")
+                .is_some()
+        );
 
         // Run the CLI binary to delete the session
         let mut cmd = Command::new(xzatoma_binary_path());
@@ -268,10 +270,12 @@ mod tests {
             .stdout(predicate::str::contains("Deleted conversation"));
 
         // Verify the session no longer exists in the DB
-        assert!(storage
-            .load_conversation(&id)
-            .expect("load failed")
-            .is_none());
+        assert!(
+            storage
+                .load_conversation(&id)
+                .expect("load failed")
+                .is_none()
+        );
     }
 
     #[test]

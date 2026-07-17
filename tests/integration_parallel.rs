@@ -9,8 +9,8 @@
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-    use xzatoma::agent::quota::{QuotaLimits, QuotaTracker};
     use xzatoma::agent::SubagentMetrics;
+    use xzatoma::agent::quota::{QuotaLimits, QuotaTracker};
     use xzatoma::tools::parallel_subagent::{ParallelSubagentInput, ParallelTask, TaskResult};
 
     // Tests for Task 5.1: Parallel Execution Infrastructure

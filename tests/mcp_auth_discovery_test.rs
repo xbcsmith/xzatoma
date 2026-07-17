@@ -13,8 +13,8 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use xzatoma::mcp::auth::discovery::{
-    fetch_authorization_server_metadata, fetch_protected_resource_metadata,
-    AuthorizationServerMetadata, ProtectedResourceMetadata,
+    AuthorizationServerMetadata, ProtectedResourceMetadata, fetch_authorization_server_metadata,
+    fetch_protected_resource_metadata,
 };
 
 // ---------------------------------------------------------------------------

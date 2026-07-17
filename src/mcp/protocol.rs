@@ -30,12 +30,12 @@ use crate::mcp::client::{BoxFuture, JsonRpcClient};
 use crate::mcp::types::{
     CallToolParams, CallToolResponse, ClientCapabilities, CompletionCompleteParams,
     CompletionCompleteResponse, ElicitationCreateParams, ElicitationResult, GetPromptParams,
-    GetPromptResponse, Implementation, InitializeParams, InitializeResponse, ListPromptsResponse,
-    ListResourcesResponse, ListToolsResponse, McpTool, PaginatedParams, Prompt, ReadResourceParams,
-    ReadResourceResponse, Resource, ResourceContents, LATEST_PROTOCOL_VERSION,
+    GetPromptResponse, Implementation, InitializeParams, InitializeResponse,
+    LATEST_PROTOCOL_VERSION, ListPromptsResponse, ListResourcesResponse, ListToolsResponse,
     METHOD_COMPLETION_COMPLETE, METHOD_INITIALIZE, METHOD_INITIALIZED, METHOD_PING,
     METHOD_PROMPTS_GET, METHOD_PROMPTS_LIST, METHOD_RESOURCES_LIST, METHOD_RESOURCES_READ,
-    METHOD_SAMPLING_CREATE_MESSAGE, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
+    METHOD_SAMPLING_CREATE_MESSAGE, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST, McpTool, PaginatedParams,
+    Prompt, ReadResourceParams, ReadResourceResponse, Resource, ResourceContents,
     SUPPORTED_PROTOCOL_VERSIONS,
 };
 use crate::mcp::types::{CreateMessageRequest, CreateMessageResult, TaskParams};
@@ -732,7 +732,7 @@ mod tests {
         // Since changing public API is not desired mid-phase, we use the
         // `wired_client` approach in each test directly.
         drop(client); // drop our ref; the loop holds its own clone
-                      // Rebuild properly:
+        // Rebuild properly:
         let (out_tx2, out_rx2) = mpsc::unbounded_channel::<String>();
         let (in_tx2, in_rx2) = mpsc::unbounded_channel::<String>();
         let token2 = CancellationToken::new();

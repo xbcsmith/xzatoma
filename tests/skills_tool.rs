@@ -6,8 +6,8 @@ use serde_json::json;
 use xzatoma::skills::activation::ActiveSkillRegistry;
 use xzatoma::skills::catalog::SkillCatalog;
 use xzatoma::skills::types::{SkillMetadata, SkillRecord, SkillSourceScope};
-use xzatoma::tools::activate_skill::{ActivateSkillTool, ACTIVATE_SKILL_TOOL_NAME};
 use xzatoma::tools::ToolExecutor;
+use xzatoma::tools::activate_skill::{ACTIVATE_SKILL_TOOL_NAME, ActivateSkillTool};
 
 fn sample_record(name: &str, description: &str, body: &str) -> SkillRecord {
     SkillRecord {
@@ -198,8 +198,8 @@ async fn test_activate_skill_tool_activation_fails_for_invalid_skill_hidden_from
 }
 
 #[tokio::test]
-async fn test_activate_skill_tool_activation_fails_for_untrusted_project_skill_hidden_from_visible_schema(
-) {
+async fn test_activate_skill_tool_activation_fails_for_untrusted_project_skill_hidden_from_visible_schema()
+ {
     let catalog = sample_catalog(vec![SkillRecord {
         metadata: SkillMetadata {
             name: "project_skill".to_string(),

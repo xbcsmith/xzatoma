@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use xzatoma::mcp::auth::token_store::TokenStore;
-use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
+use xzatoma::mcp::client::{JsonRpcClient, start_read_loop};
 use xzatoma::mcp::manager::{McpClientManager, McpServerEntry, McpServerState};
 use xzatoma::mcp::protocol::InitializedMcpProtocol;
 use xzatoma::mcp::server::{McpServerConfig, McpServerTransportConfig};

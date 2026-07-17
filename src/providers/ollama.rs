@@ -6,11 +6,11 @@
 
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
+use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FunctionCall,
-    Message, ModelCapability, ModelInfo, Provider, ProviderCapabilities, ProviderFunctionCall,
-    ProviderMessage, ProviderRequest, ProviderToolCall, TokenUsage, ToolCall,
+    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
+    ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderToolCall,
+    TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
 };
 
 use async_trait::async_trait;
@@ -820,11 +820,11 @@ fn build_model_info_from_show_response(
             } else {
                 // Fallback: find any field that ends with 'context_length'
                 for (k, v) in obj.iter() {
-                    if k.ends_with("context_length") {
-                        if let Some(val) = v.as_u64() {
-                            context_window = val as usize;
-                            break;
-                        }
+                    if k.ends_with("context_length")
+                        && let Some(val) = v.as_u64()
+                    {
+                        context_window = val as usize;
+                        break;
                     }
                 }
             }
@@ -1030,13 +1030,12 @@ impl Provider for OllamaProvider {
         tracing::debug!("Listing Ollama models");
 
         // Check cache first
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    tracing::debug!("Using cached model list");
-                    return Ok(models.clone());
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+        {
+            tracing::debug!("Using cached model list");
+            return Ok(models.clone());
         }
 
         // Cache miss or expired, fetch from API
@@ -1054,14 +1053,12 @@ impl Provider for OllamaProvider {
         tracing::debug!("Getting info for model: {}", model_name);
 
         // Try to get from cache first
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    if let Some(model) = models.iter().find(|m| m.name == model_name) {
-                        return Ok(model.clone());
-                    }
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+            && let Some(model) = models.iter().find(|m| m.name == model_name)
+        {
+            return Ok(model.clone());
         }
 
         // Not in cache, fetch from API
@@ -1699,11 +1696,13 @@ mod tests {
 
         assert_eq!(reasoning_acc, "Let me think");
         assert_eq!(content_acc, "Answer");
-        assert!(reasoning_calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| s.contains("Let me think")));
+        assert!(
+            reasoning_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s.contains("Let me think"))
+        );
         assert!(
             !in_think_block,
             "think block should be closed after </think>"

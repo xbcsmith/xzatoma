@@ -24,12 +24,12 @@
 
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
+use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
     CompletionResponse, FinishReason, FunctionCall, ImagePromptSource, Message, ModelCapability,
     ModelInfo, Provider, ProviderCapabilities, ProviderMessageContentPart, ProviderTool,
-    TokenUsage, ToolCall,
+    TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
+    validate_message_sequence,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -429,17 +429,17 @@ impl StreamAccumulator {
                         arguments_buf: String::new(),
                     });
 
-            if let Some(ref id) = tc_delta.id {
-                if entry.id.is_empty() {
-                    entry.id = id.clone();
-                }
+            if let Some(ref id) = tc_delta.id
+                && entry.id.is_empty()
+            {
+                entry.id = id.clone();
             }
 
             if let Some(ref func) = tc_delta.function {
-                if let Some(ref name) = func.name {
-                    if entry.name.is_empty() {
-                        entry.name = name.clone();
-                    }
+                if let Some(ref name) = func.name
+                    && entry.name.is_empty()
+                {
+                    entry.name = name.clone();
                 }
                 if let Some(ref args) = func.arguments {
                     entry.arguments_buf.push_str(args);
@@ -776,20 +776,20 @@ impl OpenAIProvider {
     /// [`Message::assistant`] with the content, defaulting to an empty string
     /// when `content` is `None`.
     fn convert_response_message(&self, msg: OpenAIMessage) -> Message {
-        if let Some(tool_calls) = msg.tool_calls {
-            if !tool_calls.is_empty() {
-                let converted: Vec<ToolCall> = tool_calls
-                    .into_iter()
-                    .map(|tc| ToolCall {
-                        id: tc.id,
-                        function: FunctionCall {
-                            name: tc.function.name,
-                            arguments: tc.function.arguments,
-                        },
-                    })
-                    .collect();
-                return Message::assistant_with_tools(converted);
-            }
+        if let Some(tool_calls) = msg.tool_calls
+            && !tool_calls.is_empty()
+        {
+            let converted: Vec<ToolCall> = tool_calls
+                .into_iter()
+                .map(|tc| ToolCall {
+                    id: tc.id,
+                    function: FunctionCall {
+                        name: tc.function.name,
+                        arguments: tc.function.arguments,
+                    },
+                })
+                .collect();
+            return Message::assistant_with_tools(converted);
         }
         Message::assistant(match msg.content {
             Some(OpenAIMessageContent::Text(text)) => text,
@@ -818,7 +818,7 @@ impl OpenAIProvider {
     /// from the configured strings (for example, if the API key contains
     /// non-ASCII characters that are invalid in HTTP header values).
     fn build_request_headers(&self) -> Result<reqwest::header::HeaderMap> {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+        use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -840,18 +840,15 @@ impl OpenAIProvider {
             );
         }
 
-        if let Some(org_id) = organization_id {
-            if !org_id.is_empty() {
-                headers.insert(
-                    HeaderName::from_static("openai-organization"),
-                    HeaderValue::from_str(&org_id).map_err(|e| {
-                        XzatomaError::Provider(format!(
-                            "Invalid organization ID header value: {}",
-                            e
-                        ))
-                    })?,
-                );
-            }
+        if let Some(org_id) = organization_id
+            && !org_id.is_empty()
+        {
+            headers.insert(
+                HeaderName::from_static("openai-organization"),
+                HeaderValue::from_str(&org_id).map_err(|e| {
+                    XzatomaError::Provider(format!("Invalid organization ID header value: {}", e))
+                })?,
+            );
         }
 
         Ok(headers)
@@ -871,7 +868,7 @@ impl OpenAIProvider {
     /// Returns `XzatomaError::Provider` if the config lock cannot be acquired
     /// or if a constructed header value is malformed.
     fn build_get_headers(&self) -> Result<reqwest::header::HeaderMap> {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+        use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 
         let mut headers = HeaderMap::new();
 
@@ -892,18 +889,15 @@ impl OpenAIProvider {
             );
         }
 
-        if let Some(org_id) = organization_id {
-            if !org_id.is_empty() {
-                headers.insert(
-                    HeaderName::from_static("openai-organization"),
-                    HeaderValue::from_str(&org_id).map_err(|e| {
-                        XzatomaError::Provider(format!(
-                            "Invalid organization ID header value: {}",
-                            e
-                        ))
-                    })?,
-                );
-            }
+        if let Some(org_id) = organization_id
+            && !org_id.is_empty()
+        {
+            headers.insert(
+                HeaderName::from_static("openai-organization"),
+                HeaderValue::from_str(&org_id).map_err(|e| {
+                    XzatomaError::Provider(format!("Invalid organization ID header value: {}", e))
+                })?,
+            );
         }
 
         Ok(headers)
@@ -1122,19 +1116,17 @@ impl OpenAIProvider {
                             Ok(sse_chunk) => {
                                 // Fire per-chunk callbacks before accumulating.
                                 if let Some(choice) = sse_chunk.choices.first() {
-                                    if let Some(ref r) = choice.delta.reasoning {
-                                        if !r.is_empty() {
-                                            if let Some(cb) = on_reasoning_chunk {
-                                                cb(r.clone());
-                                            }
-                                        }
+                                    if let Some(ref r) = choice.delta.reasoning
+                                        && !r.is_empty()
+                                        && let Some(cb) = on_reasoning_chunk
+                                    {
+                                        cb(r.clone());
                                     }
-                                    if let Some(ref c) = choice.delta.content {
-                                        if !c.is_empty() {
-                                            if let Some(cb) = on_content_chunk {
-                                                cb(c.clone());
-                                            }
-                                        }
+                                    if let Some(ref c) = choice.delta.content
+                                        && !c.is_empty()
+                                        && let Some(cb) = on_content_chunk
+                                    {
+                                        cb(c.clone());
                                     }
                                 }
                                 acc.apply_chunk(&sse_chunk);
@@ -1414,13 +1406,12 @@ impl Provider for OpenAIProvider {
     /// response body cannot be deserialized, or the server returns a non-401
     /// error status.
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    tracing::debug!("Using cached OpenAI model list");
-                    return Ok(models.clone());
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+        {
+            tracing::debug!("Using cached OpenAI model list");
+            return Ok(models.clone());
         }
 
         let headers = self.build_get_headers()?;
@@ -3170,8 +3161,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_complete_with_callbacks_fires_reasoning_chunk_callbacks() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3227,8 +3218,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_complete_with_callbacks_fires_content_chunk_callbacks() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 

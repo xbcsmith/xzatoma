@@ -38,7 +38,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures::Stream;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::transport::Transport;
@@ -501,10 +501,10 @@ async fn process_sse_event(
     }
 
     // Discard ping events (spec-mandated silence).
-    if let Some(et) = event_type {
-        if et.eq_ignore_ascii_case("ping") {
-            return;
-        }
+    if let Some(et) = event_type
+        && et.eq_ignore_ascii_case("ping")
+    {
+        return;
     }
 
     // Join multi-line data values.

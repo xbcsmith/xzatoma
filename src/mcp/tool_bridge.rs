@@ -33,7 +33,7 @@ use tokio::sync::RwLock;
 use crate::config::ExecutionMode;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::approval::{
-    approval_decision, prompt_user_approval, ApprovalDecision, McpOperation,
+    ApprovalDecision, McpOperation, approval_decision, prompt_user_approval,
 };
 use crate::mcp::manager::McpClientManager;
 use crate::mcp::types::{

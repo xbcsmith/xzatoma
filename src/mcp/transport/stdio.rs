@@ -31,7 +31,7 @@ use std::sync::Arc;
 use futures::Stream;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::transport::Transport;

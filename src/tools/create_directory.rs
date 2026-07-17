@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::PathValidator;
-use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_CREATE_DIRECTORY};
+use crate::tools::{TOOL_CREATE_DIRECTORY, ToolExecutor, ToolResult, parse_tool_args};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -216,9 +216,10 @@ mod tests {
             .unwrap();
 
         assert!(result.success);
-        assert!(temp
-            .path()
-            .join("very/deep/nested/directory/structure/here")
-            .is_dir());
+        assert!(
+            temp.path()
+                .join("very/deep/nested/directory/structure/here")
+                .is_dir()
+        );
     }
 }

@@ -890,8 +890,8 @@ mod tests {
     #[tokio::test]
     async fn test_complete_with_callbacks_default_does_not_fire_callbacks() {
         // Verify that the default implementation never calls the provided callbacks.
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         struct MockProvider;
 

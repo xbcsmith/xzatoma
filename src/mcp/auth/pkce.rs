@@ -105,7 +105,7 @@ pub struct PkceChallenge {
 /// assert_ne!(pkce.verifier, pkce.challenge);
 /// ```
 pub fn generate() -> Result<PkceChallenge> {
-    use rand::RngCore as _;
+    use rand::Rng as _;
 
     // Step 1: 32 cryptographically random bytes.
     let mut random_bytes = [0u8; 32];

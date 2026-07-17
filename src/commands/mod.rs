@@ -16,17 +16,17 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    parse_special_command, print_help, print_models_help, SpecialCommand,
+    SpecialCommand, parse_special_command, print_help, print_models_help,
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
+use crate::providers::{CopilotProvider, OllamaProvider, create_provider};
 use crate::skills::{
-    build_skill_disclosure_section, discover_skills, render_skill_catalog, ActiveSkillRegistry,
-    SkillCatalog, SkillRecord,
+    ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
+    discover_skills, render_skill_catalog,
 };
 use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::plan::PlanParser;
@@ -61,7 +61,7 @@ pub mod skills;
 
 // Agent environment builder (shared tool/skill/MCP initialization)
 pub mod environment;
-pub use environment::{build_agent_environment, AgentEnvironment};
+pub use environment::{AgentEnvironment, build_agent_environment};
 
 /// Detect if a user prompt requests subagent functionality
 ///
@@ -378,8 +378,8 @@ pub mod chat {
     use super::*;
     use crate::agent::events::{AgentExecutionEvent, AgentObserver};
     use colored::Colorize;
-    use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
+    use rustyline::error::ReadlineError;
     use tokio_util::sync::CancellationToken;
 
     /// Observer that writes streaming model output to stdout in real time.
@@ -618,11 +618,11 @@ pub mod chat {
                             messages.len(),
                             user_count
                         );
-                        if user_count > 0 {
-                            if let Some(first_user) = messages.iter().find(|m| m.role == "user") {
-                                let snippet = first_user.content.as_deref().unwrap_or("");
-                                tracing::debug!("First user message snippet: {}", snippet);
-                            }
+                        if user_count > 0
+                            && let Some(first_user) = messages.iter().find(|m| m.role == "user")
+                        {
+                            let snippet = first_user.content.as_deref().unwrap_or("");
+                            tracing::debug!("First user message snippet: {}", snippet);
                         }
 
                         println!("Resuming conversation: {}", title.cyan());
@@ -716,18 +716,18 @@ pub mod chat {
         }
 
         // Add skill disclosure (after user system prompt, with deduplication).
-        if let Some(ref disclosure) = skill_disclosure {
-            if !agent.conversation().messages().iter().any(|m| {
+        if let Some(ref disclosure) = skill_disclosure
+            && !agent.conversation().messages().iter().any(|m| {
                 m.role == "system"
                     && m.content
                         .as_deref()
                         .map(|c| c == disclosure.as_str())
                         .unwrap_or(false)
-            }) {
-                agent
-                    .conversation_mut()
-                    .add_system_message(disclosure.clone());
-            }
+            })
+        {
+            agent
+                .conversation_mut()
+                .add_system_message(disclosure.clone());
         }
 
         // Set transient system messages (active skills).
@@ -746,17 +746,17 @@ pub mod chat {
         if resume.is_some() {
             let mut history_count = 0usize;
             for msg in agent.conversation().messages() {
-                if msg.role == "user" {
-                    if let Some(content) = &msg.content {
-                        // Intentionally discard duplicate/history-capacity failures: they do not
-                        // prevent chat resume, and readline history is best-effort.
-                        if rl.add_history_entry(content).is_err() {
-                            tracing::debug!(
-                                "Skipped adding a resumed user message to readline history"
-                            );
-                        }
-                        history_count += 1;
+                if msg.role == "user"
+                    && let Some(content) = &msg.content
+                {
+                    // Intentionally discard duplicate/history-capacity failures: they do not
+                    // prevent chat resume, and readline history is best-effort.
+                    if rl.add_history_entry(content).is_err() {
+                        tracing::debug!(
+                            "Skipped adding a resumed user message to readline history"
+                        );
                     }
+                    history_count += 1;
                 }
             }
             tracing::debug!(
@@ -777,11 +777,7 @@ pub mod chat {
             // Build a prompt that includes provider/model when available.
             let current_model: Option<String> = {
                 let m = agent.provider().get_current_model();
-                if m == "none" {
-                    None
-                } else {
-                    Some(m)
-                }
+                if m == "none" { None } else { Some(m) }
             };
             let prompt = if let Some(ref model) = current_model {
                 mode_state
@@ -1409,8 +1405,8 @@ pub mod chat {
     /// * `agent` - The current agent
     async fn handle_list_models(agent: &Agent) {
         use colored::Colorize;
-        use prettytable::format;
         use prettytable::Table;
+        use prettytable::format;
 
         match agent.provider().list_models().await {
             Ok(models) => {
@@ -1433,11 +1429,7 @@ pub mod chat {
                 // Get current model for highlighting
                 let current_model: Option<String> = {
                     let m = agent.provider().get_current_model();
-                    if m == "none" {
-                        None
-                    } else {
-                        Some(m)
-                    }
+                    if m == "none" { None } else { Some(m) }
                 };
 
                 // Add model rows
@@ -1760,7 +1752,9 @@ pub mod chat {
     ) -> Result<()> {
         // Show warning when switching to Write mode
         if matches!(new_mode, ChatMode::Write) {
-            println!("\nWarning: Switching to WRITE mode - agent can now modify files and execute commands!");
+            println!(
+                "\nWarning: Switching to WRITE mode - agent can now modify files and execute commands!"
+            );
             println!("Type '/safe' to enable confirmations, or '/yolo' to disable.\n");
         }
 
@@ -2466,11 +2460,15 @@ pub mod auth {
                 // poll until the user authorizes the device (or an error/timeout occurs).
                 let provider = CopilotProvider::new(config.provider.copilot.clone())?;
 
-                println!("Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)...");
+                println!(
+                    "Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)..."
+                );
                 // Run the provider's authenticate flow and surface any errors to the user.
                 match provider.authenticate().await {
                     Ok(_) => {
-                        println!("Copilot: authentication successful — token cached in the system keyring.");
+                        println!(
+                            "Copilot: authentication successful — token cached in the system keyring."
+                        );
                         Ok(())
                     }
                     Err(e) => {
@@ -2481,7 +2479,9 @@ pub mod auth {
                 }
             }
             "ollama" => {
-                println!("Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set.");
+                println!(
+                    "Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set."
+                );
                 Ok(())
             }
             other => Err(XzatomaError::Provider(format!(
@@ -2718,35 +2718,35 @@ pub mod watch {
         }
 
         // Override topic if provided
-        if let Some(t) = &overrides.topic {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.topic = t.clone();
-                tracing::debug!(topic = %t, "CLI override: Kafka topic");
-            }
+        if let Some(t) = &overrides.topic
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.topic = t.clone();
+            tracing::debug!(topic = %t, "CLI override: Kafka topic");
         }
 
         // Override group ID if provided
-        if let Some(group_id) = &overrides.group_id {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.group_id = group_id.clone();
-                tracing::debug!(group_id = %group_id, "CLI override: Kafka consumer group ID");
-            }
+        if let Some(group_id) = &overrides.group_id
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.group_id = group_id.clone();
+            tracing::debug!(group_id = %group_id, "CLI override: Kafka consumer group ID");
         }
 
         // Override output topic if provided
-        if let Some(output) = &overrides.output_topic {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.output_topic = Some(output.clone());
-                tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
-            }
+        if let Some(output) = &overrides.output_topic
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.output_topic = Some(output.clone());
+            tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
         }
 
         // Override topic auto-creation if requested
-        if overrides.create_topics {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.auto_create_topics = true;
-                tracing::debug!("CLI override: Kafka topic auto-creation enabled");
-            }
+        if overrides.create_topics
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.auto_create_topics = true;
+            tracing::debug!("CLI override: Kafka topic auto-creation enabled");
         }
 
         // Override generic matcher action if provided
@@ -2768,11 +2768,11 @@ pub mod watch {
         }
 
         // Override brokers if provided
-        if let Some(brokers) = &overrides.brokers {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.brokers = brokers.clone();
-                tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
-            }
+        if let Some(brokers) = &overrides.brokers
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.brokers = brokers.clone();
+            tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
         }
 
         // Override generic matcher version if provided
@@ -2849,10 +2849,12 @@ pub mod watch {
 
             let result = apply_cli_overrides(&mut config, &WatchCliOverrides::default());
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
 
         #[test]
@@ -2912,16 +2914,20 @@ pub mod watch {
 
             assert!(result.is_ok());
             assert_eq!(config.watcher.filters.event_types.len(), 2);
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.success".to_string()));
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.failure".to_string()));
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.success".to_string())
+            );
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.failure".to_string())
+            );
         }
 
         #[test]
@@ -3300,11 +3306,13 @@ pub mod watch {
 
             assert!(result.is_ok());
             assert_eq!(config.watcher.filters.event_types.len(), 1);
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.success".to_string()));
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.success".to_string())
+            );
             assert!(config.watcher.filters.success_only);
         }
 
@@ -3333,10 +3341,12 @@ pub mod watch {
             );
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to read filter config file"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Failed to read filter config file")
+            );
         }
 
         #[test]
@@ -3379,10 +3389,12 @@ pub mod watch {
             let result = run_watch(config, WatchCliOverrides::default()).await;
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
 
         #[tokio::test]
@@ -3394,10 +3406,12 @@ pub mod watch {
             let result = run_watch(config, WatchCliOverrides::default()).await;
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
     }
 }

@@ -104,11 +104,10 @@ fn config_with_additional_paths(
     let additional_paths_yaml = if additional_paths.is_empty() {
         "[]".to_string()
     } else {
-        let entries = additional_paths
+        additional_paths
             .iter()
             .map(|path| format!("\n    - {}", path.display()))
-            .collect::<String>();
-        entries
+            .collect::<String>()
     };
 
     format!(

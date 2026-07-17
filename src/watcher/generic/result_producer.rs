@@ -83,8 +83,8 @@ struct SslConfig {
     key_location: Option<String>,
 }
 use async_trait::async_trait;
-use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::ClientConfig;
+use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Arc;

@@ -27,8 +27,8 @@ pub mod write_file;
 
 // Re-export terminal functions for convenience
 pub use terminal::{
-    execute_command, is_dangerous_command, parse_command, validate_command, CommandValidator,
-    TerminalTool,
+    CommandValidator, TerminalTool, execute_command, is_dangerous_command, parse_command,
+    validate_command,
 };
 
 // Re-export grep tool and search types
@@ -42,11 +42,11 @@ pub(crate) use subagent::SubagentTool;
 
 // Re-export file utilities and metadata types
 pub use file_metadata::{
-    detect_content_type, get_file_info, get_file_type, is_image_file, read_image_as_base64,
-    FileInfo, FileMetadataError, FileType, ImageFormat, ImageMetadata,
+    FileInfo, FileMetadataError, FileType, ImageFormat, ImageMetadata, detect_content_type,
+    get_file_info, get_file_type, is_image_file, read_image_as_base64,
 };
 pub use file_utils::{
-    check_file_size, ensure_parent_dirs, generate_diff, FileUtilsError, PathValidator,
+    FileUtilsError, PathValidator, check_file_size, ensure_parent_dirs, generate_diff,
 };
 
 use crate::error::Result;

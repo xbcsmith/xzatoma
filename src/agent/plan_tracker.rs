@@ -15,7 +15,7 @@
 //! assert_eq!(tracker.entries().len(), 2);
 //! ```
 
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 
 /// Parses streamed assistant output for numbered-list plan items and tracks
 /// their execution status.
@@ -44,7 +44,7 @@ use agent_client_protocol::schema as acp;
 /// tracker.finalize();
 /// assert_eq!(
 ///     tracker.entries()[0].status,
-///     agent_client_protocol::schema::PlanEntryStatus::Completed
+///     agent_client_protocol::schema::v1::PlanEntryStatus::Completed
 /// );
 /// ```
 pub struct PlanTracker {
@@ -144,10 +144,10 @@ impl PlanTracker {
             }
             // Promote the current last Pending entry to InProgress before
             // adding the new entry.
-            if let Some(last) = self.entries.last_mut() {
-                if last.status == acp::PlanEntryStatus::Pending {
-                    last.status = acp::PlanEntryStatus::InProgress;
-                }
+            if let Some(last) = self.entries.last_mut()
+                && last.status == acp::PlanEntryStatus::Pending
+            {
+                last.status = acp::PlanEntryStatus::InProgress;
             }
             self.entries.push(acp::PlanEntry::new(
                 content,
@@ -196,7 +196,7 @@ impl PlanTracker {
     ///
     /// ```
     /// use xzatoma::agent::plan_tracker::PlanTracker;
-    /// use agent_client_protocol::schema::PlanEntryStatus;
+    /// use agent_client_protocol::schema::v1::PlanEntryStatus;
     ///
     /// let mut tracker = PlanTracker::new();
     /// tracker.update("1. Step one\n2. Step two\n");

@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::time;
 
@@ -331,13 +331,13 @@ impl CommandValidator {
             }
 
             // If the candidate exists use canonicalization to prevent symlink escape
-            if let Ok(canonical_target) = candidate_path.canonicalize() {
-                if !canonical_target.starts_with(&canonical_working) {
-                    return Err(XzatomaError::PathOutsideWorkingDirectory(format!(
-                        "Path escapes working directory: {} -> {:?}",
-                        candidate, canonical_target
-                    )));
-                }
+            if let Ok(canonical_target) = candidate_path.canonicalize()
+                && !canonical_target.starts_with(&canonical_working)
+            {
+                return Err(XzatomaError::PathOutsideWorkingDirectory(format!(
+                    "Path escapes working directory: {} -> {:?}",
+                    candidate, canonical_target
+                )));
             }
         }
 
@@ -886,9 +886,10 @@ mod tests {
         let outside_file = outside.path().join("o.txt");
         stdfs::write(&outside_file, "o").unwrap();
         // Using absolute path explicitly should be rejected
-        assert!(v
-            .validate(&format!("cat {}", outside_file.display()))
-            .is_err());
+        assert!(
+            v.validate(&format!("cat {}", outside_file.display()))
+                .is_err()
+        );
 
         // Option value referencing outside file should be rejected
         let res = v.validate(&format!("ls --path={}", outside_file.display()));

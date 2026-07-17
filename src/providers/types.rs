@@ -2180,11 +2180,11 @@ pub fn validate_message_sequence(messages: &[Message]) -> Vec<Message> {
     // First pass: collect all tool_call IDs from assistant messages with tool_calls
     let mut valid_tool_ids: HashSet<String> = HashSet::new();
     for message in messages {
-        if message.role == "assistant" {
-            if let Some(tool_calls) = &message.tool_calls {
-                for tool_call in tool_calls {
-                    valid_tool_ids.insert(tool_call.id.clone());
-                }
+        if message.role == "assistant"
+            && let Some(tool_calls) = &message.tool_calls
+        {
+            for tool_call in tool_calls {
+                valid_tool_ids.insert(tool_call.id.clone());
             }
         }
     }
@@ -2409,9 +2409,11 @@ mod tests {
 
         model.add_capability(ModelCapability::FunctionCalling);
         assert_eq!(model.capabilities.len(), 1);
-        assert!(model
-            .capabilities
-            .contains(&ModelCapability::FunctionCalling));
+        assert!(
+            model
+                .capabilities
+                .contains(&ModelCapability::FunctionCalling)
+        );
         assert!(model.supports_tools);
         assert!(!model.supports_streaming);
 

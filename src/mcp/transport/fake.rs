@@ -60,7 +60,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::Stream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::error::Result;
 use crate::mcp::transport::Transport;

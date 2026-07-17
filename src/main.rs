@@ -7,7 +7,7 @@ use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use xzatoma::error::Result;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use xzatoma::config::LogFormat;
 
 // Removed unused grouped imports to satisfy clippy
@@ -47,7 +47,9 @@ async fn main() -> Result<()> {
     // This keeps callers unchanged while allowing `SqliteStorage::new()` to
     // honor an override.
     if let Some(db_path) = &common.storage_path {
-        std::env::set_var("XZATOMA_HISTORY_DB", db_path);
+        unsafe {
+            std::env::set_var("XZATOMA_HISTORY_DB", db_path);
+        }
         tracing::info!("Using storage DB override from CLI: {}", db_path);
     }
 

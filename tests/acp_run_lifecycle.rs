@@ -1,11 +1,11 @@
-use axum::body::{to_bytes, Body};
-use axum::http::{header, Method, Request, StatusCode};
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, StatusCode, header};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 use xzatoma::acp::executor::AcpExecutor;
 use xzatoma::acp::runtime::AcpRuntime;
-use xzatoma::acp::server::{build_router, AcpServerState};
+use xzatoma::acp::server::{AcpServerState, build_router};
 use xzatoma::config::Config;
 
 fn test_config() -> Config {
@@ -295,10 +295,12 @@ async fn test_invalid_input_handling_rejects_unsupported_artifact_input() {
 
     let json = response_json(response).await;
     assert_eq!(json["code"], "invalid_request");
-    assert!(json["message"]
-        .as_str()
-        .expect("message should be a string")
-        .contains("unsupported"));
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("unsupported")
+    );
 }
 
 #[tokio::test]
