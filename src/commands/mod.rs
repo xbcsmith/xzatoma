@@ -793,6 +793,8 @@ pub mod chat {
                         continue;
                     }
 
+                    rl.add_history_entry(trimmed)?;
+
                     // Check for special commands first
                     match parse_special_command(trimmed) {
                         Ok(SpecialCommand::SwitchMode(new_mode)) => {
@@ -1014,8 +1016,6 @@ pub mod chat {
                         }
                     };
 
-                    rl.add_history_entry(trimmed)?;
-
                     // Show per-mention loading status...
                     if !mentions.is_empty() {
                         use colored::Colorize;
@@ -1079,16 +1079,8 @@ pub mod chat {
                         )
                         .await;
 
-                    // Summarize mention load results...
+                    // Summarize mention load results.
                     use colored::Colorize;
-                    // ... (omitted similar logic for brevity, assuming standard output handling)
-                    // But we MUST verify we didn't delete the logic in replacement.
-                    // The replacement content replaces the ENTIRE run_chat body, so I need to include the rest of the logic or implement it concisely.
-
-                    // Actually, I should use the previous logic for mention display.
-                    // I will just copy-paste the mention display logic from the original file to be safe, or just use minimal replacement if possible.
-                    // But `run_chat` is one big function.
-                    // I'll rewrite the mention display logic in the replacement content.
 
                     let total_mentions = mentions.len();
                     if total_mentions > 0 {
