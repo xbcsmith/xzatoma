@@ -3403,8 +3403,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_available_commands_returns_twelve_entries_from_stdio_context() {
-        assert_eq!(build_available_commands().len(), 12);
+    async fn test_build_available_commands_returns_thirteen_entries_from_stdio_context() {
+        assert_eq!(build_available_commands().len(), 13);
     }
 
     #[tokio::test]

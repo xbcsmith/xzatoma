@@ -6,20 +6,21 @@
 //!
 //! # Command Overview
 //!
-//! | Command      | Input       | Purpose                                        |
-//! |--------------|-------------|------------------------------------------------|
-//! | `/mode`      | Optional    | Show or change the XZatoma operation mode      |
-//! | `/model`     | Optional    | Show or change the current provider model      |
-//! | `/safety`    | Optional    | Show or change the safety confirmation policy  |
-//! | `/tools`     | None        | Summarize available XZatoma and IDE tools      |
-//! | `/context`   | None        | Show current conversation context usage        |
-//! | `/summarize` | None        | Summarize and compact conversation history     |
-//! | `/skills`    | None        | List active skills for the current workspace   |
-//! | `/mcp`       | None        | List connected MCP servers and tools           |
-//! | `/help`      | None        | Show available special commands                |
-//! | `/status`    | None        | Show current mode, safety policy, and model    |
-//! | `/subagents` | Optional    | Enable or disable subagent delegation          |
-//! | `/system`    | Required    | Set or replace the active system prompt        |
+//! | Command      | Input                          | Purpose                                        |
+//! |--------------|--------------------------------|------------------------------------------------|
+//! | `/mode`      | Optional: value \| status      | Show help or switch the operation mode         |
+//! | `/model`     | Optional: value \| status      | Show help or switch the active model           |
+//! | `/safety`    | Optional: value \| status      | Show help or change the safety policy          |
+//! | `/tools`     | None                           | Summarize available XZatoma and IDE tools      |
+//! | `/context`   | None                           | Show current conversation context usage        |
+//! | `/summarize` | None                           | Summarize and compact conversation history     |
+//! | `/skills`    | None                           | List active skills for the current workspace   |
+//! | `/mcp`       | None                           | List connected MCP servers and tools           |
+//! | `/help`      | None                           | Show available special commands                |
+//! | `/status`    | None                           | Show current mode, safety policy, and model    |
+//! | `/subagents` | Optional: value \| status      | Show help or toggle subagent delegation        |
+//! | `/system`    | Optional: text \| status       | Show help, inspect, or set the system prompt   |
+//! | `/streaming` | None                           | Show streaming help (ACP mode note)            |
 //!
 //! # Examples
 //!
@@ -27,7 +28,7 @@
 //! use xzatoma::acp::available_commands::build_available_commands;
 //!
 //! let commands = build_available_commands();
-//! assert_eq!(commands.len(), 12);
+//! assert_eq!(commands.len(), 13);
 //! assert!(!commands[0].description.is_empty());
 //! ```
 
@@ -43,7 +44,7 @@ use agent_client_protocol as acp_sdk;
 ///
 /// # Returns
 ///
-/// A `Vec<acp::AvailableCommand>` containing all twelve XZatoma slash commands
+/// A `Vec<acp::AvailableCommand>` containing all thirteen XZatoma slash commands
 /// in display order.
 ///
 /// # Examples
@@ -52,13 +53,14 @@ use agent_client_protocol as acp_sdk;
 /// use xzatoma::acp::available_commands::build_available_commands;
 ///
 /// let commands = build_available_commands();
-/// assert_eq!(commands.len(), 12);
+/// assert_eq!(commands.len(), 13);
 ///
 /// let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
 /// assert!(names.contains(&"/mode"));
 /// assert!(names.contains(&"/mcp"));
 /// assert!(names.contains(&"/help"));
 /// assert!(names.contains(&"/system"));
+/// assert!(names.contains(&"/streaming"));
 /// ```
 pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
     vec![
@@ -74,6 +76,7 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
         build_status_command(),
         build_subagents_command(),
         build_system_command(),
+        build_streaming_command(),
     ]
 }
 
@@ -83,53 +86,55 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
 
 /// Builds the `/mode` command definition.
 ///
-/// Accepts an optional mode ID argument. When no argument is provided the
-/// agent reports the current mode; when an ID is provided the agent switches
-/// to that mode.
+/// Accepts an optional mode ID argument or the keyword `status`. When no
+/// argument is provided the agent shows mode help; when `status` is passed
+/// the agent reports the current mode; when a mode ID is provided the agent
+/// switches to that mode.
 fn build_mode_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
         "/mode",
-        "Show or change the XZatoma operation mode. \
-         Available modes: planning, write, safe, full_autonomous.",
+        "Show help or switch the operation mode. \
+         Use `/mode status` to see the current mode. \
+         Pass `planning` or `write` to switch.",
     )
     .input(Some(acp::AvailableCommandInput::Unstructured(
-        acp::UnstructuredCommandInput::new(
-            "Optional mode ID: planning | write | safe | full_autonomous",
-        ),
+        acp::UnstructuredCommandInput::new("Optional: planning | write | status"),
     )))
 }
 
 /// Builds the `/model` command definition.
 ///
-/// Accepts an optional model name argument. When no argument is provided the
-/// agent reports the active provider model; when a name is provided the agent
+/// Accepts an optional model name argument or the keyword `status`. When no
+/// argument is provided the agent shows model help; when `status` is passed
+/// the agent reports the active model; when a name is provided the agent
 /// requests a model switch.
 fn build_model_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
         "/model",
-        "Show or change the current AI provider model. \
-         Pass a model name to switch, or omit to see the active model.",
+        "Show help or switch the active model. \
+         Use `/model status` to see the current model. \
+         Pass a model name to switch.",
     )
     .input(Some(acp::AvailableCommandInput::Unstructured(
-        acp::UnstructuredCommandInput::new("Optional model name, e.g. gpt-4o or llama3.2:latest"),
+        acp::UnstructuredCommandInput::new("Optional: <model_name> | status"),
     )))
 }
 
 /// Builds the `/safety` command definition.
 ///
-/// Accepts an optional safety policy argument. When no argument is provided
-/// the agent reports the current policy; when a value is provided the agent
-/// applies the new policy.
+/// Accepts an optional safety policy argument or the keyword `status`. When
+/// no argument is provided the agent shows safety help; when `status` is
+/// passed the agent reports the current policy; when a value is provided the
+/// agent applies the new policy.
 fn build_safety_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
         "/safety",
-        "Show or change the safety confirmation policy. \
-         Controls when XZatoma requests confirmation before executing operations.",
+        "Show help or change the safety policy. \
+         Use `/safety status` to see the current policy. \
+         Pass `on` or `off` to change.",
     )
     .input(Some(acp::AvailableCommandInput::Unstructured(
-        acp::UnstructuredCommandInput::new(
-            "Optional policy: always_confirm | confirm_dangerous | never_confirm",
-        ),
+        acp::UnstructuredCommandInput::new("Optional: on | off | status"),
     )))
 }
 
@@ -210,30 +215,52 @@ fn build_status_command() -> acp::AvailableCommand {
 
 /// Builds the `/subagents` command definition.
 ///
-/// Accepts an optional toggle argument. When no argument is provided the
-/// agent reports whether subagent delegation is currently enabled; when a
-/// value is provided the agent enables or disables subagent delegation
-/// accordingly.
+/// Accepts an optional toggle argument or the keyword `status`. When no
+/// argument is provided the agent shows subagents help; when `status` is
+/// passed the agent reports whether subagent delegation is enabled; when a
+/// value is provided the agent enables or disables subagent delegation.
 fn build_subagents_command() -> acp::AvailableCommand {
-    acp::AvailableCommand::new("/subagents", "Enable or disable subagent delegation.").input(Some(
-        acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
-            "Optional toggle: on | off | enable | disable",
-        )),
-    ))
+    acp::AvailableCommand::new(
+        "/subagents",
+        "Show help or toggle subagent delegation. \
+         Use `/subagents status` to see current state. \
+         Pass `on` or `off` to change.",
+    )
+    .input(Some(acp::AvailableCommandInput::Unstructured(
+        acp::UnstructuredCommandInput::new("Optional: on | off | status"),
+    )))
 }
 
 /// Builds the `/system` command definition.
 ///
-/// Requires a text argument. The agent replaces the active system prompt for
-/// the remainder of the session with the provided text.
+/// Accepts an optional text argument or the keyword `status`. When no
+/// argument is provided the agent shows system prompt help; when `status`
+/// is passed the agent displays the current system prompt; when text is
+/// provided the agent replaces the active system prompt with that text.
 fn build_system_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
         "/system",
-        "Set or replace the active system prompt for this session.",
+        "Show help, inspect, or replace the system prompt. \
+         Use `/system status` to see the current prompt. \
+         Pass text to replace it.",
     )
     .input(Some(acp::AvailableCommandInput::Unstructured(
-        acp::UnstructuredCommandInput::new("Required text: the new system prompt"),
+        acp::UnstructuredCommandInput::new("Optional: <new prompt text> | status"),
     )))
+}
+
+/// Builds the `/streaming` command definition.
+///
+/// Takes no arguments. In ACP mode, response streaming is controlled by the
+/// Zed client and cannot be toggled from within the chat window. This command
+/// appears in the completion menu so that users who type `/streaming` receive
+/// an informational note rather than a confusing error.
+fn build_streaming_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new(
+        "/streaming",
+        "Show streaming help. Streaming is controlled by the Zed client in ACP mode. \
+         Use `/streaming status` for details.",
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +272,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_available_commands_returns_twelve_entries() {
+    fn test_build_available_commands_returns_thirteen_entries() {
         let commands = build_available_commands();
-        assert_eq!(commands.len(), 12);
+        assert_eq!(commands.len(), 13);
     }
 
     #[test]
@@ -269,6 +296,7 @@ mod tests {
                 "/status",
                 "/subagents",
                 "/system",
+                "/streaming",
             ]
         );
     }
@@ -276,7 +304,7 @@ mod tests {
     #[test]
     fn test_build_available_commands_includes_new_commands() {
         let commands = build_available_commands();
-        for name in ["/help", "/status", "/subagents", "/system"] {
+        for name in ["/help", "/status", "/subagents", "/system", "/streaming"] {
             assert!(
                 commands.iter().any(|c| c.name == name),
                 "expected command '{}' to be present",
@@ -372,6 +400,7 @@ mod tests {
             "/mcp",
             "/help",
             "/status",
+            "/streaming",
         ];
         for name in no_input_names {
             let command = commands.iter().find(|c| c.name == name).unwrap();
@@ -441,5 +470,71 @@ mod tests {
         let first_names: Vec<&str> = first.iter().map(|c| c.name.as_str()).collect();
         let second_names: Vec<&str> = second.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(first_names, second_names);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 5 new tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_command_is_present() {
+        let commands = build_available_commands();
+        assert!(
+            commands.iter().any(|c| c.name == "/streaming"),
+            "/streaming must be present in the advertised command list"
+        );
+    }
+
+    #[test]
+    fn test_system_command_input_hint_mentions_status() {
+        let commands = build_available_commands();
+        let system = commands.iter().find(|c| c.name == "/system").unwrap();
+        match system.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    input.hint.contains("status"),
+                    "/system input hint must mention 'status'; got: {}",
+                    input.hint
+                );
+                assert!(
+                    !input.hint.to_lowercase().contains("required"),
+                    "/system input hint must not say 'required'; got: {}",
+                    input.hint
+                );
+            }
+            _ => panic!("/system input must be Unstructured"),
+        }
+    }
+
+    #[test]
+    fn test_mode_command_input_hint_mentions_status() {
+        let commands = build_available_commands();
+        let mode = commands.iter().find(|c| c.name == "/mode").unwrap();
+        match mode.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    input.hint.contains("status"),
+                    "/mode input hint must mention 'status'; got: {}",
+                    input.hint
+                );
+            }
+            _ => panic!("/mode input must be Unstructured"),
+        }
+    }
+
+    #[test]
+    fn test_model_command_input_hint_mentions_status() {
+        let commands = build_available_commands();
+        let model = commands.iter().find(|c| c.name == "/model").unwrap();
+        match model.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    input.hint.contains("status"),
+                    "/model input hint must mention 'status'; got: {}",
+                    input.hint
+                );
+            }
+            _ => panic!("/model input must be Unstructured"),
+        }
     }
 }
