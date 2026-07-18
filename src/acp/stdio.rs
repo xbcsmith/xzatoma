@@ -58,8 +58,9 @@ use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::commands::build_agent_environment;
 use crate::commands::special_commands::{
     SpecialCommand, format_help_text, format_mention_help_text, format_mode_help_text,
-    format_model_help_text, format_safety_help_text, format_streaming_help_text,
-    format_subagents_help_text, format_system_help_text, parse_special_command,
+    format_model_help_text, format_models_help_text, format_safety_help_text,
+    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
+    parse_special_command,
 };
 use crate::config::{AgentConfig, Config, ExecutionMode, TerminalConfig};
 use crate::error::{Result, XzatomaError};
@@ -1171,13 +1172,17 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::SwitchModel(_)) => {
             "Model switching requires a live session.".to_string()
         }
-        Ok(SpecialCommand::ListModels) => handle_not_yet_implemented("/models"),
-        Ok(SpecialCommand::ModelsHelp) => handle_not_yet_implemented("/models"),
-        Ok(SpecialCommand::ShowModelInfo(_)) => handle_not_yet_implemented("/models"),
+        Ok(SpecialCommand::ListModels) => "Model listing requires a live session.".to_string(),
+        Ok(SpecialCommand::ModelsHelp) => format_models_help_text(),
+        Ok(SpecialCommand::ShowModelInfo(_)) => {
+            "Model info lookup requires a live session.".to_string()
+        }
 
         // Phase 5: Context Commands.
-        Ok(SpecialCommand::ContextInfo) => handle_not_yet_implemented("/context"),
-        Ok(SpecialCommand::ContextSummary { .. }) => handle_not_yet_implemented("/summarize"),
+        Ok(SpecialCommand::ContextInfo) => "Context info requires a live session.".to_string(),
+        Ok(SpecialCommand::ContextSummary { .. }) => {
+            "Context summary requires a live session.".to_string()
+        }
 
         // Phase 6: Subagents Toggle and System Prompt.
         Ok(SpecialCommand::ToggleSubagents(_)) => {
@@ -1665,6 +1670,136 @@ async fn handle_mcp_command(session: &ActiveSessionState) -> String {
     lines.join("\n")
 }
 
+/// Returns the models help text as a formatted string.
+///
+/// This is the pure, sessionless response for the bare `/models` command. It
+/// delegates directly to [`format_models_help_text`] from `special_commands`.
+///
+/// # Returns
+///
+/// Returns the full models help text string.
+fn handle_models_help() -> String {
+    format_models_help_text()
+}
+
+/// Lists models available from the session provider and formats them for display.
+///
+/// Queries the provider via the session agent and returns a newline-separated
+/// list of model names. Returns a graceful message when no models are available
+/// or when the listing API call fails.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose provider is queried.
+///
+/// # Returns
+///
+/// Returns a formatted list string or a graceful error message.
+async fn handle_models_list(session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    match agent.provider().list_models().await {
+        Ok(models) if models.is_empty() => "No models available.".to_string(),
+        Ok(models) => {
+            let mut lines = vec!["Available models:".to_string()];
+            for model in &models {
+                lines.push(format!("- {}", model.name));
+            }
+            lines.join("\n")
+        }
+        Err(e) => format!("Model listing failed: {e}"),
+    }
+}
+
+/// Returns formatted details for a named model from the session provider.
+///
+/// Queries the provider via the session agent for info about the named model.
+/// Returns a formatted block with the model name, display name, context window
+/// size, and capabilities. Returns a graceful error message when the lookup
+/// fails or the provider does not support detailed model info.
+///
+/// # Arguments
+///
+/// * `model` - The model identifier to look up.
+/// * `session` - Locked active session state whose provider is queried.
+///
+/// # Returns
+///
+/// Returns a formatted model info string or a graceful error message.
+async fn handle_models_info(model: String, session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    match agent.provider().get_model_info(&model).await {
+        Ok(info) => {
+            let caps: Vec<String> = info.capabilities.iter().map(|c| c.to_string()).collect();
+            let caps_str = if caps.is_empty() {
+                "none".to_string()
+            } else {
+                caps.join(", ")
+            };
+            format!(
+                "Model: {}\nDisplay name: {}\nContext window: {} tokens\nCapabilities: {}",
+                info.name, info.display_name, info.context_window, caps_str,
+            )
+        }
+        Err(e) => format!("Could not retrieve model info for '{model}': {e}"),
+    }
+}
+
+/// Returns token usage statistics for the active session's context window.
+///
+/// Reads the current conversation token count and context window size from the
+/// session agent and formats them as a human-readable status block showing
+/// tokens used, the window limit, tokens remaining, and the usage percentage.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose agent conversation is read.
+///
+/// # Returns
+///
+/// Returns a formatted context info string with token statistics.
+async fn handle_context_info(session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    let context_window = agent.conversation().max_tokens();
+    let context = agent.get_context_info(context_window);
+    format!(
+        "Context window: {}/{} tokens used ({:.1}% full)\nRemaining: {} tokens",
+        context.used_tokens, context.max_tokens, context.percentage_used, context.remaining_tokens,
+    )
+}
+
+/// Summarizes the active session's conversation history and resets the context window.
+///
+/// Compacts all non-system messages into a summary that is stored as a new
+/// system message, then clears the conversation history. This reduces token
+/// usage and allows more turns in long-running sessions.
+///
+/// The `model` parameter is accepted for API symmetry and future use; the
+/// current implementation uses the conversation's built-in summarization
+/// which does not make additional provider API calls.
+///
+/// # Arguments
+///
+/// * `model` - Optional model override for future provider-based summarization.
+/// * `session` - The active ACP session to mutate.
+///
+/// # Returns
+///
+/// Returns `"Conversation summarized. Context window reset."` on success, or
+/// an error description string when the summarization fails.
+async fn handle_context_summary(
+    _model: Option<String>,
+    session: &Arc<Mutex<ActiveSessionState>>,
+) -> String {
+    let session_lock = session.lock().await;
+    let agent_handle = session_lock.xzatoma_agent.clone();
+    drop(session_lock);
+    let mut agent = agent_handle.lock().await;
+    match agent.conversation_mut().summarize_and_reset() {
+        Ok(_) => "Conversation summarized. Context window reset.".to_string(),
+        Err(e) => format!("Summarization failed: {e}"),
+    }
+}
+
 /// Parses `prompt_text` as a special slash command and, when it is one,
 /// handles it locally instead of forwarding it to the LLM.
 ///
@@ -1768,6 +1903,22 @@ pub async fn dispatch_stdio_command(
         }
         Ok(SpecialCommand::SetSystemPrompt(text)) => handle_set_system_prompt(text, session).await,
         Ok(SpecialCommand::SwitchModel(model)) => handle_switch_model(model, session).await,
+        Ok(SpecialCommand::ModelsHelp) => handle_models_help(),
+        Ok(SpecialCommand::ListModels) => {
+            let session_lock = session.lock().await;
+            handle_models_list(&session_lock).await
+        }
+        Ok(SpecialCommand::ShowModelInfo(m)) => {
+            let session_lock = session.lock().await;
+            handle_models_info(m, &session_lock).await
+        }
+        Ok(SpecialCommand::ContextInfo) => {
+            let session_lock = session.lock().await;
+            handle_context_info(&session_lock).await
+        }
+        Ok(SpecialCommand::ContextSummary { model }) => {
+            handle_context_summary(model, session).await
+        }
         _ => resolve_special_command_response(prompt_text)?,
     };
 
@@ -6014,6 +6165,72 @@ mod tests {
         assert!(
             text.contains("not found") || text.contains("failed"),
             "error text must describe why the model switch failed; got: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4: ACP Informational Command tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_models_help_returns_models_help_text() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // Bare `/models` parses as ModelsHelp and must return the help header.
+        let result = dispatch_stdio_command("/models", &session, None).await;
+        let response = result
+            .expect("/models should short-circuit (not None)")
+            .expect("/models should not error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the text directly via the pure handler.
+        let text = handle_models_help();
+        assert!(
+            text.contains("Models Command"),
+            "models help must contain the header; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_context_info_returns_token_stats() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // `/context info` must return a string containing token statistics.
+        let result = dispatch_stdio_command("/context info", &session, None).await;
+        let response = result
+            .expect("/context info should short-circuit (not None)")
+            .expect("/context info should not error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the text directly via the handler.
+        let session_lock = session.lock().await;
+        let text = handle_context_info(&session_lock).await;
+        assert!(
+            text.contains("tokens"),
+            "context info must mention tokens; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_context_summary_returns_confirmation() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // `/context summary` must summarize the conversation and return a
+        // confirmation string containing "summarized".
+        let result = dispatch_stdio_command("/context summary", &session, None).await;
+        let response = result
+            .expect("/context summary should short-circuit (not None)")
+            .expect("/context summary should not error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the text directly via the handler.
+        let text = handle_context_summary(None, &session).await;
+        assert!(
+            text.contains("summarized"),
+            "context summary must confirm summarization; got: {text}"
         );
     }
 }

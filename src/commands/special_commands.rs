@@ -772,21 +772,27 @@ NOTES:
     .to_string()
 }
 
-/// Display detailed help for the `/models` command
+/// Return the help text for the `/models` command as a `String`.
 ///
-/// Shows usage, flags, and examples for `/models` subcommands such as
-/// `/models list` and `/models info <name>`.
+/// Contains usage, flags, and examples for `/models` subcommands such as
+/// `/models list` and `/models info <name>`. Use this function when the
+/// text needs to be captured or tested; use `print_models_help` when the
+/// text should be written directly to stdout.
+///
+/// # Returns
+///
+/// A `String` containing the full models help text.
 ///
 /// # Examples
 ///
 /// ```
-/// use xzatoma::commands::special_commands::print_models_help;
+/// use xzatoma::commands::special_commands::format_models_help_text;
 ///
-/// print_models_help();
+/// let text = format_models_help_text();
+/// assert!(!text.is_empty());
 /// ```
-pub fn print_models_help() {
-    println!(
-        r#"
+pub fn format_models_help_text() -> String {
+    r#"
 Models Command - Usage and Examples
 ===================================
 
@@ -816,7 +822,24 @@ NOTES:
   - `--summary` prints compact, script-friendly summaries
   - Use `/models` to see this help when you don't know which subcommand to run
 "#
-    );
+    .to_string()
+}
+
+/// Display detailed help for the `/models` command.
+///
+/// Writes the output of `format_models_help_text` to stdout. Shows usage,
+/// flags, and examples for `/models` subcommands such as `/models list`
+/// and `/models info <name>`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::print_models_help;
+///
+/// print_models_help();
+/// ```
+pub fn print_models_help() {
+    println!("{}", format_models_help_text());
 }
 
 /// Display detailed help for context mentions
