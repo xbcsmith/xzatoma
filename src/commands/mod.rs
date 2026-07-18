@@ -16,7 +16,9 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    SpecialCommand, parse_special_command, print_help, print_models_help,
+    SpecialCommand, format_mode_help_text, format_model_help_text, format_safety_help_text,
+    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
+    parse_special_command, print_help, print_models_help,
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
@@ -1000,6 +1002,76 @@ pub mod chat {
                         Ok(SpecialCommand::SetSystemPrompt(text)) => {
                             agent.conversation_mut().replace_first_system_message(&text);
                             println!("System prompt updated.\n");
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModeHelp) => {
+                            println!("{}", format_mode_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModeStatus) => {
+                            println!("Current mode: {}\n", mode_state.chat_mode);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSafetyHelp) => {
+                            println!("{}", format_safety_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSafetyStatus) => {
+                            println!("Current safety policy: {}\n", mode_state.safety_mode);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModelHelp) => {
+                            println!("{}", format_model_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModelStatus) => {
+                            let model = current_model.as_deref().unwrap_or(provider_type);
+                            println!("Current model: {}\n", model);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowStreamingHelp) => {
+                            println!("{}", format_streaming_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowStreamingStatus) => {
+                            println!(
+                                "Streaming: {}\n",
+                                if mode_state.streaming_enabled {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                }
+                            );
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSystemHelp) => {
+                            println!("{}", format_system_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSystemStatus) => {
+                            let prompt = agent
+                                .conversation()
+                                .messages()
+                                .iter()
+                                .find(|m| m.role == "system")
+                                .and_then(|m| m.content.as_deref())
+                                .unwrap_or("No system prompt is active for this session.");
+                            println!("Current system prompt:\n{}\n", prompt);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSubagentsHelp) => {
+                            println!("{}", format_subagents_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSubagentsStatus) => {
+                            println!(
+                                "Subagent delegation: {}\n",
+                                if mode_state.subagents_enabled {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                }
+                            );
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,

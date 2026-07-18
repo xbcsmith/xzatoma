@@ -54,7 +54,9 @@ use crate::agent::events::{AgentExecutionEvent, AgentObserver};
 use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::commands::build_agent_environment;
 use crate::commands::special_commands::{
-    CommandError, SpecialCommand, format_help_text, format_mention_help_text, parse_special_command,
+    SpecialCommand, format_help_text, format_mention_help_text, format_mode_help_text,
+    format_model_help_text, format_safety_help_text, format_streaming_help_text,
+    format_subagents_help_text, format_system_help_text, parse_special_command,
 };
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
@@ -1109,6 +1111,28 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
     let response_text = match parsed {
         Ok(SpecialCommand::None) => return None,
 
+        // Help variants for unified UX (bare command = per-command help).
+        // These are pure and require no session state.
+        Ok(SpecialCommand::ShowModeHelp) => format_mode_help_text(),
+        Ok(SpecialCommand::ShowSafetyHelp) => format_safety_help_text(),
+        Ok(SpecialCommand::ShowModelHelp) => format_model_help_text(),
+        Ok(SpecialCommand::ShowStreamingHelp) => format_streaming_help_text(),
+        Ok(SpecialCommand::ShowSystemHelp) => format_system_help_text(),
+        Ok(SpecialCommand::ShowSubagentsHelp) => format_subagents_help_text(),
+
+        // Status variants require live session state and are intercepted by
+        // dispatch_stdio_command before this resolver is reached. The stubs
+        // below are only observed in unit tests that call this pure function
+        // directly without a live session.
+        Ok(SpecialCommand::ShowModeStatus) => handle_not_yet_implemented("/mode status"),
+        Ok(SpecialCommand::ShowSafetyStatus) => handle_not_yet_implemented("/safety status"),
+        Ok(SpecialCommand::ShowModelStatus) => handle_not_yet_implemented("/model status"),
+        Ok(SpecialCommand::ShowStreamingStatus) => {
+            "/streaming has no effect over ACP; Zed controls response streaming.".to_string()
+        }
+        Ok(SpecialCommand::ShowSystemStatus) => handle_not_yet_implemented("/system status"),
+        Ok(SpecialCommand::ShowSubagentsStatus) => handle_not_yet_implemented("/subagents status"),
+
         // Phase 2: Informational Commands.
         //
         // `ShowStatus`, `ListTools`, `ListSkills`, and `ShowMcpStatus` need
@@ -1154,17 +1178,6 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
             .to_string(),
         Ok(SpecialCommand::Exit) => {
             "Use Zed's UI to close this session; /exit has no effect over ACP.".to_string()
-        }
-
-        // Bare `/mode` and bare `/model` report as a missing-argument parse
-        // error rather than a distinguishable `Ok` variant; special-case them
-        // here so they still resolve to a locally-handled response instead of
-        // falling through to the generic usage-error text below.
-        Err(CommandError::MissingArgument { ref command, .. }) if command == "/mode" => {
-            handle_not_yet_implemented("/mode")
-        }
-        Err(CommandError::MissingArgument { ref command, .. }) if command == "/model" => {
-            handle_not_yet_implemented("/model")
         }
 
         Err(error) => error.to_string(),
