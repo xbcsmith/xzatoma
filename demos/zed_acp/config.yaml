@@ -1,14 +1,25 @@
 # Default Zed ACP demo configuration (Ollama, text-only)
+#
+# New: the Zed chat panel now supports slash commands handled directly by
+# xzatoma (no LLM turn required) in addition to the native mode/safety/model
+# dropdowns: /tools, /skills, /mcp, /status, /help, /mentions. Try them after
+# connecting to this agent in Zed.
+
 provider:
-  provider_type: ollama
-  ollama_base_url: "http://localhost:11434"
-  ollama_model: "granite4:3b"
+  type: ollama
+  ollama:
+    host: "http://localhost:11434"
+    model: "granite4:3b"
 
 agent:
   max_turns: 20
   timeout_seconds: 120
 
 acp:
+  # Optional system prompt injected as the first message of every ACP chat
+  # session. Uncomment and customize to change the assistant's persona for
+  # this demo.
+  # system_prompt: "You are a helpful coding assistant for the XZatoma Zed ACP demo."
   stdio:
     persist_sessions: true
     resume_by_workspace: true

@@ -489,7 +489,7 @@ pub mod chat {
     /// ```
     #[allow(clippy::too_many_arguments)]
     pub async fn run_chat(
-        config: Config,
+        mut config: Config,
         provider_name: Option<String>,
         mode: Option<String>,
         _safe: bool,
@@ -506,9 +506,25 @@ pub mod chat {
         // config/env prompts (which only apply to new sessions).
         let cli_system_prompt = system_prompt;
 
-        let provider_type = provider_name
-            .as_deref()
-            .unwrap_or(&config.provider.provider_type);
+        // Owned so it does not keep `config` borrowed below, since resolving
+        // the Ollama model (when applicable) needs to mutate `config` in place.
+        let provider_type_owned: String =
+            provider_name.unwrap_or_else(|| config.provider.provider_type.clone());
+        let provider_type: &str = &provider_type_owned;
+
+        // If the configured Ollama model is not actually installed on the
+        // target server (e.g. the default "llama3.2:latest" was never
+        // pulled), query Ollama for locally available models and switch to
+        // the most recently modified one instead of failing at first prompt.
+        if provider_type == "ollama"
+            && let Err(error) =
+                crate::providers::ollama::resolve_available_model(&mut config.provider.ollama).await
+        {
+            tracing::warn!(
+                error = %error,
+                "Failed to validate configured Ollama model; continuing with configured value"
+            );
+        }
 
         let working_dir = std::env::current_dir()?;
         let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;

@@ -1,9 +1,14 @@
 # Zed ACP demo configuration for Ollama with vision support
 # Requires: ollama pull granite3.2-vision:2b
+#
+# New: the Zed chat panel now supports slash commands handled directly by
+# xzatoma (no LLM turn required) in addition to the native mode/safety/model
+# dropdowns: /tools, /skills, /mcp, /status, /help, /mentions.
 provider:
-  provider_type: ollama
-  ollama_base_url: "http://localhost:11434"
-  ollama_model: "granite3.2-vision:2b"
+  type: ollama
+  ollama:
+    host: "http://localhost:11434"
+    model: "granite3.2-vision:2b"
 
 agent:
   max_turns: 20

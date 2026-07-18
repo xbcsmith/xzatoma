@@ -1,8 +1,13 @@
 # Zed ACP demo configuration for OpenAI-compatible provider
 # Set OPENAI_API_KEY environment variable before use
+#
+# New: the Zed chat panel now supports slash commands handled directly by
+# xzatoma (no LLM turn required) in addition to the native mode/safety/model
+# dropdowns: /tools, /skills, /mcp, /status, /help, /mentions.
 provider:
-  provider_type: openai
-  openai_model: "gpt-4o"
+  type: openai
+  openai:
+    model: "gpt-4o"
 
 agent:
   max_turns: 20
