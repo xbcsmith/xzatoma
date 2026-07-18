@@ -54,13 +54,14 @@ use crate::acp::tool_notifications::{
 use crate::agent::events::{AgentExecutionEvent, AgentObserver};
 
 use crate::agent::{Agent as XzatomaAgent, Conversation};
+use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::commands::build_agent_environment;
 use crate::commands::special_commands::{
     SpecialCommand, format_help_text, format_mention_help_text, format_mode_help_text,
     format_model_help_text, format_safety_help_text, format_streaming_help_text,
     format_subagents_help_text, format_system_help_text, parse_special_command,
 };
-use crate::config::{Config, ExecutionMode};
+use crate::config::{AgentConfig, Config, ExecutionMode, TerminalConfig};
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::McpClientManager;
 use crate::mcp::server::{McpServerConfig, McpServerTransportConfig};
@@ -258,6 +259,10 @@ pub struct ActiveSessionState {
     current_mode_id: String,
     /// Runtime configuration state for the session (safety, terminal, routing, etc.).
     runtime_state: SessionRuntimeState,
+    /// Terminal configuration snapshot used when rebuilding the terminal tool on mode switch.
+    terminal_config: TerminalConfig,
+    /// Agent configuration snapshot used when creating subagent tools on demand.
+    agent_config: AgentConfig,
     /// IDE tool bridge, present when the Zed client advertised IDE capabilities.
     ide_bridge: Option<Arc<IdeBridge>>,
 }
@@ -682,6 +687,8 @@ impl AcpStdioServerState {
             last_activity: chrono::Utc::now().to_rfc3339(),
             current_mode_id: runtime_state.current_mode_id.clone(),
             runtime_state,
+            terminal_config: self.config.agent.terminal.clone(),
+            agent_config: self.config.agent.clone(),
             ide_bridge,
         };
 
@@ -1152,12 +1159,18 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::ListSkills) => handle_not_yet_implemented("/skills"),
         Ok(SpecialCommand::ShowMcpStatus) => handle_not_yet_implemented("/mcp"),
 
-        // Phase 3: Mode and Safety Text Commands.
-        Ok(SpecialCommand::SwitchMode(_)) => handle_not_yet_implemented("/mode"),
-        Ok(SpecialCommand::SwitchSafety(_)) => handle_not_yet_implemented("/safety"),
+        // Mutating command variants are intercepted by dispatch_stdio_command
+        // before this pure resolver is reached. The messages below are only
+        // seen in direct unit tests of this function without a live session.
+        Ok(SpecialCommand::SwitchMode(_)) => "Mode switching requires a live session.".to_string(),
+        Ok(SpecialCommand::SwitchSafety(_)) => {
+            "Safety policy switching requires a live session.".to_string()
+        }
 
         // Phase 4: Model Switch and `/model` Commands.
-        Ok(SpecialCommand::SwitchModel(_)) => handle_not_yet_implemented("/model"),
+        Ok(SpecialCommand::SwitchModel(_)) => {
+            "Model switching requires a live session.".to_string()
+        }
         Ok(SpecialCommand::ListModels) => handle_not_yet_implemented("/models"),
         Ok(SpecialCommand::ModelsHelp) => handle_not_yet_implemented("/models"),
         Ok(SpecialCommand::ShowModelInfo(_)) => handle_not_yet_implemented("/models"),
@@ -1167,8 +1180,12 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::ContextSummary { .. }) => handle_not_yet_implemented("/summarize"),
 
         // Phase 6: Subagents Toggle and System Prompt.
-        Ok(SpecialCommand::ToggleSubagents(_)) => handle_not_yet_implemented("/subagents"),
-        Ok(SpecialCommand::SetSystemPrompt(_)) => handle_not_yet_implemented("/system"),
+        Ok(SpecialCommand::ToggleSubagents(_)) => {
+            "Subagent toggling requires a live session.".to_string()
+        }
+        Ok(SpecialCommand::SetSystemPrompt(_)) => {
+            "System prompt update requires a live session.".to_string()
+        }
 
         // Final, permanent behavior: these commands have no ACP-mode
         // equivalent and are never implemented beyond this fixed message.
@@ -1349,6 +1366,215 @@ fn handle_subagents_status(session: &ActiveSessionState) -> String {
         "disabled"
     };
     format!("Subagent delegation: {state}")
+}
+
+/// Switches the active ACP session mode and rebuilds the system prompt and
+/// terminal tool to match the new mode's constraints.
+///
+/// This mirrors the effect of a `SetSessionMode` ACP request, reusing
+/// [`mode_runtime_effect`] to derive the correct safety and terminal settings.
+///
+/// # Arguments
+///
+/// * `mode` - The target `ChatMode` variant.
+/// * `session` - The active ACP session to mutate.
+///
+/// # Returns
+///
+/// Returns `"Mode switched to <mode_id>."` on success, or a descriptive error
+/// string when the mode is not valid for ACP sessions.
+async fn handle_switch_mode(mode: ChatMode, session: &Arc<Mutex<ActiveSessionState>>) -> String {
+    let mode_id = match mode {
+        ChatMode::Planning => crate::acp::session_mode::MODE_PLANNING,
+        ChatMode::Write => crate::acp::session_mode::MODE_WRITE,
+        ChatMode::Watcher => {
+            return "The 'watcher' mode is not available in ACP sessions.".to_string();
+        }
+    };
+
+    let effect = match mode_runtime_effect(mode_id) {
+        Ok(eff) => eff,
+        Err(e) => return format!("Failed to switch mode: {e}"),
+    };
+
+    let (workspace_root, terminal_config, xzatoma_agent) = {
+        let mut session_lock = session.lock().await;
+        session_lock.current_mode_id = mode_id.to_string();
+        session_lock.runtime_state.safety_mode_str = effect.safety_mode_str.clone();
+        session_lock.runtime_state.terminal_mode = effect.terminal_mode;
+        session_lock.runtime_state.current_mode_id = mode_id.to_string();
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+        (
+            session_lock.workspace_root.clone(),
+            session_lock.terminal_config.clone(),
+            session_lock.xzatoma_agent.clone(),
+        )
+    };
+
+    // Rebuild transient system messages and terminal tool with new mode settings.
+    let chat_mode = ChatMode::parse_str(&effect.chat_mode_str).unwrap_or(ChatMode::Write);
+    let safety_mode =
+        SafetyMode::parse_str(&effect.safety_mode_str).unwrap_or(SafetyMode::AlwaysConfirm);
+    let system_prompt = crate::prompts::build_system_prompt(chat_mode, safety_mode);
+
+    let mut agent_lock = xzatoma_agent.lock().await;
+    agent_lock.set_transient_system_messages(vec![system_prompt]);
+
+    let new_validator = CommandValidator::new(effect.terminal_mode, workspace_root);
+    let new_terminal_tool =
+        TerminalTool::new(new_validator, terminal_config).with_safety_mode(safety_mode);
+    agent_lock
+        .tools_mut()
+        .register("terminal", Arc::new(new_terminal_tool));
+
+    format!("Mode switched to {mode_id}.")
+}
+
+/// Updates the active safety policy in the session runtime state.
+///
+/// Modifies `session.runtime_state.safety_mode_str` to reflect the new
+/// safety mode. This is a synchronous update to the runtime state only;
+/// the system prompt is not rebuilt here (it is rebuilt on the next mode
+/// switch or session creation).
+///
+/// # Arguments
+///
+/// * `mode` - The target `SafetyMode` variant.
+/// * `session` - Mutable borrow of the locked active session state.
+///
+/// # Returns
+///
+/// Returns `"Safety policy set to <mode>."` confirming the change.
+fn handle_switch_safety(mode: SafetyMode, session: &mut ActiveSessionState) -> String {
+    let safety_str = match mode {
+        SafetyMode::AlwaysConfirm => "confirm",
+        SafetyMode::NeverConfirm => "yolo",
+    };
+    session.runtime_state.safety_mode_str = safety_str.to_string();
+    session.last_activity = chrono::Utc::now().to_rfc3339();
+    format!("Safety policy set to {safety_str}.")
+}
+
+/// Enables or disables subagent delegation for the active session.
+///
+/// When enabling, creates and registers a new `SubagentTool` in the agent's
+/// tool registry if one is not already present. When disabling, removes the
+/// registered subagent tool so the LLM cannot invoke delegation.
+///
+/// # Arguments
+///
+/// * `enable` - `true` to enable delegation, `false` to disable it.
+/// * `session` - The active ACP session to mutate.
+///
+/// # Returns
+///
+/// Returns `"Subagent delegation enabled."` or `"Subagent delegation disabled."`.
+async fn handle_toggle_subagents(enable: bool, session: &Arc<Mutex<ActiveSessionState>>) -> String {
+    let (xzatoma_agent, agent_config) = {
+        let mut session_lock = session.lock().await;
+        session_lock.runtime_state.subagents_enabled = enable;
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+        (
+            session_lock.xzatoma_agent.clone(),
+            session_lock.agent_config.clone(),
+        )
+    };
+
+    let mut agent = xzatoma_agent.lock().await;
+    if enable {
+        if agent.tools().get("subagent").is_none() {
+            let provider = agent.provider_arc();
+            let tools = agent.tools().clone();
+            let subagent_tool = SubagentTool::new(provider, agent_config, tools, 0);
+            agent
+                .tools_mut()
+                .register("subagent", Arc::new(subagent_tool));
+        }
+        "Subagent delegation enabled.".to_string()
+    } else {
+        agent.tools_mut().remove("subagent");
+        "Subagent delegation disabled.".to_string()
+    }
+}
+
+/// Replaces the active system prompt for this ACP session.
+///
+/// Updates the first transient system message on the agent. If no transient
+/// messages exist, prepends the new text. Transient messages at indices
+/// greater than zero (e.g. skill disclosures) are left unchanged.
+///
+/// # Arguments
+///
+/// * `text` - Replacement system prompt text.
+/// * `session` - The active ACP session to mutate.
+///
+/// # Returns
+///
+/// Returns `"System prompt updated."`.
+async fn handle_set_system_prompt(
+    text: String,
+    session: &Arc<Mutex<ActiveSessionState>>,
+) -> String {
+    let agent_handle = {
+        let session_lock = session.lock().await;
+        session_lock.xzatoma_agent.clone()
+    };
+    let mut agent = agent_handle.lock().await;
+    let current = agent.transient_system_messages().to_vec();
+    let new_messages = if current.is_empty() {
+        vec![text]
+    } else {
+        let mut v = current;
+        v[0] = text;
+        v
+    };
+    agent.set_transient_system_messages(new_messages);
+    "System prompt updated.".to_string()
+}
+
+/// Switches the active model for the session's provider.
+///
+/// Lists available models from the provider and validates the requested name.
+/// On success, updates the provider's active model via interior mutability and
+/// records the new model name in the session state. Returns a descriptive
+/// error string (not a hard error) when the model is not found, keeping the
+/// command non-fatal.
+///
+/// # Arguments
+///
+/// * `model` - The requested model name.
+/// * `session` - The active ACP session to mutate on success.
+///
+/// # Returns
+///
+/// Returns `"Model switched to <name>."` on success, or an error description
+/// string when the model is not available.
+async fn handle_switch_model(model: String, session: &Arc<Mutex<ActiveSessionState>>) -> String {
+    let agent_handle = {
+        let session_lock = session.lock().await;
+        session_lock.xzatoma_agent.clone()
+    };
+    let agent = agent_handle.lock().await;
+
+    let models = match agent.provider().list_models().await {
+        Ok(m) => m,
+        Err(e) => return format!("Model listing failed: {e}. Cannot switch model."),
+    };
+
+    let found = models
+        .iter()
+        .any(|m| m.name.to_lowercase() == model.to_lowercase());
+
+    if found {
+        agent.provider().set_model_inplace(&model);
+        drop(agent);
+        let mut session_lock = session.lock().await;
+        session_lock.current_model_name = model.clone();
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+        format!("Model switched to {model}.")
+    } else {
+        format!("Model '{model}' not found. Use '/models list' to see available models.")
+    }
 }
 
 /// Formats the list of tools available to the agent in the active session.
@@ -1532,6 +1758,16 @@ pub async fn dispatch_stdio_command(
             let session_lock = session.lock().await;
             handle_subagents_status(&session_lock)
         }
+        Ok(SpecialCommand::SwitchMode(mode)) => handle_switch_mode(mode, session).await,
+        Ok(SpecialCommand::SwitchSafety(mode)) => {
+            let mut session_lock = session.lock().await;
+            handle_switch_safety(mode, &mut session_lock)
+        }
+        Ok(SpecialCommand::ToggleSubagents(enable)) => {
+            handle_toggle_subagents(enable, session).await
+        }
+        Ok(SpecialCommand::SetSystemPrompt(text)) => handle_set_system_prompt(text, session).await,
+        Ok(SpecialCommand::SwitchModel(model)) => handle_switch_model(model, session).await,
         _ => resolve_special_command_response(prompt_text)?,
     };
 
@@ -2888,6 +3124,8 @@ mod tests {
             last_activity: chrono::Utc::now().to_rfc3339(),
             current_mode_id: runtime_state.current_mode_id.clone(),
             runtime_state,
+            terminal_config: crate::config::TerminalConfig::default(),
+            agent_config: crate::config::AgentConfig::default(),
             ide_bridge: None,
         };
 
@@ -3078,6 +3316,8 @@ mod tests {
             last_activity: chrono::Utc::now().to_rfc3339(),
             current_mode_id: runtime_state.current_mode_id.clone(),
             runtime_state,
+            terminal_config: crate::config::TerminalConfig::default(),
+            agent_config: crate::config::AgentConfig::default(),
             ide_bridge: None,
         };
 
@@ -5581,6 +5821,199 @@ mod tests {
         assert!(
             has_enabled || has_disabled,
             "/subagents status must report 'enabled' or 'disabled'; got: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3: ACP Mutating Command Handler tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_switch_mode_planning() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/mode planning", &session, None).await;
+
+        let response = result
+            .expect("/mode planning should short-circuit")
+            .expect("/mode planning should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        assert_eq!(
+            session_lock.current_mode_id, "planning",
+            "/mode planning must update current_mode_id to 'planning'"
+        );
+
+        let text = handle_mode_status(&session_lock);
+        assert!(
+            text.contains("Mode switched") || text.contains("Current mode:"),
+            "mode text should reference mode; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_switch_mode_planning_sets_mode_id() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let text = handle_switch_mode(ChatMode::Planning, &session).await;
+
+        assert!(
+            text.contains("Mode switched"),
+            "handle_switch_mode must return confirmation; got: {text}"
+        );
+        let session_lock = session.lock().await;
+        assert_eq!(session_lock.current_mode_id, "planning");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_switch_mode_write() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let text = handle_switch_mode(ChatMode::Write, &session).await;
+
+        assert!(
+            text.contains("Mode switched"),
+            "handle_switch_mode Write must return confirmation; got: {text}"
+        );
+        let session_lock = session.lock().await;
+        assert_eq!(
+            session_lock.current_mode_id, "write",
+            "/mode write must update current_mode_id to 'write'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_switch_safety_on() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/safety on", &session, None).await;
+
+        let response = result
+            .expect("/safety on should short-circuit")
+            .expect("/safety on should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let mut session_lock = session.lock().await;
+        let text = handle_switch_safety(SafetyMode::AlwaysConfirm, &mut session_lock);
+        assert!(
+            text.contains("Safety policy"),
+            "handle_switch_safety must include 'Safety policy'; got: {text}"
+        );
+        assert_eq!(
+            session_lock.runtime_state.safety_mode_str, "confirm",
+            "/safety on must set safety_mode_str to 'confirm'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_switch_safety_off() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/yolo", &session, None).await;
+
+        let response = result
+            .expect("/yolo should short-circuit")
+            .expect("/yolo should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        assert_eq!(
+            session_lock.runtime_state.safety_mode_str, "yolo",
+            "/yolo must set safety_mode_str to 'yolo'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_toggle_subagents_on() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/subagents on", &session, None).await;
+
+        let response = result
+            .expect("/subagents on should short-circuit")
+            .expect("/subagents on should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        assert!(
+            session_lock.runtime_state.subagents_enabled,
+            "/subagents on must set subagents_enabled to true"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_toggle_subagents_off() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // First enable, then disable.
+        handle_toggle_subagents(true, &session).await;
+
+        let result = dispatch_stdio_command("/subagents off", &session, None).await;
+
+        let response = result
+            .expect("/subagents off should short-circuit")
+            .expect("/subagents off should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        assert!(
+            !session_lock.runtime_state.subagents_enabled,
+            "/subagents off must set subagents_enabled to false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_set_system_prompt() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/system You are helpful.", &session, None).await;
+
+        let response = result
+            .expect("/system <text> should short-circuit")
+            .expect("/system <text> should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let agent = session_lock.xzatoma_agent.lock().await;
+        let first = agent
+            .transient_system_messages()
+            .first()
+            .map(String::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            first, "You are helpful.",
+            "/system <text> must update the first transient system message"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_switch_model_unknown_returns_error_string() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // The mock provider returns an empty model list; the model will not be found.
+        let result = dispatch_stdio_command("/model nonexistent-model", &session, None).await;
+
+        let response = result
+            .expect("/model <unknown> should short-circuit (not None)")
+            .expect("/model <unknown> should not propagate a hard Rust error");
+        // The response must succeed at the protocol level; the error is in the text.
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the error text via the handler directly.
+        let text = handle_switch_model("nonexistent-model".to_string(), &session).await;
+        assert!(
+            text.contains("not found") || text.contains("failed"),
+            "error text must describe why the model switch failed; got: {text}"
         );
     }
 }

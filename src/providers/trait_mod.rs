@@ -80,6 +80,19 @@ pub trait Provider: Send + Sync {
     /// calling this method.
     fn set_model(&mut self, model: &str);
 
+    /// Sets the active model using interior mutability.
+    ///
+    /// Unlike [`Provider::set_model`], this method accepts a shared reference
+    /// so it can be called via `&dyn Provider`. All built-in providers implement
+    /// this using their internal `Arc<RwLock<Config>>` storage. The default
+    /// implementation is a no-op; providers that store model state behind a
+    /// `RwLock` must override it.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The model name to set as active.
+    fn set_model_inplace(&self, _model: &str) {}
+
     /// Fetch the list of available models from the remote API. This is the
     /// canonical implementation method; `list_models` provides a default that
     /// delegates here.

@@ -1252,6 +1252,12 @@ impl Provider for OpenAIProvider {
         }
     }
 
+    fn set_model_inplace(&self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
     /// Fetch the list of available models. Delegates to the overridden
     /// `list_models`, which uses the 300-second in-process cache.
     ///

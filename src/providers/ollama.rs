@@ -1203,6 +1203,12 @@ impl Provider for OllamaProvider {
         }
     }
 
+    fn set_model_inplace(&self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
     /// Complete a conversation with per-chunk streaming callbacks.
     ///
     /// Enables Ollama streaming and calls `on_content_chunk` for each content

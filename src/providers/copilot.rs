@@ -2970,6 +2970,12 @@ impl Provider for CopilotProvider {
         }
     }
 
+    fn set_model_inplace(&self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
     /// Fetch the list of available models from the remote API. This is the
     /// canonical implementation method; `list_models` provides a default that
     /// delegates here.

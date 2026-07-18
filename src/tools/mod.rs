@@ -429,6 +429,30 @@ impl ToolRegistry {
         self.tools.insert(name.into(), executor);
     }
 
+    /// Removes a tool from the registry by name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name of the tool to remove.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the tool was present and removed, `false` if it was not
+    /// registered.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::ToolRegistry;
+    ///
+    /// let mut registry = ToolRegistry::new();
+    /// // registry.remove("missing_tool") returns false when tool is not present
+    /// assert!(!registry.remove("missing_tool"));
+    /// ```
+    pub fn remove(&mut self, name: &str) -> bool {
+        self.tools.remove(name).is_some()
+    }
+
     /// Get a tool executor by name
     ///
     /// # Arguments

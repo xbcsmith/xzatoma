@@ -1616,6 +1616,25 @@ impl Agent {
         &*self.provider
     }
 
+    /// Returns an `Arc` clone of the underlying provider.
+    ///
+    /// Use this when a shared, owning reference to the provider is needed
+    /// (e.g. for constructing subagent tools that require `Arc<dyn Provider>`).
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Arc<dyn Provider>` that shares ownership with the agent's
+    /// internal provider.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Requires a live agent instance; see integration tests for usage.
+    /// ```
+    pub fn provider_arc(&self) -> Arc<dyn Provider> {
+        Arc::clone(&self.provider)
+    }
+
     /// Returns a reference to the tool registry
     ///
     /// Useful for accessing and managing available tools
