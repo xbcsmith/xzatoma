@@ -45,7 +45,9 @@ use crate::acp::session_config::{
 };
 #[cfg(test)]
 use crate::acp::session_mode::{MODE_FULL_AUTONOMOUS, MODE_WRITE};
-use crate::acp::session_mode::{build_session_mode_state, mode_runtime_effect};
+use crate::acp::session_mode::{
+    build_session_mode_state, build_session_modes, mode_runtime_effect,
+};
 use crate::acp::tool_notifications::{
     build_tool_call_completion, build_tool_call_failure, build_tool_call_start,
 };
@@ -1213,6 +1215,142 @@ fn handle_status_command(session: &ActiveSessionState) -> String {
     )
 }
 
+/// Formats the current mode status for the active session.
+///
+/// Returns the active mode ID and its human-readable description from the
+/// advertised mode list. When the mode ID does not match a known mode, falls
+/// back to a generic acknowledgement string.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state to read.
+///
+/// # Returns
+///
+/// Returns a multi-line status string with the current mode ID and description.
+///
+/// # Examples
+///
+/// ```no_run
+/// # // Requires an active session handle; tested via dispatch_stdio_command.
+/// ```
+fn handle_mode_status(session: &ActiveSessionState) -> String {
+    let mode_id = &session.current_mode_id;
+    let description = build_session_modes()
+        .into_iter()
+        .find(|m| m.id.0.as_ref() == mode_id.as_str())
+        .and_then(|m| m.description)
+        .unwrap_or_else(|| format!("Mode '{mode_id}' is active."));
+    format!("Current mode: {mode_id}\n{description}")
+}
+
+/// Formats the current safety policy status for the active session.
+///
+/// Returns the active safety mode string with a brief description of its
+/// confirmation behaviour.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state to read.
+///
+/// # Returns
+///
+/// Returns a multi-line status string with the safety policy name and description.
+fn handle_safety_status(session: &ActiveSessionState) -> String {
+    let safety = &session.runtime_state.safety_mode_str;
+    let description = match safety.as_str() {
+        "confirm" => "All potentially dangerous operations require confirmation before proceeding.",
+        "yolo" | "never_confirm" => {
+            "No confirmations are requested. All operations proceed without prompting."
+        }
+        _ => "Safety policy is active.",
+    };
+    format!("Current safety policy: {safety}\n{description}")
+}
+
+/// Formats the current model status for the active session.
+///
+/// Returns the model name currently configured for this session and the name
+/// of the provider that hosts it.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state to read.
+///
+/// # Returns
+///
+/// Returns a multi-line status string with the current model name and provider.
+fn handle_model_status(session: &ActiveSessionState) -> String {
+    format!(
+        "Current model: {}\nProvider: {}",
+        session.current_model_name, session.provider_name
+    )
+}
+
+/// Formats the streaming status for the active ACP session.
+///
+/// In ACP mode, response streaming is controlled by the Zed client, not by
+/// the agent. This function returns a fixed informational note so that users
+/// understand why `/streaming on|off` has no effect.
+///
+/// # Arguments
+///
+/// * `_session` - Unused; present for API symmetry with other status handlers.
+///
+/// # Returns
+///
+/// Returns the ACP-mode streaming status note.
+fn handle_streaming_status(_session: &ActiveSessionState) -> String {
+    "Streaming: controlled by Zed client (ACP mode)\n\
+     /streaming on|off has no effect in this session."
+        .to_string()
+}
+
+/// Formats the current system prompt status for the active session.
+///
+/// Reads the first transient system message from the session agent, which
+/// contains the base system prompt built from the active chat mode and safety
+/// policy. If no system prompt is set, returns a graceful message.
+///
+/// This is the only status handler that exposes content the user originally
+/// wrote; it must lock the agent to read conversation history.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state whose agent is read.
+///
+/// # Returns
+///
+/// Returns `"Current system prompt:\n<text>"` when a system prompt is set, or
+/// `"No system prompt is active for this session."` when none is found.
+async fn handle_system_status(session: &ActiveSessionState) -> String {
+    let agent = session.xzatoma_agent.lock().await;
+    match agent.transient_system_messages().first() {
+        Some(prompt) if !prompt.trim().is_empty() => {
+            format!("Current system prompt:\n{prompt}")
+        }
+        _ => "No system prompt is active for this session.".to_string(),
+    }
+}
+
+/// Formats the subagent delegation status for the active session.
+///
+/// # Arguments
+///
+/// * `session` - Locked active session state to read.
+///
+/// # Returns
+///
+/// Returns `"Subagent delegation: enabled"` or `"Subagent delegation: disabled"`.
+fn handle_subagents_status(session: &ActiveSessionState) -> String {
+    let state = if session.runtime_state.subagents_enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    format!("Subagent delegation: {state}")
+}
+
 /// Formats the list of tools available to the agent in the active session.
 ///
 /// # Arguments
@@ -1369,6 +1507,30 @@ pub async fn dispatch_stdio_command(
         Ok(SpecialCommand::ShowStatus) => {
             let session_lock = session.lock().await;
             handle_status_command(&session_lock)
+        }
+        Ok(SpecialCommand::ShowModeStatus) => {
+            let session_lock = session.lock().await;
+            handle_mode_status(&session_lock)
+        }
+        Ok(SpecialCommand::ShowSafetyStatus) => {
+            let session_lock = session.lock().await;
+            handle_safety_status(&session_lock)
+        }
+        Ok(SpecialCommand::ShowModelStatus) => {
+            let session_lock = session.lock().await;
+            handle_model_status(&session_lock)
+        }
+        Ok(SpecialCommand::ShowStreamingStatus) => {
+            let session_lock = session.lock().await;
+            handle_streaming_status(&session_lock)
+        }
+        Ok(SpecialCommand::ShowSystemStatus) => {
+            let session_lock = session.lock().await;
+            handle_system_status(&session_lock).await
+        }
+        Ok(SpecialCommand::ShowSubagentsStatus) => {
+            let session_lock = session.lock().await;
+            handle_subagents_status(&session_lock)
         }
         _ => resolve_special_command_response(prompt_text)?,
     };
@@ -5210,6 +5372,215 @@ mod tests {
             json.contains("configOptions"),
             "JSON must contain 'configOptions' key; got: {}",
             json
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2: ACP Status Handlers tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_dispatch_mode_bare_returns_mode_help() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/mode", &session, None).await;
+
+        let response = result
+            .expect("/mode bare should short-circuit")
+            .expect("/mode bare should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[test]
+    fn test_resolve_bare_mode_returns_mode_help() {
+        let text = resolve_special_command_response("/mode")
+            .expect("/mode should resolve to a response, not None");
+        assert!(
+            text.contains("/mode - Chat Mode"),
+            "bare /mode must return per-command help text; got: {text}"
+        );
+        assert!(
+            !text.contains("not yet implemented"),
+            "bare /mode must not return a not-yet-implemented placeholder"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_mode_status_returns_current_mode() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/mode status", &session, None).await;
+
+        let response = result
+            .expect("/mode status should short-circuit")
+            .expect("/mode status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Verify the handler output directly.
+        let session_lock = session.lock().await;
+        let text = handle_mode_status(&session_lock);
+        assert!(
+            text.contains("Current mode:"),
+            "/mode status must include 'Current mode:'; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_safety_status_returns_current_safety() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/safety status", &session, None).await;
+
+        let response = result
+            .expect("/safety status should short-circuit")
+            .expect("/safety status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let text = handle_safety_status(&session_lock);
+        assert!(
+            text.contains("Current safety policy:"),
+            "/safety status must include 'Current safety policy:'; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_model_status_returns_current_model() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/model status", &session, None).await;
+
+        let response = result
+            .expect("/model status should short-circuit")
+            .expect("/model status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let text = handle_model_status(&session_lock);
+        assert!(
+            text.contains("Current model:"),
+            "/model status must include 'Current model:'; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_streaming_status_returns_acp_note() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/streaming status", &session, None).await;
+
+        let response = result
+            .expect("/streaming status should short-circuit")
+            .expect("/streaming status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let text = handle_streaming_status(&session_lock);
+        assert!(
+            text.contains("controlled by Zed"),
+            "/streaming status must mention 'controlled by Zed'; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_system_bare_returns_system_help() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/system", &session, None).await;
+
+        let response = result
+            .expect("/system bare should short-circuit")
+            .expect("/system bare should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_system_status_returns_system_prompt() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // Pre-populate a transient system message so /system status has content to show.
+        {
+            let session_lock = session.lock().await;
+            let agent_handle = session_lock.xzatoma_agent.clone();
+            drop(session_lock);
+            let mut agent = agent_handle.lock().await;
+            agent.set_transient_system_messages(vec![
+                "You are a helpful assistant for Rust development.".to_string(),
+            ]);
+        }
+
+        let result = dispatch_stdio_command("/system status", &session, None).await;
+
+        let response = result
+            .expect("/system status should short-circuit")
+            .expect("/system status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let text = handle_system_status(&session_lock).await;
+        assert!(
+            text.contains("Current system prompt:"),
+            "/system status must include 'Current system prompt:'; got: {text}"
+        );
+        assert!(
+            text.contains("You are a helpful assistant for Rust development."),
+            "/system status must include the prompt text; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_system_status_no_prompt_returns_none_message() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // The default test session has no transient system messages.
+        let session_lock = session.lock().await;
+        let text = handle_system_status(&session_lock).await;
+        assert!(
+            text.contains("No system prompt"),
+            "/system status with no prompt must return 'No system prompt' message; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_subagents_bare_returns_subagents_help() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/subagents", &session, None).await;
+
+        let response = result
+            .expect("/subagents bare should short-circuit")
+            .expect("/subagents bare should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_subagents_status_returns_enabled_state() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        let result = dispatch_stdio_command("/subagents status", &session, None).await;
+
+        let response = result
+            .expect("/subagents status should short-circuit")
+            .expect("/subagents status should not propagate a Rust error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        let session_lock = session.lock().await;
+        let text = handle_subagents_status(&session_lock);
+        let has_enabled = text.contains("enabled");
+        let has_disabled = text.contains("disabled");
+        assert!(
+            has_enabled || has_disabled,
+            "/subagents status must report 'enabled' or 'disabled'; got: {text}"
         );
     }
 }
