@@ -64,6 +64,22 @@ Output:
 System prompt updated.
 ```
 
+Inspect the current prompt at any time:
+
+```bash
+/system status
+```
+
+Output:
+
+```text
+Current system prompt:
+You are now a concise code reviewer.
+```
+
+A bare `/system` (no argument) shows help text for the command rather than
+returning an error.
+
 **Session resume:** when you resume a previous session, the `--system-prompt`
 flag always replaces any system message that was stored with that session. Pass
 the flag again on resume to keep your preferred prompt active.

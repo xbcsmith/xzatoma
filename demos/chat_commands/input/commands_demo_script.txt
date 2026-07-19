@@ -1,0 +1,15 @@
+/help
+/mode status
+/mode planning
+/mode status
+/safety status
+/safety off
+/safety status
+/model status
+/streaming
+/system status
+/system You are a concise assistant. Reply in one sentence.
+/system status
+/subagents status
+/context info
+exit

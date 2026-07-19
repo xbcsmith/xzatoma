@@ -539,10 +539,29 @@ the ACP protocol and are not part of the YAML configuration file. They are
 advertised to the client at session creation via `NewSessionResponse` and can be
 changed during a session using the ACP `session/setConfigOption` request.
 
+## ACP slash commands (`xzatoma agent` / Zed)
+
+When running as a Zed ACP subprocess (`xzatoma agent`), XZatoma advertises 13
+slash commands in the Zed chat input completion menu. All commands follow a
+unified UX contract:
+
+- **Bare command** (e.g., `/mode`) shows per-command help text.
+- **`/<command> status`** inspects the current live value for that command.
+- **`/<command> <action>`** applies a change.
+
+This contract applies to `/mode`, `/model`, `/safety`, `/subagents`, and
+`/system`. The `/streaming` command is advertised but is a no-op in ACP mode
+because Zed controls response streaming. Use `/streaming status` to see a note
+explaining this.
+
+The full list of advertised commands with their descriptions is in
+`docs/reference/chat_commands.md`.
+
 ## Related documentation
 
 - `docs/how-to/run_xzatoma_as_an_acp_server.md`
 - `docs/reference/acp_api.md`
+- `docs/reference/chat_commands.md`
 - `docs/explanation/acp_implementation.md`
 - `docs/how-to/zed_acp_agent_setup.md`
 - `docs/explanation/zed_acp_agent_command_implementation.md`

@@ -1759,3 +1759,35 @@ mode on every subsequent tool execution.
 
 **Documentation**:
 [zed_session_mode_selector_implementation.md](zed_session_mode_selector_implementation.md)
+
+## Chat Command Unification (2026-07-18)
+
+**Summary**: Six implementation phases unified the slash command UX across
+terminal chat mode and the Zed ACP agent. Phase 1 added per-command `help` and
+`status` variants to `SpecialCommand` and updated the parser so that bare
+commands show help text rather than returning an error. Phase 2 wired
+per-command status handlers into `dispatch_stdio_command` for live session
+reads. Phase 3 implemented all ACP mutating commands (`/mode`, `/safety`,
+`/subagents`, `/system`, `/model`). Phase 4 implemented the informational
+commands (`/models list`, `/models info`, `/context info`, `/context summary`).
+Phase 5 updated the Zed ACP advertisement to reflect the unified UX and added
+`/streaming` to the advertised command list (13 commands total). Phase 6 created
+the full documentation suite: reference, tutorial, how-to, demos, and updates to
+7 existing documents.
+
+**Files changed** (key):
+
+- `src/commands/special_commands.rs` - Added 12 new `SpecialCommand` variants;
+  updated `parse_special_command` for all six command families; added
+  `format_*_help_text` functions including `format_models_help_text`.
+- `src/acp/stdio.rs` - Added per-command status and mutating handlers; wired all
+  variants into `dispatch_stdio_command`; removed all
+  `handle_not_yet_implemented` stubs for implemented commands.
+- `src/acp/available_commands.rs` - Updated 6 command descriptions and 5 input
+  hints; added `build_streaming_command`; increased advertised count to 13.
+
+**Documentation**:
+[chat_unification_implementation_plan.md](chat_unification_implementation_plan.md),
+[chat_unification_phase4_acp_informational_commands_implementation.md](chat_unification_phase4_acp_informational_commands_implementation.md),
+[chat_unification_phase5_acp_advertisement_updates_implementation.md](chat_unification_phase5_acp_advertisement_updates_implementation.md),
+[chat_unification_phase6_documentation_and_demos_implementation.md](chat_unification_phase6_documentation_and_demos_implementation.md)

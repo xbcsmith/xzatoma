@@ -1,0 +1,6 @@
+# Ignore generated runtime files in this demo's tmp directory
+xzatoma.db
+xzatoma.db-shm
+xzatoma.db-wal
+output/*
+!output/.gitkeep

@@ -208,17 +208,57 @@ This allows natural workflows:
 Interactive mode provides special commands for controlling the session,
 implemented in `special_commands.rs`.
 
+The `SpecialCommand` enum now includes per-command `help` and `status` variants
+for the six configurable commands, plus all informational and mutating command
+variants added in Phases 1-5:
+
 ```rust
 pub enum SpecialCommand {
-  SwitchMode(ChatMode),        // /mode planning, /write
-  SwitchSafety(SafetyMode),    // /safe, /yolo
-  SetSystemPrompt(String),     // /system <text>
-  ShowStatus,                  // /status
-  Help,                        // /help
-  Exit,                        // exit, quit
-  None,                        // Regular agent prompt
+    // Mutating commands
+    SwitchMode(ChatMode),          // /mode planning, /mode write
+    SwitchSafety(SafetyMode),      // /safety on, /safety off
+    SwitchModel(String),           // /model <name>
+    ToggleSubagents(bool),         // /subagents on, /subagents off
+    SetSystemPrompt(String),       // /system <text>
+    ToggleStreaming(bool),          // /streaming on, /streaming off
+    // Informational commands
+    ShowStatus,                    // /status
+    ListTools,                     // /tools
+    ListSkills,                    // /skills
+    ShowMcpStatus,                 // /mcp
+    Help,                          // /help
+    Mentions,                      // /mentions
+    Auth(Option<String>),          // /auth [provider]
+    ListModels,                    // /models list
+    ModelsHelp,                    // /models
+    ShowModelInfo(String),         // /models info <name>
+    ContextInfo,                   // /context info
+    ContextSummary { model: Option<String> }, // /context summary
+    // Per-command help variants (bare command)
+    ShowModeHelp,                  // /mode
+    ShowSafetyHelp,                // /safety
+    ShowModelHelp,                 // /model
+    ShowStreamingHelp,             // /streaming
+    ShowSystemHelp,                // /system
+    ShowSubagentsHelp,             // /subagents
+    // Per-command status variants
+    ShowModeStatus,                // /mode status
+    ShowSafetyStatus,              // /safety status
+    ShowModelStatus,               // /model status
+    ShowStreamingStatus,           // /streaming status
+    ShowSystemStatus,              // /system status
+    ShowSubagentsStatus,           // /subagents status
+    // Terminal commands
+    Exit,                          // exit, quit
+    None,                          // Regular agent prompt
 }
 ```
+
+The unified UX contract for all six configurable commands:
+
+- **Bare** (e.g., `/mode`) returns per-command help text.
+- **`status`** subcommand (e.g., `/mode status`) reads live session state.
+- **Action argument** (e.g., `/mode write`) mutates session state.
 
 Commands are:
 
@@ -229,8 +269,15 @@ Commands are:
 
 #### `/system` Command
 
-The `/system <text>` command replaces the active system prompt mid-session
-without restarting:
+The `/system` command has three forms:
+
+```text
+/system              -- shows help text
+/system status       -- shows the current system prompt
+/system <text>       -- replaces the active system prompt
+```
+
+Replacing the prompt:
 
 ```text
 [PLANNING][SAFE] >> /system You are a concise code reviewer. Be brief.
@@ -241,8 +288,8 @@ System prompt updated.
   in-place. If no system message exists yet, one is prepended.
 - Skill disclosure messages (subsequent system messages added by active skills)
   are left untouched.
-- An empty `/system` (no text, or whitespace only) returns an error:
-  `Usage: /system <text>`.
+- A bare `/system` (no text, or whitespace only) now shows help text; the
+  existing system prompt is not changed.
 - The change takes effect immediately for the next user turn.
 
 ### 7. UI/UX Components
