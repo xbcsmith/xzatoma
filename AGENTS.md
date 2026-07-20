@@ -41,7 +41,21 @@ Run in this order before claiming any task complete:
 cargo fmt --all
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo test -p xzatoma --lib -- --skip providers::copilot --skip mcp::auth
+```
+
+**NEVER run `cargo test --all-features` or `cargo test -p xzatoma --lib` bare.**
+The `providers::copilot` and `mcp::auth` modules link against the macOS
+`Security.framework` via the `keyring` crate. On macOS, any freshly compiled
+binary that links that framework triggers an OS Keychain access dialog on first
+execution, even when no `#[ignore]`-guarded test function runs. Always pass
+`--skip providers::copilot --skip mcp::auth` to keep tests hermetic.
+
+To run the full suite including keyring round-trips (only in a trusted
+environment where Keychain prompts are acceptable):
+
+```bash
+XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -p xzatoma --lib -- --include-ignored
 ```
 
 **MANDATORY**: All Markdown files must pass linting and formatting checks:

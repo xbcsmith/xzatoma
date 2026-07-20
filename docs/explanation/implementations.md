@@ -1791,3 +1791,34 @@ the full documentation suite: reference, tutorial, how-to, demos, and updates to
 [chat_unification_phase4_acp_informational_commands_implementation.md](chat_unification_phase4_acp_informational_commands_implementation.md),
 [chat_unification_phase5_acp_advertisement_updates_implementation.md](chat_unification_phase5_acp_advertisement_updates_implementation.md),
 [chat_unification_phase6_documentation_and_demos_implementation.md](chat_unification_phase6_documentation_and_demos_implementation.md)
+
+## ACP Model Selector and Ollama Auto-Model (2026-07-19)
+
+**Summary**: Added a model selector dropdown to XZatoma's Zed ACP session
+configuration so users can switch between provider models without restarting the
+agent subprocess. Also fixed Ollama agent mode to behave like interactive chat
+mode by auto-resolving the latest available model when no `--model` flag is
+passed.
+
+**Files changed** (key):
+
+- `src/acp/session_config.rs` - Added `CONFIG_MODEL` constant;
+  `model_name: Option<String>` field on `ConfigChangeEffect`;
+  `current_model: String` and `available_models: Vec<String>` fields on
+  `SessionRuntimeState`; `build_model_selector_option` builder; `CONFIG_MODEL`
+  arm in `apply_config_option_change`; model selector added as ninth option in
+  `build_session_config_options` (count 8 to 9).
+- `src/acp/stdio.rs` - `resolve_agent_ollama_model` async helper for Ollama
+  auto-model resolution at session creation; model list fetched with timeout at
+  session creation and stored in `runtime_state.available_models`;
+  `set_session_config_option` applies `effect.model_name` by updating session
+  state and calling `provider().set_model_inplace()`; `handle_switch_model`
+  syncs `runtime_state.current_model` on slash-command model switch.
+- `docs/how-to/zed_acp_agent_setup.md` - Updated to current Zed External Agents
+  API (`agent_servers` as object with `"type": "custom"`); added file logging
+  section with `--debug`/`--trace` and `XZATOMA_LOG_FILE` examples.
+- `README.md` and `demos/zed_acp/README.md` - Updated `agent_servers` format to
+  current Zed object shape.
+
+**Documentation**:
+[model_selector_implementation.md](model_selector_implementation.md)

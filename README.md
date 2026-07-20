@@ -148,20 +148,24 @@ Done! Refactored 12 functions across 5 files.
 
 ## Zed Integration
 
-XZatoma can run as an ACP stdio agent subprocess for the [Zed](https://zed.dev)
-editor. Add it to your Zed `agent_servers` settings to access it in the agent
-panel:
+XZatoma can run as a custom External Agent for the [Zed](https://zed.dev) editor
+using the Agent Client Protocol (ACP). Add it as a custom agent in your Zed
+settings to access it in the Agent Panel and Threads Sidebar.
+
+Open the Command Palette, run `agent: open settings`, go to **External Agents**,
+click **Add Agent**, and choose **Add Custom Agent**. Replace the placeholder
+with:
 
 ```json
 {
-  "agent_servers": [
-    {
-      "name": "xzatoma",
+  "agent_servers": {
+    "xzatoma": {
+      "type": "custom",
       "command": "xzatoma",
       "args": ["agent"],
       "env": {}
     }
-  ]
+  }
 }
 ```
 
@@ -172,8 +176,11 @@ The `xzatoma agent` command:
 - runs as a stateful subprocess with per-workspace conversation history
 - forces all tracing and diagnostic output to stderr so stdout stays clean
 
+Use `dev: open acp logs` from the Command Palette to inspect ACP messages when
+debugging.
+
 See `docs/how-to/zed_acp_agent_setup.md` for full setup instructions including
-provider-specific configuration and troubleshooting.
+provider-specific configuration, MCP forwarding, and troubleshooting.
 
 ## How It Works
 

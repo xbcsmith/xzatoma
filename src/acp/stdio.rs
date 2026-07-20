@@ -450,7 +450,35 @@ impl AcpStdioServerState {
             resolve_workspace_root(&request.cwd, self.options.working_dir.as_deref())?;
         let workspace_root = normalize_workspace_root(&workspace_root);
         let provider_name = self.config.provider.provider_type.clone();
-        let model_name = current_model_name(&self.config).to_string();
+
+        // Determine the effective provider, accounting for a CLI override.
+        let effective_provider = self
+            .options
+            .provider
+            .as_deref()
+            .unwrap_or(&self.config.provider.provider_type);
+
+        // When the effective provider is Ollama and no explicit model was
+        // specified, mirror chat mode: query Ollama for locally installed
+        // models and select the most recently modified one if the configured
+        // default (e.g. "llama3.2:latest") is not installed.  This prevents
+        // agent mode from hard-failing with a model-not-found error when the
+        // user has a different model pulled locally.
+        let resolved_ollama_model = resolve_agent_ollama_model(
+            effective_provider,
+            &self.config.provider.ollama,
+            self.options.model.as_deref(),
+        )
+        .await;
+
+        // Priority: explicit CLI model override > Ollama auto-resolved model > config default.
+        let model_name = self
+            .options
+            .model
+            .as_deref()
+            .or(resolved_ollama_model.as_deref())
+            .unwrap_or_else(|| current_model_name(&self.config))
+            .to_string();
 
         let resumed_conversation =
             load_resumable_conversation(self.storage.as_ref(), &workspace_root, &self.config);
@@ -528,10 +556,17 @@ impl AcpStdioServerState {
             }
         }
 
+        // Apply the same priority for provider construction: explicit CLI
+        // model override wins; fall back to the Ollama-resolved model.
+        let effective_model = self
+            .options
+            .model
+            .as_deref()
+            .or(resolved_ollama_model.as_deref());
         let provider_box = create_provider_with_override(
             &self.config.provider,
             self.options.provider.as_deref(),
-            self.options.model.as_deref(),
+            effective_model,
         )?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
 
@@ -562,7 +597,41 @@ impl AcpStdioServerState {
             register_ide_tools(&mut tools, Arc::clone(bridge));
         }
 
-        let runtime_state = SessionRuntimeState::from_config(&self.config);
+        // Fetch the available model list for the model selector dropdown.
+        // A timeout guards against slow or unreachable providers; an empty list
+        // causes the selector to show only the current model.
+        let available_models: Vec<String> = match tokio::time::timeout(
+            Duration::from_secs(self.config.acp.stdio.model_list_timeout_seconds),
+            provider.list_models(),
+        )
+        .await
+        {
+            Ok(Ok(models)) => {
+                tracing::debug!(
+                    count = models.len(),
+                    "ACP stdio: fetched model list for model selector"
+                );
+                models.into_iter().map(|m| m.name).collect()
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(
+                    error = %error,
+                    "ACP stdio: model listing failed; model selector will show current model only"
+                );
+                Vec::new()
+            }
+            Err(_) => {
+                tracing::debug!(
+                    timeout_seconds = self.config.acp.stdio.model_list_timeout_seconds,
+                    "ACP stdio: model listing timed out; model selector will show current model only"
+                );
+                Vec::new()
+            }
+        };
+
+        let mut runtime_state = SessionRuntimeState::from_config(&self.config);
+        runtime_state.current_model = model_name.clone();
+        runtime_state.available_models = available_models;
 
         if tools.get("subagent").is_none() {
             let subagent_tool = SubagentTool::new_with_config(
@@ -894,6 +963,12 @@ impl AcpStdioServerState {
             session_lock.runtime_state.thinking_effort = effort_str.clone();
         }
 
+        // Update session state for model change (inside lock; provider call is outside lock).
+        if let Some(ref new_model) = effect.model_name {
+            session_lock.current_model_name = new_model.clone();
+            session_lock.runtime_state.current_model = new_model.clone();
+        }
+
         // Capture session_mode side-effect data before releasing the session lock.
         let mode_side_effects = if let Some(ref new_mode_id) = effect.session_mode_id {
             tracing::debug!(
@@ -929,6 +1004,7 @@ impl AcpStdioServerState {
         // prompt worker.
         let agent_handle = session_lock.xzatoma_agent.clone();
         let thinking_effort_to_apply = effect.thinking_effort.clone();
+        let model_to_apply = effect.model_name.clone();
 
         session_lock.last_activity = chrono::Utc::now().to_rfc3339();
 
@@ -957,6 +1033,17 @@ impl AcpStdioServerState {
                     "Failed to apply thinking effort change"
                 );
             }
+        }
+
+        // Apply model change to the live provider (outside session lock).
+        if let Some(ref new_model) = model_to_apply {
+            let agent_lock = agent_handle.lock().await;
+            agent_lock.provider().set_model_inplace(new_model);
+            tracing::info!(
+                session_id = %request.session_id,
+                model = %new_model,
+                "ACP session model changed via config option"
+            );
         }
 
         // Apply session_mode side effects (same logic as set_session_mode).
@@ -1060,32 +1147,6 @@ impl AcpStdioServerState {
     }
 }
 
-/// Returns a placeholder response for a `SpecialCommand` variant whose real
-/// handler has not been implemented yet in the current phase of the ACP chat
-/// commands rollout.
-///
-/// # Arguments
-///
-/// * `command_name` - The user-facing command name (e.g. `"/status"`) shown
-///   in the placeholder text.
-///
-/// # Returns
-///
-/// Returns a formatted string telling the user the command is not yet
-/// implemented in this session.
-///
-/// # Examples
-///
-/// ```
-/// use xzatoma::acp::stdio::handle_not_yet_implemented;
-///
-/// let text = handle_not_yet_implemented("/status");
-/// assert!(text.contains("/status"));
-/// ```
-pub fn handle_not_yet_implemented(command_name: &str) -> String {
-    format!("{command_name} is not yet implemented in this session.")
-}
-
 /// Parses `prompt_text` as a special slash command and resolves it to the
 /// response text that should be shown to the user, without performing any
 /// session I/O.
@@ -1131,17 +1192,23 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::ShowSubagentsHelp) => format_subagents_help_text(),
 
         // Status variants require live session state and are intercepted by
-        // dispatch_stdio_command before this resolver is reached. The stubs
+        // dispatch_stdio_command before this resolver is reached. The messages
         // below are only observed in unit tests that call this pure function
         // directly without a live session.
-        Ok(SpecialCommand::ShowModeStatus) => handle_not_yet_implemented("/mode status"),
-        Ok(SpecialCommand::ShowSafetyStatus) => handle_not_yet_implemented("/safety status"),
-        Ok(SpecialCommand::ShowModelStatus) => handle_not_yet_implemented("/model status"),
+        Ok(SpecialCommand::ShowModeStatus) => "Mode status requires a live session.".to_string(),
+        Ok(SpecialCommand::ShowSafetyStatus) => {
+            "Safety status requires a live session.".to_string()
+        }
+        Ok(SpecialCommand::ShowModelStatus) => "Model status requires a live session.".to_string(),
         Ok(SpecialCommand::ShowStreamingStatus) => {
             "/streaming has no effect over ACP; Zed controls response streaming.".to_string()
         }
-        Ok(SpecialCommand::ShowSystemStatus) => handle_not_yet_implemented("/system status"),
-        Ok(SpecialCommand::ShowSubagentsStatus) => handle_not_yet_implemented("/subagents status"),
+        Ok(SpecialCommand::ShowSystemStatus) => {
+            "System status requires a live session.".to_string()
+        }
+        Ok(SpecialCommand::ShowSubagentsStatus) => {
+            "Subagent status requires a live session.".to_string()
+        }
 
         // Phase 2: Informational Commands.
         //
@@ -1153,12 +1220,12 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         // a command outside of a live session (e.g. direct unit tests of this
         // function). `Help` and `Mentions` require no session state, so they
         // are fully resolved here.
-        Ok(SpecialCommand::ShowStatus) => handle_not_yet_implemented("/status"),
+        Ok(SpecialCommand::ShowStatus) => "Session status requires a live session.".to_string(),
         Ok(SpecialCommand::Help) => format_help_text(),
         Ok(SpecialCommand::Mentions) => format_mention_help_text(),
-        Ok(SpecialCommand::ListTools) => handle_not_yet_implemented("/tools"),
-        Ok(SpecialCommand::ListSkills) => handle_not_yet_implemented("/skills"),
-        Ok(SpecialCommand::ShowMcpStatus) => handle_not_yet_implemented("/mcp"),
+        Ok(SpecialCommand::ListTools) => "Tool listing requires a live session.".to_string(),
+        Ok(SpecialCommand::ListSkills) => "Skill listing requires a live session.".to_string(),
+        Ok(SpecialCommand::ShowMcpStatus) => "MCP status requires a live session.".to_string(),
 
         // Mutating command variants are intercepted by dispatch_stdio_command
         // before this pure resolver is reached. The messages below are only
@@ -1575,6 +1642,7 @@ async fn handle_switch_model(model: String, session: &Arc<Mutex<ActiveSessionSta
         drop(agent);
         let mut session_lock = session.lock().await;
         session_lock.current_model_name = model.clone();
+        session_lock.runtime_state.current_model = model.clone();
         session_lock.last_activity = chrono::Utc::now().to_rfc3339();
         format!("Model switched to {model}.")
     } else {
@@ -2362,6 +2430,42 @@ fn current_model_name(config: &Config) -> &str {
         "openai" => &config.provider.openai.model,
         _ => "unknown",
     }
+}
+
+/// Resolves the Ollama model to use for an agent session when no explicit
+/// model override was provided on the CLI.
+///
+/// This mirrors the behavior of chat mode: if the default configured model
+/// (e.g. `llama3.2:latest`) is not installed locally, the Ollama server is
+/// queried and the most recently modified installed model is selected instead.
+/// When the server is unreachable the configured model is returned unchanged,
+/// so the error surfaces later at the first prompt rather than at session
+/// creation time.
+///
+/// Returns `None` when:
+/// - `effective_provider` is not `"ollama"`
+/// - `model_override` is `Some` (an explicit CLI override takes precedence
+///   without any server query)
+///
+/// Returns `Some(model_name)` containing the resolved model name when the
+/// provider is Ollama and no explicit override was given.
+async fn resolve_agent_ollama_model(
+    effective_provider: &str,
+    ollama_config: &crate::config::OllamaConfig,
+    model_override: Option<&str>,
+) -> Option<String> {
+    if effective_provider != "ollama" || model_override.is_some() {
+        return None;
+    }
+    let mut cfg = ollama_config.clone();
+    if let Err(error) = crate::providers::ollama::resolve_available_model(&mut cfg).await {
+        tracing::warn!(
+            error = %error,
+            configured_model = %cfg.model,
+            "ACP stdio: failed to validate configured Ollama model; using configured value"
+        );
+    }
+    Some(cfg.model)
 }
 
 /// Determines the initial ACP session mode ID from the effective configuration.
@@ -6231,6 +6335,139 @@ mod tests {
         assert!(
             text.contains("summarized"),
             "context summary must confirm summarization; got: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_agent_ollama_model tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_resolve_agent_ollama_model_returns_none_for_non_ollama_provider() {
+        let cfg = crate::config::OllamaConfig::default();
+        let result = resolve_agent_ollama_model("copilot", &cfg, None).await;
+        assert!(
+            result.is_none(),
+            "should return None when provider is not ollama"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_ollama_model_returns_none_when_explicit_model_override_given() {
+        let cfg = crate::config::OllamaConfig::default();
+        let result = resolve_agent_ollama_model("ollama", &cfg, Some("explicit-model")).await;
+        assert!(
+            result.is_none(),
+            "should return None when an explicit model override is provided"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_ollama_model_falls_back_to_config_when_server_unreachable() {
+        // When Ollama is unreachable the function should return the configured
+        // model rather than propagating the error, matching chat mode behavior.
+        let cfg = crate::config::OllamaConfig {
+            host: "http://127.0.0.1:1".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 1,
+        };
+        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
+        assert_eq!(
+            result,
+            Some("llama3.2:latest".to_string()),
+            "should return the configured model when the server is unreachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_ollama_model_selects_installed_model_when_default_unavailable() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        // Simulate Ollama having granite4:3b locally but not llama3.2:latest.
+        let body = serde_json::json!({
+            "models": [{
+                "name": "granite4:3b",
+                "model": "granite4:3b",
+                "modified_at": "2024-06-01T00:00:00Z",
+                "size": 2_000_000_000u64,
+                "digest": "sha256:abc123",
+                "details": {
+                    "parent_model": "",
+                    "format": "gguf",
+                    "family": "granite",
+                    "families": ["granite"],
+                    "parameter_size": "3B",
+                    "quantization_level": "Q4_0"
+                }
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&mock_server)
+            .await;
+
+        let cfg = crate::config::OllamaConfig {
+            host: mock_server.uri(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 5,
+        };
+
+        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
+        assert_eq!(
+            result,
+            Some("granite4:3b".to_string()),
+            "should auto-select granite4:3b when llama3.2:latest is not installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_agent_ollama_model_keeps_configured_model_when_already_installed() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        // Simulate Ollama having the configured model already available.
+        let body = serde_json::json!({
+            "models": [{
+                "name": "granite4:3b",
+                "model": "granite4:3b",
+                "modified_at": "2024-06-01T00:00:00Z",
+                "size": 2_000_000_000u64,
+                "digest": "sha256:abc123",
+                "details": {
+                    "parent_model": "",
+                    "format": "gguf",
+                    "family": "granite",
+                    "families": ["granite"],
+                    "parameter_size": "3B",
+                    "quantization_level": "Q4_0"
+                }
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&mock_server)
+            .await;
+
+        let cfg = crate::config::OllamaConfig {
+            host: mock_server.uri(),
+            model: "granite4:3b".to_string(),
+            request_timeout_seconds: 5,
+        };
+
+        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
+        assert_eq!(
+            result,
+            Some("granite4:3b".to_string()),
+            "should return the configured model unchanged when it is already installed"
         );
     }
 }

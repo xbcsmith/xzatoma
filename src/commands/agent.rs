@@ -11,25 +11,25 @@
 //!
 //! # Examples
 //!
-//! ```no_run
-//! use std::path::PathBuf;
-//! use xzatoma::commands::agent::handle_agent;
-//! use xzatoma::Config;
-//!
-//! # async fn example() -> anyhow::Result<()> {
-//! handle_agent(
-//!     Some("ollama".to_string()),
-//!     Some("llama3.2:latest".to_string()),
-//!     false,
-//!     Some(PathBuf::from(".")),
-//!     None,
-//!     false,
-//!     Config::default(),
-//! )
-//! .await?;
-//! # Ok(())
-//! # }
-//! ```
+/// ```no_run
+/// use std::path::PathBuf;
+/// use xzatoma::commands::agent::handle_agent;
+/// use xzatoma::Config;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// handle_agent(
+///     Some("ollama".to_string()),
+///     Some("granite4:3b".to_string()),
+///     false,
+///     Some(PathBuf::from(".")),
+///     None,
+///     false,
+///     Config::default(),
+/// )
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
 use std::path::PathBuf;
 
 use crate::acp::stdio::{AcpStdioAgentOptions, run_stdio_agent};
