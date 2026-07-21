@@ -9,13 +9,16 @@ provider:
   type: ollama
   ollama:
     host: "http://localhost:11434"
-    model: "granite4:3b"
+    model: "north-mini-code-1.0:mlx-nvfp4"
 
 agent:
-  max_turns: 20
-  timeout_seconds: 120
+  max_turns: 2500
+  timeout_seconds: 300
 
 acp:
+  # Prefer streaming responses so Zed renders tokens as they arrive.
+  default_run_mode: streaming
+
   # Optional system prompt injected as the first message of every ACP chat
   # session. Uncomment and customize to change the assistant's persona for
   # this demo.
@@ -25,3 +28,7 @@ acp:
     resume_by_workspace: true
     vision_enabled: false
     prompt_queue_capacity: 8
+    # Start every session with medium thinking effort. Has no effect on models
+    # that do not support extended thinking; can be changed per-session via the
+    # Thinking Effort dropdown in the Zed agent panel.
+    default_thinking_effort: "medium"

@@ -6,9 +6,9 @@ dropdown added to XZatoma's ACP session configuration.
 ## Overview
 
 XZatoma advertises session configuration dropdowns to Zed via the Agent-Client
-Protocol. The model selector is the ninth such option, allowing users to switch
-between models available in the current provider without restarting the agent
-subprocess.
+Protocol. The model selector is the seventh such option, allowing users to
+switch between models available in the current provider without restarting the
+agent subprocess.
 
 ## Changes in `src/acp/session_config.rs`
 
@@ -115,3 +115,24 @@ dropdown always has a sensible initial selection.
 the new name back into `session_lock.runtime_state.current_model` in addition to
 `session_lock.current_model_name`, keeping the ACP config option value in sync
 with the slash-command switch path.
+
+## Bug fix: `SessionConfigOptionCategory::Model` was missing
+
+The initial implementation did not set
+`.category(Some(acp::SessionConfigOptionCategory::Model))` on the
+`SessionConfigOption` returned by `build_model_selector_option`. The ACP SDK
+defines `SessionConfigOptionCategory::Model` as the semantic hint Zed uses to
+identify and place the model selector in its dedicated UI slot. Without the
+category, Zed received the option but did not render it in the model selector
+position.
+
+The fix adds the single chained call:
+
+```rust
+acp::SessionConfigOption::select(CONFIG_MODEL, "Model", current, options)
+    .description(Some("...".to_string()))
+    .category(Some(acp::SessionConfigOptionCategory::Model))
+```
+
+A regression test `test_model_selector_option_has_model_category` was added to
+`src/acp/session_config.rs` to pin this behaviour.

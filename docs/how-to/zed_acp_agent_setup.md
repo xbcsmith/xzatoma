@@ -405,6 +405,53 @@ To confirm mode changes are applied, run XZatoma with debug logging:
 Mode changes emit `ConfigOptionUpdate` and `CurrentModeUpdate` notifications
 visible in the debug log.
 
+## Session Config Dropdowns
+
+XZatoma advertises seven session config dropdowns to Zed. They appear in the
+agent panel toolbar in this order (left to right):
+
+| Position | Dropdown            | What it controls                                                     | Default          |
+| -------- | ------------------- | -------------------------------------------------------------------- | ---------------- |
+| 1        | Thinking Effort     | Reasoning depth for extended-thinking models                         | `none` (config)  |
+| 2        | Tool Routing        | Whether tools run via the IDE or locally                             | `prefer_ide`     |
+| 3        | Subagent Delegation | Whether XZatoma can spawn subagent workers                           | from config      |
+| 4        | MCP Tools           | Whether MCP server tools are active this session                     | from config      |
+| 5        | Safety Policy       | When to ask for confirmation before risky actions                    | `always_confirm` |
+| 6        | Session Mode        | Overall capability level (planning / write / safe / full_autonomous) | `planning`       |
+| 7        | Model               | Active AI model (fetched from provider at startup)                   | from provider    |
+
+All dropdowns take effect immediately for the next prompt. They can also be
+changed via slash commands (`/mode`, `/model`, `/safety`, `/subagents`).
+
+### Thinking Effort
+
+Controls how much reasoning the model performs per turn. The default at session
+start is set by `acp.stdio.default_thinking_effort` in your config file (default
+`"none"`). Set it to `"medium"` or higher to enable reasoning on models that
+support extended thinking (for example `deepseek-r1` via Ollama or `o3-mini` via
+OpenAI-compatible providers). Has no effect on models that do not support
+extended thinking.
+
+```yaml
+acp:
+  stdio:
+    default_thinking_effort: "medium"
+```
+
+### Streaming
+
+Response streaming in ACP stdio mode is controlled by the Zed client, not by
+XZatoma. To signal that XZatoma prefers streaming responses, set
+`acp.default_run_mode` to `streaming` in your config:
+
+```yaml
+acp:
+  default_run_mode: streaming
+```
+
+See `docs/reference/acp_configuration.md` for the full list of advertised
+session config options and their accepted values.
+
 ## Context Window Bar
 
 XZatoma reports token usage to Zed so the context window bar in the agent panel

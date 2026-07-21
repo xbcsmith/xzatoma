@@ -1822,3 +1822,44 @@ passed.
 
 **Documentation**:
 [model_selector_implementation.md](model_selector_implementation.md)
+
+## ACP Session Config Dropdown Updates (2026-07-21)
+
+**Summary**: Three targeted improvements to the ACP session config dropdowns
+advertised to Zed:
+
+1. **Model selector category fix** -- `build_model_selector_option` now calls
+   `.category(Some(acp::SessionConfigOptionCategory::Model))`. Without this
+   category hint, Zed did not render the model selector in its designated UI
+   slot.
+
+2. **Dropdown reorder** -- The seven advertised dropdowns are now ordered left
+   to right: Thinking Effort, Tool Routing, Subagent Delegation, MCP Tools,
+   Safety Policy, Session Mode, Model. Vision Input and Max Turns were removed
+   from the UI (still accepted by the slash-command path). Safety Policy was
+   restored.
+
+3. **Max Turns values updated** -- The `max_turns` select options changed from
+   `[10, 25, 50, 100, 200]` to `[100, 200, 350, 500, 1000]` to support long
+   autonomous sessions.
+
+4. **`default_thinking_effort` config field** -- A new
+   `acp.stdio.default_thinking_effort` field was added to `AcpStdioConfig`
+   (default `"none"`). `SessionRuntimeState::from_config` now reads this field
+   so the Thinking Effort dropdown starts at the configured level rather than
+   always defaulting to `"none"`.
+
+**Files changed** (key):
+
+- `src/acp/session_config.rs` - Added `SessionConfigOptionCategory::Model` to
+  model selector builder; reordered `build_session_config_options` vec; removed
+  `build_vision_input_option` and `build_max_turns_option` from advertised list;
+  restored `build_safety_policy_option`; updated `parse_max_turns_value` match
+  arms; reads `config.acp.stdio.default_thinking_effort` in `from_config`.
+- `src/config.rs` - Added `default_thinking_effort: String` field to
+  `AcpStdioConfig` with default `"none"`.
+- `demos/zed_acp/config.yaml` - Set `acp.default_run_mode: streaming` and
+  `acp.stdio.default_thinking_effort: "medium"`.
+
+**Documentation**:
+[model_selector_implementation.md](model_selector_implementation.md)

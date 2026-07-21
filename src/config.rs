@@ -652,6 +652,13 @@ pub struct AcpStdioConfig {
     /// Allow image prompt content to reference remote URLs.
     #[serde(default = "default_acp_stdio_allow_remote_image_urls")]
     pub allow_remote_image_urls: bool,
+
+    /// Initial thinking-effort level for the `thinking_effort` session config
+    /// dropdown. Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`,
+    /// `"extra_high"`. Has no effect on models that do not support extended
+    /// thinking. Defaults to `"none"`.
+    #[serde(default = "default_acp_stdio_thinking_effort")]
+    pub default_thinking_effort: String,
 }
 
 fn default_acp_stdio_persist_sessions() -> bool {
@@ -703,6 +710,10 @@ fn default_acp_stdio_allow_remote_image_urls() -> bool {
     false
 }
 
+fn default_acp_stdio_thinking_effort() -> String {
+    "none".to_string()
+}
+
 impl Default for AcpStdioConfig {
     fn default() -> Self {
         Self {
@@ -717,6 +728,7 @@ impl Default for AcpStdioConfig {
             allowed_image_mime_types: default_acp_stdio_allowed_image_mime_types(),
             allow_image_file_references: default_acp_stdio_allow_image_file_references(),
             allow_remote_image_urls: default_acp_stdio_allow_remote_image_urls(),
+            default_thinking_effort: default_acp_stdio_thinking_effort(),
         }
     }
 }

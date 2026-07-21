@@ -378,7 +378,7 @@ impl SessionRuntimeState {
             subagents_enabled,
             mcp_enabled,
             max_turns,
-            thinking_effort: "none".to_string(),
+            thinking_effort: config.acp.stdio.default_thinking_effort.clone(),
             current_mode_id,
             current_model: match config.provider.provider_type.as_str() {
                 "copilot" => config.provider.copilot.model.clone(),
