@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_acp_sse_event_from_runtime_event_sets_fields() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let runtime_event = runtime.get_events(run.id.as_str()).unwrap().remove(0);
 
@@ -426,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_run_events_sse_returns_response_for_existing_run() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
 
         let response = stream_run_events_sse(runtime, run.id.as_str());
@@ -435,7 +435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_sse_stream_replays_existing_events_in_order() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         runtime.mark_queued(run.id.as_str()).unwrap();
         runtime.mark_running(run.id.as_str()).unwrap();
@@ -459,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_subscription_stream_yields_terminal_event_and_stops() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let subscription = runtime.subscribe(run.id.as_str()).unwrap();
         let mut stream = live_subscription_stream(subscription);
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_runtime_event_name_prefers_payload_event_name() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let runtime_event = runtime.get_events(run.id.as_str()).unwrap().remove(0);
 

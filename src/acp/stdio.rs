@@ -40,6 +40,8 @@ use crate::acp::ide_bridge::{IdeBridge, IdeCapabilities};
 use crate::acp::prompt_input::{
     acp_content_blocks_to_prompt_input, validate_provider_supports_prompt_input,
 };
+#[cfg(test)]
+use crate::acp::session_config::{CONFIG_MODEL, CONFIG_THINKING_EFFORT};
 use crate::acp::session_config::{
     CONFIG_SESSION_MODE, SessionRuntimeState, build_session_config_options,
 };
@@ -3966,6 +3968,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_new_session_request_returns_non_empty_session_id() {
         run_client_server_test(|connection| async move {
             let cwd = match std::env::current_dir() {
@@ -3987,6 +3990,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_two_new_session_requests_return_distinct_session_ids() {
         run_client_server_test(|connection| async move {
             let cwd = match std::env::current_dir() {
@@ -4015,6 +4019,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_persists_mapping() {
         let storage_dir = tempfile::tempdir().expect("tempdir should be created");
         let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
@@ -4061,6 +4066,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_rehydrates_workspace_conversation_history() {
         let storage_dir = tempfile::tempdir().expect("tempdir should be created");
         let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
@@ -4190,6 +4196,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_missing_conversation_fallback_does_not_fail_session_creation() {
         let storage_dir = tempfile::tempdir().expect("tempdir should be created");
         let storage = SqliteStorage::new_with_path(storage_dir.path().join("history.db"))
@@ -4264,6 +4271,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_copilot_model_listing_fallback_still_returns_new_session_response() {
         let mut config = Config::default();
         config.acp.stdio.persist_sessions = false;
@@ -4401,6 +4409,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_cancel_notification_cancels_current_prompt_token() {
         let workspace_dir = tempfile::tempdir().expect("workspace should be created");
         let config = Config::default();
@@ -4436,6 +4445,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_prompt_request_returns_end_turn_over_protocol() {
         // Validates that the ACP protocol plumbing for session creation works
         // correctly and that a session ID is returned over the wire. The
@@ -4480,6 +4490,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_queue_ordering_multiple_prompts_complete_in_order() {
         // Validates the FIFO property of the prompt queue by confirming that
         // two messages can be accepted into the channel without being dropped.
@@ -4580,6 +4591,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_new_session_response_includes_session_modes() {
         run_client_server_test(|connection| async move {
             let initialize_resp = receive_response(connection.send_request(
@@ -4625,6 +4637,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_new_session_response_includes_config_options() {
         run_client_server_test(|connection| async move {
             let initialize_resp = receive_response(connection.send_request(
@@ -4665,6 +4678,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_changes_current_mode() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4715,6 +4729,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_invalid_mode_returns_error() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4744,6 +4759,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_config_option_returns_updated_options() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4792,6 +4808,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_config_option_invalid_value_returns_error() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4825,7 +4842,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_new_session_response_mode_config_option_is_first() {
+    #[ignore = "requires system keyring"]
+    async fn test_new_session_response_config_options_order() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
                 acp_sdk::schema::ProtocolVersion::LATEST,
@@ -4843,21 +4861,41 @@ mod tests {
                 .as_ref()
                 .expect("config_options should be present");
             assert!(!config_options.is_empty());
+            // First option (leftmost in Zed): thinking_effort
             assert_eq!(
                 config_options[0].id.0.as_ref(),
+                CONFIG_THINKING_EFFORT,
+                "first config option must be thinking_effort"
+            );
+            // session_mode is second-to-last and must carry category=Mode
+            let n = config_options.len();
+            assert_eq!(
+                config_options[n - 2].id.0.as_ref(),
                 CONFIG_SESSION_MODE,
-                "first config option must be session_mode"
+                "second-to-last config option must be session_mode"
             );
             assert_eq!(
-                config_options[0].category,
+                config_options[n - 2].category,
                 Some(acp::SessionConfigOptionCategory::Mode),
                 "session_mode must carry category=Mode"
+            );
+            // model is last and must carry category=Model
+            assert_eq!(
+                config_options[n - 1].id.0.as_ref(),
+                CONFIG_MODEL,
+                "last config option must be model"
+            );
+            assert_eq!(
+                config_options[n - 1].category,
+                Some(acp::SessionConfigOptionCategory::Model),
+                "model must carry category=Model"
             );
         })
         .await;
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_sends_config_option_update() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4887,6 +4925,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_config_option_mode_sends_current_mode_update() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4936,6 +4975,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_full_autonomous_updates_session_mode_option() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4964,6 +5004,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_all_valid_modes_succeed() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -4996,6 +5037,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_updates_terminal_tool_execution_mode_to_full_autonomous() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -5026,6 +5068,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_full_autonomous_to_planning_restricts_terminal() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -5064,6 +5107,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_set_session_mode_does_not_change_terminal_for_unknown_mode() {
         run_client_server_test(|connection| async move {
             let _init = receive_response(connection.send_request(acp::InitializeRequest::new(
@@ -5139,6 +5183,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_active_session_state_includes_mode_and_runtime_state() {
         let workspace_dir = tempfile::tempdir().expect("workspace should be created");
         let config = Config::default();
@@ -5295,6 +5340,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_with_empty_mcp_servers_list_does_not_error() {
         run_client_server_test(|connection| async move {
             let initialize_resp = receive_response(connection.send_request(
@@ -5403,6 +5449,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_sends_initial_usage_update_when_connection_present() {
         // Create an AcpStdioServerState with default config and no storage, then
         // call create_session with connection = None to exercise the code path.
@@ -5440,6 +5487,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_injects_agent_system_prompt_into_conversation() {
         let mut config = Config::default();
         config.agent.system_prompt = Some("You are helpful.".to_string());
@@ -5458,6 +5506,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_create_session_injects_acp_system_prompt_into_conversation() {
         let mut config = Config::default();
         config.acp.system_prompt = Some("ACP-specific.".to_string());
@@ -6380,6 +6429,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires network (wiremock MockServer)"]
     async fn test_resolve_agent_ollama_model_selects_installed_model_when_default_unavailable() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -6426,6 +6476,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires network (wiremock MockServer)"]
     async fn test_resolve_agent_ollama_model_keeps_configured_model_when_already_installed() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

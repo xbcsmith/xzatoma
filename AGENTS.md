@@ -1,6 +1,7 @@
 # AGENTS.md - AI Agent Development Guidelines
 
-**CRITICAL**: Mandatory rules for AI agents working on XZatoma. Non-compliance will result in rejected code.
+**CRITICAL**: Mandatory rules for AI agents working on XZatoma. Non-compliance
+will result in rejected code.
 
 ---
 
@@ -51,6 +52,26 @@ binary that links that framework triggers an OS Keychain access dialog on first
 execution, even when no `#[ignore]`-guarded test function runs. Always pass
 `--skip providers::copilot --skip mcp::auth` to keep tests hermetic.
 
+**Keyring access chain -- know this to avoid re-introducing the bug:**
+
+```text
+keyring::Entry::{get,set,delete}_password
+  <- CopilotProvider::{get_cached_token, cache_token, clear_cached_token}
+    <- is_authenticated(), authenticate(), fetch_copilot_models()
+  <- TokenStore::{save,load,delete}_token
+    <- AuthManager::get_token(), handle_401()
+```
+
+`CopilotProvider::new()` itself is safe -- it only stores strings. The keyring
+is hit as soon as any method that checks or updates authentication is called.
+
+Modules that are gated by `#[ignore = "requires system keyring"]` (not by
+`--skip`) include tests in `src/acp/stdio.rs` that call `run_client_server_test`
+or `create_session`. Those helpers initialize a session with the default config
+(provider = copilot) which calls `provider.list_models()` -> `authenticate()` ->
+`get_cached_token()` -> keyring. Never remove the `#[ignore]` annotation from
+those tests.
+
 To run the full suite including keyring round-trips (only in a trusted
 environment where Keychain prompts are acceptable):
 
@@ -69,14 +90,16 @@ Stop immediately and fix if any command fails.
 
 ### Rule 5: Documentation is Mandatory
 
-- Create `docs/explanation/<feature_name>_implementation.md` for every feature or task
+- Create `docs/explanation/<feature_name>_implementation.md` for every feature
+  or task
 - Add `///` doc comments to every public function, struct, enum, and module
 - Include runnable examples in doc comments (they are compiled by `cargo test`)
 - Never skip documentation because "code is self-documenting"
 
 ### Rule 6: Use the Agent Harness Tools
 
-Do not write custom scripts for tasks that can be accomplished with the agent tools.
+Do not write custom scripts for tasks that can be accomplished with the agent
+tools.
 
 ---
 
@@ -85,7 +108,8 @@ Do not write custom scripts for tasks that can be accomplished with the agent to
 - **Name**: XZatoma
 - **Type**: Autonomous AI agent CLI
 - **Language**: Rust (latest stable)
-- **Purpose**: Execute tasks through conversation with AI providers using basic file system and terminal tools
+- **Purpose**: Execute tasks through conversation with AI providers using basic
+  file system and terminal tools
 - **Providers**: GitHub Copilot, Ollama
 
 ### Module Structure
@@ -233,6 +257,23 @@ pub fn function(param: Type) -> Result<ReturnType, Error> {
 - Achieve >80% code coverage
 - Use descriptive names: `test_<function>_<condition>_<expected>`
 
+#### Test Isolation Rule: Never use `AcpRuntime::new()` in tests
+
+Always use `AcpRuntime::new_in_memory()` inside unit tests. `AcpRuntime::new()`
+opens the shared on-disk `history.db` (the user's production database). When
+multiple tests run in parallel they race for write locks and produce
+`Storage("Failed to save ACP session")` failures or hangs.
+
+```rust
+// WRONG -- writes to ~/Library/Application Support/.../history.db
+let runtime = AcpRuntime::new(crate::Config::default());
+
+// CORRECT -- isolated, in-memory, no disk I/O
+let runtime = AcpRuntime::new_in_memory(crate::Config::default());
+```
+
+The `executor.rs` tests already follow this pattern. Never regress.
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -292,4 +333,5 @@ Do not run git commands. The user handles all git interactions.
 
 This file is updated as new patterns emerge.
 
-You are a master Rust developer. Follow these rules precisely. All implementation summaries go in `docs/explanation/` with lowercase filenames.
+You are a master Rust developer. Follow these rules precisely. All
+implementation summaries go in `docs/explanation/` with lowercase filenames.

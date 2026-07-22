@@ -660,6 +660,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
+    #[ignore = "requires system keyring"]
     async fn test_handle_401_returns_error_for_unregistered_server() {
         use std::collections::HashMap;
 

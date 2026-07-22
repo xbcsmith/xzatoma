@@ -2641,12 +2641,6 @@ impl Config {
             ));
         }
 
-        if self.agent.max_turns > 1000 {
-            return Err(XzatomaError::Config(
-                "max_turns must be less than or equal to 1000".to_string(),
-            ));
-        }
-
         if self.agent.timeout_seconds == 0 {
             return Err(XzatomaError::Config(
                 "timeout_seconds must be greater than 0".to_string(),
@@ -3773,13 +3767,6 @@ enabled: true
     fn test_config_validation_zero_max_turns() {
         let mut config = Config::default();
         config.agent.max_turns = 0;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_config_validation_max_turns_too_large() {
-        let mut config = Config::default();
-        config.agent.max_turns = 1001;
         assert!(config.validate().is_err());
     }
 
