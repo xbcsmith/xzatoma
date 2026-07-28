@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::{self, PathValidator};
-use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_MOVE_PATH};
+use crate::tools::{TOOL_MOVE_PATH, ToolExecutor, ToolResult, parse_tool_args};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -98,7 +98,7 @@ impl ToolExecutor for MovePathTool {
                 return Ok(ToolResult::error(format!(
                     "Invalid destination path: {}",
                     e
-                )))
+                )));
             }
         };
 
@@ -130,7 +130,7 @@ impl ToolExecutor for MovePathTool {
                 return Ok(ToolResult::error(format!(
                     "Invalid destination path after parent creation: {}",
                     e
-                )))
+                )));
             }
         };
 

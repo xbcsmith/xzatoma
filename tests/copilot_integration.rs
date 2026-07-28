@@ -17,7 +17,9 @@ fn should_run_keychain_tests() -> bool {
 #[ignore = "requires system keyring; enable with XZATOMA_RUN_KEYCHAIN_TESTS=1"]
 async fn test_copilot_models_401_refresh_retry() {
     if !should_run_keychain_tests() {
-        println!("Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored");
+        println!(
+            "Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored"
+        );
         return;
     }
     let server = MockServer::start().await;
@@ -101,7 +103,9 @@ async fn test_copilot_models_401_refresh_retry() {
 #[ignore = "requires system keyring; enable with XZATOMA_RUN_KEYCHAIN_TESTS=1"]
 async fn test_copilot_models_caching_ttl() {
     if !should_run_keychain_tests() {
-        println!("Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored");
+        println!(
+            "Skipping keychain test. Enable with: XZATOMA_RUN_KEYCHAIN_TESTS=1 cargo test -- --ignored"
+        );
         return;
     }
     let server = MockServer::start().await;

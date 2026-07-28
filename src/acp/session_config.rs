@@ -6,22 +6,24 @@
 //!
 //! # Option Overview
 //!
-//! | Config ID              | Values                                              |
-//! |------------------------|-----------------------------------------------------|
-//! | `safety_policy`        | always_confirm, confirm_dangerous, never_confirm    |
-//! | `terminal_execution`   | interactive, restricted_autonomous, full_autonomous |
-//! | `tool_routing`         | prefer_ide, prefer_local, require_ide               |
-//! | `vision_input`         | enabled, disabled                                   |
-//! | `subagent_delegation`  | enabled, disabled                                   |
-//! | `mcp_tools`            | enabled, disabled                                   |
-//! | `max_turns`            | 10, 25, 50, 100, 200                                |
-//! | `thinking_effort`      | none, low, medium, high, extra_high                 |
+//! | Config ID              | Values                                              | UI position |
+//! |------------------------|-----------------------------------------------------|-------------|
+//! | `thinking_effort`      | none, low, medium, high, extra_high                 | 1 (left)    |
+//! | `tool_routing`         | prefer_ide, prefer_local, require_ide               | 2           |
+//! | `subagent_delegation`  | enabled, disabled                                   | 3           |
+//! | `mcp_tools`            | enabled, disabled                                   | 4           |
+//! | `safety_policy`        | always_confirm, confirm_dangerous, never_confirm    | 5           |
+//! | `session_mode`         | planning, write, safe, full_autonomous              | 6           |
+//! | `model`                | <model name from provider>                          | 7 (right)   |
+//!
+//! `vision_input` and `max_turns` are still accepted by `apply_config_option_change`
+//! but are not advertised as dropdowns in the Zed UI.
 //!
 //! # Examples
 //!
 //! ```
 //! use xzatoma::acp::session_config::{
-//!     build_session_config_options, SessionRuntimeState, CONFIG_SAFETY_POLICY,
+//!     build_session_config_options, SessionRuntimeState,
 //! };
 //! use xzatoma::Config;
 //!
@@ -31,9 +33,12 @@
 //! assert!(!options.is_empty());
 //! ```
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol as acp_sdk;
 
+use crate::acp::session_mode::{
+    MODE_FULL_AUTONOMOUS, MODE_PLANNING, MODE_WRITE, mode_runtime_effect,
+};
 use crate::config::{Config, ExecutionMode};
 use crate::error::{Result, XzatomaError};
 
@@ -69,6 +74,24 @@ pub const CONFIG_MAX_TURNS: &str = "max_turns";
 /// model default). Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`,
 /// `"extra_high"`.
 pub const CONFIG_THINKING_EFFORT: &str = "thinking_effort";
+
+/// Config option ID for the session mode selector.
+///
+/// Controls which operating mode the session runs in. The value is one of the
+/// stable mode ID constants: `"planning"`, `"write"`, `"safe"`,
+/// `"full_autonomous"`. Changing this option applies the corresponding chat
+/// mode, safety policy, and terminal execution mode as a unit.
+pub const CONFIG_SESSION_MODE: &str = "session_mode";
+
+/// Config option ID for the active model selector.
+///
+/// Lets the user switch between models available from the current provider
+/// without restarting the agent subprocess. The `value_id` is the full model
+/// name as returned by the provider's model listing API (e.g. `"granite4:3b"`
+/// for Ollama, `"gpt-4o"` for OpenAI). The available values are populated
+/// dynamically at session creation and stored in
+/// [`SessionRuntimeState::available_models`].
+pub const CONFIG_MODEL: &str = "model";
 
 // ---------------------------------------------------------------------------
 // ToolRouting
@@ -209,6 +232,17 @@ pub struct ConfigChangeEffect {
     /// `"extra_high"`. When `Some("none")`, callers must pass `None` to
     /// `Provider::set_thinking_effort` to disable reasoning parameters.
     pub thinking_effort: Option<String>,
+    /// New session mode ID if the session mode was changed via `CONFIG_SESSION_MODE`.
+    ///
+    /// When `Some`, callers must also apply the corresponding `safety_mode_str`
+    /// and `terminal_mode` effects, rebuild system prompts, and replace the
+    /// terminal tool.
+    pub session_mode_id: Option<String>,
+    /// New model name if the active model was changed via `CONFIG_MODEL`.
+    ///
+    /// When `Some`, the caller must call `provider.set_model_inplace` and update
+    /// `ActiveSessionState.current_model_name` to reflect the provider change.
+    pub model_name: Option<String>,
 }
 
 impl ConfigChangeEffect {
@@ -222,6 +256,8 @@ impl ConfigChangeEffect {
             mcp_enabled: None,
             max_turns: None,
             thinking_effort: None,
+            session_mode_id: None,
+            model_name: None,
         }
     }
 }
@@ -269,6 +305,25 @@ pub struct SessionRuntimeState {
     /// and the model uses its own default. Other accepted values: `"low"`,
     /// `"medium"`, `"high"`, `"extra_high"`.
     pub thinking_effort: String,
+    /// The currently active session mode ID (e.g. `"planning"`, `"write"`).
+    ///
+    /// Mirrors `ActiveSessionState.current_mode_id` in `stdio.rs` so that
+    /// `build_session_config_options` can reflect the selected mode without
+    /// requiring a separate parameter.
+    pub current_mode_id: String,
+    /// The currently active model name for this session.
+    ///
+    /// Initialized from the provider config at session creation and updated when
+    /// the user changes the model via the `CONFIG_MODEL` config option or the
+    /// `/model` slash command.
+    pub current_model: String,
+    /// The list of model names available from the current provider.
+    ///
+    /// Populated asynchronously at session creation by querying the provider's
+    /// model listing API. Empty when listing fails, times out, or the provider
+    /// does not support listing. When empty, `build_session_config_options` falls
+    /// back to showing only `current_model` in the model selector dropdown.
+    pub available_models: Vec<String>,
 }
 
 impl SessionRuntimeState {
@@ -294,6 +349,7 @@ impl SessionRuntimeState {
     ///
     /// let state = SessionRuntimeState::from_config(&Config::default());
     /// assert!(!state.safety_mode_str.is_empty());
+    /// assert!(!state.current_mode_id.is_empty());
     /// ```
     pub fn from_config(config: &Config) -> Self {
         let safety_mode_str = config.agent.chat.default_safety.clone();
@@ -305,6 +361,14 @@ impl SessionRuntimeState {
         // whether the manager attempts connections at session start.
         let mcp_enabled = config.mcp.auto_connect;
         let max_turns = config.agent.max_turns as u32;
+        let current_mode_id = if config.agent.terminal.default_mode == ExecutionMode::FullAutonomous
+        {
+            MODE_FULL_AUTONOMOUS.to_string()
+        } else if config.agent.chat.default_mode == "planning" {
+            MODE_PLANNING.to_string()
+        } else {
+            MODE_WRITE.to_string()
+        };
 
         Self {
             safety_mode_str,
@@ -314,7 +378,15 @@ impl SessionRuntimeState {
             subagents_enabled,
             mcp_enabled,
             max_turns,
-            thinking_effort: "none".to_string(),
+            thinking_effort: config.acp.stdio.default_thinking_effort.clone(),
+            current_mode_id,
+            current_model: match config.provider.provider_type.as_str() {
+                "copilot" => config.provider.copilot.model.clone(),
+                "ollama" => config.provider.ollama.model.clone(),
+                "openai" => config.provider.openai.model.clone(),
+                _ => String::new(),
+            },
+            available_models: Vec::new(),
         }
     }
 }
@@ -345,20 +417,19 @@ impl SessionRuntimeState {
 ///
 /// let runtime = SessionRuntimeState::from_config(&Config::default());
 /// let options = build_session_config_options(&runtime);
-/// assert_eq!(options.len(), 8);
+/// assert_eq!(options.len(), 7);
 /// ```
 pub fn build_session_config_options(
     runtime: &SessionRuntimeState,
 ) -> Vec<acp::SessionConfigOption> {
     vec![
-        build_safety_policy_option(runtime),
-        build_terminal_execution_option(runtime),
+        build_thinking_effort_option(runtime),
         build_tool_routing_option(runtime),
-        build_vision_input_option(runtime),
         build_subagent_delegation_option(runtime),
         build_mcp_tools_option(runtime),
-        build_max_turns_option(runtime),
-        build_thinking_effort_option(runtime),
+        build_safety_policy_option(runtime),
+        build_session_mode_option(&runtime.current_mode_id),
+        build_model_selector_option(runtime),
     ]
 }
 
@@ -400,7 +471,7 @@ pub fn build_session_config_options(
 /// let (effect, options) =
 ///     apply_config_option_change(CONFIG_MAX_TURNS, "100", &runtime).unwrap();
 /// assert_eq!(effect.max_turns, Some(100));
-/// assert_eq!(options.len(), 8);
+/// assert_eq!(options.len(), 7);
 /// ```
 pub fn apply_config_option_change(
     config_id: &str,
@@ -451,10 +522,35 @@ pub fn apply_config_option_change(
             effect.thinking_effort = Some(effort.clone());
             updated.thinking_effort = effort;
         }
+        CONFIG_SESSION_MODE => {
+            let mode_effect = mode_runtime_effect(value_id)?;
+            effect.safety_mode_str = Some(mode_effect.safety_mode_str.clone());
+            effect.terminal_mode = Some(mode_effect.terminal_mode);
+            effect.session_mode_id = Some(value_id.to_string());
+            updated.safety_mode_str = mode_effect.safety_mode_str;
+            updated.terminal_mode = mode_effect.terminal_mode;
+            updated.current_mode_id = value_id.to_string();
+        }
+        CONFIG_MODEL => {
+            // Validate against the available list when populated.
+            // When the list is empty (provider does not support listing or listing
+            // failed at session creation), accept any model name so the UI is not
+            // blocked.
+            if !runtime.available_models.is_empty()
+                && !runtime.available_models.iter().any(|m| m == value_id)
+            {
+                return Err(XzatomaError::Config(format!(
+                    "unknown model: '{value_id}'; model is not in the current \
+                     provider's available model list"
+                )));
+            }
+            effect.model_name = Some(value_id.to_string());
+            updated.current_model = value_id.to_string();
+        }
         other => {
             return Err(XzatomaError::Config(format!(
                 "unknown session config option id: '{other}'; expected one of: \
-                 '{CONFIG_SAFETY_POLICY}', '{CONFIG_TERMINAL_EXECUTION}', \
+                 '{CONFIG_SESSION_MODE}', '{CONFIG_MODEL}', '{CONFIG_SAFETY_POLICY}', \
                  '{CONFIG_TOOL_ROUTING}', '{CONFIG_VISION_INPUT}', \
                  '{CONFIG_SUBAGENT_DELEGATION}', '{CONFIG_MCP_TOOLS}', \
                  '{CONFIG_MAX_TURNS}', '{CONFIG_THINKING_EFFORT}'"
@@ -470,6 +566,49 @@ pub fn apply_config_option_change(
 // Private option builders
 // ---------------------------------------------------------------------------
 
+fn build_session_mode_option(current_mode_id: &str) -> acp::SessionConfigOption {
+    let current = current_mode_id.to_string();
+    let options = vec![
+        acp::SessionConfigSelectOption::new("planning", "Planning"),
+        acp::SessionConfigSelectOption::new("write", "Write"),
+        acp::SessionConfigSelectOption::new("safe", "Safe"),
+        acp::SessionConfigSelectOption::new("full_autonomous", "Full Autonomous"),
+    ];
+    acp::SessionConfigOption::select(CONFIG_SESSION_MODE, "Session Mode", current, options)
+        .description(Some(
+            "Active session mode. Controls which file and terminal operations are \
+         permitted and what confirmation policy is applied."
+                .to_string(),
+        ))
+        .category(Some(acp::SessionConfigOptionCategory::Mode))
+}
+
+fn build_model_selector_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
+    let current = runtime.current_model.clone();
+    // Build select options from the available model list.
+    let mut options: Vec<acp::SessionConfigSelectOption> = runtime
+        .available_models
+        .iter()
+        .map(|name| acp::SessionConfigSelectOption::new(name.clone(), name.clone()))
+        .collect();
+    // Always ensure the current model appears in the list, even if the
+    // provider listing failed or has not been populated yet.
+    if !current.is_empty() && !runtime.available_models.iter().any(|m| m == &current) {
+        options.insert(
+            0,
+            acp::SessionConfigSelectOption::new(current.clone(), current.clone()),
+        );
+    }
+    acp::SessionConfigOption::select(CONFIG_MODEL, "Model", current, options)
+        .description(Some(
+            "Active model for this session. \
+         Select from models available in the current provider. \
+         Reopen the session to refresh the list after pulling new models."
+                .to_string(),
+        ))
+        .category(Some(acp::SessionConfigOptionCategory::Model))
+}
+
 fn build_safety_policy_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
     let current = safety_policy_value_id(&runtime.safety_mode_str).to_string();
     let options = vec![
@@ -481,25 +620,6 @@ fn build_safety_policy_option(runtime: &SessionRuntimeState) -> acp::SessionConf
         .description(Some(
             "Controls when XZatoma requests confirmation before executing operations.".to_string(),
         ))
-        .category(Some(acp::SessionConfigOptionCategory::Mode))
-}
-
-fn build_terminal_execution_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
-    let current = terminal_execution_value_id(runtime.terminal_mode);
-    let options = vec![
-        acp::SessionConfigSelectOption::new("interactive", "Interactive"),
-        acp::SessionConfigSelectOption::new("restricted_autonomous", "Restricted Autonomous"),
-        acp::SessionConfigSelectOption::new("full_autonomous", "Full Autonomous"),
-    ];
-    acp::SessionConfigOption::select(
-        CONFIG_TERMINAL_EXECUTION,
-        "Terminal Execution",
-        current,
-        options,
-    )
-    .description(Some(
-        "Controls how terminal commands are validated and executed.".to_string(),
-    ))
 }
 
 fn build_tool_routing_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
@@ -512,15 +632,6 @@ fn build_tool_routing_option(runtime: &SessionRuntimeState) -> acp::SessionConfi
     acp::SessionConfigOption::select(CONFIG_TOOL_ROUTING, "Tool Routing", current, options)
         .description(Some(
             "Controls whether tool calls are delegated to the IDE or executed locally.".to_string(),
-        ))
-}
-
-fn build_vision_input_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
-    let current = bool_to_enabled_disabled(runtime.vision_enabled);
-    let options = enabled_disabled_options();
-    acp::SessionConfigOption::select(CONFIG_VISION_INPUT, "Vision Input", current, options)
-        .description(Some(
-            "Controls whether image and screenshot inputs are accepted in prompts.".to_string(),
         ))
 }
 
@@ -543,20 +654,6 @@ fn build_mcp_tools_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOp
     let options = enabled_disabled_options();
     acp::SessionConfigOption::select(CONFIG_MCP_TOOLS, "MCP Tools", current, options).description(
         Some("Controls whether tools from connected MCP servers are available.".to_string()),
-    )
-}
-
-fn build_max_turns_option(runtime: &SessionRuntimeState) -> acp::SessionConfigOption {
-    let current = runtime.max_turns.to_string();
-    let options = vec![
-        acp::SessionConfigSelectOption::new("10", "10 turns"),
-        acp::SessionConfigSelectOption::new("25", "25 turns"),
-        acp::SessionConfigSelectOption::new("50", "50 turns"),
-        acp::SessionConfigSelectOption::new("100", "100 turns"),
-        acp::SessionConfigSelectOption::new("200", "200 turns"),
-    ];
-    acp::SessionConfigOption::select(CONFIG_MAX_TURNS, "Max Turns", current, options).description(
-        Some("Maximum number of agent turns allowed per run before the agent stops.".to_string()),
     )
 }
 
@@ -589,20 +686,8 @@ fn safety_policy_value_id(safety_mode_str: &str) -> &'static str {
     }
 }
 
-fn terminal_execution_value_id(mode: ExecutionMode) -> &'static str {
-    match mode {
-        ExecutionMode::Interactive => "interactive",
-        ExecutionMode::RestrictedAutonomous => "restricted_autonomous",
-        ExecutionMode::FullAutonomous => "full_autonomous",
-    }
-}
-
 fn bool_to_enabled_disabled(value: bool) -> &'static str {
-    if value {
-        "enabled"
-    } else {
-        "disabled"
-    }
+    if value { "enabled" } else { "disabled" }
 }
 
 fn enabled_disabled_options() -> Vec<acp::SessionConfigSelectOption> {
@@ -648,14 +733,14 @@ fn parse_enabled_disabled(value_id: &str, config_id: &str) -> Result<bool> {
 
 fn parse_max_turns_value(value_id: &str) -> Result<u32> {
     match value_id {
-        "10" => Ok(10),
-        "25" => Ok(25),
-        "50" => Ok(50),
         "100" => Ok(100),
         "200" => Ok(200),
+        "350" => Ok(350),
+        "500" => Ok(500),
+        "1000" => Ok(1000),
         other => Err(XzatomaError::Config(format!(
             "unknown max_turns value: '{other}'; \
-             expected one of: '10', '25', '50', '100', '200'"
+             expected one of: '100', '200', '350', '500', '1000'"
         ))),
     }
 }
@@ -719,9 +804,9 @@ mod tests {
     // --- build_session_config_options ---
 
     #[test]
-    fn test_build_session_config_options_returns_eight_options() {
+    fn test_build_session_config_options_returns_seven_options() {
         let options = build_session_config_options(&default_runtime());
-        assert_eq!(options.len(), 8);
+        assert_eq!(options.len(), 7);
     }
 
     #[test]
@@ -729,12 +814,19 @@ mod tests {
         let options = build_session_config_options(&default_runtime());
         let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
         assert!(ids.contains(&CONFIG_SAFETY_POLICY));
-        assert!(ids.contains(&CONFIG_TERMINAL_EXECUTION));
+        assert!(ids.contains(&CONFIG_SESSION_MODE));
+        assert!(ids.contains(&CONFIG_MODEL));
         assert!(ids.contains(&CONFIG_TOOL_ROUTING));
-        assert!(ids.contains(&CONFIG_VISION_INPUT));
+        assert!(
+            !ids.contains(&CONFIG_VISION_INPUT),
+            "vision_input must not be advertised as a UI dropdown"
+        );
         assert!(ids.contains(&CONFIG_SUBAGENT_DELEGATION));
         assert!(ids.contains(&CONFIG_MCP_TOOLS));
-        assert!(ids.contains(&CONFIG_MAX_TURNS));
+        assert!(
+            !ids.contains(&CONFIG_MAX_TURNS),
+            "max_turns must not be advertised as a UI dropdown"
+        );
         assert!(ids.contains(&CONFIG_THINKING_EFFORT));
     }
 
@@ -769,7 +861,7 @@ mod tests {
         let (effect, options) =
             apply_config_option_change(CONFIG_SAFETY_POLICY, "never_confirm", &runtime).unwrap();
         assert_eq!(effect.safety_mode_str.as_deref(), Some("yolo"));
-        assert_eq!(options.len(), 8);
+        assert_eq!(options.len(), 7);
     }
 
     #[test]
@@ -857,11 +949,11 @@ mod tests {
     fn test_apply_config_option_change_max_turns_all_valid_values() {
         let runtime = default_runtime();
         for (value_id, expected) in [
-            ("10", 10u32),
-            ("25", 25),
-            ("50", 50),
-            ("100", 100),
+            ("100", 100u32),
             ("200", 200),
+            ("350", 350),
+            ("500", 500),
+            ("1000", 1000),
         ] {
             let (effect, _) =
                 apply_config_option_change(CONFIG_MAX_TURNS, value_id, &runtime).unwrap();
@@ -874,7 +966,7 @@ mod tests {
         let runtime = default_runtime();
         let (_effect, options) =
             apply_config_option_change(CONFIG_TERMINAL_EXECUTION, "interactive", &runtime).unwrap();
-        assert_eq!(options.len(), 8);
+        assert_eq!(options.len(), 7);
     }
 
     // --- apply_config_option_change: invalid inputs ---
@@ -958,7 +1050,7 @@ mod tests {
             Some("high"),
             "thinking_effort effect must be Some('high')"
         );
-        assert_eq!(options.len(), 8);
+        assert_eq!(options.len(), 7);
     }
 
     #[test]
@@ -1041,5 +1133,172 @@ mod tests {
             let id = routing.as_value_id();
             assert_eq!(id, id.to_lowercase(), "value id '{id}' must be lowercase");
         }
+    }
+
+    #[test]
+    fn test_session_runtime_state_current_mode_id_defaults_to_planning() {
+        let state = SessionRuntimeState::from_config(&Config::default());
+        // Config::default() uses planning chat mode, which maps to planning session mode.
+        assert_eq!(state.current_mode_id, "planning");
+    }
+
+    #[test]
+    fn test_build_session_config_options_first_option_is_thinking_effort() {
+        let options = build_session_config_options(&default_runtime());
+        assert!(!options.is_empty(), "options list must not be empty");
+        assert_eq!(
+            options[0].id.0.as_ref(),
+            CONFIG_THINKING_EFFORT,
+            "first config option (leftmost) must be thinking_effort"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_last_two_are_session_mode_then_model() {
+        let options = build_session_config_options(&default_runtime());
+        let n = options.len();
+        assert!(n >= 2, "need at least 2 options");
+        assert_eq!(
+            options[n - 2].id.0.as_ref(),
+            CONFIG_SESSION_MODE,
+            "second-to-last option (rightmost visible) must be session_mode"
+        );
+        assert_eq!(
+            options[n - 1].id.0.as_ref(),
+            CONFIG_MODEL,
+            "last option (rightmost) must be model"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_vision_and_max_turns_not_advertised() {
+        let options = build_session_config_options(&default_runtime());
+        let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
+        assert!(
+            !ids.contains(&CONFIG_VISION_INPUT),
+            "vision_input must not appear in advertised UI dropdowns"
+        );
+        assert!(
+            !ids.contains(&CONFIG_MAX_TURNS),
+            "max_turns must not appear in advertised UI dropdowns"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_does_not_include_terminal_execution() {
+        let options = build_session_config_options(&default_runtime());
+        let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
+        assert!(
+            !ids.contains(&CONFIG_TERMINAL_EXECUTION),
+            "terminal_execution must not appear in config options"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_planning() {
+        let runtime = default_runtime();
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_SESSION_MODE, "planning", &runtime).unwrap();
+        assert_eq!(effect.terminal_mode, Some(ExecutionMode::Interactive));
+        assert_eq!(effect.session_mode_id.as_deref(), Some("planning"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_full_autonomous() {
+        let runtime = default_runtime();
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_SESSION_MODE, "full_autonomous", &runtime).unwrap();
+        assert_eq!(effect.terminal_mode, Some(ExecutionMode::FullAutonomous));
+        assert_eq!(effect.safety_mode_str.as_deref(), Some("yolo"));
+        assert_eq!(effect.session_mode_id.as_deref(), Some("full_autonomous"));
+    }
+
+    #[test]
+    fn test_session_runtime_state_from_config_current_model_reflects_ollama_config() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.provider.ollama.model = "granite4:3b".to_string();
+        let state = SessionRuntimeState::from_config(&config);
+        assert_eq!(state.current_model, "granite4:3b");
+    }
+
+    #[test]
+    fn test_session_runtime_state_from_config_available_models_defaults_empty() {
+        let state = default_runtime();
+        assert!(
+            state.available_models.is_empty(),
+            "available_models must be empty at construction; fetching is async"
+        );
+    }
+
+    #[test]
+    fn test_build_session_config_options_ids_include_model() {
+        let options = build_session_config_options(&default_runtime());
+        let ids: Vec<&str> = options.iter().map(|o| o.id.0.as_ref()).collect();
+        assert!(
+            ids.contains(&CONFIG_MODEL),
+            "model option must be present in config options list"
+        );
+    }
+
+    #[test]
+    fn test_model_selector_option_has_model_category() {
+        let options = build_session_config_options(&default_runtime());
+        let model_opt = options
+            .iter()
+            .find(|o| o.id.0.as_ref() == CONFIG_MODEL)
+            .expect("model option must be present");
+        assert_eq!(
+            model_opt.category,
+            Some(acp::SessionConfigOptionCategory::Model),
+            "model selector must carry SessionConfigOptionCategory::Model so Zed \
+             renders it in the model selector slot"
+        );
+    }
+
+    #[test]
+    fn test_apply_config_option_change_model_accepts_any_when_list_empty() {
+        // When available_models is empty (provider listing not yet fetched),
+        // any model name should be accepted.
+        let runtime = default_runtime();
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_MODEL, "some-model:latest", &runtime).unwrap();
+        assert_eq!(effect.model_name.as_deref(), Some("some-model:latest"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_model_validates_against_list_when_populated() {
+        let mut runtime = default_runtime();
+        runtime.available_models = vec!["granite4:3b".to_string(), "llama3.2:latest".to_string()];
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_MODEL, "granite4:3b", &runtime).unwrap();
+        assert_eq!(effect.model_name.as_deref(), Some("granite4:3b"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_model_rejects_unknown_model_when_list_populated() {
+        let mut runtime = default_runtime();
+        runtime.available_models = vec!["granite4:3b".to_string()];
+        let result = apply_config_option_change(CONFIG_MODEL, "nonexistent:model", &runtime);
+        assert!(result.is_err());
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("nonexistent:model"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_model_updates_current_model_in_returned_options() {
+        let mut runtime = default_runtime();
+        runtime.current_model = "llama3.2:latest".to_string();
+        runtime.available_models = vec!["llama3.2:latest".to_string(), "granite4:3b".to_string()];
+        let (effect, _options) =
+            apply_config_option_change(CONFIG_MODEL, "granite4:3b", &runtime).unwrap();
+        assert_eq!(effect.model_name.as_deref(), Some("granite4:3b"));
+    }
+
+    #[test]
+    fn test_apply_config_option_change_session_mode_unknown_value_returns_error() {
+        let runtime = default_runtime();
+        let result = apply_config_option_change(CONFIG_SESSION_MODE, "turbo_mode", &runtime);
+        assert!(result.is_err(), "unknown mode id must return an error");
     }
 }

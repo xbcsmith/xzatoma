@@ -198,6 +198,8 @@ impl AcpSseEvent {
 /// use xzatoma::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
 /// use xzatoma::Config;
 ///
+/// # let rt = tokio::runtime::Runtime::new().unwrap();
+/// # let _guard = rt.enter();
 /// let runtime = AcpRuntime::new(Config::default());
 /// let run = runtime.create_run(AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
 ///     AcpRole::User,
@@ -210,7 +212,7 @@ impl AcpSseEvent {
 pub fn stream_run_events_sse(
     runtime: AcpRuntime,
     run_id: &str,
-) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
+) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>> + use<>>> {
     let replay = runtime.get_events(run_id)?;
     let subscription = runtime.subscribe(run_id)?;
     let stream = build_sse_stream(replay, subscription);
@@ -391,24 +393,26 @@ pub fn streaming_error<T>(message: impl Into<String>) -> Result<T> {
 mod tests {
     use super::*;
     use crate::acp::runtime::{
-        assistant_text_message, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode,
+        AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode, assistant_text_message,
     };
     use crate::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
 
     fn test_request() -> AcpRuntimeCreateRequest {
-        AcpRuntimeCreateRequest::new(vec![AcpMessage::new(
-            AcpRole::User,
-            vec![AcpMessagePart::Text(AcpTextPart::new(
-                "Stream this run".to_string(),
-            ))],
-        )
-        .unwrap()])
+        AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new(
+                    "Stream this run".to_string(),
+                ))],
+            )
+            .unwrap(),
+        ])
         .with_mode(AcpRuntimeExecuteMode::Stream)
     }
 
     #[test]
     fn test_acp_sse_event_from_runtime_event_sets_fields() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let runtime_event = runtime.get_events(run.id.as_str()).unwrap().remove(0);
 
@@ -420,9 +424,9 @@ mod tests {
         assert!(!sse_event.terminal);
     }
 
-    #[test]
-    fn test_stream_run_events_sse_returns_response_for_existing_run() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+    #[tokio::test]
+    async fn test_stream_run_events_sse_returns_response_for_existing_run() {
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
 
         let response = stream_run_events_sse(runtime, run.id.as_str());
@@ -431,7 +435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_sse_stream_replays_existing_events_in_order() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         runtime.mark_queued(run.id.as_str()).unwrap();
         runtime.mark_running(run.id.as_str()).unwrap();
@@ -455,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_subscription_stream_yields_terminal_event_and_stops() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let subscription = runtime.subscribe(run.id.as_str()).unwrap();
         let mut stream = live_subscription_stream(subscription);
@@ -485,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_runtime_event_name_prefers_payload_event_name() {
-        let runtime = AcpRuntime::new(crate::Config::default());
+        let runtime = AcpRuntime::new_in_memory(crate::Config::default());
         let run = runtime.create_run(test_request()).unwrap();
         let runtime_event = runtime.get_events(run.id.as_str()).unwrap().remove(0);
 

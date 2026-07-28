@@ -16,19 +16,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use xzatoma::config::ExecutionMode;
 use xzatoma::mcp::approval::should_auto_approve;
 use xzatoma::mcp::auth::token_store::TokenStore;
-use xzatoma::mcp::client::{start_read_loop, JsonRpcClient};
+use xzatoma::mcp::client::{JsonRpcClient, start_read_loop};
 use xzatoma::mcp::manager::{McpClientManager, McpServerEntry, McpServerState};
 use xzatoma::mcp::protocol::InitializedMcpProtocol;
 use xzatoma::mcp::server::{
     McpApprovalAction, McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig,
 };
-use xzatoma::mcp::tool_bridge::{register_mcp_tools, McpToolExecutor};
+use xzatoma::mcp::tool_bridge::{McpToolExecutor, register_mcp_tools};
 use xzatoma::mcp::types::{
     Implementation, InitializeResponse, McpTool, ServerCapabilities, TaskSupport, ToolExecution,
 };

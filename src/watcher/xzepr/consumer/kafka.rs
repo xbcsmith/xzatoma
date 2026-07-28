@@ -34,17 +34,17 @@
 //! }
 //! ```
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
 use futures::StreamExt;
-use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
-use rdkafka::error::KafkaError;
 use rdkafka::ClientConfig;
 use rdkafka::Message;
+use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+use rdkafka::error::KafkaError;
 
 use super::config::KafkaConsumerConfig;
 use super::message::CloudEventMessage;

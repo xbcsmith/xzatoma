@@ -5,11 +5,11 @@
 
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
+use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    messages_contain_image_content, CompletionResponse, FinishReason, FunctionCall, Message,
-    ModelCapability, ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction,
-    ProviderTool, TokenUsage, ToolCall,
+    CompletionResponse, FinishReason, FunctionCall, Message, ModelCapability, ModelInfo,
+    ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage,
+    ToolCall, messages_contain_image_content,
 };
 
 use async_trait::async_trait;
@@ -1703,14 +1703,14 @@ impl CopilotProvider {
     fn api_endpoint(&self, path: &str) -> String {
         match path {
             "models" | "chat/completions" | "responses" => {
-                if let Ok(cfg) = self.config.read() {
-                    if let Some(base) = &cfg.api_base {
-                        return format!(
-                            "{}/{}",
-                            base.trim_end_matches('/'),
-                            path.trim_start_matches('/')
-                        );
-                    }
+                if let Ok(cfg) = self.config.read()
+                    && let Some(base) = &cfg.api_base
+                {
+                    return format!(
+                        "{}/{}",
+                        base.trim_end_matches('/'),
+                        path.trim_start_matches('/')
+                    );
                 }
 
                 match path {
@@ -1745,16 +1745,16 @@ impl CopilotProvider {
     /// assert_eq!(url, "https://api.githubcopilot.com/responses");
     /// ```
     fn endpoint_url(&self, endpoint: ModelEndpoint) -> String {
-        if let Ok(cfg) = self.config.read() {
-            if let Some(base) = &cfg.api_base {
-                let path = match endpoint {
-                    ModelEndpoint::ChatCompletions => "/chat/completions",
-                    ModelEndpoint::Responses => "/responses",
-                    ModelEndpoint::Messages => "/messages",
-                    ModelEndpoint::Unknown => "/chat/completions",
-                };
-                return format!("{}{}", base.trim_end_matches('/'), path);
-            }
+        if let Ok(cfg) = self.config.read()
+            && let Some(base) = &cfg.api_base
+        {
+            let path = match endpoint {
+                ModelEndpoint::ChatCompletions => "/chat/completions",
+                ModelEndpoint::Responses => "/responses",
+                ModelEndpoint::Messages => "/messages",
+                ModelEndpoint::Unknown => "/chat/completions",
+            };
+            return format!("{}{}", base.trim_end_matches('/'), path);
         }
 
         match endpoint {
@@ -1794,14 +1794,14 @@ impl CopilotProvider {
     /// models endpoint (useful for tests/local mocking).
     async fn fetch_copilot_models(&self) -> Result<Vec<ModelInfo>> {
         // Check models cache first using the shared provider TTL helper.
-        if let Ok(cache_guard) = self.models_cache.read() {
-            if let Some((models, cached_at)) = &*cache_guard {
-                if is_cache_valid(*cached_at) {
-                    tracing::debug!("Using cached Copilot models");
-                    return Ok(models.clone());
-                }
-                tracing::debug!("Copilot models cache expired");
+        if let Ok(cache_guard) = self.models_cache.read()
+            && let Some((models, cached_at)) = &*cache_guard
+        {
+            if is_cache_valid(*cached_at) {
+                tracing::debug!("Using cached Copilot models");
+                return Ok(models.clone());
             }
+            tracing::debug!("Copilot models cache expired");
         }
 
         let token = self.authenticate().await?;
@@ -1831,7 +1831,9 @@ impl CopilotProvider {
 
             // If unauthorized, attempt a non-interactive refresh using the cached GitHub token.
             if status == reqwest::StatusCode::UNAUTHORIZED {
-                tracing::warn!("Copilot returned 401 Unauthorized; attempting non-interactive refresh using cached GitHub token");
+                tracing::warn!(
+                    "Copilot returned 401 Unauthorized; attempting non-interactive refresh using cached GitHub token"
+                );
                 if let Ok(cached) = self.get_cached_token() {
                     match self.get_copilot_token(&cached.github_token).await {
                         Ok(new_token) => {
@@ -1848,7 +1850,9 @@ impl CopilotProvider {
                             if let Err(e) = self.cache_token(&refreshed) {
                                 tracing::warn!("Failed to cache refreshed Copilot token: {}", e);
                             } else {
-                                tracing::info!("Successfully refreshed Copilot token using cached GitHub token");
+                                tracing::info!(
+                                    "Successfully refreshed Copilot token using cached GitHub token"
+                                );
                             }
 
                             // Retry models request with refreshed token
@@ -1880,13 +1884,10 @@ impl CopilotProvider {
                                     status2,
                                     error_text2
                                 );
-                                if status2 == reqwest::StatusCode::UNAUTHORIZED {
-                                    if let Err(e) = self.clear_cached_token() {
-                                        tracing::warn!(
-                                            "Failed to clear cached Copilot token: {}",
-                                            e
-                                        );
-                                    }
+                                if status2 == reqwest::StatusCode::UNAUTHORIZED
+                                    && let Err(e) = self.clear_cached_token()
+                                {
+                                    tracing::warn!("Failed to clear cached Copilot token: {}", e);
                                 }
                                 return Err(format_copilot_api_error(status2, &error_text2));
                             }
@@ -1907,10 +1908,10 @@ impl CopilotProvider {
                             let mut models = Vec::new();
                             for model_data in models_response.data {
                                 // Only include enabled models
-                                if let Some(policy) = &model_data.policy {
-                                    if policy.state != "enabled" {
-                                        continue;
-                                    }
+                                if let Some(policy) = &model_data.policy
+                                    && policy.state != "enabled"
+                                {
+                                    continue;
                                 }
 
                                 // Extract context window size
@@ -1928,18 +1929,17 @@ impl CopilotProvider {
                                 );
 
                                 // Add capabilities based on supports flags
-                                if let Some(caps) = &model_data.capabilities {
-                                    if let Some(supports) = &caps.supports {
-                                        if supports.tool_calls.unwrap_or(false) {
-                                            model_info
-                                                .add_capability(ModelCapability::FunctionCalling);
-                                        }
-                                        if supports.vision.unwrap_or(false) {
-                                            model_info.add_capability(ModelCapability::Vision);
-                                        }
-                                        if supports.streaming.unwrap_or(false) {
-                                            model_info.add_capability(ModelCapability::Streaming);
-                                        }
+                                if let Some(caps) = &model_data.capabilities
+                                    && let Some(supports) = &caps.supports
+                                {
+                                    if supports.tool_calls.unwrap_or(false) {
+                                        model_info.add_capability(ModelCapability::FunctionCalling);
+                                    }
+                                    if supports.vision.unwrap_or(false) {
+                                        model_info.add_capability(ModelCapability::Vision);
+                                    }
+                                    if supports.streaming.unwrap_or(false) {
+                                        model_info.add_capability(ModelCapability::Streaming);
                                     }
                                 }
 
@@ -1989,10 +1989,10 @@ impl CopilotProvider {
         let mut models = Vec::new();
         for model_data in models_response.data {
             // Only include enabled models
-            if let Some(policy) = &model_data.policy {
-                if policy.state != "enabled" {
-                    continue;
-                }
+            if let Some(policy) = &model_data.policy
+                && policy.state != "enabled"
+            {
+                continue;
             }
 
             // Extract context window size
@@ -2006,17 +2006,17 @@ impl CopilotProvider {
             let mut model_info = ModelInfo::new(&model_data.id, &model_data.name, context_window);
 
             // Add capabilities based on supports flags
-            if let Some(caps) = &model_data.capabilities {
-                if let Some(supports) = &caps.supports {
-                    if supports.tool_calls.unwrap_or(false) {
-                        model_info.add_capability(ModelCapability::FunctionCalling);
-                    }
-                    if supports.vision.unwrap_or(false) {
-                        model_info.add_capability(ModelCapability::Vision);
-                    }
-                    if supports.streaming.unwrap_or(false) {
-                        model_info.add_capability(ModelCapability::Streaming);
-                    }
+            if let Some(caps) = &model_data.capabilities
+                && let Some(supports) = &caps.supports
+            {
+                if supports.tool_calls.unwrap_or(false) {
+                    model_info.add_capability(ModelCapability::FunctionCalling);
+                }
+                if supports.vision.unwrap_or(false) {
+                    model_info.add_capability(ModelCapability::Vision);
+                }
+                if supports.streaming.unwrap_or(false) {
+                    model_info.add_capability(ModelCapability::Streaming);
                 }
             }
 
@@ -2240,7 +2240,7 @@ impl CopilotProvider {
                             return Some((
                                 Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
-                            ))
+                            ));
                         }
                         None => {
                             // Stream ended
@@ -2349,7 +2349,7 @@ impl CopilotProvider {
                             return Some((
                                 Err(XzatomaError::StreamInterrupted(e.to_string())),
                                 (byte_stream, buffer),
-                            ))
+                            ));
                         }
                         None => {
                             // Stream ended
@@ -2693,70 +2693,70 @@ impl CopilotProvider {
 
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 tracing::warn!("Attempting token refresh");
-                if let Ok(cached) = self.get_cached_token() {
-                    if let Ok(new_token) = self.get_copilot_token(&cached.github_token).await {
-                        let refreshed = CachedToken {
-                            github_token: cached.github_token.clone(),
-                            copilot_token: new_token.clone(),
-                            expires_at: SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs()
-                                + 3600,
-                        };
-                        if let Err(e) = self.cache_token(&refreshed) {
-                            tracing::warn!("Failed to cache refreshed token: {}", e);
-                        }
-
-                        // Retry with new token
-                        let retry_response = self
-                            .client
-                            .post(&url)
-                            .header("Authorization", format!("Bearer {}", new_token))
-                            .header("Editor-Version", "vscode/1.85.0")
-                            .json(&copilot_request)
-                            .send()
-                            .await
-                            .map_err(|e| {
-                                tracing::error!("Retry failed: {}", e);
-                                XzatomaError::Provider(format!("Retry failed: {}", e))
-                            })?;
-
-                        let retry_status = retry_response.status();
-                        if !retry_status.is_success() {
-                            let error_text = crate::security::redact_sensitive_text(
-                                &retry_response.text().await.unwrap_or_default(),
-                            );
-                            tracing::error!(
-                                "/chat/completions retry returned error {}: {}",
-                                retry_status,
-                                error_text
-                            );
-                            return Err(format_copilot_api_error(retry_status, &error_text));
-                        }
-
-                        let copilot_response: CopilotResponse =
-                            retry_response.json().await.map_err(|e| {
-                                tracing::error!("Failed to parse response: {}", e);
-                                XzatomaError::Provider(format!("Failed to parse response: {}", e))
-                            })?;
-
-                        let choice =
-                            copilot_response.choices.into_iter().next().ok_or_else(|| {
-                                XzatomaError::Provider("No choices in response".to_string())
-                            })?;
-
-                        let message = self.convert_response_message(choice.message);
-                        let usage = copilot_response
-                            .usage
-                            .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
-
-                        return Ok(match usage {
-                            Some(u) => CompletionResponse::with_usage(message, u)
-                                .set_model(model.to_string()),
-                            None => CompletionResponse::new(message).set_model(model.to_string()),
-                        });
+                if let Ok(cached) = self.get_cached_token()
+                    && let Ok(new_token) = self.get_copilot_token(&cached.github_token).await
+                {
+                    let refreshed = CachedToken {
+                        github_token: cached.github_token.clone(),
+                        copilot_token: new_token.clone(),
+                        expires_at: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                            + 3600,
+                    };
+                    if let Err(e) = self.cache_token(&refreshed) {
+                        tracing::warn!("Failed to cache refreshed token: {}", e);
                     }
+
+                    // Retry with new token
+                    let retry_response = self
+                        .client
+                        .post(&url)
+                        .header("Authorization", format!("Bearer {}", new_token))
+                        .header("Editor-Version", "vscode/1.85.0")
+                        .json(&copilot_request)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            tracing::error!("Retry failed: {}", e);
+                            XzatomaError::Provider(format!("Retry failed: {}", e))
+                        })?;
+
+                    let retry_status = retry_response.status();
+                    if !retry_status.is_success() {
+                        let error_text = crate::security::redact_sensitive_text(
+                            &retry_response.text().await.unwrap_or_default(),
+                        );
+                        tracing::error!(
+                            "/chat/completions retry returned error {}: {}",
+                            retry_status,
+                            error_text
+                        );
+                        return Err(format_copilot_api_error(retry_status, &error_text));
+                    }
+
+                    let copilot_response: CopilotResponse =
+                        retry_response.json().await.map_err(|e| {
+                            tracing::error!("Failed to parse response: {}", e);
+                            XzatomaError::Provider(format!("Failed to parse response: {}", e))
+                        })?;
+
+                    let choice = copilot_response.choices.into_iter().next().ok_or_else(|| {
+                        XzatomaError::Provider("No choices in response".to_string())
+                    })?;
+
+                    let message = self.convert_response_message(choice.message);
+                    let usage = copilot_response
+                        .usage
+                        .map(|u| TokenUsage::new(u.prompt_tokens, u.completion_tokens));
+
+                    return Ok(match usage {
+                        Some(u) => {
+                            CompletionResponse::with_usage(message, u).set_model(model.to_string())
+                        }
+                        None => CompletionResponse::new(message).set_model(model.to_string()),
+                    });
                 }
                 if let Err(e) = self.clear_cached_token() {
                     tracing::warn!("Failed to clear cached token: {}", e);
@@ -2965,6 +2965,12 @@ impl Provider for CopilotProvider {
     /// that need model-existence validation should call `list_models` before
     /// calling this method.
     fn set_model(&mut self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
+    fn set_model_inplace(&self, model: &str) {
         if let Ok(mut config) = self.config.write() {
             config.model = model.to_string();
         }
@@ -3546,10 +3552,12 @@ mod tests {
         assert_eq!(summary.state, Some("enabled".to_string()));
         assert_eq!(summary.supports_tool_calls, Some(true));
         assert_eq!(summary.supports_vision, Some(true));
-        assert!(summary
-            .info
-            .capabilities
-            .contains(&ModelCapability::FunctionCalling));
+        assert!(
+            summary
+                .info
+                .capabilities
+                .contains(&ModelCapability::FunctionCalling)
+        );
         assert!(summary.info.capabilities.contains(&ModelCapability::Vision));
         assert!(summary.raw_data.is_object());
     }
@@ -3604,10 +3612,12 @@ mod tests {
         assert_eq!(summary.info.context_window, 200000);
         assert!(summary.supports_tool_calls.is_none());
         assert!(summary.supports_vision.is_none());
-        assert!(summary
-            .info
-            .capabilities
-            .contains(&ModelCapability::LongContext));
+        assert!(
+            summary
+                .info
+                .capabilities
+                .contains(&ModelCapability::LongContext)
+        );
     }
 
     #[test]
@@ -3638,10 +3648,12 @@ mod tests {
         assert!(summary.state.is_none());
         assert_eq!(summary.supports_tool_calls, Some(false));
         assert_eq!(summary.supports_vision, Some(false));
-        assert!(!summary
-            .info
-            .capabilities
-            .contains(&ModelCapability::FunctionCalling));
+        assert!(
+            !summary
+                .info
+                .capabilities
+                .contains(&ModelCapability::FunctionCalling)
+        );
         assert!(!summary.info.capabilities.contains(&ModelCapability::Vision));
     }
 

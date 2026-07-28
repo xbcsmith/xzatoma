@@ -1,7 +1,11 @@
 # Zed ACP demo configuration for GitHub Copilot
 # Requires: xzatoma auth --provider copilot
+#
+# New: the Zed chat panel now supports slash commands handled directly by
+# xzatoma (no LLM turn required) in addition to the native mode/safety/model
+# dropdowns: /tools, /skills, /mcp, /status, /help, /mentions.
 provider:
-  provider_type: copilot
+  type: copilot
 
 agent:
   max_turns: 20

@@ -22,11 +22,11 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{Result, XzatomaError};
@@ -600,12 +600,12 @@ async fn handle_server_request(value: serde_json::Value, client: &Arc<JsonRpcCli
         }),
     };
 
-    if let Ok(serialized) = serde_json::to_string(&response) {
-        if client.outbound_tx.send(serialized).is_err() {
-            tracing::debug!(
-                "Failed to forward MCP server response because outbound channel was closed"
-            );
-        }
+    if let Ok(serialized) = serde_json::to_string(&response)
+        && client.outbound_tx.send(serialized).is_err()
+    {
+        tracing::debug!(
+            "Failed to forward MCP server response because outbound channel was closed"
+        );
     }
 }
 

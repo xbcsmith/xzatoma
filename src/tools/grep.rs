@@ -285,18 +285,18 @@ impl GrepTool {
             }
 
             // Check if file is excluded via user-provided excluded_patterns
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if self.should_exclude(file_name, path) {
-                    continue;
-                }
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str())
+                && self.should_exclude(file_name, path)
+            {
+                continue;
             }
 
             // Check file size
-            if let Ok(metadata) = fs::metadata(path) {
-                if metadata.len() > self.max_file_size {
-                    debug!("Skipping {} (too large)", path.display());
-                    continue;
-                }
+            if let Ok(metadata) = fs::metadata(path)
+                && metadata.len() > self.max_file_size
+            {
+                debug!("Skipping {} (too large)", path.display());
+                continue;
             }
 
             // Read and search file

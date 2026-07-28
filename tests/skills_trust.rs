@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use xzatoma::config::SkillsConfig;
 use xzatoma::skills::trust::{
-    default_trust_store_path, enumerate_skill_resources, expand_tilde_path, load_trusted_paths,
-    resolve_skill_resource_path, resolve_trust_store_path, SkillTrustStore, SkillTrustStoreData,
+    SkillTrustStore, SkillTrustStoreData, default_trust_store_path, enumerate_skill_resources,
+    expand_tilde_path, load_trusted_paths, resolve_skill_resource_path, resolve_trust_store_path,
 };
 
 fn write_file(path: &Path, contents: &str) {

@@ -40,8 +40,8 @@ use crate::watcher::generic::result_producer::{
 use crate::watcher::plan_executor::execute_tasks_sequentially;
 
 use serde_json::json;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, error, info, trace, warn};
@@ -444,7 +444,7 @@ impl GenericWatcher {
                     let trigger_id = task
                         .correlation_key
                         .clone()
-                        .unwrap_or_else(|| Ulid::new().to_string());
+                        .unwrap_or_else(|| Ulid::generate().to_string());
 
                     let mut result = GenericPlanResult::new(
                         trigger_id,
@@ -701,7 +701,7 @@ impl GenericWatcher {
         let trigger_id = task
             .correlation_key
             .clone()
-            .unwrap_or_else(|| Ulid::new().to_string());
+            .unwrap_or_else(|| Ulid::generate().to_string());
 
         let mut result = GenericPlanResult::new(trigger_id, success, summary);
         result.task_outcomes = task_outcomes_opt;

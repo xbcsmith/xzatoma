@@ -325,14 +325,14 @@ fn run_build_catalog(scenario: &Scenario, config: &Config) -> XResult<()> {
     let trusted_paths: BTreeSet<PathBuf> = BTreeSet::new();
     let catalog = build_visible_skill_catalog(config, &working_dir, &trusted_paths)?;
 
-    if let Some(expected_size) = scenario.expect.catalog_size {
-        if catalog.len() != expected_size {
-            return Err(XzatomaError::Config(format!(
-                "expected catalog size {} but got {}",
-                expected_size,
-                catalog.len()
-            )));
-        }
+    if let Some(expected_size) = scenario.expect.catalog_size
+        && catalog.len() != expected_size
+    {
+        return Err(XzatomaError::Config(format!(
+            "expected catalog size {} but got {}",
+            expected_size,
+            catalog.len()
+        )));
     }
 
     Ok(())

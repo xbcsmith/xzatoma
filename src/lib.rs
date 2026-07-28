@@ -52,8 +52,8 @@ pub use chat_mode::{ChatMode, ChatModeParseError, SafetyMode, SafetyModeParseErr
 pub use config::Config;
 pub use error::{Result, XzatomaError};
 pub use mention_parser::{
-    augment_prompt_with_mentions, load_file_content, parse_mentions, FileMention, LoadError,
-    LoadErrorKind, Mention, MentionCache, MentionContent, SearchMention, UrlMention,
+    FileMention, LoadError, LoadErrorKind, Mention, MentionCache, MentionContent, SearchMention,
+    UrlMention, augment_prompt_with_mentions, load_file_content, parse_mentions,
 };
 pub use tools::{GrepTool, SearchMatch};
 

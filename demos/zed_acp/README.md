@@ -30,7 +30,7 @@ workspace, and example prompts for text and vision scenarios.
    ollama pull granite3.2-vision:2b
    ```
 
-4. Install Zed and ensure it supports custom ACP agent servers.
+4. Install Zed and ensure it supports External Agents and the ACP Registry.
 
 ## Demo directory layout
 
@@ -63,33 +63,35 @@ bash setup.sh
 
 ## Step 2: Configure Zed
 
-Add XZatoma to your Zed settings. Open `~/.config/zed/settings.json` and add:
+Open the Command Palette and run `agent: open settings`. Go to **External
+Agents**, click **Add Agent**, and choose **Add Custom Agent**. Replace the
+placeholder values with:
 
 ```json
 {
-  "agent_servers": [
-    {
-      "name": "xzatoma",
+  "agent_servers": {
+    "xzatoma": {
+      "type": "custom",
       "command": "xzatoma",
       "args": ["agent"],
       "env": {}
     }
-  ]
+  }
 }
 ```
 
-To use a specific configuration file for the demo:
+To target a specific provider for this demo:
 
 ```json
 {
-  "agent_servers": [
-    {
-      "name": "xzatoma",
+  "agent_servers": {
+    "xzatoma": {
+      "type": "custom",
       "command": "xzatoma",
       "args": ["agent", "--provider", "ollama", "--model", "granite4:3b"],
       "env": {}
     }
-  ]
+  }
 }
 ```
 

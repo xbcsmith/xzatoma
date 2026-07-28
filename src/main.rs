@@ -7,7 +7,7 @@ use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use xzatoma::error::Result;
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use xzatoma::config::LogFormat;
 
 // Removed unused grouped imports to satisfy clippy
@@ -47,13 +47,15 @@ async fn main() -> Result<()> {
     // This keeps callers unchanged while allowing `SqliteStorage::new()` to
     // honor an override.
     if let Some(db_path) = &common.storage_path {
-        std::env::set_var("XZATOMA_HISTORY_DB", db_path);
+        unsafe {
+            std::env::set_var("XZATOMA_HISTORY_DB", db_path);
+        }
         tracing::info!("Using storage DB override from CLI: {}", db_path);
     }
 
     // Load configuration
-    let config_path = common.config.as_deref().unwrap_or("config/config.yaml");
-    let config = Config::load(config_path, &common)?;
+    let config_path = Config::find_config_path(common.config.as_deref());
+    let config = Config::load(&config_path, &common)?;
 
     // Validate configuration
     config.validate()?;
@@ -67,6 +69,7 @@ async fn main() -> Result<()> {
             resume,
             thinking_effort,
             system_prompt,
+            streaming,
             ..
         } => {
             tracing::info!("Starting interactive chat mode");
@@ -99,6 +102,7 @@ async fn main() -> Result<()> {
                 resume,
                 thinking_effort,
                 system_prompt,
+                streaming,
             )
             .await?;
             Ok(())
@@ -109,6 +113,7 @@ async fn main() -> Result<()> {
             allow_dangerous,
             thinking_effort,
             system_prompt,
+            streaming,
             ..
         } => {
             tracing::info!("Starting plan execution mode");
@@ -137,6 +142,7 @@ async fn main() -> Result<()> {
                 allow_dangerous,
                 thinking_effort,
                 system_prompt,
+                streaming,
             )
             .await?;
             Ok(())
@@ -262,6 +268,7 @@ async fn main() -> Result<()> {
             allow_dangerous,
             working_dir,
             system_prompt,
+            streaming,
             ..
         } => {
             commands::agent::handle_agent(
@@ -270,6 +277,7 @@ async fn main() -> Result<()> {
                 allow_dangerous,
                 working_dir,
                 system_prompt,
+                streaming,
                 config,
             )
             .await?;

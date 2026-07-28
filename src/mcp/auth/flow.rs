@@ -87,7 +87,7 @@ use url::Url;
 
 use crate::error::{Result, XzatomaError};
 use crate::mcp::auth::discovery::{
-    validate_authorization_server_metadata, AuthorizationServerMetadata,
+    AuthorizationServerMetadata, validate_authorization_server_metadata,
 };
 use crate::mcp::auth::pkce;
 use crate::mcp::auth::token_store::OAuthToken;
@@ -661,7 +661,7 @@ impl OAuthFlow {
     ///
     /// 16 random bytes encoded as base64url without padding.
     fn generate_state(&self) -> Result<String> {
-        use rand::RngCore as _;
+        use rand::Rng as _;
         let mut bytes = [0u8; 16];
         rand::rng().fill_bytes(&mut bytes);
         Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
@@ -885,12 +885,12 @@ fn percent_decode(s: &str) -> String {
             out.push(' ');
             i += 1;
         } else if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
-                    i += 3;
-                    continue;
-                }
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                && let Ok(byte) = u8::from_str_radix(hex, 16)
+            {
+                out.push(byte as char);
+                i += 3;
+                continue;
             }
             out.push(bytes[i] as char);
             i += 1;

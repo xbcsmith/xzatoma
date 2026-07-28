@@ -59,7 +59,48 @@ log:
 ## File Sink
 
 Use `--logfile` to write a second log stream to a file. The file is created or
-appended to. File output defaults to JSON format regardless of `--log-format`.
+appended to. File output is always JSON (NDJSON) format regardless of
+`--log-format`.
+
+### Recommended location
+
+For per-user troubleshooting, write to `~/.local/xzatoma/agent.log`. Create the
+directory once before first use:
+
+```bash
+mkdir -p ~/.local/xzatoma
+```
+
+Then start xzatoma with debug or trace logging:
+
+```bash
+# Debug level: provider round-trips, tool execution, iteration counts
+xzatoma agent --debug --logfile ~/.local/xzatoma/agent.log
+
+# Trace level: full conversation transcript, tool arguments and results
+xzatoma agent --trace --logfile ~/.local/xzatoma/agent.log
+
+# Combine with a specific subcommand
+xzatoma chat --debug --logfile ~/.local/xzatoma/agent.log
+xzatoma run  --trace --logfile ~/.local/xzatoma/agent.log --prompt "hello"
+```
+
+### Reading the log
+
+The file contains one JSON object per line. Use `jq` to inspect it:
+
+```bash
+# Follow in real time with pretty-printing
+tail -f ~/.local/xzatoma/agent.log | jq .
+
+# Show only ERROR and WARN events
+jq 'select(.level == "ERROR" or .level == "WARN")' ~/.local/xzatoma/agent.log
+
+# Show log messages from the ACP module only
+jq 'select(.target | startswith("xzatoma::acp"))' ~/.local/xzatoma/agent.log
+```
+
+### Other usage
 
 ```bash
 # Plain text to stderr, JSON to file

@@ -8,6 +8,11 @@
 //! - Display help information
 //! - Exit the session
 //!
+//! The unified command contract:
+//! - Typing a command bare (e.g. `/mode`) returns per-command help.
+//! - Typing `/<command> status` returns the current state for that command.
+//! - Typing `/<command> <action>` performs the action.
+//!
 //! Commands are prefixed with `/` and are case-insensitive.
 
 use crate::chat_mode::{ChatMode, SafetyMode};
@@ -51,6 +56,49 @@ pub enum SpecialCommand {
     ///
     /// Shows the current chat mode, safety mode, and their descriptions.
     ShowStatus,
+
+    /// Display the list of tools available to the agent in this session
+    ///
+    /// Shows every tool the agent can currently invoke.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/tools").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ListTools);
+    /// ```
+    ListTools,
+
+    /// Display the list of active skills loaded for this workspace
+    ///
+    /// Shows every skill currently disclosed to the agent for this workspace.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/skills").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ListSkills);
+    /// ```
+    ListSkills,
+
+    /// Display connected MCP servers and the tools they expose
+    ///
+    /// Shows each connected MCP server along with the tools it makes
+    /// available to the agent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let cmd = parse_special_command("/mcp").unwrap();
+    /// assert_eq!(cmd, SpecialCommand::ShowMcpStatus);
+    /// ```
+    ShowMcpStatus,
 
     /// Display help information
     ///
@@ -115,6 +163,196 @@ pub enum SpecialCommand {
     /// Use `/system <text>` to provide the new prompt text.
     SetSystemPrompt(String),
 
+    /// Toggle live streaming of model output tokens.
+    ///
+    /// When enabled, response and reasoning tokens are printed to the
+    /// terminal as they arrive. When disabled, the full response is
+    /// printed only after the model finishes.
+    ///
+    /// Use `/streaming on` or `/streaming enable` to enable.
+    /// Use `/streaming off` or `/streaming disable` to disable.
+    ToggleStreaming(bool),
+
+    /// Show help text for the `/mode` command.
+    ///
+    /// Emitted when the user types `/mode` with no argument, displaying
+    /// all available chat modes, their aliases, and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/mode").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowModeHelp);
+    /// ```
+    ShowModeHelp,
+
+    /// Show the currently active chat mode.
+    ///
+    /// Emitted when the user types `/mode status`, reporting the active
+    /// chat mode without modifying it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/mode status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowModeStatus);
+    /// ```
+    ShowModeStatus,
+
+    /// Show help text for the `/safety` command.
+    ///
+    /// Emitted when the user types `/safety` with no argument, displaying
+    /// all available safety policies, their aliases, and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/safety").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSafetyHelp);
+    /// ```
+    ShowSafetyHelp,
+
+    /// Show the currently active safety confirmation policy.
+    ///
+    /// Emitted when the user types `/safety status`, reporting the active
+    /// confirmation policy without modifying it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/safety status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSafetyStatus);
+    /// ```
+    ShowSafetyStatus,
+
+    /// Show help text for the `/model` command.
+    ///
+    /// Emitted when the user types `/model` with no argument, displaying
+    /// the model-switching syntax and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/model").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowModelHelp);
+    /// ```
+    ShowModelHelp,
+
+    /// Show the currently active AI model name.
+    ///
+    /// Emitted when the user types `/model status`, reporting the active
+    /// model name without switching to a different model.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/model status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowModelStatus);
+    /// ```
+    ShowModelStatus,
+
+    /// Show help text for the `/streaming` command.
+    ///
+    /// Emitted when the user types `/streaming` with no argument, displaying
+    /// all valid toggle values, their aliases, and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/streaming").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowStreamingHelp);
+    /// ```
+    ShowStreamingHelp,
+
+    /// Show the current token-streaming setting.
+    ///
+    /// Emitted when the user types `/streaming status`, reporting whether
+    /// streaming is enabled or disabled without changing the setting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/streaming status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowStreamingStatus);
+    /// ```
+    ShowStreamingStatus,
+
+    /// Show help text for the `/system` command.
+    ///
+    /// Emitted when the user types `/system` with no argument, displaying
+    /// the system-prompt syntax and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/system").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSystemHelp);
+    /// ```
+    ShowSystemHelp,
+
+    /// Show the active system prompt text.
+    ///
+    /// Emitted when the user types `/system status`, displaying the current
+    /// system prompt without replacing it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/system status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSystemStatus);
+    /// ```
+    ShowSystemStatus,
+
+    /// Show help text for the `/subagents` command.
+    ///
+    /// Emitted when the user types `/subagents` with no argument, displaying
+    /// all valid toggle values, their aliases, and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/subagents").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSubagentsHelp);
+    /// ```
+    ShowSubagentsHelp,
+
+    /// Show the current subagent delegation setting.
+    ///
+    /// Emitted when the user types `/subagents status`, reporting whether
+    /// subagent delegation is enabled or disabled without changing the setting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/subagents status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowSubagentsStatus);
+    /// ```
+    ShowSubagentsStatus,
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -131,24 +369,33 @@ pub enum SpecialCommand {
 /// Checks if the input matches any special command pattern.
 /// Commands are case-insensitive and may have multiple aliases.
 ///
+/// The unified command contract is:
+/// - Typing a command bare (e.g. `/mode`) returns the per-command help variant.
+/// - Typing `/<command> status` returns the per-command status variant.
+/// - Typing `/<command> <action>` performs the action.
+///
 /// # Arguments
 ///
 /// * `input` - The user input string to parse
 ///
 /// # Returns
 ///
-/// Returns Ok(SpecialCommand) for valid commands or SpecialCommand::None for non-commands.
-/// Returns Err(CommandError) for invalid commands or invalid arguments.
+/// Returns `Ok(SpecialCommand)` for valid commands or `SpecialCommand::None` for
+/// non-commands. Returns `Err(CommandError)` for unknown commands or invalid
+/// arguments.
 ///
 /// # Errors
 ///
-/// Returns CommandError::UnknownCommand if input starts with "/" but is not a valid command.
-/// Returns CommandError::UnsupportedArgument if a command receives an invalid argument.
-/// Returns CommandError::MissingArgument if a command requires an argument but none was provided.
+/// Returns `CommandError::UnknownCommand` if input starts with `/` but is not a
+/// valid command.
+/// Returns `CommandError::UnsupportedArgument` if a command receives an
+/// unrecognised argument.
 ///
 /// # Command Examples
 ///
 /// Chat mode switching:
+/// - `/mode` - Show mode help
+/// - `/mode status` - Show the currently active mode
 /// - `/mode planning` or `/planning` - Switch to Planning mode
 /// - `/mode write` or `/write` - Switch to Write mode
 ///
@@ -159,6 +406,7 @@ pub enum SpecialCommand {
 /// Other commands:
 /// - `/status` - Show current mode and safety status
 /// - `/help` - Show help information
+/// - `/system status` - Show the active system prompt
 /// - `/system <text>` - Set the active system prompt
 /// - `exit` or `quit` - Exit the session
 ///
@@ -174,10 +422,13 @@ pub enum SpecialCommand {
 /// let cmd = parse_special_command("/yolo").unwrap();
 /// assert_eq!(cmd, SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm));
 ///
+/// let cmd = parse_special_command("/mode").unwrap();
+/// assert_eq!(cmd, SpecialCommand::ShowModeHelp);
+///
 /// let cmd = parse_special_command("hello agent").unwrap();
 /// assert_eq!(cmd, SpecialCommand::None);
 ///
-/// // Invalid command returns error
+/// // Unknown command returns error
 /// assert!(parse_special_command("/foo").is_err());
 /// ```
 pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError> {
@@ -194,11 +445,9 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
         "/mode planning" | "/planning" => Ok(SpecialCommand::SwitchMode(ChatMode::Planning)),
         "/mode write" | "/write" => Ok(SpecialCommand::SwitchMode(ChatMode::Write)),
 
-        // Handle /mode with no argument or invalid argument
-        "/mode" => Err(CommandError::MissingArgument {
-            command: "/mode".to_string(),
-            usage: "/mode <planning|write>".to_string(),
-        }),
+        // Handle /mode with no argument, status subcommand, or invalid argument
+        "/mode" => Ok(SpecialCommand::ShowModeHelp),
+        "/mode status" => Ok(SpecialCommand::ShowModeStatus),
         input if input.starts_with("/mode ") => {
             let arg = input[6..].trim();
             Err(CommandError::UnsupportedArgument {
@@ -211,11 +460,9 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
         "/safe" | "/safety on" => Ok(SpecialCommand::SwitchSafety(SafetyMode::AlwaysConfirm)),
         "/yolo" | "/safety off" => Ok(SpecialCommand::SwitchSafety(SafetyMode::NeverConfirm)),
 
-        // Handle /safety with no argument or invalid argument
-        "/safety" => Err(CommandError::MissingArgument {
-            command: "/safety".to_string(),
-            usage: "/safety <on|off>".to_string(),
-        }),
+        // Handle /safety with no argument, status subcommand, or invalid argument
+        "/safety" => Ok(SpecialCommand::ShowSafetyHelp),
+        "/safety status" => Ok(SpecialCommand::ShowSafetyStatus),
         input if input.starts_with("/safety ") => {
             let arg = input[8..].trim();
             if arg != "on" && arg != "off" {
@@ -231,6 +478,9 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
 
         // Status and help
         "/status" => Ok(SpecialCommand::ShowStatus),
+        "/tools" => Ok(SpecialCommand::ListTools),
+        "/skills" => Ok(SpecialCommand::ListSkills),
+        "/mcp" => Ok(SpecialCommand::ShowMcpStatus),
         "/help" | "/?" => Ok(SpecialCommand::Help),
         "/mentions" => Ok(SpecialCommand::Mentions),
 
@@ -332,26 +582,17 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
         }
 
         // Model switching with arguments
-        "/model" => Err(CommandError::MissingArgument {
-            command: "/model".to_string(),
-            usage: "/model <model_name>".to_string(),
-        }),
+        "/model" => Ok(SpecialCommand::ShowModelHelp),
+        "/model status" => Ok(SpecialCommand::ShowModelStatus),
         input if input.starts_with("/model ") => {
             let rest = input[7..].trim();
-            if rest.is_empty() {
-                Err(CommandError::MissingArgument {
-                    command: "/model".to_string(),
-                    usage: "/model <model_name>".to_string(),
-                })
-            } else {
-                Ok(SpecialCommand::SwitchModel(rest.to_string()))
-            }
+            Ok(SpecialCommand::SwitchModel(rest.to_string()))
         }
 
         // Subagent delegation commands
-        "/subagents" => Ok(SpecialCommand::ToggleSubagents(true)),
         "/subagents on" | "/subagents enable" => Ok(SpecialCommand::ToggleSubagents(true)),
         "/subagents off" | "/subagents disable" => Ok(SpecialCommand::ToggleSubagents(false)),
+        "/subagents status" => Ok(SpecialCommand::ShowSubagentsStatus),
 
         // Handle /subagents with invalid argument
         input if input.starts_with("/subagents ") => {
@@ -362,22 +603,34 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             })
         }
 
+        "/subagents" => Ok(SpecialCommand::ShowSubagentsHelp),
+
         // Set system prompt: preserve original case of the prompt text
-        "/system" => Err(CommandError::MissingArgument {
-            command: "/system".to_string(),
-            usage: "/system <text>".to_string(),
-        }),
+        "/system" => Ok(SpecialCommand::ShowSystemHelp),
+        "/system status" => Ok(SpecialCommand::ShowSystemStatus),
         input if input.starts_with("/system ") => {
             // Use `trimmed` (not `lower`) to preserve the original case of the text
             let text = trimmed[8..].trim();
             if text.is_empty() {
-                Err(CommandError::MissingArgument {
-                    command: "/system".to_string(),
-                    usage: "/system <text>".to_string(),
-                })
+                Ok(SpecialCommand::ShowSystemHelp)
             } else {
                 Ok(SpecialCommand::SetSystemPrompt(text.to_string()))
             }
+        }
+
+        // Streaming toggle commands
+        "/streaming on" | "/streaming enable" => Ok(SpecialCommand::ToggleStreaming(true)),
+        "/streaming off" | "/streaming disable" => Ok(SpecialCommand::ToggleStreaming(false)),
+
+        // Handle /streaming with no argument, status subcommand, or invalid argument
+        "/streaming" => Ok(SpecialCommand::ShowStreamingHelp),
+        "/streaming status" => Ok(SpecialCommand::ShowStreamingStatus),
+        input if input.starts_with("/streaming ") => {
+            let arg = input[11..].trim();
+            Err(CommandError::UnsupportedArgument {
+                command: "/streaming".to_string(),
+                arg: arg.to_string(),
+            })
         }
 
         // Exit commands
@@ -407,27 +660,55 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
 /// print_help();
 /// ```
 pub fn print_help() {
-    println!(
-        r#"
+    println!("{}", format_help_text());
+}
+
+/// Build the help text for special commands as an owned string.
+///
+/// This is the string-returning equivalent of [`print_help`], used by
+/// callers such as the stdio ACP agent that must not write directly to
+/// stdout (stdout is the JSON-RPC wire channel in that context).
+///
+/// # Returns
+///
+/// Returns the full special-commands help text.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_help_text;
+///
+/// let text = format_help_text();
+/// assert!(text.contains("/help"));
+/// ```
+pub fn format_help_text() -> String {
+    r#"
 Special Commands for Interactive Chat Mode
 ===========================================
 
+Type any command alone for per-command help. Add `status` to see the current value.
+
 CHAT MODE SWITCHING:
+  /mode           - Show mode help and available modes
+  /mode status    - Show the currently active mode
   /mode planning  - Switch to Planning mode (read-only)
   /planning       - Shorthand for /mode planning
   /mode write     - Switch to Write mode (read/write)
   /write          - Shorthand for /mode write
 
 SAFETY MODE SWITCHING:
+  /safety         - Show safety help and available policies
+  /safety status  - Show the currently active safety policy
   /safe           - Enable safety mode (require confirmations)
   /safety on      - Same as /safe
   /yolo           - Disable safety mode (YOLO mode)
   /safety off     - Same as /yolo
 
 SUBAGENT DELEGATION:
-  /subagents      - Show subagent enablement status
-  /subagents on   - Enable subagent delegation
-  /subagents off  - Disable subagent delegation
+  /subagents         - Show subagent help and current state
+  /subagents status  - Show the current subagent setting
+  /subagents on      - Enable subagent delegation
+  /subagents off     - Disable subagent delegation
   /subagents enable  - Same as /subagents on
   /subagents disable - Same as /subagents off
 
@@ -440,10 +721,12 @@ CONTEXT MENTIONS (Quick Reference):
   @url:https://...      - Include web content
 
 MODEL MANAGEMENT:
+  /model          - Show model help
+  /model status   - Show currently active model
+  /model <name>   - Switch to a different model
   /models         - Show help for models subcommands and flags
   /models list    - Show available models from current provider
   /models info <name> - Show detailed info about a specific model
-  /model <name>   - Switch to a different model
   /auth [provider] - Start authentication for the provider; use `/auth` for the configured provider
 
 CONTEXT WINDOW MANAGEMENT:
@@ -452,8 +735,18 @@ CONTEXT WINDOW MANAGEMENT:
   /context summary -m MODEL  - Summarize using a specific model (for cost optimization)
 
 SYSTEM PROMPT:
+  /system         - Show system prompt help
+  /system status  - Show the active system prompt text
   /system <text>  - Replace the active system prompt for this session
                     (replaces the first system message; skill disclosures are kept)
+
+STREAMING:
+  /streaming         - Show streaming help
+  /streaming status  - Show the current streaming setting
+  /streaming on      - Enable live token streaming to terminal
+  /streaming off     - Disable live token streaming
+  /streaming enable  - Same as /streaming on
+  /streaming disable - Same as /streaming off
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -467,6 +760,7 @@ SESSION CONTROL:
 
 NOTES:
   - Commands are case-insensitive
+  - Type a command alone for per-command help; add `status` to inspect the current value
   - Regular text (not starting with /) is sent to the agent
   - Mentions (@file, @search, etc.) inject context into prompts
   - Switching to Write mode enables powerful file and terminal tools
@@ -475,24 +769,30 @@ NOTES:
   - Mention "subagent", "delegate", or "parallel agent" in your prompt to auto-enable subagents
   - See /mentions for complete mention syntax and examples
 "#
-    );
+    .to_string()
 }
 
-/// Display detailed help for the `/models` command
+/// Return the help text for the `/models` command as a `String`.
 ///
-/// Shows usage, flags, and examples for `/models` subcommands such as
-/// `/models list` and `/models info <name>`.
+/// Contains usage, flags, and examples for `/models` subcommands such as
+/// `/models list` and `/models info <name>`. Use this function when the
+/// text needs to be captured or tested; use `print_models_help` when the
+/// text should be written directly to stdout.
+///
+/// # Returns
+///
+/// A `String` containing the full models help text.
 ///
 /// # Examples
 ///
 /// ```
-/// use xzatoma::commands::special_commands::print_models_help;
+/// use xzatoma::commands::special_commands::format_models_help_text;
 ///
-/// print_models_help();
+/// let text = format_models_help_text();
+/// assert!(!text.is_empty());
 /// ```
-pub fn print_models_help() {
-    println!(
-        r#"
+pub fn format_models_help_text() -> String {
+    r#"
 Models Command - Usage and Examples
 ===================================
 
@@ -522,7 +822,24 @@ NOTES:
   - `--summary` prints compact, script-friendly summaries
   - Use `/models` to see this help when you don't know which subcommand to run
 "#
-    );
+    .to_string()
+}
+
+/// Display detailed help for the `/models` command.
+///
+/// Writes the output of `format_models_help_text` to stdout. Shows usage,
+/// flags, and examples for `/models` subcommands such as `/models list`
+/// and `/models info <name>`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::print_models_help;
+///
+/// print_models_help();
+/// ```
+pub fn print_models_help() {
+    println!("{}", format_models_help_text());
 }
 
 /// Display detailed help for context mentions
@@ -537,8 +854,29 @@ NOTES:
 /// print_mention_help();
 /// ```
 pub fn print_mention_help() {
-    println!(
-        r#"
+    println!("{}", format_mention_help_text());
+}
+
+/// Build the context-mention help text as an owned string.
+///
+/// This is the string-returning equivalent of [`print_mention_help`], used
+/// by callers such as the stdio ACP agent that must not write directly to
+/// stdout (stdout is the JSON-RPC wire channel in that context).
+///
+/// # Returns
+///
+/// Returns the full context-mention help text.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_mention_help_text;
+///
+/// let text = format_mention_help_text();
+/// assert!(text.contains("@file"));
+/// ```
+pub fn format_mention_help_text() -> String {
+    r#"
 Context Mentions for XZatoma
 =============================
 
@@ -714,7 +1052,280 @@ URL fetch timeout:
 
 For more details, see the user guide: docs/how-to/use_context_mentions.md
 "#
-    );
+    .to_string()
+}
+
+/// Return help text for the `/mode` command.
+///
+/// Describes all valid mode subcommands: the bare command for per-command help,
+/// the `status` query, and all mode-switching actions with their aliases.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/mode`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_mode_help_text;
+///
+/// let text = format_mode_help_text();
+/// assert!(text.contains("/mode status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_mode_help_text() -> String {
+    r#"
+/mode - Chat Mode
+=================
+
+Controls which tools and capabilities are available in this chat session.
+
+USAGE:
+  /mode              - Show this help (you are here)
+  /mode status       - Show the currently active mode
+  /mode planning     - Switch to Planning mode (read-only file access)
+  /planning          - Shorthand for /mode planning
+  /mode write        - Switch to Write mode (file read/write and terminal)
+  /write             - Shorthand for /mode write
+
+EXAMPLES:
+  /mode status
+  /mode planning
+  /mode write
+
+NOTE: Type /mode alone for this help. Type /mode status to see the active mode.
+      Switching to Write mode gives the agent access to file and terminal tools.
+"#
+    .to_string()
+}
+
+/// Return help text for the `/safety` command.
+///
+/// Describes all valid safety subcommands: the bare command for per-command help,
+/// the `status` query, and all policy-switching actions with their aliases.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/safety`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_safety_help_text;
+///
+/// let text = format_safety_help_text();
+/// assert!(text.contains("/safety status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_safety_help_text() -> String {
+    r#"
+/safety - Safety Confirmation Policy
+=====================================
+
+Controls whether the agent requests confirmation before executing
+dangerous operations such as terminal commands.
+
+USAGE:
+  /safety            - Show this help (you are here)
+  /safety status     - Show the currently active safety policy
+  /safety on         - Enable safety mode (require confirmation for dangerous ops)
+  /safe              - Shorthand for /safety on
+  /safety off        - Disable safety mode (no confirmation required)
+  /yolo              - Shorthand for /safety off
+
+EXAMPLES:
+  /safety status
+  /safety on
+  /yolo
+
+NOTE: Type /safety alone for this help. Type /safety status to see the active
+      policy. Use /safe in Write mode to require confirmation before terminal
+      commands.
+"#
+    .to_string()
+}
+
+/// Return help text for the `/model` command.
+///
+/// Describes all valid model subcommands: the bare command for per-command help,
+/// the `status` query, and the model-switching syntax.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/model`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_model_help_text;
+///
+/// let text = format_model_help_text();
+/// assert!(text.contains("/model status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_model_help_text() -> String {
+    r#"
+/model - Active Model
+======================
+
+Shows or changes the AI provider model used for this session.
+
+USAGE:
+  /model                  - Show this help (you are here)
+  /model status           - Show the currently active model name
+  /model <name>           - Switch to a different model
+  /models                 - Show help for model-management subcommands
+  /models list            - List all available models from the current provider
+  /models info <name>     - Show detailed information about a specific model
+
+EXAMPLES:
+  /model status
+  /model gpt-4o
+  /model llama3.2:latest
+  /models list
+
+NOTE: Type /model alone for this help. Type /model status to see the active
+      model. Use /models list to discover available model names before
+      switching.
+"#
+    .to_string()
+}
+
+/// Return help text for the `/streaming` command.
+///
+/// Describes all valid streaming subcommands: the bare command for per-command
+/// help, the `status` query, and all toggle actions with their aliases.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/streaming`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_streaming_help_text;
+///
+/// let text = format_streaming_help_text();
+/// assert!(text.contains("/streaming status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_streaming_help_text() -> String {
+    r#"
+/streaming - Token Streaming
+=============================
+
+Controls whether model response tokens are printed as they arrive or
+all at once after the model finishes.
+
+USAGE:
+  /streaming             - Show this help (you are here)
+  /streaming status      - Show the current streaming setting
+  /streaming on          - Enable live token streaming to terminal
+  /streaming enable      - Shorthand for /streaming on
+  /streaming off         - Disable streaming (print full response when complete)
+  /streaming disable     - Shorthand for /streaming off
+
+EXAMPLES:
+  /streaming status
+  /streaming on
+  /streaming off
+
+NOTE: Type /streaming alone for this help. Type /streaming status for the
+      current setting. In Zed (ACP mode), streaming is controlled by the Zed
+      client; /streaming on|off has no effect in that environment. In terminal
+      chat mode, streaming shows tokens in real time as the model generates
+      them.
+"#
+    .to_string()
+}
+
+/// Return help text for the `/system` command.
+///
+/// Describes all valid system subcommands: the bare command for per-command
+/// help, the `status` query, and the system-prompt replacement syntax.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/system`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_system_help_text;
+///
+/// let text = format_system_help_text();
+/// assert!(text.contains("/system status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_system_help_text() -> String {
+    r#"
+/system - System Prompt
+========================
+
+Shows or replaces the active system prompt for this session.
+
+USAGE:
+  /system                - Show this help (you are here)
+  /system status         - Show the currently active system prompt text
+  /system <text>         - Replace the active system prompt with <text>
+
+EXAMPLES:
+  /system status
+  /system You are a concise code reviewer. Be brief.
+  /system Act as a senior Rust engineer reviewing pull requests.
+
+NOTE: Type /system alone for this help. Type /system status to see the
+      active prompt without replacing it. The command replaces the first
+      system message in the conversation history; skill disclosure messages
+      that follow it are preserved unchanged.
+"#
+    .to_string()
+}
+
+/// Return help text for the `/subagents` command.
+///
+/// Describes all valid subagents subcommands: the bare command for per-command
+/// help, the `status` query, and all delegation-toggle actions with aliases.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/subagents`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_subagents_help_text;
+///
+/// let text = format_subagents_help_text();
+/// assert!(text.contains("/subagents status"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_subagents_help_text() -> String {
+    r#"
+/subagents - Subagent Delegation
+==================================
+
+Controls whether the agent can delegate tasks to separate agent instances.
+
+USAGE:
+  /subagents            - Show this help (you are here)
+  /subagents status     - Show the current subagent delegation state
+  /subagents on         - Enable subagent delegation
+  /subagents enable     - Shorthand for /subagents on
+  /subagents off        - Disable subagent delegation
+  /subagents disable    - Shorthand for /subagents off
+
+EXAMPLES:
+  /subagents status
+  /subagents on
+  /subagents off
+
+NOTE: Type /subagents alone for this help. Type /subagents status for the
+      current state. When enabled, mentioning "subagent", "delegate", or
+      "parallel agent" in your prompt auto-enables delegation for complex
+      multi-step tasks.
+"#
+    .to_string()
 }
 
 #[cfg(test)]
@@ -801,6 +1412,30 @@ mod tests {
     fn test_parse_show_status() {
         let cmd = parse_special_command("/status").unwrap();
         assert_eq!(cmd, SpecialCommand::ShowStatus);
+    }
+
+    #[test]
+    fn test_parse_special_command_tools_returns_list_tools() {
+        assert_eq!(
+            parse_special_command("/tools"),
+            Ok(SpecialCommand::ListTools)
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_skills_returns_list_skills() {
+        assert_eq!(
+            parse_special_command("/skills"),
+            Ok(SpecialCommand::ListSkills)
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_mcp_returns_show_mcp_status() {
+        assert_eq!(
+            parse_special_command("/mcp"),
+            Ok(SpecialCommand::ShowMcpStatus)
+        );
     }
 
     #[test]
@@ -1029,14 +1664,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_model_command_no_args_returns_error() {
-        let result = parse_special_command("/model");
-        assert!(result.is_err());
-        if let Err(CommandError::MissingArgument { command, .. }) = result {
-            assert_eq!(command, "/model");
-        } else {
-            panic!("Expected MissingArgument error");
-        }
+    fn test_parse_model_bare_returns_show_model_help() {
+        assert_eq!(
+            parse_special_command("/model").unwrap(),
+            SpecialCommand::ShowModelHelp
+        );
+    }
+
+    #[test]
+    fn test_parse_model_status_returns_show_model_status() {
+        assert_eq!(
+            parse_special_command("/model status").unwrap(),
+            SpecialCommand::ShowModelStatus
+        );
+    }
+
+    #[test]
+    fn test_parse_model_status_not_treated_as_model_name() {
+        // "/model status" must route to ShowModelStatus, not SwitchModel("status")
+        let result = parse_special_command("/model status").unwrap();
+        assert_eq!(result, SpecialCommand::ShowModelStatus);
+        assert_ne!(result, SpecialCommand::SwitchModel("status".to_string()));
     }
 
     #[test]
@@ -1075,27 +1723,35 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_mode_no_arg_returns_error() {
-        let result = parse_special_command("/mode");
-        assert!(result.is_err());
-        if let Err(CommandError::MissingArgument { command, usage }) = result {
-            assert_eq!(command, "/mode");
-            assert_eq!(usage, "/mode <planning|write>");
-        } else {
-            panic!("Expected MissingArgument error");
-        }
+    fn test_parse_mode_bare_returns_show_mode_help() {
+        assert_eq!(
+            parse_special_command("/mode").unwrap(),
+            SpecialCommand::ShowModeHelp
+        );
     }
 
     #[test]
-    fn test_parse_safety_no_arg_returns_error() {
-        let result = parse_special_command("/safety");
-        assert!(result.is_err());
-        if let Err(CommandError::MissingArgument { command, usage }) = result {
-            assert_eq!(command, "/safety");
-            assert_eq!(usage, "/safety <on|off>");
-        } else {
-            panic!("Expected MissingArgument error");
-        }
+    fn test_parse_mode_status_returns_show_mode_status() {
+        assert_eq!(
+            parse_special_command("/mode status").unwrap(),
+            SpecialCommand::ShowModeStatus
+        );
+    }
+
+    #[test]
+    fn test_parse_safety_bare_returns_show_safety_help() {
+        assert_eq!(
+            parse_special_command("/safety").unwrap(),
+            SpecialCommand::ShowSafetyHelp
+        );
+    }
+
+    #[test]
+    fn test_parse_safety_status_returns_show_safety_status() {
+        assert_eq!(
+            parse_special_command("/safety status").unwrap(),
+            SpecialCommand::ShowSafetyStatus
+        );
     }
 
     #[test]
@@ -1150,9 +1806,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_subagents_toggle() {
-        let cmd = parse_special_command("/subagents").unwrap();
-        assert_eq!(cmd, SpecialCommand::ToggleSubagents(true));
+    fn test_parse_subagents_bare_returns_show_subagents_help() {
+        assert_eq!(
+            parse_special_command("/subagents").unwrap(),
+            SpecialCommand::ShowSubagentsHelp
+        );
     }
 
     #[test]
@@ -1210,27 +1868,20 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_set_system_prompt_empty_returns_missing_argument_error() {
-        let result = parse_special_command("/system");
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            CommandError::MissingArgument { command, .. } => {
-                assert_eq!(command, "/system");
-            }
-            other => panic!("expected MissingArgument, got {:?}", other),
-        }
+    fn test_parse_system_bare_returns_show_system_help() {
+        assert_eq!(
+            parse_special_command("/system").unwrap(),
+            SpecialCommand::ShowSystemHelp
+        );
     }
 
     #[test]
-    fn test_parse_set_system_prompt_whitespace_only_text_returns_missing_argument_error() {
-        let result = parse_special_command("/system   ");
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            CommandError::MissingArgument { command, .. } => {
-                assert_eq!(command, "/system");
-            }
-            other => panic!("expected MissingArgument, got {:?}", other),
-        }
+    fn test_parse_system_whitespace_only_after_system_returns_help() {
+        // "/system   " trims to "/system" -- must return ShowSystemHelp, not an error
+        assert_eq!(
+            parse_special_command("/system   ").unwrap(),
+            SpecialCommand::ShowSystemHelp
+        );
     }
 
     #[test]
@@ -1254,6 +1905,174 @@ mod tests {
             SpecialCommand::SetSystemPrompt(
                 "act as a senior Rust engineer reviewing code".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn test_parse_streaming_on_returns_toggle_streaming_true() {
+        let result = parse_special_command("/streaming on").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(true));
+    }
+
+    #[test]
+    fn test_parse_streaming_off_returns_toggle_streaming_false() {
+        let result = parse_special_command("/streaming off").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(false));
+    }
+
+    #[test]
+    fn test_parse_streaming_enable_alias() {
+        let result = parse_special_command("/streaming enable").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(true));
+    }
+
+    #[test]
+    fn test_parse_streaming_disable_alias() {
+        let result = parse_special_command("/streaming disable").unwrap();
+        assert_eq!(result, SpecialCommand::ToggleStreaming(false));
+    }
+
+    #[test]
+    fn test_parse_streaming_bare_returns_show_streaming_help() {
+        assert_eq!(
+            parse_special_command("/streaming").unwrap(),
+            SpecialCommand::ShowStreamingHelp
+        );
+    }
+
+    #[test]
+    fn test_parse_streaming_invalid_arg_returns_unsupported_argument_error() {
+        let result = parse_special_command("/streaming maybe");
+        if let Err(CommandError::UnsupportedArgument { command, arg }) = result {
+            assert_eq!(command, "/streaming");
+            assert_eq!(arg, "maybe");
+        } else {
+            panic!(
+                "expected UnsupportedArgument {{ command: \"/streaming\", arg: \"maybe\" }}, got {:?}",
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_help_text_matches_print_help_content() {
+        let text = format_help_text();
+        assert!(!text.is_empty());
+        assert!(text.contains("Special Commands for Interactive Chat Mode"));
+        assert!(text.contains("CHAT MODE SWITCHING"));
+        assert!(text.contains("SESSION INFORMATION"));
+        assert!(text.contains("/help"));
+        assert!(text.contains("/mentions"));
+    }
+
+    #[test]
+    fn test_format_mention_help_text_contains_mention_syntax() {
+        let text = format_mention_help_text();
+        assert!(!text.is_empty());
+        assert!(text.contains("Context Mentions for XZatoma"));
+        assert!(text.contains("@file"));
+        assert!(text.contains("@search"));
+        assert!(text.contains("@grep"));
+        assert!(text.contains("@url"));
+    }
+
+    #[test]
+    fn test_parse_streaming_status_returns_show_streaming_status() {
+        assert_eq!(
+            parse_special_command("/streaming status").unwrap(),
+            SpecialCommand::ShowStreamingStatus
+        );
+    }
+
+    #[test]
+    fn test_parse_system_status_returns_show_system_status() {
+        assert_eq!(
+            parse_special_command("/system status").unwrap(),
+            SpecialCommand::ShowSystemStatus
+        );
+    }
+
+    #[test]
+    fn test_parse_system_status_not_treated_as_prompt_text() {
+        // "/system status" must route to ShowSystemStatus, not SetSystemPrompt("status")
+        let result = parse_special_command("/system status").unwrap();
+        assert_eq!(result, SpecialCommand::ShowSystemStatus);
+        assert_ne!(
+            result,
+            SpecialCommand::SetSystemPrompt("status".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_subagents_status_returns_show_subagents_status() {
+        assert_eq!(
+            parse_special_command("/subagents status").unwrap(),
+            SpecialCommand::ShowSubagentsStatus
+        );
+    }
+
+    #[test]
+    fn test_format_mode_help_text_contains_status_note() {
+        let text = format_mode_help_text();
+        assert!(
+            text.contains("/mode status"),
+            "format_mode_help_text() missing '/mode status': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_mode_help_text() missing 'USAGE:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_format_safety_help_text_contains_status_note() {
+        let text = format_safety_help_text();
+        assert!(
+            text.contains("/safety status"),
+            "format_safety_help_text() missing '/safety status': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_safety_help_text() missing 'USAGE:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_help_text_contains_status_note() {
+        let text = format_streaming_help_text();
+        assert!(
+            text.contains("/streaming status"),
+            "format_streaming_help_text() missing '/streaming status': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_streaming_help_text() missing 'USAGE:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_format_system_help_text_contains_status_note() {
+        let text = format_system_help_text();
+        assert!(
+            text.contains("/system status"),
+            "format_system_help_text() missing '/system status': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_system_help_text() missing 'USAGE:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_format_subagents_help_text_contains_status_note() {
+        let text = format_subagents_help_text();
+        assert!(
+            text.contains("/subagents status"),
+            "format_subagents_help_text() missing '/subagents status': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_subagents_help_text() missing 'USAGE:': {text}"
         );
     }
 }

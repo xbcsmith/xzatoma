@@ -8,7 +8,7 @@ use crate::error::{Result, XzatomaError};
 use crate::skills::trust::{
     filter_visible_skill_records, load_trust_store, load_trusted_paths, resolve_trust_store_path,
 };
-use crate::skills::{discover_skills, SkillCatalog};
+use crate::skills::{SkillCatalog, discover_skills};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

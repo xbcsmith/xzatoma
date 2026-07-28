@@ -4,7 +4,7 @@
 
 use crate::error::{Result, XzatomaError};
 use crate::tools::parse_tool_args;
-use crate::tools::{file_utils, ToolExecutor, ToolResult};
+use crate::tools::{ToolExecutor, ToolResult, file_utils};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;

@@ -10,8 +10,8 @@ use xzatoma::config::{
     AgentConfig, CopilotConfig, OllamaConfig, OpenAIConfig, ProviderConfig, SubagentConfig,
 };
 use xzatoma::providers::create_provider_with_override;
-use xzatoma::tools::subagent::SubagentTool;
 use xzatoma::tools::ToolRegistry;
+use xzatoma::tools::subagent::SubagentTool;
 
 /// Helper to create a test provider config
 fn create_test_provider_config() -> ProviderConfig {

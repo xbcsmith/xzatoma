@@ -302,7 +302,7 @@ impl ConversationStore {
 /// assert!(id.len() > 0);
 /// ```
 pub fn new_conversation_id() -> String {
-    Ulid::new().to_string()
+    Ulid::generate().to_string()
 }
 
 /// Get current timestamp in RFC-3339 format

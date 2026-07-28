@@ -313,6 +313,28 @@ xzatoma chat --safe
 xzatoma chat --resume
 ```
 
+#### Chat Slash Commands
+
+All commands follow the pattern: bare = help, `status` = inspect current value,
+action argument = change.
+
+| Command      | Status form         | Action form              |
+| ------------ | ------------------- | ------------------------ |
+| `/mode`      | `/mode status`      | `/mode planning\|write`  |
+| `/model`     | `/model status`     | `/model <name>`          |
+| `/safety`    | `/safety status`    | `/safety on\|off`        |
+| `/subagents` | `/subagents status` | `/subagents on\|off`     |
+| `/system`    | `/system status`    | `/system <text>`         |
+| `/streaming` | n/a (ACP only)      | n/a                      |
+| `/tools`     | n/a                 | n/a                      |
+| `/context`   | n/a                 | `/context info\|summary` |
+| `/skills`    | n/a                 | n/a                      |
+| `/mcp`       | n/a                 | n/a                      |
+| `/help`      | n/a                 | n/a                      |
+| `/status`    | n/a                 | n/a                      |
+
+Full reference: `docs/reference/chat_commands.md`
+
 ### Plan and Prompt Execution
 
 ```bash

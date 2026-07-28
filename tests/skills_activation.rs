@@ -236,10 +236,12 @@ fn test_active_skill_registry_activation_fails_for_untrusted_project_skill() {
     })));
 
     assert!(result.is_err());
-    assert!(registry
-        .lock()
-        .expect("registry lock should succeed")
-        .is_empty());
+    assert!(
+        registry
+            .lock()
+            .expect("registry lock should succeed")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -526,24 +528,30 @@ fn test_transient_active_skill_prompt_injection_does_not_pollute_conversation_me
     assert_eq!(conversation.messages().len(), original_messages.len());
     assert_eq!(conversation.messages()[0].role, "system");
     assert_eq!(conversation.messages()[1].role, "user");
-    assert!(!conversation
-        .messages()
-        .iter()
-        .filter_map(|message| message.content.as_deref())
-        .any(|content| content.contains("## Active Skills")));
+    assert!(
+        !conversation
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .any(|content| content.contains("## Active Skills"))
+    );
 
     assert_eq!(transient_messages.len(), original_messages.len() + 1);
     assert_eq!(transient_messages[1].role, "system");
-    assert!(transient_messages[1]
-        .content
-        .as_deref()
-        .map(|content| content.contains("## Active Skills"))
-        .unwrap_or(false));
-    assert!(transient_messages[1]
-        .content
-        .as_deref()
-        .map(|content| content.contains("example_skill"))
-        .unwrap_or(false));
+    assert!(
+        transient_messages[1]
+            .content
+            .as_deref()
+            .map(|content| content.contains("## Active Skills"))
+            .unwrap_or(false)
+    );
+    assert!(
+        transient_messages[1]
+            .content
+            .as_deref()
+            .map(|content| content.contains("example_skill"))
+            .unwrap_or(false)
+    );
     assert_eq!(conversation.messages().len(), 2);
 }
 
@@ -606,22 +614,28 @@ fn test_transient_active_skill_prompt_injection_adds_only_one_synthetic_message(
         .count();
     assert_eq!(synthetic_system_messages, 2);
 
-    assert!(transient_messages[1]
-        .content
-        .as_deref()
-        .map(|content| content.contains("alpha_skill"))
-        .unwrap_or(false));
-    assert!(transient_messages[1]
-        .content
-        .as_deref()
-        .map(|content| content.contains("beta_skill"))
-        .unwrap_or(false));
+    assert!(
+        transient_messages[1]
+            .content
+            .as_deref()
+            .map(|content| content.contains("alpha_skill"))
+            .unwrap_or(false)
+    );
+    assert!(
+        transient_messages[1]
+            .content
+            .as_deref()
+            .map(|content| content.contains("beta_skill"))
+            .unwrap_or(false)
+    );
 
-    assert!(!conversation
-        .messages()
-        .iter()
-        .filter_map(|message| message.content.as_deref())
-        .any(|content| content.contains("alpha_skill") && content.contains("beta_skill")));
+    assert!(
+        !conversation
+            .messages()
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .any(|content| content.contains("alpha_skill") && content.contains("beta_skill"))
+    );
 }
 
 fn canonicalize_for_assertion(path: &Path) -> PathBuf {

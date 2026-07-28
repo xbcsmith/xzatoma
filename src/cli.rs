@@ -26,15 +26,17 @@ use std::path::PathBuf;
 /// let cli = Cli::parse_from(["xzatoma", "auth", "--verbose"]);
 /// assert!(cli.command.common_args().verbose);
 /// ```
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct CommonArgs {
-    /// Path to configuration file
-    #[arg(
-        short = 'c',
-        long,
-        default_value = "config/config.yaml",
-        env = "XZATOMA_CONFIG"
-    )]
+    /// Path to the configuration file.
+    ///
+    /// When omitted, xzatoma searches for a config file in this order:
+    /// 1. `~/.config/xzatoma/config.yaml` (XDG standard user config)
+    /// 2. `config/config.yaml` (project-relative development fallback)
+    ///
+    /// If neither file exists, built-in defaults are used. Set the
+    /// `XZATOMA_CONFIG` environment variable as an alternative to this flag.
+    #[arg(short = 'c', long, env = "XZATOMA_CONFIG")]
     pub config: Option<String>,
 
     /// Enable verbose logging.
@@ -77,20 +79,6 @@ pub struct CommonArgs {
     /// per-event watcher output. Env: `XZATOMA_LOG_FILE`.
     #[arg(id = "global-logfile", long = "logfile", env = "XZATOMA_LOG_FILE")]
     pub log_file: Option<PathBuf>,
-}
-
-impl Default for CommonArgs {
-    fn default() -> Self {
-        Self {
-            config: Some("config/config.yaml".to_string()),
-            verbose: false,
-            debug: false,
-            trace: false,
-            storage_path: None,
-            log_format: None,
-            log_file: None,
-        }
-    }
 }
 
 /// XZatoma - Autonomous AI agent CLI.
@@ -150,6 +138,14 @@ pub enum Commands {
         /// precedence over this flag.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// When set, reasoning tokens (thinking) are printed with a visual
+        /// indicator before the response tokens. Requires the configured
+        /// provider to support streaming.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Execute a plan or prompt
@@ -183,6 +179,13 @@ pub enum Commands {
         /// precedence over this flag.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// When set, response and reasoning tokens are printed progressively.
+        /// Requires the configured provider to support streaming.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Run as an ACP stdio agent subprocess for Zed or another ACP-compatible client
@@ -210,6 +213,13 @@ pub enum Commands {
         /// Override the system prompt for this agent session.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Stream model output tokens to the terminal as they are generated.
+        ///
+        /// Note: the agent command uses ACP stdio mode; this flag is accepted
+        /// for API consistency but has no effect on the ACP protocol stream.
+        #[arg(long)]
+        streaming: bool,
     },
 
     /// Watch Kafka topic for events and execute plans
@@ -653,10 +663,7 @@ mod tests {
     #[test]
     fn test_cli_default() {
         let cli = Cli::default();
-        assert_eq!(
-            cli.command.common_args().config,
-            Some("config/config.yaml".to_string())
-        );
+        assert_eq!(cli.command.common_args().config, None);
         assert!(!cli.command.common_args().verbose);
 
         if let Commands::Auth { provider, .. } = cli.command {
@@ -915,15 +922,7 @@ mod tests {
         let cli = Cli::try_parse_from(["xzatoma", "chat", "--provider", "ollama"]);
         assert!(cli.is_ok());
         let cli = cli.unwrap();
-        if let Commands::Chat {
-            provider,
-            mode: _,
-            safe: _,
-            resume: _,
-            thinking_effort: _,
-            ..
-        } = cli.command
-        {
+        if let Commands::Chat { provider, .. } = cli.command {
             assert_eq!(provider, Some("ollama".to_string()));
         } else {
             panic!("Expected Chat command");
@@ -1044,7 +1043,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1065,7 +1063,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1086,7 +1083,6 @@ mod tests {
             plan,
             prompt,
             allow_dangerous,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1267,8 +1263,6 @@ mod tests {
             provider,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1286,12 +1280,7 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         if let Commands::Chat {
-            provider: _,
-            mode,
-            safe: _,
-            resume: _,
-            thinking_effort: _,
-            ..
+            provider: _, mode, ..
         } = cli.command
         {
             assert_eq!(mode, Some("write".to_string()));
@@ -1309,8 +1298,6 @@ mod tests {
             provider: _,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1363,8 +1350,6 @@ mod tests {
             provider,
             mode,
             safe,
-            resume: _,
-            thinking_effort: _,
             ..
         } = cli.command
         {
@@ -1849,20 +1834,57 @@ mod tests {
     // --- Phase 1 new tests ---
 
     #[test]
+    #[serial_test::serial]
     fn test_common_args_config_default() {
+        // Guard: ensure XZATOMA_CONFIG is absent for the duration of this test.
+        let _guard = std::env::var("XZATOMA_CONFIG").ok();
+        unsafe {
+            std::env::remove_var("XZATOMA_CONFIG");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let result = cli.command.common_args().config.clone();
+        // Restore if it was set before.
+        if let Some(prev) = _guard {
+            unsafe {
+                std::env::set_var("XZATOMA_CONFIG", prev);
+            }
+        }
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_common_args_config_explicit_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--config", "/tmp/my.yaml"]).unwrap();
         assert_eq!(
             cli.command.common_args().config,
-            Some("config/config.yaml".to_string())
+            Some("/tmp/my.yaml".to_string())
         );
     }
 
     #[test]
+    #[serial_test::serial]
+    fn test_common_args_config_env_var() {
+        unsafe {
+            std::env::set_var("XZATOMA_CONFIG", "/tmp/env.yaml");
+        }
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        let cfg = cli.command.common_args().config.clone();
+        unsafe {
+            std::env::remove_var("XZATOMA_CONFIG");
+        }
+        assert_eq!(cfg, Some("/tmp/env.yaml".to_string()));
+    }
+
+    #[test]
     fn test_common_args_storage_path_env() {
-        std::env::set_var("XZATOMA_HISTORY_DB", "/tmp/x");
+        unsafe {
+            std::env::set_var("XZATOMA_HISTORY_DB", "/tmp/x");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
         let storage = cli.command.common_args().storage_path.clone();
-        std::env::remove_var("XZATOMA_HISTORY_DB");
+        unsafe {
+            std::env::remove_var("XZATOMA_HISTORY_DB");
+        }
         assert_eq!(storage, Some("/tmp/x".to_string()));
     }
 
@@ -1901,10 +1923,14 @@ mod tests {
 
     #[test]
     fn test_xzatoma_debug_env_sets_flag() {
-        std::env::set_var("XZATOMA_DEBUG", "true");
+        unsafe {
+            std::env::set_var("XZATOMA_DEBUG", "true");
+        }
         let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
         let debug = cli.command.common_args().debug;
-        std::env::remove_var("XZATOMA_DEBUG");
+        unsafe {
+            std::env::remove_var("XZATOMA_DEBUG");
+        }
         assert!(debug);
     }
 
@@ -2110,6 +2136,47 @@ mod tests {
                 _ => panic!("expected AcpCommand::Serve"),
             },
             _ => panic!("expected Acp command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_with_streaming_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat", "--streaming"]).unwrap();
+        if let Commands::Chat { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_chat_streaming_defaults_false() {
+        let cli = Cli::try_parse_from(["xzatoma", "chat"]).unwrap();
+        if let Commands::Chat { streaming, .. } = cli.command {
+            assert!(!streaming);
+        } else {
+            panic!("Expected Chat command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_run_with_streaming_flag() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "run", "--prompt", "hello", "--streaming"]).unwrap();
+        if let Commands::Run { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_agent_with_streaming_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "agent", "--streaming"]).unwrap();
+        if let Commands::Agent { streaming, .. } = cli.command {
+            assert!(streaming);
+        } else {
+            panic!("Expected Agent command");
         }
     }
 }

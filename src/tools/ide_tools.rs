@@ -728,8 +728,8 @@ pub fn register_ide_tools(registry: &mut ToolRegistry, bridge: Arc<IdeBridge>) {
 /// Terminal IDs are returned as strings by `ide_open_terminal` and stored in
 /// tool result metadata. This helper reconstructs the typed ID so callers do
 /// not need to depend on ACP SDK internals directly.
-fn acp_terminal_id_from_str(id: &str) -> agent_client_protocol::schema::TerminalId {
-    agent_client_protocol::schema::TerminalId::new(id.to_string())
+fn acp_terminal_id_from_str(id: &str) -> agent_client_protocol::schema::v1::TerminalId {
+    agent_client_protocol::schema::v1::TerminalId::new(id.to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -219,15 +219,13 @@ impl MentionCache {
         let cached = self.cache.get(path)?;
 
         // Check if file was modified since we cached it
-        if let Ok(metadata) = std::fs::metadata(path) {
-            if let Ok(current_mtime) = metadata.modified() {
-                if let Some(cached_mtime) = cached.mtime {
-                    if current_mtime <= cached_mtime {
-                        debug!("Cache hit for {}", path.display());
-                        return Some(cached.clone());
-                    }
-                }
-            }
+        if let Ok(metadata) = std::fs::metadata(path)
+            && let Ok(current_mtime) = metadata.modified()
+            && let Some(cached_mtime) = cached.mtime
+            && current_mtime <= cached_mtime
+        {
+            debug!("Cache hit for {}", path.display());
+            return Some(cached.clone());
         }
 
         // Cache is stale
@@ -355,32 +353,32 @@ fn try_parse_mention_at(chars: &[char], start: usize) -> Option<(Mention, usize)
     let remaining: String = chars[start..].iter().collect();
 
     // Try URL mention: url:https://...
-    if let Some(rest) = remaining.strip_prefix("url:") {
-        if let Some(url_end) = find_url_end(rest) {
-            let url = rest[..url_end].to_string();
-            if is_valid_url(&url) {
-                return Some((Mention::Url(UrlMention { url }), 4 + url_end));
-            }
+    if let Some(rest) = remaining.strip_prefix("url:")
+        && let Some(url_end) = find_url_end(rest)
+    {
+        let url = rest[..url_end].to_string();
+        if is_valid_url(&url) {
+            return Some((Mention::Url(UrlMention { url }), 4 + url_end));
         }
     }
 
     // Try search mention: search:"pattern"
-    if let Some(rest) = remaining.strip_prefix("search:\"") {
-        if let Some(quote_pos) = rest.find('"') {
-            let pattern = rest[..quote_pos].to_string();
-            return Some((
-                Mention::Search(SearchMention { pattern }),
-                8 + quote_pos + 1,
-            ));
-        }
+    if let Some(rest) = remaining.strip_prefix("search:\"")
+        && let Some(quote_pos) = rest.find('"')
+    {
+        let pattern = rest[..quote_pos].to_string();
+        return Some((
+            Mention::Search(SearchMention { pattern }),
+            8 + quote_pos + 1,
+        ));
     }
 
     // Try grep mention: grep:"pattern"
-    if let Some(rest) = remaining.strip_prefix("grep:\"") {
-        if let Some(quote_pos) = rest.find('"') {
-            let pattern = rest[..quote_pos].to_string();
-            return Some((Mention::Grep(SearchMention { pattern }), 6 + quote_pos + 1));
-        }
+    if let Some(rest) = remaining.strip_prefix("grep:\"")
+        && let Some(quote_pos) = rest.find('"')
+    {
+        let pattern = rest[..quote_pos].to_string();
+        return Some((Mention::Grep(SearchMention { pattern }), 6 + quote_pos + 1));
     }
 
     // Try file mention: path[#L...[-...]]
@@ -444,11 +442,7 @@ fn find_file_mention_end(s: &str) -> Option<usize> {
             }
         }
     }
-    if end > 0 {
-        Some(end)
-    } else {
-        None
-    }
+    if end > 0 { Some(end) } else { None }
 }
 
 /// Find the end of a URL mention
@@ -478,11 +472,7 @@ fn find_url_end(s: &str) -> Option<usize> {
             }
         }
     }
-    if end > 0 {
-        Some(end)
-    } else {
-        None
-    }
+    if end > 0 { Some(end) } else { None }
 }
 
 /// Parse line range from format like "L10-20" or "L10"
@@ -927,10 +917,10 @@ pub fn expand_common_abbreviations(
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
     {
-        if let Some(fname) = entry.path().file_name().and_then(|s| s.to_str()) {
-            if fname.to_lowercase() == target {
-                return Some(entry.path().to_path_buf());
-            }
+        if let Some(fname) = entry.path().file_name().and_then(|s| s.to_str())
+            && fname.to_lowercase() == target
+        {
+            return Some(entry.path().to_path_buf());
         }
     }
 
@@ -1146,14 +1136,14 @@ pub async fn load_url_content(
     // Check cache first
     {
         let cache = url_cache.read().await;
-        if let Some(cached) = cache.get(&url_mention.url) {
-            if !cached.is_expired() {
-                debug!("Using cached URL content for {}", url_mention.url);
-                return Ok(format!(
-                    "Web content from {} (cached):\n\n{}",
-                    url_mention.url, cached.content
-                ));
-            }
+        if let Some(cached) = cache.get(&url_mention.url)
+            && !cached.is_expired()
+        {
+            debug!("Using cached URL content for {}", url_mention.url);
+            return Ok(format!(
+                "Web content from {} (cached):\n\n{}",
+                url_mention.url, cached.content
+            ));
         }
     }
 
@@ -1246,15 +1236,14 @@ pub async fn augment_prompt_with_mentions(
                         suggestion = Some(format!("Did you mean: {}?", expanded.to_string_lossy()));
                     } else if let Ok(matches) =
                         find_fuzzy_file_matches(&file_mention.path, working_dir, 5, 0.65)
+                        && !matches.is_empty()
                     {
-                        if !matches.is_empty() {
-                            let snippet: Vec<String> = matches
-                                .into_iter()
-                                .take(3)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .collect();
-                            suggestion = Some(format!("Did you mean: {}?", snippet.join(", ")));
-                        }
+                        let snippet: Vec<String> = matches
+                            .into_iter()
+                            .take(3)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        suggestion = Some(format!("Did you mean: {}?", snippet.join(", ")));
                     }
 
                     let load_err = LoadError::new(
@@ -1387,23 +1376,23 @@ pub async fn augment_prompt_with_mentions(
                 cache.get(&url_mention.url).cloned()
             };
 
-            if let Some(cached) = cached_opt {
-                if !cached.is_expired() {
-                    debug!("Using cached URL content for {}", url_mention.url);
-                    // Use the cached formatted content
-                    file_contents.push(cached.content.clone());
-                    let size = cached.size_bytes.unwrap_or(0);
-                    let ctype = cached
-                        .content_type
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_string());
-                    let truncated_note = if cached.truncated { " (truncated)" } else { "" };
-                    successes.push(format!(
-                        "Fetched @{} ({} bytes, {}{}) (cached)",
-                        url_mention.url, size, ctype, truncated_note
-                    ));
-                    continue;
-                }
+            if let Some(cached) = cached_opt
+                && !cached.is_expired()
+            {
+                debug!("Using cached URL content for {}", url_mention.url);
+                // Use the cached formatted content
+                file_contents.push(cached.content.clone());
+                let size = cached.size_bytes.unwrap_or(0);
+                let ctype = cached
+                    .content_type
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string());
+                let truncated_note = if cached.truncated { " (truncated)" } else { "" };
+                successes.push(format!(
+                    "Fetched @{} ({} bytes, {}{}) (cached)",
+                    url_mention.url, size, ctype, truncated_note
+                ));
+                continue;
             }
 
             // Not cached (or expired), attempt to fetch
@@ -2306,11 +2295,13 @@ mod tests {
         assert!(errors[0].suggestion.is_some());
         assert!(successes.is_empty());
         assert!(augmented.contains("Failed to include file large.txt"));
-        assert!(errors[0]
-            .suggestion
-            .as_ref()
-            .unwrap()
-            .contains("max_file_read_size"));
+        assert!(
+            errors[0]
+                .suggestion
+                .as_ref()
+                .unwrap()
+                .contains("max_file_read_size")
+        );
         assert!(augmented.contains("Failed to include file large.txt"));
     }
 

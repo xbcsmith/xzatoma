@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::{self, PathValidator};
-use crate::tools::{parse_tool_args, ToolExecutor, ToolResult, TOOL_COPY_PATH};
+use crate::tools::{TOOL_COPY_PATH, ToolExecutor, ToolResult, parse_tool_args};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,7 @@ impl ToolExecutor for CopyPathTool {
                 return Ok(ToolResult::error(format!(
                     "Invalid destination path: {}",
                     e
-                )))
+                )));
             }
         };
 
@@ -131,13 +131,13 @@ impl ToolExecutor for CopyPathTool {
                         e
                     )));
                 }
-            } else if destination.is_dir() {
-                if let Err(e) = tokio::fs::remove_dir_all(&destination).await {
-                    return Ok(ToolResult::error(format!(
-                        "Failed to remove existing directory: {}",
-                        e
-                    )));
-                }
+            } else if destination.is_dir()
+                && let Err(e) = tokio::fs::remove_dir_all(&destination).await
+            {
+                return Ok(ToolResult::error(format!(
+                    "Failed to remove existing directory: {}",
+                    e
+                )));
             }
         }
 
@@ -155,7 +155,7 @@ impl ToolExecutor for CopyPathTool {
                 return Ok(ToolResult::error(format!(
                     "Invalid destination path after parent creation: {}",
                     e
-                )))
+                )));
             }
         };
 

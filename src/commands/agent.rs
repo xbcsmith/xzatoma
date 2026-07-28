@@ -11,27 +11,28 @@
 //!
 //! # Examples
 //!
-//! ```no_run
-//! use std::path::PathBuf;
-//! use xzatoma::commands::agent::handle_agent;
-//! use xzatoma::Config;
-//!
-//! # async fn example() -> anyhow::Result<()> {
-//! handle_agent(
-//!     Some("ollama".to_string()),
-//!     Some("llama3.2:latest".to_string()),
-//!     false,
-//!     Some(PathBuf::from(".")),
-//!     None,
-//!     Config::default(),
-//! )
-//! .await?;
-//! # Ok(())
-//! # }
-//! ```
+/// ```no_run
+/// use std::path::PathBuf;
+/// use xzatoma::commands::agent::handle_agent;
+/// use xzatoma::Config;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// handle_agent(
+///     Some("ollama".to_string()),
+///     Some("granite4:3b".to_string()),
+///     false,
+///     Some(PathBuf::from(".")),
+///     None,
+///     false,
+///     Config::default(),
+/// )
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
 use std::path::PathBuf;
 
-use crate::acp::stdio::{run_stdio_agent, AcpStdioAgentOptions};
+use crate::acp::stdio::{AcpStdioAgentOptions, run_stdio_agent};
 use crate::config::Config;
 use crate::error::Result;
 
@@ -54,6 +55,8 @@ use crate::error::Result;
 /// * `allow_dangerous` - Whether to allow dangerous terminal commands without confirmation.
 /// * `working_dir` - Optional fallback workspace root when the ACP client omits one.
 /// * `system_prompt` - Optional system prompt CLI flag override for the agent session.
+/// * `_streaming` - Streaming flag (accepted for API consistency; has no effect
+///   on ACP stdio mode which manages its own protocol-level streaming).
 /// * `config` - Loaded XZatoma configuration.
 ///
 /// # Errors
@@ -68,7 +71,7 @@ use crate::error::Result;
 /// use xzatoma::Config;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// handle_agent(None, None, false, None, None, Config::default()).await?;
+/// handle_agent(None, None, false, None, None, false, Config::default()).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -78,6 +81,7 @@ pub async fn handle_agent(
     allow_dangerous: bool,
     working_dir: Option<PathBuf>,
     system_prompt: Option<String>,
+    _streaming: bool,
     mut config: Config,
 ) -> Result<()> {
     // Resolve the CLI flag against any config/env value already in config.
@@ -112,7 +116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_default_config() {
-        let result = handle_agent(None, None, false, None, None, Config::default()).await;
+        let result = handle_agent(None, None, false, None, None, false, Config::default()).await;
 
         assert!(result.is_ok());
     }
@@ -125,6 +129,7 @@ mod tests {
             false,
             None,
             None,
+            false,
             Config::default(),
         )
         .await;
@@ -140,6 +145,7 @@ mod tests {
             false,
             None,
             None,
+            false,
             Config::default(),
         )
         .await;
@@ -155,6 +161,7 @@ mod tests {
             false,
             Some(PathBuf::from("/tmp/xzatoma-zed-workspace")),
             None,
+            false,
             Config::default(),
         )
         .await;
@@ -164,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_allow_dangerous() {
-        let result = handle_agent(None, None, true, None, None, Config::default()).await;
+        let result = handle_agent(None, None, true, None, None, false, Config::default()).await;
 
         assert!(result.is_ok());
     }
@@ -177,6 +184,7 @@ mod tests {
             false,
             None,
             Some("You are a helpful assistant.".to_string()),
+            false,
             Config::default(),
         )
         .await;

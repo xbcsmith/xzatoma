@@ -58,17 +58,17 @@ pub mod tool_notifications;
 pub mod types;
 
 pub use error::{AcpError, AcpValidationError};
-pub use manifest::{validate_agent_name, AcpAgentCapability, AcpAgentManifest};
+pub use manifest::{AcpAgentCapability, AcpAgentManifest, validate_agent_name};
 pub use prompt_input::{
     acp_content_blocks_to_prompt_input, prompt_input_requires_vision,
     provider_model_supports_vision, validate_provider_supports_prompt_input,
 };
 pub use types::{
-    agent_message_to_acp_message, now_rfc3339, validate_acp_identifier, validate_acp_role,
-    validate_rfc3339, AcpAgentManifest as CanonicalAcpAgentManifest, AcpArtifact, AcpAwaitPayload,
+    AcpAgentManifest as CanonicalAcpAgentManifest, AcpArtifact, AcpAwaitPayload,
     AcpError as ProtocolAcpError, AcpEvent, AcpEventKind, AcpMessage, AcpMessagePart, AcpRole,
     AcpRun, AcpRunCreateRequest, AcpRunId, AcpRunOutput, AcpRunResumeRequest, AcpRunSession,
-    AcpRunState, AcpRunStatus, AcpSessionId, AcpTextPart,
+    AcpRunState, AcpRunStatus, AcpSessionId, AcpTextPart, agent_message_to_acp_message,
+    now_rfc3339, validate_acp_identifier, validate_acp_role, validate_rfc3339,
 };
 
 use crate::error::Result;

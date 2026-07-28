@@ -63,9 +63,11 @@ fn test_active_skills_do_not_persist_across_restarted_runtime_instances() {
     assert!(!restarted_runtime_registry.is_active("example_skill"));
     assert!(restarted_runtime_registry.is_empty());
     assert_eq!(restarted_runtime_registry.len(), 0);
-    assert!(restarted_runtime_registry
-        .render_for_prompt_injection()
-        .is_none());
+    assert!(
+        restarted_runtime_registry
+            .render_for_prompt_injection()
+            .is_none()
+    );
 }
 
 #[test]

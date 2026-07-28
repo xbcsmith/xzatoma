@@ -73,12 +73,11 @@ scenarios:
       outcome: invalid
       error_contains: "max_turns must be greater than 0"
 
-  - id: invalid_max_turns_over
-    description: "max_turns: 5000 triggers upper bound error"
-    config_file: "invalid_max_turns_over.yaml"
+  - id: valid_max_turns_high
+    description: "max_turns: 5000 is accepted (no upper bound enforced)"
+    config_file: "valid_max_turns_high.yaml"
     expect:
-      outcome: invalid
-      error_contains: "max_turns must be less than or equal to 1000"
+      outcome: valid
 
   - id: invalid_timeout_zero
     description: "timeout_seconds: 0 triggers positive check"

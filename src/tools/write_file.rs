@@ -3,7 +3,7 @@
 //! Provides a tool to write or overwrite file contents with automatic parent directory creation.
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
+use crate::tools::{ToolExecutor, ToolResult, file_utils, parse_tool_args};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;

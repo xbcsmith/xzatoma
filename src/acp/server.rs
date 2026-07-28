@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -50,7 +50,7 @@ use serde_json::Value;
 use crate::acp::executor::{AcpExecutor, AcpExecutorOutcome};
 use crate::acp::manifest::{AcpAgentCapability, AcpAgentManifest, AcpManifestLink};
 use crate::acp::runtime::{
-    build_run_snapshot, AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeEvent, AcpRuntimeExecuteMode,
+    AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeEvent, AcpRuntimeExecuteMode, build_run_snapshot,
 };
 use crate::acp::streaming::stream_run_events_sse;
 use crate::acp::{AcpRun, AcpRunId, AcpRunResumeRequest, AcpRunSession};
@@ -828,12 +828,15 @@ pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
     let discovery_router = Router::new()
         .route("/ping", get(handle_ping))
         .route("/agents", get(handle_agents))
-        .route("/agents/:name", get(handle_agent_by_name))
+        .route("/agents/{name}", get(handle_agent_by_name))
         .route("/runs", post(handle_create_run))
-        .route("/runs/:run_id", get(handle_get_run).post(handle_resume_run))
-        .route("/runs/:run_id/events", get(handle_get_run_events))
-        .route("/runs/:run_id/cancel", post(handle_cancel_run))
-        .route("/sessions/:session_id", get(handle_get_session))
+        .route(
+            "/runs/{run_id}",
+            get(handle_get_run).post(handle_resume_run),
+        )
+        .route("/runs/{run_id}/events", get(handle_get_run_events))
+        .route("/runs/{run_id}/cancel", post(handle_cancel_run))
+        .route("/sessions/{session_id}", get(handle_get_session))
         .layer(DefaultBodyLimit::max(config.max_request_bytes))
         .layer(middleware::from_fn_with_state(
             Arc::clone(&protection),
@@ -1025,13 +1028,13 @@ pub async fn handle_create_run(
     State(state): State<AcpServerState>,
     Json(body): Json<CreateRunRequestBody>,
 ) -> std::result::Result<Response, AcpHttpError> {
-    if let Some(agent_name) = &body.agent_name {
-        if state.find_manifest(agent_name).is_none() {
-            return Err(AcpHttpError::not_found(format!(
-                "ACP agent '{}' was not found",
-                agent_name
-            )));
-        }
+    if let Some(agent_name) = &body.agent_name
+        && state.find_manifest(agent_name).is_none()
+    {
+        return Err(AcpHttpError::not_found(format!(
+            "ACP agent '{}' was not found",
+            agent_name
+        )));
     }
 
     let mode = body.mode.unwrap_or_else(|| state.runtime().default_mode());
@@ -1700,12 +1703,16 @@ mod tests {
         assert!(manifest.metadata.contains_key("implementation"));
         assert!(manifest.metadata.contains_key("language"));
         assert!(manifest.metadata.contains_key("framework"));
-        assert!(manifest
-            .metadata
-            .contains_key("supported_input_content_types"));
-        assert!(manifest
-            .metadata
-            .contains_key("supported_output_content_types"));
+        assert!(
+            manifest
+                .metadata
+                .contains_key("supported_input_content_types")
+        );
+        assert!(
+            manifest
+                .metadata
+                .contains_key("supported_output_content_types")
+        );
         assert!(manifest.metadata.contains_key("generated_at"));
         assert!(!manifest.links.is_empty());
     }
@@ -1716,13 +1723,15 @@ mod tests {
         agent_name: &str,
     ) -> CreateRunRequestBody {
         CreateRunRequestBody {
-            input: vec![crate::acp::AcpMessage::new(
-                crate::acp::AcpRole::User,
-                vec![crate::acp::AcpMessagePart::Text(
-                    crate::acp::AcpTextPart::new(prompt.to_string()),
-                )],
-            )
-            .unwrap()],
+            input: vec![
+                crate::acp::AcpMessage::new(
+                    crate::acp::AcpRole::User,
+                    vec![crate::acp::AcpMessagePart::Text(
+                        crate::acp::AcpTextPart::new(prompt.to_string()),
+                    )],
+                )
+                .unwrap(),
+            ],
             mode: Some(mode),
             session_id: None,
             agent_name: Some(agent_name.to_string()),
@@ -1895,18 +1904,20 @@ mod tests {
         let result = handle_create_run(
             State(state),
             Json(CreateRunRequestBody {
-                input: vec![crate::acp::AcpMessage::new(
-                    crate::acp::AcpRole::User,
-                    vec![crate::acp::AcpMessagePart::Artifact(
-                        crate::acp::AcpArtifact::new_remote(
-                            "image.png".to_string(),
-                            "image/png".to_string(),
-                            "https://example.com/image.png".to_string(),
-                        )
-                        .unwrap(),
-                    )],
-                )
-                .unwrap()],
+                input: vec![
+                    crate::acp::AcpMessage::new(
+                        crate::acp::AcpRole::User,
+                        vec![crate::acp::AcpMessagePart::Artifact(
+                            crate::acp::AcpArtifact::new_remote(
+                                "image.png".to_string(),
+                                "image/png".to_string(),
+                                "https://example.com/image.png".to_string(),
+                            )
+                            .unwrap(),
+                        )],
+                    )
+                    .unwrap(),
+                ],
                 mode: Some(AcpRuntimeExecuteMode::Sync),
                 session_id: None,
                 agent_name: Some("xzatoma".to_string()),

@@ -458,6 +458,149 @@ When true, image content blocks that contain `http://` or `https://` URLs are
 fetched and decoded. Disabled by default to prevent unintended outbound
 requests.
 
+### `acp.stdio.default_thinking_effort`
+
+- Type: string
+- Default: `"none"`
+
+Initial thinking-effort level advertised by the `thinking_effort` session config
+dropdown when a new session starts. Can be changed per-session via the Thinking
+Effort dropdown in the Zed agent panel or the `/mode` slash command family.
+
+Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`, `"extra_high"`.
+
+Has no effect on models that do not support extended thinking. Set to `"medium"`
+or higher to enable reasoning on models such as `deepseek-r1` via Ollama or
+`o3-mini` via the OpenAI-compatible provider.
+
+### Session config options
+
+The following session-level config options are advertised to ACP clients (such
+as Zed) via `NewSessionResponse.config_options`. They are not YAML configuration
+fields; they are runtime controls the client sets through the ACP protocol. In
+the Zed agent panel they appear as dropdowns in the order listed below (left to
+right).
+
+`vision_input` and `max_turns` are accepted by the config-option change handler
+(used by the `/safety` and `/model` slash commands) but are not advertised as UI
+dropdowns.
+
+#### `thinking_effort` (position 1, leftmost)
+
+- ACP config option ID: `thinking_effort`
+- Type: select
+- Default: value of `acp.stdio.default_thinking_effort` (default `"none"`)
+
+Controls how much reasoning the model performs per turn. Has no effect on models
+that do not support extended thinking.
+
+| Value        | Display Name |
+| ------------ | ------------ |
+| `none`       | None         |
+| `low`        | Low          |
+| `medium`     | Medium       |
+| `high`       | High         |
+| `extra_high` | Extra High   |
+
+#### `tool_routing` (position 2)
+
+- ACP config option ID: `tool_routing`
+- Type: select
+- Default: `prefer_ide`
+
+Controls whether tool calls (file reads, terminal commands) are delegated to the
+IDE over ACP or executed locally by XZatoma's own tool implementations.
+
+| Value          | Display Name | Behaviour                                       |
+| -------------- | ------------ | ----------------------------------------------- |
+| `prefer_ide`   | Prefer IDE   | Use IDE tools when available, local as fallback |
+| `prefer_local` | Prefer Local | Use local tools; IDE tools as fallback          |
+| `require_ide`  | Require IDE  | Only IDE tools; fail if IDE is unavailable      |
+
+#### `subagent_delegation` (position 3)
+
+- ACP config option ID: `subagent_delegation`
+- Type: select
+- Default: `enabled` or `disabled` depending on `agent.subagent.chat_enabled`
+
+Controls whether XZatoma can spawn subagent workers to parallelize tasks.
+
+| Value      | Display Name |
+| ---------- | ------------ |
+| `enabled`  | Enabled      |
+| `disabled` | Disabled     |
+
+#### `mcp_tools` (position 4)
+
+- ACP config option ID: `mcp_tools`
+- Type: select
+- Default: `enabled` when `mcp.auto_connect` is `true`, otherwise `disabled`
+
+Controls whether tools from connected MCP servers are available in the current
+session.
+
+| Value      | Display Name |
+| ---------- | ------------ |
+| `enabled`  | Enabled      |
+| `disabled` | Disabled     |
+
+#### `safety_policy` (position 5)
+
+- ACP config option ID: `safety_policy`
+- Type: select
+- Default: `always_confirm`
+
+Controls when XZatoma requests confirmation before executing operations.
+
+| Value               | Display Name      | Behaviour                                     |
+| ------------------- | ----------------- | --------------------------------------------- |
+| `always_confirm`    | Always Confirm    | Confirm before every potentially risky action |
+| `confirm_dangerous` | Confirm Dangerous | Confirm only before destructive terminal ops  |
+| `never_confirm`     | Never Confirm     | Execute without any confirmation prompts      |
+
+This option is also settable via the `/safety` slash command.
+
+#### `session_mode` (position 6)
+
+- ACP config option ID: `session_mode`
+- Type: select
+- Default: `planning` (or `full_autonomous` when `--allow-dangerous` is passed)
+- Category: `mode` (Zed renders this in the mode selector dropdown)
+
+Controls the operating mode of the session. Changing this option applies a
+corresponding set of safety policy, chat mode, and terminal execution mode
+settings as a unit.
+
+| Value             | Display Name    | Terminal access | Confirmations |
+| ----------------- | --------------- | --------------- | ------------- |
+| `planning`        | Planning        | None            | Always        |
+| `write`           | Write           | Safe only       | Always        |
+| `safe`            | Safe            | Safe only       | Always (Zed)  |
+| `full_autonomous` | Full Autonomous | Unrestricted    | Never         |
+
+The value can be changed at any point during a session. The change takes effect
+immediately for the next prompt.
+
+**Note**: `terminal_execution` is no longer advertised as a standalone config
+option. Terminal execution mode is controlled exclusively through
+`session_mode`. Clients that previously used `terminal_execution` directly
+should switch to setting `session_mode` instead.
+
+#### `model` (position 7, rightmost)
+
+- ACP config option ID: `model`
+- Type: select
+- Default: active model resolved at session creation
+- Category: `model` (Zed renders this in the model selector slot)
+
+Switches the AI model used for the current session without restarting the agent
+subprocess. The selectable options are fetched from the provider at session
+creation using a timeout controlled by `acp.stdio.model_list_timeout_seconds`.
+When the list is empty (provider does not support listing or listing timed out),
+any model name entered is accepted.
+
+This option is also settable via the `/model` slash command.
+
 ## Stdio environment variable overrides
 
 The following environment variables override `acp.stdio` fields:
@@ -482,6 +625,7 @@ variables: true values are `1`, `true`, `yes`, `on`; false values are `0`,
 
 ```yaml
 acp:
+  default_run_mode: streaming
   stdio:
     persist_sessions: true
     resume_by_workspace: true
@@ -498,12 +642,37 @@ acp:
       - image/gif
     allow_image_file_references: true
     allow_remote_image_urls: false
+    default_thinking_effort: "none"
 ```
+
+Session config options such as `session_mode` are runtime controls set through
+the ACP protocol and are not part of the YAML configuration file. They are
+advertised to the client at session creation via `NewSessionResponse` and can be
+changed during a session using the ACP `session/setConfigOption` request.
+
+## ACP slash commands (`xzatoma agent` / Zed)
+
+When running as a Zed ACP subprocess (`xzatoma agent`), XZatoma advertises 13
+slash commands in the Zed chat input completion menu. All commands follow a
+unified UX contract:
+
+- **Bare command** (e.g., `/mode`) shows per-command help text.
+- **`/<command> status`** inspects the current live value for that command.
+- **`/<command> <action>`** applies a change.
+
+This contract applies to `/mode`, `/model`, `/safety`, `/subagents`, and
+`/system`. The `/streaming` command is advertised but is a no-op in ACP mode
+because Zed controls response streaming. Use `/streaming status` to see a note
+explaining this.
+
+The full list of advertised commands with their descriptions is in
+`docs/reference/chat_commands.md`.
 
 ## Related documentation
 
 - `docs/how-to/run_xzatoma_as_an_acp_server.md`
 - `docs/reference/acp_api.md`
+- `docs/reference/chat_commands.md`
 - `docs/explanation/acp_implementation.md`
 - `docs/how-to/zed_acp_agent_setup.md`
 - `docs/explanation/zed_acp_agent_command_implementation.md`

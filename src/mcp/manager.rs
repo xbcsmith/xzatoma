@@ -32,19 +32,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::auth::discovery::{
-    fetch_authorization_server_metadata, fetch_protected_resource_metadata,
-    validate_authorization_server_metadata, AuthorizationServerMetadata,
+    AuthorizationServerMetadata, fetch_authorization_server_metadata,
+    fetch_protected_resource_metadata, validate_authorization_server_metadata,
 };
 use crate::mcp::auth::flow::OAuthFlowConfig;
 use crate::mcp::auth::manager::AuthManager;
 use crate::mcp::auth::token_store::TokenStore;
-use crate::mcp::client::{start_read_loop, JsonRpcClient};
+use crate::mcp::client::{JsonRpcClient, start_read_loop};
 use crate::mcp::config::McpConfig;
 use crate::mcp::protocol::{InitializedMcpProtocol, McpProtocol};
 use crate::mcp::server::{McpServerApprovalPolicy, McpServerConfig, McpServerTransportConfig};
@@ -392,12 +392,11 @@ impl McpClientManager {
 
         // Build the transport and optional auth manager.
         let (transport, auth_manager, server_metadata) =
-            self.build_transport(&config).await.map_err(|e| {
+            self.build_transport(&config).await.inspect_err(|e| {
                 // Update state to Failed before propagating.
                 if let Some(entry) = self.servers.get_mut(&id) {
                     entry.state = McpServerState::Failed(e.to_string());
                 }
-                e
             })?;
 
         // Wire channels: the read loop receives from the transport's inbound
@@ -451,11 +450,10 @@ impl McpClientManager {
         let initialized = protocol_uninit
             .initialize(client_info, capabilities)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 if let Some(entry) = self.servers.get_mut(&id) {
                     entry.state = McpServerState::Failed(e.to_string());
                 }
-                e
             })?;
 
         let protocol = Arc::new(initialized);

@@ -15,9 +15,9 @@ delegating to `file_utils::PathValidator`.
 */
 
 use crate::error::{Result, XzatomaError};
-use crate::tools::{file_utils, parse_tool_args, ToolExecutor, ToolResult};
+use crate::tools::{ToolExecutor, ToolResult, file_utils, parse_tool_args};
 use async_trait::async_trait;
-use metrics::increment_counter;
+use metrics::counter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -196,7 +196,8 @@ impl ToolExecutor for EditFileTool {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    increment_counter!("overwrite_mode_no_file_total", "file" => file_label.clone());
+                    counter!("overwrite_mode_no_file_total", "file" => file_label.clone())
+                        .increment(1);
                     tracing::warn!(path = %params.path, "overwrite failed: file not found");
 
                     #[cfg(test)]
@@ -250,7 +251,8 @@ impl ToolExecutor for EditFileTool {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    increment_counter!("append_mode_no_file_total", "file" => file_label.clone());
+                    counter!("append_mode_no_file_total", "file" => file_label.clone())
+                        .increment(1);
                     tracing::warn!(path = %params.path, "append failed: file not found; suggest 'create'");
 
                     #[cfg(test)]
@@ -325,7 +327,8 @@ impl ToolExecutor for EditFileTool {
                             .unwrap_or("unknown")
                             .to_string();
 
-                        increment_counter!("edit_mode_missing_oldtext_total", "file" => file_label.clone());
+                        counter!("edit_mode_missing_oldtext_total", "file" => file_label.clone())
+                            .increment(1);
                         tracing::warn!(path = %params.path, "edit rejected: missing old_text; suggest 'append' or 'overwrite'");
 
                         #[cfg(test)]
@@ -357,7 +360,8 @@ impl ToolExecutor for EditFileTool {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    increment_counter!("edit_mode_oldtext_not_found_total", "file" => file_label.clone());
+                    counter!("edit_mode_oldtext_not_found_total", "file" => file_label.clone())
+                        .increment(1);
 
                     let old_text_snippet: String = old_text.chars().take(128).collect();
                     tracing::warn!(path = %params.path, old_text = %old_text_snippet, "edit failed: old_text not found");
@@ -381,7 +385,7 @@ impl ToolExecutor for EditFileTool {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    increment_counter!("edit_mode_oldtext_ambiguous_total", "file" => file_label.clone(), "occurrences" => occurrences.to_string());
+                    counter!("edit_mode_oldtext_ambiguous_total", "file" => file_label.clone(), "occurrences" => occurrences.to_string()).increment(1);
                     tracing::warn!(path = %params.path, occurrences = occurrences, "edit failed: old_text ambiguous");
 
                     #[cfg(test)]
@@ -410,7 +414,7 @@ impl ToolExecutor for EditFileTool {
                         .and_then(|s| s.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    increment_counter!("edit_mode_safety_block_total", "file" => file_label.clone(), "old_lines" => old_line_count.to_string(), "new_lines" => new_line_count.to_string());
+                    counter!("edit_mode_safety_block_total", "file" => file_label.clone(), "old_lines" => old_line_count.to_string(), "new_lines" => new_line_count.to_string()).increment(1);
                     tracing::warn!(
                         "safety check blocked edit on file={}; old_lines={}, new_lines={}",
                         params.path,
@@ -786,21 +790,17 @@ mod tests {
         let mut found = false;
         if let Some(arr) = all_of {
             for item in arr {
-                if let Some(if_obj) = item.get("if") {
-                    if let Some(mode_obj) = if_obj.get("properties").and_then(|pr| pr.get("mode")) {
-                        if mode_obj.get("const").and_then(|c| c.as_str()) == Some("edit") {
-                            if let Some(required_arr) = item
-                                .get("then")
-                                .and_then(|t| t.get("required"))
-                                .and_then(|r| r.as_array())
-                            {
-                                if required_arr.iter().any(|v| v.as_str() == Some("old_text")) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                if let Some(if_obj) = item.get("if")
+                    && let Some(mode_obj) = if_obj.get("properties").and_then(|pr| pr.get("mode"))
+                    && mode_obj.get("const").and_then(|c| c.as_str()) == Some("edit")
+                    && let Some(required_arr) = item
+                        .get("then")
+                        .and_then(|t| t.get("required"))
+                        .and_then(|r| r.as_array())
+                    && required_arr.iter().any(|v| v.as_str() == Some("old_text"))
+                {
+                    found = true;
+                    break;
                 }
             }
         }

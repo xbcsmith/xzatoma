@@ -103,11 +103,20 @@ steps:
 
 ## Interactive `/system` Command
 
-In `xzatoma chat` interactive mode, the `/system` command replaces the active
-system prompt without restarting the session.
+In `xzatoma chat` interactive mode and in Zed (ACP mode), the `/system` command
+has three forms:
+
+| Form             | Behaviour                                       |
+| ---------------- | ----------------------------------------------- |
+| `/system` (bare) | Shows help text for the `/system` command       |
+| `/system status` | Displays the current active system prompt       |
+| `/system <text>` | Replaces the active system prompt with `<text>` |
+
+### Replacing the system prompt
 
 ```text
-/system <text>
+/system You are a strict code reviewer. Reject anything without tests.
+System prompt updated.
 ```
 
 Behaviour:
@@ -115,21 +124,28 @@ Behaviour:
 - Replaces the first system message in the active conversation with `<text>`.
 - If no system message exists, prepends one.
 - Skill disclosure messages are left untouched.
-- Produces a confirmation line on success:
+- Produces `System prompt updated.` on success.
+
+### Inspecting the current system prompt
 
 ```text
-System prompt updated.
+/system status
+Current system prompt:
+You are a strict code reviewer. Reject anything without tests.
 ```
 
-- An empty `/system` (no text supplied) produces an error; the existing system
-  prompt is not changed.
-
-Example:
+When no system prompt is active:
 
 ```text
-/system You are a strict code reviewer. Reject anything without tests.
-System prompt updated.
+/system status
+No system prompt is active for this session.
 ```
+
+### Bare invocation
+
+A bare `/system` (no text, no subcommand) now shows the help text for the
+`/system` command instead of returning an error. This matches the unified UX
+contract: bare command = help, `status` = inspect, text argument = change.
 
 ## Injection Order in Agent Conversations
 

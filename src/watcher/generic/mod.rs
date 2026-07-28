@@ -160,7 +160,7 @@ pub use matcher::GenericMatcher;
 pub use message::GenericPlanCloudEvent;
 pub use result_event::GenericPlanResult;
 pub use result_producer::{
-    BufferedResultProducer, FakeResultProducer, GenericResultProducer, ResultProducerTrait,
-    DEFAULT_DLQ_MAX_BUFFERED,
+    BufferedResultProducer, DEFAULT_DLQ_MAX_BUFFERED, FakeResultProducer, GenericResultProducer,
+    ResultProducerTrait,
 };
 pub use watcher::GenericWatcher;

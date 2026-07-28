@@ -229,14 +229,14 @@ impl GenericEventHandler {
         );
 
         // Step 2: Evaluate the optional event matcher.
-        if let Some(matcher) = &self.matcher {
-            if !matcher.should_process(&event) {
-                debug!(
-                    plan_name = %event.plan.name,
-                    "Event did not satisfy configured match criteria; skipping"
-                );
-                return Ok(None);
-            }
+        if let Some(matcher) = &self.matcher
+            && !matcher.should_process(&event)
+        {
+            debug!(
+                plan_name = %event.plan.name,
+                "Event did not satisfy configured match criteria; skipping"
+            );
+            return Ok(None);
         }
 
         // Step 3: Resolve plan from disk directory if configured.

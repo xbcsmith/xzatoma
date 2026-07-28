@@ -9,10 +9,10 @@ use crate::storage::types::{
     StoredAcpAwaitState, StoredAcpCancellation, StoredAcpRun, StoredAcpRunEvent, StoredAcpSession,
     StoredAcpStdioSession, StoredSession,
 };
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1777,11 +1777,7 @@ fn parse_rfc3339_to_utc(value: &str) -> Result<DateTime<Utc>> {
 }
 
 fn bool_to_sqlite(value: bool) -> i64 {
-    if value {
-        1
-    } else {
-        0
-    }
+    if value { 1 } else { 0 }
 }
 
 fn sqlite_to_bool(value: i64) -> bool {
@@ -1888,13 +1884,15 @@ mod tests {
         let session = AcpRunSession::new(session_id.clone()).expect("valid session");
         let request = AcpRunCreateRequest::new(
             session_id,
-            vec![AcpMessage::new(
-                AcpRole::User,
-                vec![AcpMessagePart::Text(AcpTextPart::new(
-                    "hello from acp".to_string(),
-                ))],
-            )
-            .expect("valid message")],
+            vec![
+                AcpMessage::new(
+                    AcpRole::User,
+                    vec![AcpMessagePart::Text(AcpTextPart::new(
+                        "hello from acp".to_string(),
+                    ))],
+                )
+                .expect("valid message"),
+            ],
         )
         .expect("valid create request");
 
@@ -2134,10 +2132,12 @@ mod tests {
             .expect("prune should succeed");
 
         assert_eq!(deleted, 1);
-        assert!(storage
-            .load_acp_stdio_session_by_session_id("xzatoma-session-7")
-            .expect("stdio session lookup failed")
-            .is_none());
+        assert!(
+            storage
+                .load_acp_stdio_session_by_session_id("xzatoma-session-7")
+                .expect("stdio session lookup failed")
+                .is_none()
+        );
     }
 
     #[test]
@@ -2257,10 +2257,12 @@ mod tests {
             .expect("save failed");
 
         storage.delete_conversation(id).expect("delete failed");
-        assert!(storage
-            .load_conversation(id)
-            .expect("load failed")
-            .is_none());
+        assert!(
+            storage
+                .load_conversation(id)
+                .expect("load failed")
+                .is_none()
+        );
     }
 
     #[test]
@@ -2519,11 +2521,13 @@ mod tests {
         let session = AcpRunSession::new(session_id.clone()).expect("valid session");
         let request = AcpRunCreateRequest::new(
             session_id,
-            vec![AcpMessage::new(
-                AcpRole::User,
-                vec![AcpMessagePart::Text(AcpTextPart::new("second".to_string()))],
-            )
-            .expect("valid message")],
+            vec![
+                AcpMessage::new(
+                    AcpRole::User,
+                    vec![AcpMessagePart::Text(AcpTextPart::new("second".to_string()))],
+                )
+                .expect("valid message"),
+            ],
         )
         .expect("valid request");
         let run_two = AcpRun::new(
@@ -2601,11 +2605,15 @@ mod tests {
     fn test_new_respects_history_db_environment_override() {
         let dir = tempdir().expect("failed to create tempdir");
         let db_path = dir.path().join("override_history.db");
-        std::env::set_var("XZATOMA_HISTORY_DB", &db_path);
+        unsafe {
+            std::env::set_var("XZATOMA_HISTORY_DB", &db_path);
+        }
 
         let storage = SqliteStorage::new().expect("storage should initialize");
         assert_eq!(storage.database_path(), &db_path);
 
-        std::env::remove_var("XZATOMA_HISTORY_DB");
+        unsafe {
+            std::env::remove_var("XZATOMA_HISTORY_DB");
+        }
     }
 }

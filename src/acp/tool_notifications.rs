@@ -19,7 +19,7 @@
 //!     build_tool_call_completion, build_tool_call_failure, build_tool_call_start,
 //!     generate_tool_call_id, tool_kind_for_name,
 //! };
-//! use agent_client_protocol::schema as acp;
+//! use agent_client_protocol::schema::v1 as acp;
 //!
 //! let id = generate_tool_call_id();
 //! let input = serde_json::json!({ "path": "/workspace/src/main.rs" });
@@ -33,7 +33,7 @@
 //! assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Completed));
 //! ```
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol as acp_sdk;
 use uuid::Uuid;
 
@@ -88,7 +88,7 @@ pub fn generate_tool_call_id() -> acp::ToolCallId {
 /// # Examples
 ///
 /// ```
-/// use agent_client_protocol::schema as acp;
+/// use agent_client_protocol::schema::v1 as acp;
 /// use xzatoma::acp::tool_notifications::tool_kind_for_name;
 ///
 /// assert_eq!(tool_kind_for_name("read_file"), acp::ToolKind::Read);
@@ -270,7 +270,7 @@ pub fn tool_call_title(tool_name: &str, input: &serde_json::Value) -> String {
 /// # Examples
 ///
 /// ```
-/// use agent_client_protocol::schema as acp;
+/// use agent_client_protocol::schema::v1 as acp;
 /// use xzatoma::acp::tool_notifications::{build_tool_call_start, generate_tool_call_id};
 ///
 /// let id = generate_tool_call_id();
@@ -315,7 +315,7 @@ pub fn build_tool_call_start(
 /// # Examples
 ///
 /// ```
-/// use agent_client_protocol::schema as acp;
+/// use agent_client_protocol::schema::v1 as acp;
 /// use xzatoma::acp::tool_notifications::{build_tool_call_completion, generate_tool_call_id};
 ///
 /// let id = generate_tool_call_id();
@@ -356,7 +356,7 @@ pub fn build_tool_call_completion(
 /// # Examples
 ///
 /// ```
-/// use agent_client_protocol::schema as acp;
+/// use agent_client_protocol::schema::v1 as acp;
 /// use xzatoma::acp::tool_notifications::{build_tool_call_failure, generate_tool_call_id};
 ///
 /// let id = generate_tool_call_id();
@@ -444,7 +444,7 @@ pub fn build_tool_call_locations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_sdk::schema as acp;
+    use acp_sdk::schema::v1 as acp;
 
     // -----------------------------------------------------------------------
     // generate_tool_call_id

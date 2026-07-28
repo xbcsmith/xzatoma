@@ -31,7 +31,7 @@
 //! assert_eq!(effect.chat_mode_str, "planning");
 //! ```
 
-use acp_sdk::schema as acp;
+use acp_sdk::schema::v1 as acp;
 use agent_client_protocol as acp_sdk;
 
 use crate::config::ExecutionMode;

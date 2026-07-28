@@ -134,7 +134,7 @@ impl GenericPlanResult {
     /// ```
     pub fn new(trigger_event_id: String, success: bool, summary: String) -> Self {
         Self {
-            id: Ulid::new().to_string(),
+            id: Ulid::generate().to_string(),
             event_type: "result".to_string(),
             trigger_event_id,
             success,

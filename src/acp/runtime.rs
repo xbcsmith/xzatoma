@@ -36,8 +36,8 @@
 /// # Ok::<(), anyhow::Error>(())
 /// ```
 use crate::acp::{
-    now_rfc3339, AcpEvent, AcpEventKind, AcpMessage, AcpMessagePart, AcpRole, AcpRun,
-    AcpRunCreateRequest, AcpRunId, AcpRunResumeRequest, AcpRunSession, AcpRunState, AcpSessionId,
+    AcpEvent, AcpEventKind, AcpMessage, AcpMessagePart, AcpRole, AcpRun, AcpRunCreateRequest,
+    AcpRunId, AcpRunResumeRequest, AcpRunSession, AcpRunState, AcpSessionId, now_rfc3339,
 };
 use crate::config::{AcpCompatibilityMode, AcpDefaultRunMode, Config};
 use crate::error::{Result, XzatomaError};
@@ -45,7 +45,7 @@ use crate::storage::{
     PublicStoredAcpAwaitState, PublicStoredAcpCancellation, PublicStoredAcpRunEvent, SqliteStorage,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -336,13 +336,13 @@ impl AcpRuntimeCreateRequest {
             );
         }
 
-        if let Some(agent_name) = &self.agent_name {
-            if agent_name.trim().is_empty() {
-                return Err(crate::acp::error::AcpError::validation(
-                    "ACP agent name cannot be empty when set",
-                )
-                .into());
-            }
+        if let Some(agent_name) = &self.agent_name
+            && agent_name.trim().is_empty()
+        {
+            return Err(crate::acp::error::AcpError::validation(
+                "ACP agent name cannot be empty when set",
+            )
+            .into());
         }
 
         for message in &self.input {
@@ -1293,10 +1293,10 @@ impl AcpRuntime {
 
         if let Some(storage) = self.storage_handle()? {
             for stored_run in storage.list_acp_runs_for_session(session_id)? {
-                if seen.insert(stored_run.run_id.clone()) {
-                    if let Some(restored) = self.restore_run(&stored_run.run_id)? {
-                        runs.push(restored);
-                    }
+                if seen.insert(stored_run.run_id.clone())
+                    && let Some(restored) = self.restore_run(&stored_run.run_id)?
+                {
+                    runs.push(restored);
                 }
             }
         }
@@ -1552,15 +1552,15 @@ impl AcpRuntime {
         record.conversation_id = stored_run.conversation_id;
         record.cancellation_reason = run.status.cancellation_reason.clone();
 
-        if let Some(await_state) = storage.load_acp_await_state(run_id)? {
-            if let Some(resume_payload_json) = await_state.resume_payload_json {
-                record.resume_payload = Some(serde_json::from_str(&resume_payload_json).map_err(
-                    |source| XzatomaError::StorageSerialization {
-                        operation: "deserialize stored ACP resume payload".to_string(),
-                        source: source.into(),
-                    },
-                )?);
-            }
+        if let Some(await_state) = storage.load_acp_await_state(run_id)?
+            && let Some(resume_payload_json) = await_state.resume_payload_json
+        {
+            record.resume_payload = Some(serde_json::from_str(&resume_payload_json).map_err(
+                |source| XzatomaError::StorageSerialization {
+                    operation: "deserialize stored ACP resume payload".to_string(),
+                    source: source.into(),
+                },
+            )?);
         }
 
         if let Some(cancellation) = storage.load_acp_cancellation(run_id)? {
@@ -2168,9 +2168,11 @@ mod tests {
             .unwrap();
 
         let error = runtime.complete_run(run.id.as_str()).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("already reached terminal completion"));
+        assert!(
+            error
+                .to_string()
+                .contains("already reached terminal completion")
+        );
     }
 
     #[test]
@@ -2293,12 +2295,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(runs.len(), 2);
-        assert!(runs
-            .iter()
-            .any(|run| run.id.as_str() == first_run.id.as_str()));
-        assert!(runs
-            .iter()
-            .any(|run| run.id.as_str() == second_run.id.as_str()));
+        assert!(
+            runs.iter()
+                .any(|run| run.id.as_str() == first_run.id.as_str())
+        );
+        assert!(
+            runs.iter()
+                .any(|run| run.id.as_str() == second_run.id.as_str())
+        );
     }
 
     #[test]
@@ -2375,9 +2379,11 @@ mod tests {
         assert!(resumed.await_payload.is_none());
 
         let events = runtime.get_events(run.id.as_str()).unwrap();
-        assert!(events
-            .iter()
-            .any(|event| event.event.payload["event"] == "run.resumed"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event.payload["event"] == "run.resumed")
+        );
     }
 
     #[test]

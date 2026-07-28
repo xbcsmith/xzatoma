@@ -61,6 +61,31 @@ pub enum AgentExecutionEvent {
         text: String,
     },
 
+    /// A single streaming chunk of reasoning or chain-of-thought content.
+    ///
+    /// Emitted during streaming generation when the provider delivers reasoning
+    /// tokens incrementally. Observers that receive this event SHOULD forward each
+    /// chunk separately for live display. The accumulated full reasoning is also
+    /// delivered via `ReasoningEmitted` at the end of the turn for non-streaming
+    /// providers and as a fallback.
+    ReasoningChunkEmitted {
+        /// The incremental reasoning text for this chunk.
+        text: String,
+    },
+
+    /// The model has started a reasoning / thinking phase.
+    ///
+    /// Fired when the first reasoning chunk or opening think-tag is detected.
+    /// ACP observers SHOULD send a visual indicator so the user knows the model
+    /// is actively thinking before any content appears.
+    ThinkingStarted,
+
+    /// The model has finished its reasoning / thinking phase.
+    ///
+    /// Fired after the last reasoning chunk before the model transitions to
+    /// producing the final response.
+    ThinkingFinished,
+
     /// A tool call is about to begin executing.
     ToolCallStarted {
         /// Unique tool call identifier assigned by the provider.
@@ -152,6 +177,26 @@ pub trait AgentObserver: Send {
     ///
     /// * `event` - The execution event that was emitted.
     fn on_event(&mut self, event: AgentExecutionEvent);
+
+    /// Returns `true` if this observer discards all events without acting on them.
+    ///
+    /// The agent loop uses this to skip the overhead of building streaming
+    /// callback closures when no real observer is listening.
+    ///
+    /// The default implementation returns `false`. Override to return `true`
+    /// only in no-op or stub observer implementations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::agent::events::{AgentObserver, NoOpObserver};
+    ///
+    /// let observer = NoOpObserver;
+    /// assert!(observer.is_noop());
+    /// ```
+    fn is_noop(&self) -> bool {
+        false
+    }
 }
 
 /// A no-op observer that discards all events.
@@ -177,6 +222,10 @@ impl AgentObserver for NoOpObserver {
     ///
     /// * `_event` - The event to discard.
     fn on_event(&mut self, _event: AgentExecutionEvent) {}
+
+    fn is_noop(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +247,11 @@ mod tests {
         observer.on_event(AgentExecutionEvent::ReasoningEmitted {
             text: "thinking...".to_string(),
         });
+        observer.on_event(AgentExecutionEvent::ReasoningChunkEmitted {
+            text: "incremental reasoning chunk".to_string(),
+        });
+        observer.on_event(AgentExecutionEvent::ThinkingStarted);
+        observer.on_event(AgentExecutionEvent::ThinkingFinished);
         observer.on_event(AgentExecutionEvent::ToolCallStarted {
             id: "tc-1".to_string(),
             name: "read_file".to_string(),
@@ -253,6 +307,42 @@ mod tests {
         };
         let cloned = event.clone();
         let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn test_no_op_observer_accepts_reasoning_chunk_emitted() {
+        let mut observer = NoOpObserver;
+        observer.on_event(AgentExecutionEvent::ReasoningChunkEmitted {
+            text: "incremental chunk".to_string(),
+        });
+        // NoOpObserver must silently discard the event without panicking.
+    }
+
+    #[test]
+    fn test_no_op_observer_accepts_thinking_started_and_finished() {
+        let mut observer = NoOpObserver;
+        observer.on_event(AgentExecutionEvent::ThinkingStarted);
+        observer.on_event(AgentExecutionEvent::ThinkingFinished);
+        // Both marker events must be silently accepted without panicking.
+    }
+
+    #[test]
+    fn test_no_op_observer_is_noop_returns_true() {
+        let observer = NoOpObserver;
+        assert!(
+            observer.is_noop(),
+            "NoOpObserver must report is_noop() = true"
+        );
+    }
+
+    #[test]
+    fn test_custom_observer_is_noop_returns_false() {
+        struct RealObserver;
+        impl AgentObserver for RealObserver {
+            fn on_event(&mut self, _event: AgentExecutionEvent) {}
+        }
+        let observer = RealObserver;
+        assert!(!observer.is_noop(), "non-noop observer must return false");
     }
 
     #[test]

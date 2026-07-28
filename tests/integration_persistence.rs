@@ -5,7 +5,7 @@
 
 use tempfile::TempDir;
 use xzatoma::agent::{
-    new_conversation_id, now_rfc3339, ConversationMetadata, ConversationRecord, ConversationStore,
+    ConversationMetadata, ConversationRecord, ConversationStore, new_conversation_id, now_rfc3339,
 };
 use xzatoma::providers::Message;
 

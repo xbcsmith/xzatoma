@@ -281,25 +281,25 @@ fn check_output(
     }
 
     // stdout substring check.
-    if let Some(ref needle) = expect.stdout_contains {
-        if !stdout.contains(needle.as_str()) {
-            return Err(format!(
-                "expected stdout to contain {:?} but got:\n{}",
-                needle,
-                stdout.trim()
-            ));
-        }
+    if let Some(ref needle) = expect.stdout_contains
+        && !stdout.contains(needle.as_str())
+    {
+        return Err(format!(
+            "expected stdout to contain {:?} but got:\n{}",
+            needle,
+            stdout.trim()
+        ));
     }
 
     // stderr substring check.
-    if let Some(ref needle) = expect.stderr_contains {
-        if !stderr.contains(needle.as_str()) {
-            return Err(format!(
-                "expected stderr to contain {:?} but got:\n{}",
-                needle,
-                stderr.trim()
-            ));
-        }
+    if let Some(ref needle) = expect.stderr_contains
+        && !stderr.contains(needle.as_str())
+    {
+        return Err(format!(
+            "expected stderr to contain {:?} but got:\n{}",
+            needle,
+            stderr.trim()
+        ));
     }
 
     Ok(())

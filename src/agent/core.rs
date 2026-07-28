@@ -674,13 +674,78 @@ impl Agent {
 
             observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
 
-            let completion_response = tokio::select! {
-                result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
-                _ = cancellation_token.cancelled() => {
-                    observer.on_event(AgentExecutionEvent::CancellationRequested);
-                    return Err(XzatomaError::Cancelled);
+            // Use streaming callbacks when the provider supports live streaming and a
+            // real observer is listening. Callbacks collect per-chunk events into
+            // streaming_events; those are replayed to the observer after the call.
+            let use_streaming_callbacks = self.provider.supports_streaming() && !observer.is_noop();
+            let streaming_events: std::sync::Arc<std::sync::Mutex<Vec<AgentExecutionEvent>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+            let completion_response = if use_streaming_callbacks {
+                let ev_r = std::sync::Arc::clone(&streaming_events);
+                let ev_c = std::sync::Arc::clone(&streaming_events);
+                let ts_emitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ta_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ts_r = std::sync::Arc::clone(&ts_emitted);
+                let ta_r = std::sync::Arc::clone(&ta_active);
+                let ta_c = std::sync::Arc::clone(&ta_active);
+
+                let on_reasoning = move |text: String| {
+                    // SAFETY: single-threaded async context; lock cannot deadlock.
+                    let mut events = ev_r.lock().unwrap();
+                    if !ts_r.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        events.push(AgentExecutionEvent::ThinkingStarted);
+                        ta_r.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    events.push(AgentExecutionEvent::ReasoningChunkEmitted { text });
+                };
+                let on_content = move |text: String| {
+                    // SAFETY: single-threaded async context; lock cannot deadlock.
+                    let mut events = ev_c.lock().unwrap();
+                    if ta_c.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        events.push(AgentExecutionEvent::ThinkingFinished);
+                    }
+                    events.push(AgentExecutionEvent::AssistantTextEmitted { text });
+                };
+                tokio::select! {
+                    result = self.provider.complete_with_callbacks(
+                        &prompt_messages,
+                        &tool_definitions,
+                        Some(&on_reasoning),
+                        Some(&on_content),
+                    ) => result?,
+                    _ = cancellation_token.cancelled() => {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
+                }
+            } else {
+                tokio::select! {
+                    result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
+                    _ = cancellation_token.cancelled() => {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
                 }
             };
+
+            // Emit per-chunk streaming events collected during the provider call.
+            // These deliver ThinkingStarted, ReasoningChunkEmitted, ThinkingFinished,
+            // and AssistantTextEmitted to the observer before the batch processing.
+            let streaming_events_vec: Vec<AgentExecutionEvent> = {
+                // SAFETY: Arc only accessed here after the provider call has returned.
+                let mut locked = streaming_events.lock().unwrap();
+                std::mem::take(&mut *locked)
+            };
+            let reasoning_was_streamed = streaming_events_vec
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::ReasoningChunkEmitted { .. }));
+            let content_was_streamed = streaming_events_vec
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::AssistantTextEmitted { .. }));
+            for event in streaming_events_vec {
+                observer.on_event(event);
+            }
 
             let raw_reasoning = completion_response.reasoning;
             let mut message = completion_response.message;
@@ -697,10 +762,15 @@ impl Agent {
                 None
             };
 
-            // Emit a ReasoningEmitted event when reasoning is available from either the
-            // structured CompletionResponse.reasoning field or extracted thinking tags.
-            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+            // Emit batch reasoning only when streaming callbacks did not already deliver
+            // per-chunk events. For non-streaming providers, wrap with ThinkingStarted
+            // and ThinkingFinished so Zed opens the thinking panel before content arrives.
+            if !reasoning_was_streamed
+                && let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning)
+            {
+                observer.on_event(AgentExecutionEvent::ThinkingStarted);
                 observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+                observer.on_event(AgentExecutionEvent::ThinkingFinished);
             }
 
             if let Some(usage) = completion_response.usage {
@@ -746,11 +816,13 @@ impl Agent {
                 has_tool_calls,
             });
 
-            if let Some(text) = &message.content {
-                if !text.is_empty() {
-                    observer
-                        .on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
-                }
+            // Only emit batch content when streaming callbacks did not already deliver
+            // per-chunk AssistantTextEmitted events.
+            if !content_was_streamed
+                && let Some(text) = &message.content
+                && !text.is_empty()
+            {
+                observer.on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
             }
 
             self.conversation.add_message(message.clone());
@@ -788,7 +860,7 @@ impl Agent {
                             observer.on_event(AgentExecutionEvent::ToolCallCompleted {
                                 id: tool_call.id.clone(),
                                 name: tool_call.function.name.clone(),
-                                output: tool_result.output.clone(),
+                                output: tool_result.to_message(),
                             });
                             self.conversation
                                 .add_tool_result(&tool_call.id, tool_result.to_message());
@@ -1064,13 +1136,78 @@ impl Agent {
 
             observer.on_event(AgentExecutionEvent::ProviderRequestStarted);
 
-            let completion_response = tokio::select! {
-                result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
-                _ = cancellation_token.cancelled() => {
-                    observer.on_event(AgentExecutionEvent::CancellationRequested);
-                    return Err(XzatomaError::Cancelled);
+            // Use streaming callbacks when the provider supports live streaming and a
+            // real observer is listening. Callbacks collect per-chunk events into
+            // streaming_events; those are replayed to the observer after the call.
+            let use_streaming_callbacks = self.provider.supports_streaming() && !observer.is_noop();
+            let streaming_events: std::sync::Arc<std::sync::Mutex<Vec<AgentExecutionEvent>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+            let completion_response = if use_streaming_callbacks {
+                let ev_r = std::sync::Arc::clone(&streaming_events);
+                let ev_c = std::sync::Arc::clone(&streaming_events);
+                let ts_emitted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ta_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let ts_r = std::sync::Arc::clone(&ts_emitted);
+                let ta_r = std::sync::Arc::clone(&ta_active);
+                let ta_c = std::sync::Arc::clone(&ta_active);
+
+                let on_reasoning = move |text: String| {
+                    // SAFETY: single-threaded async context; lock cannot deadlock.
+                    let mut events = ev_r.lock().unwrap();
+                    if !ts_r.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        events.push(AgentExecutionEvent::ThinkingStarted);
+                        ta_r.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    events.push(AgentExecutionEvent::ReasoningChunkEmitted { text });
+                };
+                let on_content = move |text: String| {
+                    // SAFETY: single-threaded async context; lock cannot deadlock.
+                    let mut events = ev_c.lock().unwrap();
+                    if ta_c.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        events.push(AgentExecutionEvent::ThinkingFinished);
+                    }
+                    events.push(AgentExecutionEvent::AssistantTextEmitted { text });
+                };
+                tokio::select! {
+                    result = self.provider.complete_with_callbacks(
+                        &prompt_messages,
+                        &tool_definitions,
+                        Some(&on_reasoning),
+                        Some(&on_content),
+                    ) => result?,
+                    _ = cancellation_token.cancelled() => {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
+                }
+            } else {
+                tokio::select! {
+                    result = self.provider.complete(&prompt_messages, &tool_definitions) => result?,
+                    _ = cancellation_token.cancelled() => {
+                        observer.on_event(AgentExecutionEvent::CancellationRequested);
+                        return Err(XzatomaError::Cancelled);
+                    }
                 }
             };
+
+            // Emit per-chunk streaming events collected during the provider call.
+            // These deliver ThinkingStarted, ReasoningChunkEmitted, ThinkingFinished,
+            // and AssistantTextEmitted to the observer before the batch processing.
+            let streaming_events_vec: Vec<AgentExecutionEvent> = {
+                // SAFETY: Arc only accessed here after the provider call has returned.
+                let mut locked = streaming_events.lock().unwrap();
+                std::mem::take(&mut *locked)
+            };
+            let reasoning_was_streamed = streaming_events_vec
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::ReasoningChunkEmitted { .. }));
+            let content_was_streamed = streaming_events_vec
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::AssistantTextEmitted { .. }));
+            for event in streaming_events_vec {
+                observer.on_event(event);
+            }
 
             let raw_reasoning = completion_response.reasoning;
             let mut message = completion_response.message;
@@ -1085,9 +1222,15 @@ impl Agent {
                 None
             };
 
-            // Emit a ReasoningEmitted event when reasoning is available.
-            if let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning) {
+            // Emit batch reasoning only when streaming callbacks did not already deliver
+            // per-chunk events. For non-streaming providers, wrap with ThinkingStarted
+            // and ThinkingFinished so Zed opens the thinking panel before content arrives.
+            if !reasoning_was_streamed
+                && let Some(combined) = combine_reasoning(raw_reasoning, tag_reasoning)
+            {
+                observer.on_event(AgentExecutionEvent::ThinkingStarted);
                 observer.on_event(AgentExecutionEvent::ReasoningEmitted { text: combined });
+                observer.on_event(AgentExecutionEvent::ThinkingFinished);
             }
 
             if let Some(usage) = completion_response.usage {
@@ -1134,11 +1277,13 @@ impl Agent {
                 has_tool_calls,
             });
 
-            if let Some(text) = &message.content {
-                if !text.is_empty() {
-                    observer
-                        .on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
-                }
+            // Only emit batch content when streaming callbacks did not already deliver
+            // per-chunk AssistantTextEmitted events.
+            if !content_was_streamed
+                && let Some(text) = &message.content
+                && !text.is_empty()
+            {
+                observer.on_event(AgentExecutionEvent::AssistantTextEmitted { text: text.clone() });
             }
 
             self.conversation.add_message(message.clone());
@@ -1176,7 +1321,7 @@ impl Agent {
                             observer.on_event(AgentExecutionEvent::ToolCallCompleted {
                                 id: tool_call.id.clone(),
                                 name: tool_call.function.name.clone(),
-                                output: tool_result.output.clone(),
+                                output: tool_result.to_message(),
                             });
                             self.conversation
                                 .add_tool_result(&tool_call.id, tool_result.to_message());
@@ -1469,6 +1614,25 @@ impl Agent {
     /// Useful for accessing provider-specific methods like model listing and switching
     pub fn provider(&self) -> &dyn Provider {
         &*self.provider
+    }
+
+    /// Returns an `Arc` clone of the underlying provider.
+    ///
+    /// Use this when a shared, owning reference to the provider is needed
+    /// (e.g. for constructing subagent tools that require `Arc<dyn Provider>`).
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Arc<dyn Provider>` that shares ownership with the agent's
+    /// internal provider.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Requires a live agent instance; see integration tests for usage.
+    /// ```
+    pub fn provider_arc(&self) -> Arc<dyn Provider> {
+        Arc::clone(&self.provider)
     }
 
     /// Returns a reference to the tool registry
@@ -2050,10 +2214,12 @@ mod tests {
             .await;
         assert!(result.is_ok());
         assert!(collector.events.iter().any(|e| e.contains("PromptStarted")));
-        assert!(collector
-            .events
-            .iter()
-            .any(|e| e.contains("ExecutionCompleted")));
+        assert!(
+            collector
+                .events
+                .iter()
+                .any(|e| e.contains("ExecutionCompleted"))
+        );
     }
 
     #[tokio::test]
@@ -2224,6 +2390,152 @@ mod tests {
                 Ok(CompletionResponse::new(Message::assistant("Done")))
             }
         }
+    }
+
+    /// Mock streaming provider for Phase 4 testing.
+    #[derive(Clone)]
+    struct MockStreamingProvider {
+        reasoning_chunks: Vec<String>,
+        content_chunks: Vec<String>,
+    }
+
+    #[async_trait]
+    impl Provider for MockStreamingProvider {
+        fn is_authenticated(&self) -> bool {
+            true
+        }
+
+        fn current_model(&self) -> Option<&str> {
+            Some("mock-streaming")
+        }
+
+        fn set_model(&mut self, _model: &str) {}
+
+        async fn fetch_models(&self) -> Result<Vec<crate::providers::ModelInfo>> {
+            Ok(vec![])
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<CompletionResponse> {
+            // Fallback for non-streaming path
+            Ok(CompletionResponse::new(Message::assistant(
+                self.content_chunks.join(""),
+            )))
+        }
+
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        async fn complete_with_callbacks(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+            on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+            on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        ) -> Result<CompletionResponse> {
+            for chunk in &self.reasoning_chunks {
+                if let Some(cb) = on_reasoning_chunk {
+                    cb(chunk.clone());
+                }
+            }
+            for chunk in &self.content_chunks {
+                if let Some(cb) = on_content_chunk {
+                    cb(chunk.clone());
+                }
+            }
+            let content = self.content_chunks.join("");
+            let reasoning = if !self.reasoning_chunks.is_empty() {
+                Some(self.reasoning_chunks.join(""))
+            } else {
+                None
+            };
+            let mut resp = CompletionResponse::new(Message::assistant(content));
+            if let Some(r) = reasoning {
+                resp = resp.set_reasoning(r);
+            }
+            Ok(resp)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_observer_emits_reasoning_chunk_events_for_streaming_provider() {
+        // Verify that when a streaming provider is used and the observer is not a
+        // no-op, the agent loop emits ThinkingStarted, ReasoningChunkEmitted,
+        // ThinkingFinished, and AssistantTextEmitted events in order.
+        let provider = MockStreamingProvider {
+            reasoning_chunks: vec!["Let me think ".to_string(), "about this.".to_string()],
+            content_chunks: vec!["Here is my answer.".to_string()],
+        };
+
+        let mut agent = Agent::new(
+            provider,
+            crate::tools::ToolRegistry::new(),
+            crate::config::AgentConfig::default(),
+        )
+        .expect("agent creation should succeed");
+
+        struct EventCollector {
+            events: Vec<AgentExecutionEvent>,
+        }
+        impl AgentObserver for EventCollector {
+            fn on_event(&mut self, event: AgentExecutionEvent) {
+                self.events.push(event);
+            }
+        }
+
+        let mut observer = EventCollector { events: vec![] };
+        let token = tokio_util::sync::CancellationToken::new();
+        let _ = agent
+            .execute_with_observer("test prompt", &token, &mut observer)
+            .await;
+
+        // ThinkingStarted must precede any ReasoningChunkEmitted event.
+        let thinking_started_pos = observer
+            .events
+            .iter()
+            .position(|e| matches!(e, AgentExecutionEvent::ThinkingStarted))
+            .expect("ThinkingStarted must be emitted");
+
+        let first_chunk_pos = observer
+            .events
+            .iter()
+            .position(|e| matches!(e, AgentExecutionEvent::ReasoningChunkEmitted { .. }))
+            .expect("at least one ReasoningChunkEmitted must be emitted");
+
+        assert!(
+            thinking_started_pos < first_chunk_pos,
+            "ThinkingStarted must come before the first ReasoningChunkEmitted"
+        );
+
+        // Two reasoning chunks should be emitted.
+        let chunk_count = observer
+            .events
+            .iter()
+            .filter(|e| matches!(e, AgentExecutionEvent::ReasoningChunkEmitted { .. }))
+            .count();
+        assert_eq!(chunk_count, 2, "two ReasoningChunkEmitted events expected");
+
+        // ThinkingFinished must be emitted.
+        assert!(
+            observer
+                .events
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::ThinkingFinished)),
+            "ThinkingFinished must be emitted"
+        );
+
+        // AssistantTextEmitted must be present (from content chunks).
+        assert!(
+            observer
+                .events
+                .iter()
+                .any(|e| matches!(e, AgentExecutionEvent::AssistantTextEmitted { .. })),
+            "AssistantTextEmitted must be emitted"
+        );
     }
 
     #[tokio::test]
@@ -2597,6 +2909,39 @@ mod tests {
     }
 
     // --- Phase 5 new tests ---
+
+    // --- ToolCallCompleted output fix tests ---
+
+    /// Verify that `ToolCallCompleted.output` matches `to_message()` for a successful result.
+    ///
+    /// For a successful `ToolResult`, `to_message()` returns the plain output string,
+    /// so behaviour is unchanged from the previous `output.clone()` path.
+    #[test]
+    fn test_tool_call_completed_output_uses_to_message_for_success() {
+        let result = crate::tools::ToolResult::success("hello world");
+        // For a successful result, to_message() returns the output string directly.
+        assert_eq!(result.to_message(), "hello world");
+        // Confirm parity with the raw output field (no regression for the success path).
+        assert_eq!(result.to_message(), result.output);
+    }
+
+    /// Verify that `ToolCallCompleted.output` uses `to_message()` for a failed result.
+    ///
+    /// For a failed `ToolResult` (e.g. non-zero exit code from the terminal tool),
+    /// `output` is an empty string while the actual content is in `error`.
+    /// Calling `to_message()` surfaces the error text so the tool call card
+    /// in Zed shows the full output rather than an empty string.
+    #[test]
+    fn test_tool_call_completed_output_uses_to_message_for_failure() {
+        let result = crate::tools::ToolResult::error("Exit code 1: command not found");
+        // The raw output field is empty for a failed result.
+        assert!(result.output.is_empty());
+        // to_message() returns the error string prefixed with "Error: ".
+        let msg = result.to_message();
+        assert_eq!(msg, "Error: Exit code 1: command not found");
+        // Crucially, it is not empty - unlike result.output.
+        assert!(!msg.is_empty());
+    }
 
     #[tokio::test]
     async fn test_log_provider_metadata_no_panic_when_model_is_none() {

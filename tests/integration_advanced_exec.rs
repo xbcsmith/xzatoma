@@ -8,8 +8,8 @@
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-    use xzatoma::agent::quota::{QuotaLimits, QuotaTracker};
     use xzatoma::agent::SubagentMetrics;
+    use xzatoma::agent::quota::{QuotaLimits, QuotaTracker};
 
     // Tests for Task 5.2: Quota Tracking
 

@@ -28,14 +28,14 @@ pub mod types;
 // ---------------------------------------------------------------------------
 
 pub use types::{
-    convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
     CompletionResponse, FinishReason, FunctionCall, ImagePromptError, ImagePromptPart,
     ImagePromptSource, Message, ModelCapability, ModelInfo, ModelInfoSummary,
     MultimodalPromptInput, PromptInputError, PromptInputPart, ProviderCapabilities,
     ProviderFunction, ProviderFunctionCall, ProviderImagePromptPart, ProviderImagePromptSource,
     ProviderMessage, ProviderMessageContentPart, ProviderMessageContentParts, ProviderPromptInput,
     ProviderPromptInputPart, ProviderRequest, ProviderTextPromptPart, ProviderTool,
-    ProviderToolCall, TextPromptPart, TokenUsage, ToolCall,
+    ProviderToolCall, TextPromptPart, TokenUsage, ToolCall, convert_tools_from_json,
+    messages_contain_image_content, validate_message_sequence,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,13 +48,13 @@ pub use trait_mod::Provider;
 // Factory (from factory.rs)
 // ---------------------------------------------------------------------------
 
-pub use factory::{create_provider, create_provider_with_override, ProviderFactory};
+pub use factory::{ProviderFactory, create_provider, create_provider_with_override};
 
 // ---------------------------------------------------------------------------
 // Cache helpers (from cache.rs)
 // ---------------------------------------------------------------------------
 
-pub use cache::{is_cache_valid, new_model_cache, ModelCache, MODEL_CACHE_TTL_SECS};
+pub use cache::{MODEL_CACHE_TTL_SECS, ModelCache, is_cache_valid, new_model_cache};
 pub use capabilities::{
     ollama_model_supports_vision, openai_model_supports_vision, provider_model_supports_vision,
 };

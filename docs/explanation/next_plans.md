@@ -229,3 +229,24 @@ Write a plan to add dynamic system templates to all xzatoma modes (chat, agent, 
 In ACP mode we should be able to see the stream where the model is thinking when thinking mode is available. We should have the same feature in chat mode. We should be able to enable it with "/streaming on" and disable it with "/streaming off". It should also be able to be set with "--streaming" cli flag.
 
 For OpenAI streaming we want to make sure we are using an idle/read timeout for streaming. Basically we want to only fail if no data arrives for N seconds.
+
+
+✅ COMPLETED -
+
+## Chat Command Unification
+
+All the chat `/command` should behave the same. Running `/command` without options should show the help for the command.
+
+All the chat commands should have an `status` function that shows the current status.
+
+For example the `/streaming` command without any options should show the help for streaming. In turn `/streaming status` should give a detailed output of the streaming setting.
+
+The `/system status` command should show the current system prompt.
+
+All commands should follow this UX where applicable. Make sure to have a section that updates the Zed ACP implementation to support these changes.
+
+Make sure documentation [how-to, reference, tutorials, demos] are all updated as part of hte plan.
+
+Write a plan with a phased approach to unify the chat command UX. THINK HARD and follow the rules in @PLAN.md
+
+[Chat Command Unification Plan](./chat_unification_implementation_plan.md)

@@ -54,10 +54,10 @@ use crate::error::{Result, XzatomaError};
 use crate::watcher::xzepr::consumer::config::{
     SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
 };
+use rdkafka::ClientConfig;
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::types::RDKafkaErrorCode;
-use rdkafka::ClientConfig;
 use std::time::Duration;
 use tracing::info;
 
@@ -285,10 +285,10 @@ impl WatcherTopicAdmin {
     pub fn topics_for_xzepr_watcher(&self) -> Vec<String> {
         let mut topics = vec![self.input_topic.clone()];
 
-        if let Some(output) = &self.output_topic {
-            if output != &self.input_topic {
-                topics.push(output.clone());
-            }
+        if let Some(output) = &self.output_topic
+            && output != &self.input_topic
+        {
+            topics.push(output.clone());
         }
 
         topics
@@ -306,10 +306,10 @@ impl WatcherTopicAdmin {
     pub fn topics_for_generic_watcher(&self) -> Vec<String> {
         let mut topics = vec![self.input_topic.clone()];
 
-        if let Some(output) = &self.output_topic {
-            if output != &self.input_topic {
-                topics.push(output.clone());
-            }
+        if let Some(output) = &self.output_topic
+            && output != &self.input_topic
+        {
+            topics.push(output.clone());
         }
 
         topics
@@ -326,13 +326,13 @@ impl WatcherTopicAdmin {
             purpose: "xzepr watcher input topic".to_string(),
         }];
 
-        if let Some(output) = &self.output_topic {
-            if output != &self.input_topic {
-                requests.push(TopicEnsureRequest {
-                    topic: output.clone(),
-                    purpose: "xzepr watcher output topic".to_string(),
-                });
-            }
+        if let Some(output) = &self.output_topic
+            && output != &self.input_topic
+        {
+            requests.push(TopicEnsureRequest {
+                topic: output.clone(),
+                purpose: "xzepr watcher output topic".to_string(),
+            });
         }
 
         requests
@@ -349,13 +349,13 @@ impl WatcherTopicAdmin {
             purpose: "generic watcher input topic".to_string(),
         }];
 
-        if let Some(output) = &self.output_topic {
-            if output != &self.input_topic {
-                requests.push(TopicEnsureRequest {
-                    topic: output.clone(),
-                    purpose: "generic watcher output topic".to_string(),
-                });
-            }
+        if let Some(output) = &self.output_topic
+            && output != &self.input_topic
+        {
+            requests.push(TopicEnsureRequest {
+                topic: output.clone(),
+                purpose: "generic watcher output topic".to_string(),
+            });
         }
 
         requests

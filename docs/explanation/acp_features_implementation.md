@@ -1109,26 +1109,559 @@ In `src/cli.rs`:
 
 ---
 
+### Phase 7: Wire-Format Diagnostic Logging
+
+> **Prerequisite**: None. This phase is a standalone observability improvement
+> that can be applied at any time.
+
+#### Task 7.1 Add TRACE-Level Wire Logging for `NewSessionResponse`
+
+In `src/acp/stdio.rs`, inside `create_session`, immediately before returning
+`Ok(response)`, serialize the `NewSessionResponse` to JSON and emit it at
+`TRACE` level:
+
+```rust
+if tracing::enabled!(tracing::Level::TRACE) {
+    match serde_json::to_string(&response) {
+        Ok(json) => tracing::trace!(
+            session_id = %session_id,
+            response_json = %json,
+            "ACP stdio: NewSessionResponse wire format"
+        ),
+        Err(e) => tracing::trace!(
+            session_id = %session_id,
+            error = %e,
+            "ACP stdio: NewSessionResponse serialization failed"
+        ),
+    }
+}
+```
+
+This enables operators to run
+`RUST_LOG=xzatoma::acp=trace xzatoma agent 2>trace.log` and confirm the exact
+JSON payload Zed receives for `configOptions`, `modes`, `models`, and any other
+fields.
+
+#### Task 7.2 Add TRACE-Level Wire Logging for `LoadSessionResponse`
+
+Apply the same pattern in the `LoadSessionRequest` handler in
+`run_stdio_agent_with_transport`. After `create_session` returns the session
+response and before `responder.respond(response)`, emit the same TRACE log using
+the existing pattern:
+
+```rust
+if tracing::enabled!(tracing::Level::TRACE) {
+    if let Ok(json) = serde_json::to_string(&response) {
+        tracing::trace!(
+            session_id = %response.session_id,
+            response_json = %json,
+            "ACP stdio: LoadSessionResponse wire format"
+        );
+    }
+}
+```
+
+> Note: xzatoma currently handles session resume inside `create_session`
+> (controlled by `AcpStdioConfig::resume_by_workspace`). There is no separate
+> `LoadSessionRequest` handler at the protocol level; the single
+> `NewSessionRequest` handler covers both fresh and resumed sessions. The Task
+> 7.1 log therefore covers both code paths. If a dedicated `LoadSessionRequest`
+> handler is added in a future phase, Task 7.2 applies there.
+
+#### Task 7.3 Testing Requirements
+
+In `src/acp/stdio.rs`:
+
+- `test_new_session_response_is_serializable_to_json` -- construct a
+  `NewSessionResponse` with modes and config options populated, serialize it to
+  JSON with `serde_json::to_string`, verify the output contains the `session_id`
+  field and a non-empty `configOptions` array. (The actual TRACE log is not
+  testable in unit tests because tracing output is not captured in the normal
+  test harness; this test validates the serialization contract instead.)
+- `test_new_session_response_json_contains_config_options_key` -- verify the
+  JSON string from `serde_json::to_string` contains the string `"configOptions"`
+  when the response carries config options.
+
+#### Task 7.4 Deliverables
+
+- `src/acp/stdio.rs` -- TRACE log in `create_session` before returning the
+  `NewSessionResponse`.
+
+#### Task 7.5 Success Criteria
+
+- Running `RUST_LOG=xzatoma::acp=trace xzatoma agent 2>trace.log` and opening a
+  new Zed session produces a log line containing
+  `NewSessionResponse wire format` with a `response_json` field.
+- The JSON in the log contains `session_mode` in `configOptions` and the four
+  modes in `modes`.
+- `cargo test --all-features` passes with all new tests green.
+
+---
+
+### Phase 8: Plan Tracking
+
+> **Prerequisite**: Phase 4 must be complete. Plan tracking hooks into
+> `AssistantTextEmitted` and `ToolCallStarted` events which are emitted by the
+> Phase 4 streaming path. The `acp::Plan`, `acp::PlanEntry`, and
+> `acp::PlanEntryStatus` types are available in `agent-client-protocol` version
+> 0.11.1 without any feature flag.
+
+Zed's `SessionUpdate::Plan` variant renders a task-checklist panel in the thread
+view. Each `PlanEntry` has a `status` (`Pending`, `InProgress`, or `Completed`)
+and a `content` string. When the agent begins a multi-step task, users see a
+live list of steps that update as work progresses.
+
+#### Task 8.1 Add `PlanTracker` to `src/agent/plan_tracker.rs`
+
+Create a new file `src/agent/plan_tracker.rs` with a `PlanTracker` struct that
+accumulates streamed assistant text and extracts numbered-list items as plan
+entries.
+
+```rust
+/// Parses streamed assistant output for numbered-list plan items and tracks
+/// their execution status.
+///
+/// Only items in the initial assistant response (before the first tool call)
+/// are tracked. After a tool call boundary, the tracker enters a
+/// `post_tool_call` state and ignores subsequent text.
+///
+/// Status transitions:
+/// - `Pending` when an item is first detected.
+/// - `InProgress` when streaming moves past an entry to a later one.
+/// - `Completed` after `finalize()` is called at the end of the turn.
+pub struct PlanTracker {
+    entries: Vec<PlanEntry>,
+    buffer: String,
+    post_tool_call: bool,
+}
+```
+
+Public interface:
+
+```rust
+impl PlanTracker {
+    /// Create a new tracker with no entries.
+    pub fn new() -> Self;
+
+    /// Feed a chunk of streamed assistant text.
+    ///
+    /// Returns `true` if the plan changed (new entries were added or an
+    /// entry transitioned from `Pending` to `InProgress`), signalling the
+    /// caller to emit a `SessionUpdate::Plan`.
+    pub fn update(&mut self, chunk: &str) -> bool;
+
+    /// Notify the tracker that a tool call has started.
+    ///
+    /// After this call, `update` silently ignores all text, preventing
+    /// tool-output numbered lists from being misidentified as plan items.
+    pub fn on_tool_call_started(&mut self);
+
+    /// Finalize the plan at the end of a turn.
+    ///
+    /// Promotes any remaining `InProgress` entries to `Completed`.
+    /// Returns `true` if at least one entry exists (so the caller can emit
+    /// a final `SessionUpdate::Plan`).
+    pub fn finalize(&mut self) -> bool;
+
+    /// Return a snapshot of the current plan entries.
+    pub fn entries(&self) -> &[PlanEntry];
+
+    /// Return `true` if any entries have been detected.
+    pub fn has_entries(&self) -> bool;
+
+    /// Reset all entries to `Pending` and clear the buffer.
+    ///
+    /// Called at the start of a new turn to reuse the tracker.
+    pub fn reset(&mut self);
+}
+```
+
+Parsing rules:
+
+- Detect lines matching the pattern `^\d+\.\s+.+` (one or more digits, period,
+  whitespace, non-empty text).
+- Each distinct detected line creates one `PlanEntry` with
+  `PlanEntryPriority::Medium` and `PlanEntryStatus::Pending`.
+- When streaming advances past entry `N` to a detected entry `N+1`, entry `N` is
+  promoted to `InProgress`.
+- Duplicates (same content) are ignored.
+- After `on_tool_call_started()`, `update()` is a no-op.
+
+`PlanEntry` is constructed using
+`acp::PlanEntry::new(content, acp::PlanEntryPriority::Medium, acp::PlanEntryStatus::Pending)`.
+Import types via `use agent_client_protocol::schema as acp`.
+
+Register the new module in `src/agent/mod.rs` with `pub mod plan_tracker;`.
+
+#### Task 8.2 Add `plan_tracker` Field to `AcpSessionObserver`
+
+In `src/acp/stdio.rs`, add a `plan_tracker: PlanTracker` field to
+`AcpSessionObserver`:
+
+```rust
+struct AcpSessionObserver {
+    session_id: acp::SessionId,
+    connection: ConnectionTo<AcpClientRole>,
+    text_emitted: bool,
+    plan_tracker: crate::agent::plan_tracker::PlanTracker,
+}
+```
+
+Update `AcpSessionObserver::new` to initialize the field:
+
+```rust
+plan_tracker: crate::agent::plan_tracker::PlanTracker::new(),
+```
+
+#### Task 8.3 Wire `PlanTracker` into `AgentObserver for AcpSessionObserver`
+
+In the `on_event` implementation, wire plan tracking into two existing match
+arms:
+
+**`AssistantTextEmitted { text }` arm** -- after emitting the
+`AgentMessageChunk`, call the tracker and emit a `Plan` update if the plan
+changes:
+
+```rust
+AgentExecutionEvent::AssistantTextEmitted { text } => {
+    self.text_emitted = true;
+    let chunk = acp::ContentChunk::new(acp::ContentBlock::from(text.clone()));
+    self.send_update(acp::SessionUpdate::AgentMessageChunk(chunk));
+
+    if self.plan_tracker.update(&text) {
+        let plan = acp::Plan::new(self.plan_tracker.entries().to_vec());
+        self.send_update(acp::SessionUpdate::Plan(plan));
+    }
+}
+```
+
+**`ToolCallStarted { .. }` arm** -- notify the tracker before the existing
+tool-call notification logic:
+
+```rust
+AgentExecutionEvent::ToolCallStarted { id, name, arguments } => {
+    self.plan_tracker.on_tool_call_started();
+    // ... existing tool-call start notification code ...
+}
+```
+
+**`ExecutionCompleted { response }` arm** -- finalize the plan before the
+existing text-emit guard:
+
+```rust
+AgentExecutionEvent::ExecutionCompleted { response } => {
+    if self.plan_tracker.finalize() {
+        let plan = acp::Plan::new(self.plan_tracker.entries().to_vec());
+        self.send_update(acp::SessionUpdate::Plan(plan));
+    }
+    // ... existing text-emit guard ...
+}
+```
+
+#### Task 8.4 Add System-Prompt Anchor Text for ACP Sessions
+
+In `src/acp/stdio.rs` inside `create_session`, after the existing system-prompt
+injection block and before the skill-disclosure injection, append a
+planning-instruction paragraph to the agent's conversation when the session is
+ACP-mode (i.e., always, since this is `stdio.rs`):
+
+Add a constant:
+
+```rust
+/// System-prompt fragment that encourages numbered-list plan output.
+///
+/// Prepended to every ACP session so that Zed's plan-checklist panel
+/// shows live step progress for multi-step tasks.
+const ACP_PLAN_INSTRUCTION: &str = \
+    "When you have a multi-step task, begin your response with a \
+     numbered list of the steps you will take (e.g., \"1. Read the \
+     file\n2. Edit the function\n3. Run tests\"). \
+     Proceed with execution immediately after the list.";
+```
+
+Inject it as a system message only when no existing system message already
+contains the instruction text:
+
+```rust
+if !agent
+    .conversation()
+    .messages()
+    .iter()
+    .any(|m| m.role == "system" && m.content.as_deref().unwrap_or("").contains(ACP_PLAN_INSTRUCTION))
+{
+    agent.conversation_mut().add_system_message(ACP_PLAN_INSTRUCTION.to_string());
+}
+```
+
+> **Architecture note**: The deduplication guard prevents double-injection when
+> `create_session` is called for a workspace-resumed session that already has
+> the instruction in its stored conversation history.
+
+#### Task 8.5 Testing Requirements
+
+In `src/agent/plan_tracker.rs`:
+
+- `test_plan_tracker_detects_numbered_list_items` -- feed a chunk containing
+  `"1. Read the file\n2. Edit the code\n"`, verify `entries()` has two items
+  with `Pending` status and `update` returned `true`.
+- `test_plan_tracker_returns_false_for_plain_text` -- feed a chunk with no
+  numbered list; verify `update` returns `false` and `entries()` is empty.
+- `test_plan_tracker_ignores_text_after_tool_call` -- call
+  `on_tool_call_started()`, then `update("1. Should be ignored")`, verify
+  `entries()` is still empty.
+- `test_plan_tracker_promotes_entries_to_in_progress` -- feed a two-item list
+  one item at a time; after the second item is detected, verify the first entry
+  has `InProgress` status.
+- `test_plan_tracker_finalize_promotes_all_to_completed` -- feed items, call
+  `finalize()`, verify all entries have `Completed` status and `finalize`
+  returns `true`.
+- `test_plan_tracker_finalize_returns_false_when_no_entries` -- verify
+  `finalize()` returns `false` on an empty tracker.
+- `test_plan_tracker_reset_clears_entries_and_buffer` -- feed items, call
+  `reset()`, verify `entries()` is empty and `has_entries()` returns `false`.
+- `test_plan_tracker_ignores_duplicate_items` -- feed the same numbered-list
+  line twice; verify only one entry exists.
+
+In `src/acp/stdio.rs`:
+
+- `test_acp_observer_emits_plan_update_on_numbered_list_text` -- call
+  `on_event(AssistantTextEmitted { text: "1. Do thing one\n" })` on an
+  `AcpSessionObserver`; verify `plan_tracker.has_entries()` is `true`.
+- `test_acp_observer_plan_tracker_stops_on_tool_call_started` -- call
+  `on_event(ToolCallStarted { .. })` after injecting text; verify subsequent
+  `AssistantTextEmitted` events with numbered lists do not add entries.
+- `test_acp_observer_finalize_on_execution_completed` -- send a numbered-list
+  text event followed by `ExecutionCompleted`; verify all entries have
+  `Completed` status via `plan_tracker.entries()`.
+- `test_acp_plan_instruction_constant_is_not_empty` -- assert
+  `!ACP_PLAN_INSTRUCTION.is_empty()`.
+
+#### Task 8.6 Deliverables
+
+- `src/agent/plan_tracker.rs` -- `PlanTracker` struct, all methods, and full
+  unit-test suite.
+- `src/agent/mod.rs` -- `pub mod plan_tracker;` registration.
+- `src/acp/stdio.rs` -- `plan_tracker` field on `AcpSessionObserver`; wired into
+  `AssistantTextEmitted`, `ToolCallStarted`, and `ExecutionCompleted` arms;
+  `ACP_PLAN_INSTRUCTION` constant and system-prompt injection in
+  `create_session`.
+- `docs/explanation/phase8_plan_tracking_implementation.md` -- implementation
+  summary.
+
+#### Task 8.7 Success Criteria
+
+- When xzatoma executes a multi-step task where the model emits a leading
+  numbered list, Zed's thread panel displays a live checklist that updates as
+  each step begins and completes.
+- `cargo test --all-features` passes with all new tests green.
+- `cargo check --all-targets --all-features` passes with zero errors.
+- `cargo clippy --all-targets --all-features -- -D warnings` passes with zero
+  warnings.
+
+---
+
+### Phase 9: Cross-Reference Bug Fixes from Atoma Agent
+
+> **Source**: Bugs fixed in the Atoma agent (`atoma_implementation_plan_v2.md`)
+> were cross-referenced against XZatoma to identify the same or similar issues.
+
+#### Issue Inventory
+
+The following bugs were found in Atoma and investigated in XZatoma:
+
+| Bug                                                                            | Atoma Status | XZatoma Status                                                                                         |
+| ------------------------------------------------------------------------------ | ------------ | ------------------------------------------------------------------------------------------------------ |
+| Initial `UsageUpdate` size uses config default instead of model context window | Fixed        | Fixed in Phase 9                                                                                       |
+| `ToolCallCompleted` emits empty output for non-zero exit tools                 | Fixed        | Fixed in Phase 9                                                                                       |
+| OpenAI provider reports `0` context window for all models                      | Fixed        | Fixed in Phase 9                                                                                       |
+| `unstable_session_usage` feature not in `default = [...]`                      | Fixed        | Not applicable: XZatoma enables the feature directly on the dependency, not as a re-exportable feature |
+| `NewSessionRequest` resumes prior conversations instead of always being fresh  | Fixed        | Design difference: XZatoma intentionally resumes by workspace (no `LoadSession` mechanism)             |
+| Ollama context-window extraction misses versioned architecture names           | Fixed        | Not applicable: XZatoma already uses a three-tier approach                                             |
+| UTF-8 panic in streamed thinking parser                                        | Fixed        | Not applicable: XZatoma uses `String::from_utf8_lossy` and no raw byte-offset slicing                  |
+| ACP diff viewer support for file-writing tools                                 | Added        | Not yet implemented (future phase)                                                                     |
+| Agent identity missing from ACP system prompt                                  | Fixed        | Not applicable until Phase 8 (Plan Tracking) is implemented                                            |
+
+---
+
+#### Task 9.1 Initial `UsageUpdate` Size Uses Model Context Window
+
+**Problem**: In `create_session`, the initial `UsageUpdate` used
+`agent.conversation().max_tokens()` (a config value, default 100,000) as the
+`size` field. For providers that report the actual model context window (Ollama
+via `/api/show`, llama.cpp via `meta.n_ctx`), the Zed context bar denominator
+would show the config default instead of the true capacity.
+
+**Fix**: In `src/acp/stdio.rs`, a new helper function
+`model_context_window_from_state` extracts the `contextWindow` key from the
+`meta` map of the matching model in the already-fetched `SessionModelState`. The
+initial `UsageUpdate` uses this value, falling back to
+`agent.conversation().max_tokens()` when:
+
+- The model listing failed (fallback model from
+  `acp_model_info_from_current_model` does not include `contextWindow` in meta).
+- The provider reports `0` as the context window.
+- The current model is not found in `available_models`.
+
+This reuses the already-fetched model listing with no additional network
+requests. The debug log now also includes `config_max_tokens` to make it clear
+which source was used.
+
+**Files changed**: `src/acp/stdio.rs`
+
+**Tests added** (5):
+
+- `test_model_context_window_from_state_returns_value_from_meta`
+- `test_model_context_window_from_state_falls_back_when_no_meta`
+- `test_model_context_window_from_state_falls_back_when_context_window_zero`
+- `test_model_context_window_from_state_falls_back_for_unknown_model`
+- `test_model_context_window_from_state_ignores_non_current_models`
+
+---
+
+#### Task 9.2 `ToolCallCompleted` Emits Full Output for Non-Zero Exit Tools
+
+**Problem**: In `src/agent/core.rs`, both `execute_with_observer` and
+`execute_provider_messages_with_observer` emitted the `ToolCallCompleted` agent
+event with `output: tool_result.output.clone()`. For terminal commands that exit
+non-zero, the terminal tool stores the combined captured output in the `error`
+field and leaves `output` as an empty string. The ACP observer forwards `output`
+to Zed's tool call card, so Zed displayed an empty body for every failed command
+— hiding all diagnostic output from the user.
+
+The model's conversation was unaffected because `add_tool_result` already used
+`tool_result.to_message()` (which includes the output inside the error string),
+but the Zed UI card showed nothing.
+
+**Fix**: Change `output: tool_result.output.clone()` to
+`output: tool_result.to_message()` in both execution paths. For the success
+case, `to_message()` returns the same value as `output` (with an optional
+truncation note), so existing behavior is preserved. For the failure case,
+`to_message()` returns `"Error: Exit code N: <full captured output>"`, which Zed
+now displays in the tool card.
+
+**Files changed**: `src/agent/core.rs`
+
+**Tests added** (2):
+
+- `test_tool_call_completed_output_uses_to_message_for_success`
+- `test_tool_call_completed_output_uses_to_message_for_failure`
+
+---
+
+#### Task 9.3 OpenAI Provider Reports Actual Context Windows
+
+**Problem**: `src/providers/openai.rs` always passed `0` as the context window
+when constructing `ModelInfo` in both `list_models` and `get_model_info`. A zero
+context window causes `model_context_window_from_state` to fall through to the
+config fallback. It also means the model listing in Zed shows `0` for all OpenAI
+models.
+
+**Fix**: Add a `pub fn context_window_for_model_id(id: &str) -> usize` function
+that pattern-matches on model ID prefix and returns the known context window:
+
+| Pattern             | Context window |
+| ------------------- | -------------- |
+| `gpt-4.1*`          | 1,047,576      |
+| `o1*`, `o3*`, `o4*` | 200,000        |
+| `gpt-4-32k*`        | 32,768         |
+| `gpt-3.5*`          | 16,385         |
+| all others          | 128,000        |
+
+All three call sites that previously used `0` now call
+`context_window_for_model_id(&entry.id)`. The function is `pub` so it can be
+used by the initial `UsageUpdate` fallback chain via the model listing.
+
+**Files changed**: `src/providers/openai.rs`
+
+**Tests added** (5):
+
+- `test_context_window_for_model_id_gpt4_1_returns_million`
+- `test_context_window_for_model_id_o_series_returns_200k`
+- `test_context_window_for_model_id_gpt35_returns_16k`
+- `test_context_window_for_model_id_gpt4_returns_128k`
+- `test_context_window_for_model_id_unknown_returns_128k`
+
+---
+
+#### Task 9.4 Bugs Not Present in XZatoma
+
+**`unstable_session_usage` feature gating**: In Atoma, this feature was defined
+in `[features]` but not included in `default = [...]`, so all
+`#[cfg(feature = "unstable_session_usage")]` blocks were dead code in normal
+builds. XZatoma enables the feature directly on the `agent-client-protocol`
+dependency line (`features = ["unstable_session_usage"]`), so it is always
+enabled unconditionally. No fix needed.
+
+**Ollama context-window extraction**: Atoma's `extract_context_window` function
+used a hardcoded architecture prefix list that missed versioned names (e.g.
+`gemma4.context_length`). XZatoma already uses a three-tier chain: dynamic key
+construction from `general.architecture`, bare `context_length` fallback, then a
+scan of all keys ending in `context_length`. No fix needed.
+
+**UTF-8 panic in streamed thinking parser**: Atoma had a `StreamThinkingParser`
+that sliced `String` values at raw byte offsets, causing panics on multibyte
+characters. XZatoma's OpenAI streaming path uses `String::from_utf8_lossy` for
+HTTP chunk conversion and only appends to strings via `push_str` — no raw
+byte-offset slicing is performed. No fix needed.
+
+**`NewSessionRequest` resuming prior conversations**: In Atoma this was a bug
+because a separate `LoadSessionRequest` handler exists for explicit session
+resumption. XZatoma's `create_session` intentionally resumes prior conversations
+(controlled by `persist_sessions` and `resume_by_workspace` config options, both
+defaulting to `true`) because XZatoma does not advertise the `load_session`
+capability (`load_session(false)` in `handle_initialize`). This is a deliberate
+design difference, not a bug.
+
+---
+
+#### Task 9.5 Testing Requirements
+
+See tasks 9.1–9.3 for per-fix test lists. All 12 new tests are in
+`src/acp/stdio.rs`, `src/agent/core.rs`, and `src/providers/openai.rs`.
+
+#### Task 9.6 Deliverables
+
+- `src/acp/stdio.rs` - `model_context_window_from_state` helper; updated initial
+  `UsageUpdate` in `create_session`; 5 new tests.
+- `src/agent/core.rs` - `ToolCallCompleted` uses `to_message()` in both
+  execution paths; 2 new tests.
+- `src/providers/openai.rs` - `context_window_for_model_id` function; updated 3
+  call sites in `list_models` and `get_model_info`; 5 new tests.
+- `docs/explanation/acp_features_implementation.md` - This phase added.
+
+#### Task 9.7 Success Criteria
+
+- Zed's context bar denominator reflects the model's actual context window for
+  Ollama and llama.cpp providers (not the config default).
+- Zed's tool call card shows full captured output (including diagnostics) for
+  commands that exit non-zero.
+- OpenAI model listing shows accurate context windows in Zed's model selector.
+- `cargo test --all-features --lib` passes with all new tests green.
+
+---
+
 ## File Change Summary
 
-| File                                              | Change                                                                                                                                                                                                                |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/acp/session_config.rs`                       | Add `CONFIG_SESSION_MODE`, `build_session_mode_option`, `current_mode_id` on `SessionRuntimeState`, `session_mode_id` on `ConfigChangeEffect`, update `build_session_config_options` and `apply_config_option_change` |
-| `src/acp/stdio.rs`                                | Update `create_session`, `set_session_mode`, `set_session_config_option`, `execute_queued_prompt`, and `AcpSessionObserver`                                                                                           |
-| `src/agent/events.rs`                             | Add `ReasoningChunkEmitted`, `ThinkingStarted`, `ThinkingFinished` variants                                                                                                                                           |
-| `src/providers/trait_mod.rs`                      | Add `complete_with_callbacks` default method                                                                                                                                                                          |
-| `src/providers/openai.rs`                         | Add `streaming_client`, idle-timeout loop, `complete_with_callbacks` override with per-chunk callbacks                                                                                                                |
-| `src/providers/ollama.rs`                         | Override `complete_with_callbacks` with streaming and `<think>` tag detection                                                                                                                                         |
-| `src/agent/core.rs`                               | Use `complete_with_callbacks` when provider supports streaming                                                                                                                                                        |
-| `src/config.rs`                                   | Add `stream_idle_timeout_seconds` to `OpenAIConfig`, default function, `Default` impl, env-var override                                                                                                               |
-| `docs/how-to/zed_acp_agent_setup.md`              | Add Mode Selector, Context Window, and Thinking Stream sections                                                                                                                                                       |
-| `docs/reference/acp_configuration.md`             | Document `session_mode` option, note `terminal_execution` removal, document `stream_idle_timeout_seconds`                                                                                                             |
-| `src/cli.rs`                                      | Add `streaming: bool` to `Commands::Chat`, `Commands::Agent`, `Commands::Run`                                                                                                                                         |
-| `src/commands/special_commands.rs`                | Add `ToggleStreaming(bool)` variant, `/streaming on\|off\|enable\|disable` parser, `print_help` entry                                                                                                                 |
-| `src/commands/mod.rs`                             | Add `streaming_enabled` and `set_streaming` to `ChatModeState`; add `ChatStreamingObserver`; update `run_chat` and `run_plan_with_options` streaming branches                                                         |
-| `src/commands/agent.rs`                           | Accept and forward `streaming` flag in `handle_agent`                                                                                                                                                                 |
-| `src/main.rs`                                     | Extract and forward `streaming` from `Chat`, `Agent`, and `Run` CLI arms                                                                                                                                              |
-| `docs/explanation/acp_features_implementation.md` | This plan document                                                                                                                                                                                                    |
+| File                                              | Change                                                                                                                                                                                                                             |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/acp/session_config.rs`                       | Add `CONFIG_SESSION_MODE`, `build_session_mode_option`, `current_mode_id` on `SessionRuntimeState`, `session_mode_id` on `ConfigChangeEffect`, update `build_session_config_options` and `apply_config_option_change`              |
+| `src/acp/stdio.rs`                                | Update `create_session`, `set_session_mode`, `set_session_config_option`, `execute_queued_prompt`, and `AcpSessionObserver`; Phase 9: `model_context_window_from_state` helper, use model context window for initial `UsageUpdate` |
+| `src/agent/events.rs`                             | Add `ReasoningChunkEmitted`, `ThinkingStarted`, `ThinkingFinished` variants                                                                                                                                                        |
+| `src/providers/trait_mod.rs`                      | Add `complete_with_callbacks` default method                                                                                                                                                                                       |
+| `src/providers/openai.rs`                         | Add `streaming_client`, idle-timeout loop, `complete_with_callbacks` override with per-chunk callbacks; Phase 9: `context_window_for_model_id` lookup table, update 3 `ModelInfo` call sites                                       |
+| `src/providers/ollama.rs`                         | Override `complete_with_callbacks` with streaming and `<think>` tag detection                                                                                                                                                      |
+| `src/agent/core.rs`                               | Use `complete_with_callbacks` when provider supports streaming; Phase 9: `ToolCallCompleted` uses `to_message()` in both execution paths                                                                                           |
+| `src/config.rs`                                   | Add `stream_idle_timeout_seconds` to `OpenAIConfig`, default function, `Default` impl, env-var override                                                                                                                            |
+| `docs/how-to/zed_acp_agent_setup.md`              | Add Mode Selector, Context Window, and Thinking Stream sections                                                                                                                                                                    |
+| `docs/reference/acp_configuration.md`             | Document `session_mode` option, note `terminal_execution` removal, document `stream_idle_timeout_seconds`                                                                                                                          |
+| `src/cli.rs`                                      | Add `streaming: bool` to `Commands::Chat`, `Commands::Agent`, `Commands::Run`                                                                                                                                                      |
+| `src/commands/special_commands.rs`                | Add `ToggleStreaming(bool)` variant, `/streaming on\|off\|enable\|disable` parser, `print_help` entry                                                                                                                              |
+| `src/commands/mod.rs`                             | Add `streaming_enabled` and `set_streaming` to `ChatModeState`; add `ChatStreamingObserver`; update `run_chat` and `run_plan_with_options` streaming branches                                                                      |
+| `src/commands/agent.rs`                           | Accept and forward `streaming` flag in `handle_agent`                                                                                                                                                                              |
+| `src/main.rs`                                     | Extract and forward `streaming` from `Chat`, `Agent`, and `Run` CLI arms                                                                                                                                                           |
+| `src/agent/plan_tracker.rs`                       | New file: `PlanTracker` struct with numbered-list parser, status-transition logic, and unit tests                                                                                                                                  |
+| `src/agent/mod.rs`                                | Register `pub mod plan_tracker`                                                                                                                                                                                                    |
+| `docs/explanation/acp_features_implementation.md` | This plan document                                                                                                                                                                                                                 |
 
 ## Key Design Decisions
 
@@ -1253,3 +1786,49 @@ twice: once token-by-token during streaming, and once in full after
 check needed to prevent this. Using the observer flag is safer than using
 `streaming_enabled` because it handles the edge case where streaming is enabled
 but the provider emits no chunks and falls back to batch delivery.
+
+### Why TRACE level for wire-format logging instead of DEBUG?
+
+DEBUG is already used for operational events (session creation, prompt
+processing, token counts). Adding `NewSessionResponse` JSON at DEBUG level would
+flood the log for every session creation and make normal debug output harder to
+read. TRACE is reserved for data-level inspection. An operator who needs to
+diagnose Zed wire-format issues runs with `--trace` or
+`RUST_LOG=xzatoma::acp=trace`; all other users see no extra noise.
+
+### Why not log both `modes` and `configOptions` separately?
+
+Serializing the full `NewSessionResponse` JSON is simpler and more complete than
+extract-and-log approaches. It captures everything Zed receives in one line,
+including any future fields added to the response struct. The downside (slightly
+larger log line) is insignificant at TRACE level since TRACE is never enabled in
+production.
+
+### Why restrict plan tracking to items before the first tool call?
+
+Numbered lists appear throughout model output: explanations, tool outputs,
+troubleshooting guides, and changelog entries all use `1. ... 2. ...` syntax.
+Without a boundary rule, the tracker would produce false-positive plan entries
+for every numbered list in tool results or the model's final explanation. The
+boundary rule (stop tracking when `ToolCallStarted` fires) is a pragmatic
+heuristic: genuine multi-step plans almost always appear in the model's opening
+statement before any tool execution begins, while post-tool numbered lists are
+usually incidental.
+
+### Why use `PlanEntryPriority::Medium` for all detected entries?
+
+The numbered-list parser has no information about relative priority; all
+detected steps are treated equally. Using `Medium` as the default avoids
+overloading any step with a `High` or `Low` signal the agent did not explicitly
+express. A future extension could parse prefixes like `[CRITICAL]` or
+`(optional)` to derive priority, but this adds complexity that is not justified
+until there is evidence users need priority differentiation.
+
+### Why emit `SessionUpdate::Plan` incrementally instead of only at the end?
+
+Zed renders the checklist in real time as plan events arrive. Emitting only a
+final plan (after the turn) defeats the purpose: users see nothing during the
+potentially long execution phase and the checklist appears only at completion.
+Incremental emission means the checklist is visible from the moment the model
+outputs its first numbered item, giving users early confirmation of what steps
+are planned.

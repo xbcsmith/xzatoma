@@ -16,17 +16,19 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    parse_special_command, print_help, print_models_help, SpecialCommand,
+    SpecialCommand, format_mode_help_text, format_model_help_text, format_safety_help_text,
+    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
+    parse_special_command, print_help, print_models_help,
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{create_provider, CopilotProvider, OllamaProvider};
+use crate::providers::{CopilotProvider, OllamaProvider, create_provider};
 use crate::skills::{
-    build_skill_disclosure_section, discover_skills, render_skill_catalog, ActiveSkillRegistry,
-    SkillCatalog, SkillRecord,
+    ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
+    discover_skills, render_skill_catalog,
 };
 use crate::tools::activate_skill::ActivateSkillTool;
 use crate::tools::plan::PlanParser;
@@ -61,7 +63,7 @@ pub mod skills;
 
 // Agent environment builder (shared tool/skill/MCP initialization)
 pub mod environment;
-pub use environment::{build_agent_environment, AgentEnvironment};
+pub use environment::{AgentEnvironment, build_agent_environment};
 
 /// Detect if a user prompt requests subagent functionality
 ///
@@ -376,9 +378,89 @@ pub mod chat {
     //! The agent will use the registered tools (file_ops, etc.) as required.
 
     use super::*;
+    use crate::agent::events::{AgentExecutionEvent, AgentObserver};
     use colored::Colorize;
-    use rustyline::error::ReadlineError;
     use rustyline::DefaultEditor;
+    use rustyline::error::ReadlineError;
+    use tokio_util::sync::CancellationToken;
+
+    /// Observer that writes streaming model output to stdout in real time.
+    ///
+    /// Used by `run_chat`, `run_plan_with_options`, and `handle_agent` when
+    /// `streaming_enabled` is true. Receives `AgentExecutionEvent` emissions
+    /// from the agent loop and immediately flushes each chunk to stdout.
+    ///
+    /// After execution, callers MUST check `streamed_any_content()` and skip
+    /// their normal `println!` of the full response to avoid printing it twice.
+    pub struct ChatStreamingObserver {
+        thinking_active: bool,
+        content_started: bool,
+        streamed_any_content: bool,
+    }
+
+    impl Default for ChatStreamingObserver {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl ChatStreamingObserver {
+        /// Create a new observer with all flags reset to false.
+        pub fn new() -> Self {
+            Self {
+                thinking_active: false,
+                content_started: false,
+                streamed_any_content: false,
+            }
+        }
+
+        /// Returns true if at least one content or reasoning chunk was printed to stdout.
+        pub fn streamed_any_content(&self) -> bool {
+            self.streamed_any_content
+        }
+    }
+
+    impl AgentObserver for ChatStreamingObserver {
+        fn on_event(&mut self, event: AgentExecutionEvent) {
+            use std::io::Write;
+            match event {
+                AgentExecutionEvent::ThinkingStarted => {
+                    if !self.thinking_active {
+                        print!("\nThinking...\n");
+                        // SAFETY: stdout().flush() returns an error only if the underlying
+                        // write syscall fails; we accept that risk for best-effort streaming.
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = true;
+                    }
+                }
+                AgentExecutionEvent::ReasoningChunkEmitted { text } => {
+                    print!("{}", text);
+                    std::io::stdout().flush().ok();
+                    self.streamed_any_content = true;
+                }
+                AgentExecutionEvent::ThinkingFinished => {
+                    if self.thinking_active {
+                        println!();
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = false;
+                    }
+                }
+                AgentExecutionEvent::AssistantTextEmitted { text } => {
+                    // If thinking was still active when content starts, close the thinking block.
+                    if self.thinking_active {
+                        println!();
+                        std::io::stdout().flush().ok();
+                        self.thinking_active = false;
+                    }
+                    print!("{}", text);
+                    std::io::stdout().flush().ok();
+                    self.content_started = true;
+                    self.streamed_any_content = true;
+                }
+                _ => {}
+            }
+        }
+    }
 
     /// Start interactive chat mode
     ///
@@ -394,6 +476,9 @@ pub mod chat {
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
     /// * `system_prompt` - Optional system prompt override for this session.
+    /// * `streaming` - When true, response and reasoning tokens are printed
+    ///   progressively to stdout as they arrive. Requires the configured
+    ///   provider to support streaming.
     ///
     /// # Examples
     ///
@@ -402,16 +487,18 @@ pub mod chat {
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None, None, None).await?;
+    /// // chat::run_chat(Config::default(), None, None, false, None, None, None, false).await?;
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_chat(
-        config: Config,
+        mut config: Config,
         provider_name: Option<String>,
         mode: Option<String>,
         _safe: bool,
         resume: Option<String>,
         thinking_effort: Option<String>,
         system_prompt: Option<String>,
+        streaming: bool,
     ) -> Result<()> {
         use crate::storage::SqliteStorage;
 
@@ -421,9 +508,25 @@ pub mod chat {
         // config/env prompts (which only apply to new sessions).
         let cli_system_prompt = system_prompt;
 
-        let provider_type = provider_name
-            .as_deref()
-            .unwrap_or(&config.provider.provider_type);
+        // Owned so it does not keep `config` borrowed below, since resolving
+        // the Ollama model (when applicable) needs to mutate `config` in place.
+        let provider_type_owned: String =
+            provider_name.unwrap_or_else(|| config.provider.provider_type.clone());
+        let provider_type: &str = &provider_type_owned;
+
+        // If the configured Ollama model is not actually installed on the
+        // target server (e.g. the default "llama3.2:latest" was never
+        // pulled), query Ollama for locally available models and switch to
+        // the most recently modified one instead of failing at first prompt.
+        if provider_type == "ollama"
+            && let Err(error) =
+                crate::providers::ollama::resolve_available_model(&mut config.provider.ollama).await
+        {
+            tracing::warn!(
+                error = %error,
+                "Failed to validate configured Ollama model; continuing with configured value"
+            );
+        }
 
         let working_dir = std::env::current_dir()?;
         let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
@@ -439,6 +542,7 @@ pub mod chat {
 
         // Default to safe mode (AlwaysConfirm)
         let mut mode_state = ChatModeState::new(initial_mode, SafetyMode::AlwaysConfirm);
+        mode_state.set_streaming(streaming);
 
         // Build initial tool registry based on mode
         let mut tools = build_tools_for_mode(&mode_state, &config, &working_dir)?;
@@ -532,11 +636,11 @@ pub mod chat {
                             messages.len(),
                             user_count
                         );
-                        if user_count > 0 {
-                            if let Some(first_user) = messages.iter().find(|m| m.role == "user") {
-                                let snippet = first_user.content.as_deref().unwrap_or("");
-                                tracing::debug!("First user message snippet: {}", snippet);
-                            }
+                        if user_count > 0
+                            && let Some(first_user) = messages.iter().find(|m| m.role == "user")
+                        {
+                            let snippet = first_user.content.as_deref().unwrap_or("");
+                            tracing::debug!("First user message snippet: {}", snippet);
                         }
 
                         println!("Resuming conversation: {}", title.cyan());
@@ -630,18 +734,18 @@ pub mod chat {
         }
 
         // Add skill disclosure (after user system prompt, with deduplication).
-        if let Some(ref disclosure) = skill_disclosure {
-            if !agent.conversation().messages().iter().any(|m| {
+        if let Some(ref disclosure) = skill_disclosure
+            && !agent.conversation().messages().iter().any(|m| {
                 m.role == "system"
                     && m.content
                         .as_deref()
                         .map(|c| c == disclosure.as_str())
                         .unwrap_or(false)
-            }) {
-                agent
-                    .conversation_mut()
-                    .add_system_message(disclosure.clone());
-            }
+            })
+        {
+            agent
+                .conversation_mut()
+                .add_system_message(disclosure.clone());
         }
 
         // Set transient system messages (active skills).
@@ -660,17 +764,17 @@ pub mod chat {
         if resume.is_some() {
             let mut history_count = 0usize;
             for msg in agent.conversation().messages() {
-                if msg.role == "user" {
-                    if let Some(content) = &msg.content {
-                        // Intentionally discard duplicate/history-capacity failures: they do not
-                        // prevent chat resume, and readline history is best-effort.
-                        if rl.add_history_entry(content).is_err() {
-                            tracing::debug!(
-                                "Skipped adding a resumed user message to readline history"
-                            );
-                        }
-                        history_count += 1;
+                if msg.role == "user"
+                    && let Some(content) = &msg.content
+                {
+                    // Intentionally discard duplicate/history-capacity failures: they do not
+                    // prevent chat resume, and readline history is best-effort.
+                    if rl.add_history_entry(content).is_err() {
+                        tracing::debug!(
+                            "Skipped adding a resumed user message to readline history"
+                        );
                     }
+                    history_count += 1;
                 }
             }
             tracing::debug!(
@@ -691,11 +795,7 @@ pub mod chat {
             // Build a prompt that includes provider/model when available.
             let current_model: Option<String> = {
                 let m = agent.provider().get_current_model();
-                if m == "none" {
-                    None
-                } else {
-                    Some(m)
-                }
+                if m == "none" { None } else { Some(m) }
             };
             let prompt = if let Some(ref model) = current_model {
                 mode_state
@@ -710,6 +810,8 @@ pub mod chat {
                     if trimmed.is_empty() {
                         continue;
                     }
+
+                    rl.add_history_entry(trimmed)?;
 
                     // Check for special commands first
                     match parse_special_command(trimmed) {
@@ -733,6 +835,51 @@ pub mod chat {
                             let tool_count = agent.num_tools();
                             let conversation_len = agent.conversation().len();
                             print_status_display(&mode_state, tool_count, conversation_len);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ListTools) => {
+                            let names = agent.tools().tool_names();
+                            println!("Available tools ({}):", names.len());
+                            for name in &names {
+                                println!("  {name}");
+                            }
+                            println!();
+                            continue;
+                        }
+                        Ok(SpecialCommand::ListSkills) => {
+                            let registry = active_skill_registry.lock().unwrap();
+                            if registry.is_empty() {
+                                println!("No active skills for this workspace.\n");
+                            } else {
+                                println!("Active skills ({}):", registry.len());
+                                for name in registry.names() {
+                                    println!("  {name}");
+                                }
+                                println!();
+                            }
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowMcpStatus) => {
+                            match &mcp_manager {
+                                None => println!("No MCP servers configured.\n"),
+                                Some(manager) => {
+                                    let manager = manager.read().await;
+                                    let servers = manager.connected_servers();
+                                    if servers.is_empty() {
+                                        println!("No MCP servers configured.\n");
+                                    } else {
+                                        println!("Connected MCP servers ({}):", servers.len());
+                                        for server in &servers {
+                                            println!(
+                                                "  {} ({} tools)",
+                                                server.config.id,
+                                                server.tools.len()
+                                            );
+                                        }
+                                        println!();
+                                    }
+                                }
+                            }
                             continue;
                         }
                         Ok(SpecialCommand::Help) => {
@@ -842,9 +989,89 @@ pub mod chat {
                             println!();
                             continue;
                         }
+                        Ok(SpecialCommand::ToggleStreaming(enable)) => {
+                            let prev = mode_state.set_streaming(enable);
+                            if prev != enable {
+                                println!(
+                                    "Streaming {}.",
+                                    if enable { "enabled" } else { "disabled" }
+                                );
+                            }
+                            continue;
+                        }
                         Ok(SpecialCommand::SetSystemPrompt(text)) => {
                             agent.conversation_mut().replace_first_system_message(&text);
                             println!("System prompt updated.\n");
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModeHelp) => {
+                            println!("{}", format_mode_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModeStatus) => {
+                            println!("Current mode: {}\n", mode_state.chat_mode);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSafetyHelp) => {
+                            println!("{}", format_safety_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSafetyStatus) => {
+                            println!("Current safety policy: {}\n", mode_state.safety_mode);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModelHelp) => {
+                            println!("{}", format_model_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowModelStatus) => {
+                            let model = current_model.as_deref().unwrap_or(provider_type);
+                            println!("Current model: {}\n", model);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowStreamingHelp) => {
+                            println!("{}", format_streaming_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowStreamingStatus) => {
+                            println!(
+                                "Streaming: {}\n",
+                                if mode_state.streaming_enabled {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                }
+                            );
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSystemHelp) => {
+                            println!("{}", format_system_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSystemStatus) => {
+                            let prompt = agent
+                                .conversation()
+                                .messages()
+                                .iter()
+                                .find(|m| m.role == "system")
+                                .and_then(|m| m.content.as_deref())
+                                .unwrap_or("No system prompt is active for this session.");
+                            println!("Current system prompt:\n{}\n", prompt);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSubagentsHelp) => {
+                            println!("{}", format_subagents_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowSubagentsStatus) => {
+                            println!(
+                                "Subagent delegation: {}\n",
+                                if mode_state.subagents_enabled {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                }
+                            );
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,
@@ -876,8 +1103,6 @@ pub mod chat {
                             (Vec::new(), trimmed.to_string())
                         }
                     };
-
-                    rl.add_history_entry(trimmed)?;
 
                     // Show per-mention loading status...
                     if !mentions.is_empty() {
@@ -942,16 +1167,8 @@ pub mod chat {
                         )
                         .await;
 
-                    // Summarize mention load results...
+                    // Summarize mention load results.
                     use colored::Colorize;
-                    // ... (omitted similar logic for brevity, assuming standard output handling)
-                    // But we MUST verify we didn't delete the logic in replacement.
-                    // The replacement content replaces the ENTIRE run_chat body, so I need to include the rest of the logic or implement it concisely.
-
-                    // Actually, I should use the previous logic for mention display.
-                    // I will just copy-paste the mention display logic from the original file to be safe, or just use minimal replacement if possible.
-                    // But `run_chat` is one big function.
-                    // I'll rewrite the mention display logic in the replacement content.
 
                     let total_mentions = mentions.len();
                     if total_mentions > 0 {
@@ -1001,9 +1218,26 @@ pub mod chat {
                     }
 
                     // Execute the prompt via the agent
-                    match agent.execute(augmented_prompt).await {
+                    let cancellation_token = CancellationToken::new();
+                    let mut observer = ChatStreamingObserver::new();
+                    let exec_result = if mode_state.streaming_enabled {
+                        agent
+                            .execute_with_observer(
+                                augmented_prompt,
+                                &cancellation_token,
+                                &mut observer,
+                            )
+                            .await
+                    } else {
+                        agent.execute(augmented_prompt).await
+                    };
+                    match exec_result {
                         Ok(response) => {
-                            println!("\n{}\n", response);
+                            if !observer.streamed_any_content() {
+                                println!("\n{}\n", response);
+                            } else {
+                                println!();
+                            }
 
                             // Check context status and display warnings if needed
                             let warning_threshold =
@@ -1251,8 +1485,8 @@ pub mod chat {
     /// * `agent` - The current agent
     async fn handle_list_models(agent: &Agent) {
         use colored::Colorize;
-        use prettytable::format;
         use prettytable::Table;
+        use prettytable::format;
 
         match agent.provider().list_models().await {
             Ok(models) => {
@@ -1275,11 +1509,7 @@ pub mod chat {
                 // Get current model for highlighting
                 let current_model: Option<String> = {
                     let m = agent.provider().get_current_model();
-                    if m == "none" {
-                        None
-                    } else {
-                        Some(m)
-                    }
+                    if m == "none" { None } else { Some(m) }
                 };
 
                 // Add model rows
@@ -1602,7 +1832,9 @@ pub mod chat {
     ) -> Result<()> {
         // Show warning when switching to Write mode
         if matches!(new_mode, ChatMode::Write) {
-            println!("\nWarning: Switching to WRITE mode - agent can now modify files and execute commands!");
+            println!(
+                "\nWarning: Switching to WRITE mode - agent can now modify files and execute commands!"
+            );
             println!("Type '/safe' to enable confirmations, or '/yolo' to disable.\n");
         }
 
@@ -1644,7 +1876,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None, None, None).await;
+            let res = run_chat(cfg, None, None, false, None, None, None, false).await;
             assert!(res.is_err());
         }
 
@@ -1917,6 +2149,49 @@ pub mod chat {
             assert_eq!(SafetyMode::AlwaysConfirm.to_string(), "SAFE");
             assert_eq!(SafetyMode::NeverConfirm.to_string(), "YOLO");
         }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_false_initially() {
+            let observer = ChatStreamingObserver::new();
+            assert!(!observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_true_after_reasoning_chunk() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ReasoningChunkEmitted {
+                text: "thinking...".to_string(),
+            });
+            assert!(observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_streamed_any_content_true_after_content_chunk() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::AssistantTextEmitted {
+                text: "Hello".to_string(),
+            });
+            assert!(observer.streamed_any_content());
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_thinking_active_set_on_thinking_started() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ThinkingStarted);
+            assert!(observer.thinking_active);
+        }
+
+        #[test]
+        fn test_chat_streaming_observer_thinking_cleared_on_thinking_finished() {
+            use crate::agent::events::{AgentExecutionEvent, AgentObserver};
+            let mut observer = ChatStreamingObserver::new();
+            observer.on_event(AgentExecutionEvent::ThinkingStarted);
+            observer.on_event(AgentExecutionEvent::ThinkingFinished);
+            assert!(!observer.thinking_active);
+        }
     }
 }
 
@@ -1925,7 +2200,9 @@ pub mod chat {
 /// This module provides `run_plan` which runs a plan or a single prompt.
 /// We provide a `run_plan_with_options` helper to support the `allow_dangerous` flag.
 pub mod r#run {
+    use super::chat::ChatStreamingObserver;
     use super::*;
+    use tokio_util::sync::CancellationToken;
 
     /// Run a plan or a prompt via the agent
     ///
@@ -1941,7 +2218,7 @@ pub mod r#run {
         plan_path: Option<String>,
         prompt: Option<String>,
     ) -> Result<()> {
-        run_plan_with_options(config, plan_path, prompt, false, None, None).await
+        run_plan_with_options(config, plan_path, prompt, false, None, None, false).await
     }
 
     /// Run a plan or a prompt via the agent with extra options.
@@ -1957,6 +2234,8 @@ pub mod r#run {
     ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
     ///   When `None`, the provider default is used.
     /// * `system_prompt` - Optional system prompt override for this run session.
+    /// * `streaming` - When true, response and reasoning tokens are printed
+    ///   progressively to stdout as they arrive.
     pub async fn run_plan_with_options(
         mut config: Config,
         plan_path: Option<String>,
@@ -1964,6 +2243,7 @@ pub mod r#run {
         allow_dangerous: bool,
         thinking_effort: Option<String>,
         system_prompt: Option<String>,
+        streaming: bool,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
         // Save CLI flag separately before merging into config.
@@ -2079,9 +2359,22 @@ pub mod r#run {
         agent.set_transient_system_messages(transient_system_messages);
 
         println!("Executing task...\n");
-        match agent.execute(task).await {
+        let cancellation_token = CancellationToken::new();
+        let mut observer = ChatStreamingObserver::new();
+        let exec_result = if streaming {
+            agent
+                .execute_with_observer(task, &cancellation_token, &mut observer)
+                .await
+        } else {
+            agent.execute(task).await
+        };
+        match exec_result {
             Ok(response) => {
-                println!("Result:\n{}", response);
+                if !observer.streamed_any_content() {
+                    println!("Result:\n{}", response);
+                } else {
+                    println!();
+                }
                 Ok(())
             }
             Err(e) => {
@@ -2247,11 +2540,15 @@ pub mod auth {
                 // poll until the user authorizes the device (or an error/timeout occurs).
                 let provider = CopilotProvider::new(config.provider.copilot.clone())?;
 
-                println!("Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)...");
+                println!(
+                    "Copilot: initiating device flow (you will be prompted to visit a URL and enter a code)..."
+                );
                 // Run the provider's authenticate flow and surface any errors to the user.
                 match provider.authenticate().await {
                     Ok(_) => {
-                        println!("Copilot: authentication successful — token cached in the system keyring.");
+                        println!(
+                            "Copilot: authentication successful — token cached in the system keyring."
+                        );
                         Ok(())
                     }
                     Err(e) => {
@@ -2262,7 +2559,9 @@ pub mod auth {
                 }
             }
             "ollama" => {
-                println!("Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set.");
+                println!(
+                    "Ollama: typically uses a local host with no OAuth; ensure `provider.ollama` config is set."
+                );
                 Ok(())
             }
             other => Err(XzatomaError::Provider(format!(
@@ -2499,35 +2798,35 @@ pub mod watch {
         }
 
         // Override topic if provided
-        if let Some(t) = &overrides.topic {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.topic = t.clone();
-                tracing::debug!(topic = %t, "CLI override: Kafka topic");
-            }
+        if let Some(t) = &overrides.topic
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.topic = t.clone();
+            tracing::debug!(topic = %t, "CLI override: Kafka topic");
         }
 
         // Override group ID if provided
-        if let Some(group_id) = &overrides.group_id {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.group_id = group_id.clone();
-                tracing::debug!(group_id = %group_id, "CLI override: Kafka consumer group ID");
-            }
+        if let Some(group_id) = &overrides.group_id
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.group_id = group_id.clone();
+            tracing::debug!(group_id = %group_id, "CLI override: Kafka consumer group ID");
         }
 
         // Override output topic if provided
-        if let Some(output) = &overrides.output_topic {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.output_topic = Some(output.clone());
-                tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
-            }
+        if let Some(output) = &overrides.output_topic
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.output_topic = Some(output.clone());
+            tracing::debug!(output_topic = %output, "CLI override: Kafka output topic");
         }
 
         // Override topic auto-creation if requested
-        if overrides.create_topics {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.auto_create_topics = true;
-                tracing::debug!("CLI override: Kafka topic auto-creation enabled");
-            }
+        if overrides.create_topics
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.auto_create_topics = true;
+            tracing::debug!("CLI override: Kafka topic auto-creation enabled");
         }
 
         // Override generic matcher action if provided
@@ -2549,11 +2848,11 @@ pub mod watch {
         }
 
         // Override brokers if provided
-        if let Some(brokers) = &overrides.brokers {
-            if let Some(ref mut kafka) = config.watcher.kafka {
-                kafka.brokers = brokers.clone();
-                tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
-            }
+        if let Some(brokers) = &overrides.brokers
+            && let Some(ref mut kafka) = config.watcher.kafka
+        {
+            kafka.brokers = brokers.clone();
+            tracing::debug!(brokers = %brokers, "CLI override: Kafka brokers");
         }
 
         // Override generic matcher version if provided
@@ -2630,10 +2929,12 @@ pub mod watch {
 
             let result = apply_cli_overrides(&mut config, &WatchCliOverrides::default());
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
 
         #[test]
@@ -2693,16 +2994,20 @@ pub mod watch {
 
             assert!(result.is_ok());
             assert_eq!(config.watcher.filters.event_types.len(), 2);
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.success".to_string()));
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.failure".to_string()));
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.success".to_string())
+            );
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.failure".to_string())
+            );
         }
 
         #[test]
@@ -3081,11 +3386,13 @@ pub mod watch {
 
             assert!(result.is_ok());
             assert_eq!(config.watcher.filters.event_types.len(), 1);
-            assert!(config
-                .watcher
-                .filters
-                .event_types
-                .contains(&"deployment.success".to_string()));
+            assert!(
+                config
+                    .watcher
+                    .filters
+                    .event_types
+                    .contains(&"deployment.success".to_string())
+            );
             assert!(config.watcher.filters.success_only);
         }
 
@@ -3114,10 +3421,12 @@ pub mod watch {
             );
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to read filter config file"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Failed to read filter config file")
+            );
         }
 
         #[test]
@@ -3160,10 +3469,12 @@ pub mod watch {
             let result = run_watch(config, WatchCliOverrides::default()).await;
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
 
         #[tokio::test]
@@ -3175,10 +3486,12 @@ pub mod watch {
             let result = run_watch(config, WatchCliOverrides::default()).await;
 
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Kafka configuration"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Kafka configuration")
+            );
         }
     }
 }

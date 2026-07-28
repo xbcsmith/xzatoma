@@ -1759,3 +1759,107 @@ mode on every subsequent tool execution.
 
 **Documentation**:
 [zed_session_mode_selector_implementation.md](zed_session_mode_selector_implementation.md)
+
+## Chat Command Unification (2026-07-18)
+
+**Summary**: Six implementation phases unified the slash command UX across
+terminal chat mode and the Zed ACP agent. Phase 1 added per-command `help` and
+`status` variants to `SpecialCommand` and updated the parser so that bare
+commands show help text rather than returning an error. Phase 2 wired
+per-command status handlers into `dispatch_stdio_command` for live session
+reads. Phase 3 implemented all ACP mutating commands (`/mode`, `/safety`,
+`/subagents`, `/system`, `/model`). Phase 4 implemented the informational
+commands (`/models list`, `/models info`, `/context info`, `/context summary`).
+Phase 5 updated the Zed ACP advertisement to reflect the unified UX and added
+`/streaming` to the advertised command list (13 commands total). Phase 6 created
+the full documentation suite: reference, tutorial, how-to, demos, and updates to
+7 existing documents.
+
+**Files changed** (key):
+
+- `src/commands/special_commands.rs` - Added 12 new `SpecialCommand` variants;
+  updated `parse_special_command` for all six command families; added
+  `format_*_help_text` functions including `format_models_help_text`.
+- `src/acp/stdio.rs` - Added per-command status and mutating handlers; wired all
+  variants into `dispatch_stdio_command`; removed all
+  `handle_not_yet_implemented` stubs for implemented commands.
+- `src/acp/available_commands.rs` - Updated 6 command descriptions and 5 input
+  hints; added `build_streaming_command`; increased advertised count to 13.
+
+**Documentation**:
+[chat_unification_implementation_plan.md](chat_unification_implementation_plan.md),
+[chat_unification_phase4_acp_informational_commands_implementation.md](chat_unification_phase4_acp_informational_commands_implementation.md),
+[chat_unification_phase5_acp_advertisement_updates_implementation.md](chat_unification_phase5_acp_advertisement_updates_implementation.md),
+[chat_unification_phase6_documentation_and_demos_implementation.md](chat_unification_phase6_documentation_and_demos_implementation.md)
+
+## ACP Model Selector and Ollama Auto-Model (2026-07-19)
+
+**Summary**: Added a model selector dropdown to XZatoma's Zed ACP session
+configuration so users can switch between provider models without restarting the
+agent subprocess. Also fixed Ollama agent mode to behave like interactive chat
+mode by auto-resolving the latest available model when no `--model` flag is
+passed.
+
+**Files changed** (key):
+
+- `src/acp/session_config.rs` - Added `CONFIG_MODEL` constant;
+  `model_name: Option<String>` field on `ConfigChangeEffect`;
+  `current_model: String` and `available_models: Vec<String>` fields on
+  `SessionRuntimeState`; `build_model_selector_option` builder; `CONFIG_MODEL`
+  arm in `apply_config_option_change`; model selector added as ninth option in
+  `build_session_config_options` (count 8 to 9).
+- `src/acp/stdio.rs` - `resolve_agent_ollama_model` async helper for Ollama
+  auto-model resolution at session creation; model list fetched with timeout at
+  session creation and stored in `runtime_state.available_models`;
+  `set_session_config_option` applies `effect.model_name` by updating session
+  state and calling `provider().set_model_inplace()`; `handle_switch_model`
+  syncs `runtime_state.current_model` on slash-command model switch.
+- `docs/how-to/zed_acp_agent_setup.md` - Updated to current Zed External Agents
+  API (`agent_servers` as object with `"type": "custom"`); added file logging
+  section with `--debug`/`--trace` and `XZATOMA_LOG_FILE` examples.
+- `README.md` and `demos/zed_acp/README.md` - Updated `agent_servers` format to
+  current Zed object shape.
+
+**Documentation**:
+[model_selector_implementation.md](model_selector_implementation.md)
+
+## ACP Session Config Dropdown Updates (2026-07-21)
+
+**Summary**: Three targeted improvements to the ACP session config dropdowns
+advertised to Zed:
+
+1. **Model selector category fix** -- `build_model_selector_option` now calls
+   `.category(Some(acp::SessionConfigOptionCategory::Model))`. Without this
+   category hint, Zed did not render the model selector in its designated UI
+   slot.
+
+2. **Dropdown reorder** -- The seven advertised dropdowns are now ordered left
+   to right: Thinking Effort, Tool Routing, Subagent Delegation, MCP Tools,
+   Safety Policy, Session Mode, Model. Vision Input and Max Turns were removed
+   from the UI (still accepted by the slash-command path). Safety Policy was
+   restored.
+
+3. **Max Turns values updated** -- The `max_turns` select options changed from
+   `[10, 25, 50, 100, 200]` to `[100, 200, 350, 500, 1000]` to support long
+   autonomous sessions.
+
+4. **`default_thinking_effort` config field** -- A new
+   `acp.stdio.default_thinking_effort` field was added to `AcpStdioConfig`
+   (default `"none"`). `SessionRuntimeState::from_config` now reads this field
+   so the Thinking Effort dropdown starts at the configured level rather than
+   always defaulting to `"none"`.
+
+**Files changed** (key):
+
+- `src/acp/session_config.rs` - Added `SessionConfigOptionCategory::Model` to
+  model selector builder; reordered `build_session_config_options` vec; removed
+  `build_vision_input_option` and `build_max_turns_option` from advertised list;
+  restored `build_safety_policy_option`; updated `parse_max_turns_value` match
+  arms; reads `config.acp.stdio.default_thinking_effort` in `from_config`.
+- `src/config.rs` - Added `default_thinking_effort: String` field to
+  `AcpStdioConfig` with default `"none"`.
+- `demos/zed_acp/config.yaml` - Set `acp.default_run_mode: streaming` and
+  `acp.stdio.default_thinking_effort: "medium"`.
+
+**Documentation**:
+[model_selector_implementation.md](model_selector_implementation.md)

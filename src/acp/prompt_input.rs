@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use base64::Engine;
 
 use crate::config::AcpStdioConfig;
@@ -37,7 +37,7 @@ use crate::providers::{ImagePromptPart, MultimodalPromptInput, PromptInputPart};
 /// # Examples
 ///
 /// ```
-/// use agent_client_protocol::schema::{ContentBlock, TextContent};
+/// use agent_client_protocol::schema::v1::{ContentBlock, TextContent};
 /// use xzatoma::acp::prompt_input::acp_content_blocks_to_prompt_input;
 /// use xzatoma::config::AcpStdioConfig;
 ///
@@ -499,7 +499,7 @@ fn provider_error(message: impl ToString) -> XzatomaError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol::schema::{
+    use agent_client_protocol::schema::v1::{
         BlobResourceContents, ContentBlock, EmbeddedResource, EmbeddedResourceResource,
         ImageContent, ResourceLink, TextContent, TextResourceContents,
     };

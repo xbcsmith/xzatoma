@@ -7,13 +7,13 @@
 //! - `GET /agents`
 //! - `GET /agents/{name}`
 
-use axum::body::{to_bytes, Body};
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
 use xzatoma::acp::executor::AcpExecutor;
 use xzatoma::acp::runtime::AcpRuntime;
-use xzatoma::acp::server::{build_router, AcpServerState};
+use xzatoma::acp::server::{AcpServerState, build_router};
 use xzatoma::config::{AcpCompatibilityMode, Config};
 
 fn test_config() -> Config {
@@ -184,18 +184,24 @@ async fn test_agent_by_name_success() {
             .expect("framework metadata should exist"),
         "axum"
     );
-    assert!(metadata
-        .get("supported_input_content_types")
-        .and_then(Value::as_str)
-        .is_some());
-    assert!(metadata
-        .get("supported_output_content_types")
-        .and_then(Value::as_str)
-        .is_some());
-    assert!(metadata
-        .get("generated_at")
-        .and_then(Value::as_str)
-        .is_some());
+    assert!(
+        metadata
+            .get("supported_input_content_types")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(
+        metadata
+            .get("supported_output_content_types")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert!(
+        metadata
+            .get("generated_at")
+            .and_then(Value::as_str)
+            .is_some()
+    );
 
     let links = json["links"].as_array().expect("links should be an array");
     assert!(!links.is_empty());
@@ -225,10 +231,12 @@ async fn test_agent_by_name_not_found() {
     let json: Value = serde_json::from_slice(&body).expect("body should be valid JSON");
 
     assert_eq!(json["code"], "not_found");
-    assert!(json["message"]
-        .as_str()
-        .expect("message should be a string")
-        .contains("missing-agent"));
+    assert!(
+        json["message"]
+            .as_str()
+            .expect("message should be a string")
+            .contains("missing-agent")
+    );
 }
 
 #[tokio::test]

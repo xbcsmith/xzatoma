@@ -52,9 +52,11 @@ fn test_model_info_json_output_parseable() {
     let parsed: ModelInfo = serde_json::from_str(&json).expect("parse model info JSON");
 
     assert_eq!(parsed.name, "gpt-5.3-codex");
-    assert!(parsed
-        .capabilities
-        .contains(&ModelCapability::FunctionCalling));
+    assert!(
+        parsed
+            .capabilities
+            .contains(&ModelCapability::FunctionCalling)
+    );
 }
 
 #[test]

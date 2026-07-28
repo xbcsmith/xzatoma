@@ -16,7 +16,7 @@ use crate::config::WatcherLoggingConfig;
 use crate::error::{Result, XzatomaError};
 use std::fs::OpenOptions;
 use std::sync::Arc;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize watcher logging based on configuration.
 ///

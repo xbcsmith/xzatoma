@@ -5,7 +5,7 @@
 //! This feature prevents context pollution and enables parallel exploration
 //! of sub-problems without polluting the main conversation history.
 
-use crate::agent::{quota::QuotaTracker, Agent, ConversationStore, SubagentMetrics};
+use crate::agent::{Agent, ConversationStore, SubagentMetrics, quota::QuotaTracker};
 use crate::config::{AgentConfig, SubagentConfig};
 use crate::error::{Result, XzatomaError};
 use crate::providers::Provider;
@@ -540,10 +540,10 @@ fn create_filtered_registry(
             // (prevents infinite recursion in tool definitions)
             // Decision 2: ALL parent tools except "subagent"
             for tool_name in parent_registry.tool_names() {
-                if tool_name != "subagent" {
-                    if let Some(executor) = parent_registry.get(&tool_name) {
-                        subagent_registry.register(&tool_name, executor);
-                    }
+                if tool_name != "subagent"
+                    && let Some(executor) = parent_registry.get(&tool_name)
+                {
+                    subagent_registry.register(&tool_name, executor);
                 }
             }
         }
@@ -619,23 +619,23 @@ impl ToolExecutor for SubagentTool {
         );
 
         // STEP 1: Check quota availability before any work
-        if let Some(quota_tracker) = &self.quota_tracker {
-            if let Err(e) = quota_tracker.check_and_reserve() {
-                let label = args
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                if self.subagent_config.telemetry_enabled {
-                    tracing::warn!(
-                        subagent.event = "quota_exceeded",
-                        subagent.label = label,
-                        subagent.error = %e,
-                        "Subagent quota exceeded"
-                    );
-                }
-                metrics.record_error("quota_exceeded");
-                return Ok(ToolResult::error(format!("Resource quota exceeded: {}", e)));
+        if let Some(quota_tracker) = &self.quota_tracker
+            && let Err(e) = quota_tracker.check_and_reserve()
+        {
+            let label = args
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            if self.subagent_config.telemetry_enabled {
+                tracing::warn!(
+                    subagent.event = "quota_exceeded",
+                    subagent.label = label,
+                    subagent.error = %e,
+                    "Subagent quota exceeded"
+                );
             }
+            metrics.record_error("quota_exceeded");
+            return Ok(ToolResult::error(format!("Resource quota exceeded: {}", e)));
         }
 
         // STEP 2: Validate recursion depth
@@ -656,8 +656,7 @@ impl ToolExecutor for SubagentTool {
             metrics.record_error("max_depth_reached");
             return Ok(ToolResult::error(format!(
                 "Maximum subagent recursion depth ({}) exceeded. Current depth: {}. Cannot spawn nested subagent.",
-                self.subagent_config.max_depth,
-                self.current_depth
+                self.subagent_config.max_depth, self.current_depth
             )));
         }
 
@@ -687,13 +686,13 @@ impl ToolExecutor for SubagentTool {
         }
 
         // Validate max_turns if specified
-        if let Some(max_turns) = input.max_turns {
-            if max_turns == 0 || max_turns > 50 {
-                metrics.record_error("invalid_input");
-                return Ok(ToolResult::error(
-                    "max_turns must be between 1 and 50".to_string(),
-                ));
-            }
+        if let Some(max_turns) = input.max_turns
+            && (max_turns == 0 || max_turns > 50)
+        {
+            metrics.record_error("invalid_input");
+            return Ok(ToolResult::error(
+                "max_turns must be between 1 and 50".to_string(),
+            ));
         }
 
         // STEP 3: Create filtered registry for subagent
@@ -853,20 +852,19 @@ impl ToolExecutor for SubagentTool {
         };
 
         // Record quota usage if tracker is available
-        if let Some(quota_tracker) = &self.quota_tracker {
-            if let Err(e) = quota_tracker.record_execution(tokens_used) {
-                if telemetry_enabled {
-                    tracing::warn!(
-                        subagent.event = "quota_recording_failed",
-                        subagent.label = %label,
-                        subagent.error = %e,
-                        "Failed to record quota usage"
-                    );
-                }
-                // Log warning but don't fail the execution
-                // The subagent already completed successfully
-            }
+        if let Some(quota_tracker) = &self.quota_tracker
+            && let Err(e) = quota_tracker.record_execution(tokens_used)
+            && telemetry_enabled
+        {
+            tracing::warn!(
+                subagent.event = "quota_recording_failed",
+                subagent.label = %label,
+                subagent.error = %e,
+                "Failed to record quota usage"
+            );
         }
+        // Log warning but don't fail the execution
+        // The subagent already completed successfully
 
         // STEP 9: Truncate if needed and log if truncation occurred
         if output_len > self.subagent_config.output_max_size {
@@ -1081,10 +1079,12 @@ mod tests {
 
         let result = tool.execute(input).await.unwrap();
         assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap()
-            .contains("Maximum subagent recursion depth"));
+        assert!(
+            result
+                .error
+                .unwrap()
+                .contains("Maximum subagent recursion depth")
+        );
     }
 
     // Test 5: Depth 0 allows execution
@@ -1485,34 +1485,42 @@ mod tests {
         // Verify all tools return ToolResult::error (not Err)
         let fetch_result = MockFetchTool.execute(serde_json::json!({})).await.unwrap();
         assert!(!fetch_result.success);
-        assert!(fetch_result
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("404")));
+        assert!(
+            fetch_result
+                .error
+                .as_ref()
+                .is_some_and(|e| e.contains("404"))
+        );
 
         let file_result = MockFileTool.execute(serde_json::json!({})).await.unwrap();
         assert!(!file_result.success);
-        assert!(file_result
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("Permission denied")));
+        assert!(
+            file_result
+                .error
+                .as_ref()
+                .is_some_and(|e| e.contains("Permission denied"))
+        );
 
         let grep_result = MockGrepTool.execute(serde_json::json!({})).await.unwrap();
         assert!(!grep_result.success);
-        assert!(grep_result
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("Invalid regex")));
+        assert!(
+            grep_result
+                .error
+                .as_ref()
+                .is_some_and(|e| e.contains("Invalid regex"))
+        );
 
         let terminal_result = MockTerminalTool
             .execute(serde_json::json!({}))
             .await
             .unwrap();
         assert!(!terminal_result.success);
-        assert!(terminal_result
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("timed out")));
+        assert!(
+            terminal_result
+                .error
+                .as_ref()
+                .is_some_and(|e| e.contains("timed out"))
+        );
     }
 
     // Quota tracking tests

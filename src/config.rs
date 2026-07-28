@@ -221,6 +221,7 @@ impl Default for OllamaConfig {
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
+///     stream_idle_timeout_seconds: 30,
 ///     reasoning_effort: None,
 /// };
 /// assert_eq!(config.model, "gpt-4o-mini");
@@ -286,6 +287,20 @@ pub struct OpenAIConfig {
     #[serde(default = "default_openai_request_timeout")]
     pub request_timeout_seconds: u64,
 
+    /// Per-chunk idle timeout for SSE streaming.
+    ///
+    /// If no SSE chunk is received within this many seconds, the stream is
+    /// cancelled and an error is returned. This guards against connections
+    /// that are established and HTTP headers received but where the body
+    /// silently stalls.
+    ///
+    /// Defaults to 30 seconds. Increase for very large models on slow
+    /// inference servers.
+    ///
+    /// Set via the `XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT` environment variable.
+    #[serde(default = "default_openai_stream_idle_timeout")]
+    pub stream_idle_timeout_seconds: u64,
+
     /// Reasoning effort level for OpenAI o-series reasoning models.
     ///
     /// Accepted values: `"low"`, `"medium"`, `"high"`. Set to `None` to use
@@ -317,6 +332,10 @@ fn default_openai_request_timeout() -> u64 {
     600
 }
 
+fn default_openai_stream_idle_timeout() -> u64 {
+    30
+}
+
 impl Default for OpenAIConfig {
     fn default() -> Self {
         Self {
@@ -326,6 +345,7 @@ impl Default for OpenAIConfig {
             organization_id: None,
             enable_streaming: default_openai_streaming(),
             request_timeout_seconds: default_openai_request_timeout(),
+            stream_idle_timeout_seconds: default_openai_stream_idle_timeout(),
             reasoning_effort: None,
         }
     }
@@ -632,6 +652,13 @@ pub struct AcpStdioConfig {
     /// Allow image prompt content to reference remote URLs.
     #[serde(default = "default_acp_stdio_allow_remote_image_urls")]
     pub allow_remote_image_urls: bool,
+
+    /// Initial thinking-effort level for the `thinking_effort` session config
+    /// dropdown. Accepted values: `"none"`, `"low"`, `"medium"`, `"high"`,
+    /// `"extra_high"`. Has no effect on models that do not support extended
+    /// thinking. Defaults to `"none"`.
+    #[serde(default = "default_acp_stdio_thinking_effort")]
+    pub default_thinking_effort: String,
 }
 
 fn default_acp_stdio_persist_sessions() -> bool {
@@ -683,6 +710,10 @@ fn default_acp_stdio_allow_remote_image_urls() -> bool {
     false
 }
 
+fn default_acp_stdio_thinking_effort() -> String {
+    "none".to_string()
+}
+
 impl Default for AcpStdioConfig {
     fn default() -> Self {
         Self {
@@ -697,6 +728,7 @@ impl Default for AcpStdioConfig {
             allowed_image_mime_types: default_acp_stdio_allowed_image_mime_types(),
             allow_image_file_references: default_acp_stdio_allow_image_file_references(),
             allow_remote_image_urls: default_acp_stdio_allow_remote_image_urls(),
+            default_thinking_effort: default_acp_stdio_thinking_effort(),
         }
     }
 }
@@ -1634,6 +1666,14 @@ impl Config {
             }
         }
 
+        if let Ok(timeout) = std::env::var("XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.openai.stream_idle_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT: {}", timeout);
+            }
+        }
+
         if let Ok(val) = std::env::var("XZATOMA_OPENAI_REASONING_EFFORT") {
             if val == "none" {
                 self.provider.openai.reasoning_effort = None;
@@ -1659,13 +1699,13 @@ impl Config {
             }
         }
 
-        if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT") {
-            if !prompt.trim().is_empty() {
-                self.agent.system_prompt = Some(prompt.clone());
-                // Mirror into acp.system_prompt so ACP contexts can prefer the
-                // ACP-specific field while XZATOMA_SYSTEM_PROMPT covers all modes.
-                self.acp.system_prompt = Some(prompt);
-            }
+        if let Ok(prompt) = std::env::var("XZATOMA_SYSTEM_PROMPT")
+            && !prompt.trim().is_empty()
+        {
+            self.agent.system_prompt = Some(prompt.clone());
+            // Mirror into acp.system_prompt so ACP contexts can prefer the
+            // ACP-specific field while XZATOMA_SYSTEM_PROMPT covers all modes.
+            self.acp.system_prompt = Some(prompt);
         }
 
         if let Ok(mode) = std::env::var("XZATOMA_EXECUTION_MODE") {
@@ -2601,24 +2641,18 @@ impl Config {
             ));
         }
 
-        if self.agent.max_turns > 1000 {
-            return Err(XzatomaError::Config(
-                "max_turns must be less than or equal to 1000".to_string(),
-            ));
-        }
-
         if self.agent.timeout_seconds == 0 {
             return Err(XzatomaError::Config(
                 "timeout_seconds must be greater than 0".to_string(),
             ));
         }
 
-        if let Some(ref prompt) = self.agent.system_prompt {
-            if prompt.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "agent.system_prompt cannot be blank".to_string(),
-                ));
-            }
+        if let Some(ref prompt) = self.agent.system_prompt
+            && prompt.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "agent.system_prompt cannot be blank".to_string(),
+            ));
         }
 
         if self.agent.conversation.max_tokens == 0 {
@@ -2733,12 +2767,12 @@ impl Config {
                 ));
             }
 
-            if let Some(output_topic) = &kafka.output_topic {
-                if output_topic.trim().is_empty() {
-                    return Err(XzatomaError::Config(
-                        "watcher.kafka.output_topic cannot be empty when set".to_string(),
-                    ));
-                }
+            if let Some(output_topic) = &kafka.output_topic
+                && output_topic.trim().is_empty()
+            {
+                return Err(XzatomaError::Config(
+                    "watcher.kafka.output_topic cannot be empty when set".to_string(),
+                ));
             }
 
             if kafka.group_id.trim().is_empty() {
@@ -2850,21 +2884,21 @@ impl Config {
             ));
         }
 
-        if let Some(token) = &self.acp.auth_token {
-            if token.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "acp.auth_token cannot be empty when set".to_string(),
-                ));
-            }
+        if let Some(token) = &self.acp.auth_token
+            && token.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "acp.auth_token cannot be empty when set".to_string(),
+            ));
         }
 
-        if let Some(ref sp) = self.acp.system_prompt {
-            if sp.trim().is_empty() {
-                return Err(XzatomaError::Config(
-                    "acp.system_prompt cannot be blank; remove the field or set a non-empty value"
-                        .to_string(),
-                ));
-            }
+        if let Some(ref sp) = self.acp.system_prompt
+            && sp.trim().is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "acp.system_prompt cannot be blank; remove the field or set a non-empty value"
+                    .to_string(),
+            ));
         }
 
         if self.acp.max_request_bytes == 0 {
@@ -3058,13 +3092,66 @@ fn parse_log_format(value: &str) -> Option<LogFormat> {
 }
 
 fn resolve_config_like_path(path: &str) -> PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(stripped);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
     }
 
     PathBuf::from(path)
+}
+
+impl Config {
+    /// Resolve the effective configuration file path.
+    ///
+    /// Searches candidate locations in priority order and returns the first that
+    /// exists, or the last candidate if none exist (so that [`Config::load`] can
+    /// emit a warning and fall back to built-in defaults).
+    ///
+    /// # Search order
+    ///
+    /// 1. `explicit` -- the value of `--config` / `XZATOMA_CONFIG` when provided.
+    /// 2. `~/.config/xzatoma/config.yaml` -- XDG standard user config location.
+    /// 3. `config/config.yaml` -- development/project-relative fallback.
+    ///
+    /// Paths beginning with `~/` are expanded using the `HOME` environment
+    /// variable before the existence check.
+    ///
+    /// # Arguments
+    ///
+    /// * `explicit` - Optional path supplied via `--config` flag or `XZATOMA_CONFIG` env var.
+    ///
+    /// # Returns
+    ///
+    /// The resolved path as an owned `String`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::Config;
+    ///
+    /// // Explicit path is returned verbatim (after tilde expansion).
+    /// let path = Config::find_config_path(Some("my-config.yaml"));
+    /// assert_eq!(path, "my-config.yaml");
+    ///
+    /// // Without an explicit path, the function does not panic.
+    /// let _path = Config::find_config_path(None);
+    /// ```
+    pub fn find_config_path(explicit: Option<&str>) -> String {
+        // Priority 1: explicit flag or XZATOMA_CONFIG env value.
+        if let Some(p) = explicit {
+            return resolve_config_like_path(p).to_string_lossy().into_owned();
+        }
+
+        // Priority 2: XDG user config directory.
+        let xdg_path = resolve_config_like_path("~/.config/xzatoma/config.yaml");
+        if xdg_path.exists() {
+            return xdg_path.to_string_lossy().into_owned();
+        }
+
+        // Priority 3: development/project-relative fallback.
+        "config/config.yaml".to_string()
+    }
 }
 
 impl Default for Config {
@@ -3086,7 +3173,9 @@ mod tests {
     impl EnvVarGuard {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
+            unsafe {
+                std::env::set_var(key, value);
+            }
             Self { key, original }
         }
     }
@@ -3094,9 +3183,13 @@ mod tests {
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             if let Some(original) = &self.original {
-                std::env::set_var(self.key, original);
+                unsafe {
+                    std::env::set_var(self.key, original);
+                }
             } else {
-                std::env::remove_var(self.key);
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
             }
         }
     }
@@ -3231,17 +3324,21 @@ mod tests {
         config.acp.max_request_bytes = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.max_request_bytes must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.max_request_bytes must be greater than 0")
+        );
 
         let mut config = Config::default();
         config.acp.rate_limit_per_minute = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.rate_limit_per_minute must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.rate_limit_per_minute must be greater than 0")
+        );
     }
 
     #[test]
@@ -3250,9 +3347,11 @@ mod tests {
         config.acp.base_path = "/".to_string();
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.base_path cannot be '/' in versioned compatibility mode"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.base_path cannot be '/' in versioned compatibility mode")
+        );
     }
 
     #[test]
@@ -3270,17 +3369,21 @@ mod tests {
         config.acp.persistence.max_events_per_run = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.persistence.max_events_per_run must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.persistence.max_events_per_run must be greater than 0")
+        );
 
         config.acp.persistence.max_events_per_run = 1000;
         config.acp.persistence.max_completed_runs = 0;
 
         let error = config.validate().expect_err("config should be invalid");
-        assert!(error
-            .to_string()
-            .contains("acp.persistence.max_completed_runs must be greater than 0"));
+        assert!(
+            error
+                .to_string()
+                .contains("acp.persistence.max_completed_runs must be greater than 0")
+        );
     }
 
     #[test]
@@ -3484,6 +3587,61 @@ enabled: true
     }
 
     #[test]
+    fn test_find_config_path_with_explicit_path_returns_it() {
+        let path = Config::find_config_path(Some("/tmp/my-config.yaml"));
+        assert_eq!(path, "/tmp/my-config.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_with_explicit_tilde_path_expands_home() {
+        unsafe {
+            std::env::set_var("HOME", "/tmp/xzatoma-home");
+        }
+        let path = Config::find_config_path(Some("~/custom.yaml"));
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(path, "/tmp/xzatoma-home/custom.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_without_explicit_falls_back_to_dev_path_when_xdg_absent() {
+        // Temporarily point HOME at a directory that has no xzatoma config so
+        // that the XDG candidate does not accidentally exist.
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        let path = Config::find_config_path(None);
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(path, "config/config.yaml");
+    }
+
+    #[test]
+    fn test_find_config_path_without_explicit_uses_xdg_when_present() {
+        let tmp = tempfile::tempdir().expect("tempdir should be created");
+        let xdg_dir = tmp.path().join(".config").join("xzatoma");
+        std::fs::create_dir_all(&xdg_dir).expect("dirs should be created");
+        let xdg_file = xdg_dir.join("config.yaml");
+        std::fs::write(&xdg_file, "").expect("file should be written");
+
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        let path = Config::find_config_path(None);
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        assert_eq!(
+            path,
+            xdg_file.to_string_lossy().as_ref(),
+            "should return XDG path when it exists"
+        );
+    }
+
+    #[test]
     #[serial]
     fn test_apply_env_vars_overrides_skills_fields() {
         unsafe {
@@ -3502,25 +3660,51 @@ enabled: true
             std::env::remove_var("XZATOMA_SKILLS_TRUST_STORE_PATH");
         }
 
-        std::env::set_var("XZATOMA_SKILLS_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_PROJECT_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_USER_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED", "false");
-        std::env::set_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED", "false");
-        std::env::set_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST", "true");
-        std::env::set_var("XZATOMA_SKILLS_STRICT_FRONTMATTER", "false");
-        std::env::set_var(
-            "XZATOMA_SKILLS_ADDITIONAL_PATHS",
-            "/opt/xzatoma/skills:./custom_skills",
-        );
-        std::env::set_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS", "64");
-        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES", "400");
-        std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH", "3");
-        std::env::set_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES", "16");
-        std::env::set_var(
-            "XZATOMA_SKILLS_TRUST_STORE_PATH",
-            "~/.xzatoma/custom_skills_trust.yaml",
-        );
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_PROJECT_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_USER_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ACTIVATION_TOOL_ENABLED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_PROJECT_TRUST_REQUIRED", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_ALLOW_CUSTOM_PATHS_WITHOUT_TRUST", "true");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_STRICT_FRONTMATTER", "false");
+        }
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_SKILLS_ADDITIONAL_PATHS",
+                "/opt/xzatoma/skills:./custom_skills",
+            );
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_DISCOVERED_SKILLS", "64");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DIRECTORIES", "400");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_MAX_SCAN_DEPTH", "3");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_SKILLS_CATALOG_MAX_ENTRIES", "16");
+        }
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_SKILLS_TRUST_STORE_PATH",
+                "~/.xzatoma/custom_skills_trust.yaml",
+            );
+        }
 
         let mut config = Config::default();
         config.apply_env_vars();
@@ -3583,13 +3767,6 @@ enabled: true
     fn test_config_validation_zero_max_turns() {
         let mut config = Config::default();
         config.agent.max_turns = 0;
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn test_config_validation_max_turns_too_large() {
-        let mut config = Config::default();
-        config.agent.max_turns = 1001;
         assert!(config.validate().is_err());
     }
 
@@ -4271,6 +4448,34 @@ agent: {}
     }
 
     #[test]
+    fn test_openai_config_default_stream_idle_timeout_is_30() {
+        let config = OpenAIConfig::default();
+        assert_eq!(config.stream_idle_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_stream_idle_timeout() {
+        let yaml = "base_url: http://localhost:8080/v1\nstream_idle_timeout_seconds: 60\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.stream_idle_timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_openai_config_deserialize_omits_stream_idle_timeout_uses_default() {
+        let yaml = "model: gpt-4o\n";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("deserialize failed");
+        assert_eq!(config.stream_idle_timeout_seconds, 30);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_stream_idle_timeout() {
+        let _timeout = EnvVarGuard::set("XZATOMA_OPENAI_STREAM_IDLE_TIMEOUT", "45");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.openai.stream_idle_timeout_seconds, 45);
+    }
+
+    #[test]
     fn test_openai_config_reasoning_effort_defaults_none() {
         let config = OpenAIConfig::default();
         assert!(
@@ -4469,12 +4674,24 @@ chat_enabled: true
             std::env::remove_var("XZEPR_KAFKA_SASL_PASSWORD");
         }
 
-        std::env::set_var("XZEPR_KAFKA_BROKERS", "test-broker:9092");
-        std::env::set_var("XZEPR_KAFKA_TOPIC", "test-topic");
-        std::env::set_var("XZEPR_KAFKA_GROUP_ID", "test-group");
-        std::env::set_var("XZEPR_KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        std::env::set_var("XZEPR_KAFKA_SASL_USERNAME", "user");
-        std::env::set_var("XZEPR_KAFKA_SASL_PASSWORD", "pass");
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_BROKERS", "test-broker:9092");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_TOPIC", "test-topic");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_GROUP_ID", "test-group");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SASL_USERNAME", "user");
+        }
+        unsafe {
+            std::env::set_var("XZEPR_KAFKA_SASL_PASSWORD", "pass");
+        }
 
         let mut cfg = Config::default();
         // apply_env_vars is private but accessible within the test module
@@ -4514,13 +4731,21 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
         }
 
-        std::env::set_var(
-            "XZATOMA_WATCHER_EVENT_TYPES",
-            "deployment.success,ci.pipeline.completed",
-        );
-        std::env::set_var("XZATOMA_WATCHER_LOG_LEVEL", "debug");
-        std::env::set_var("XZATOMA_WATCHER_JSON_LOGS", "false");
-        std::env::set_var("XZATOMA_WATCHER_MAX_CONCURRENT", "3");
+        unsafe {
+            std::env::set_var(
+                "XZATOMA_WATCHER_EVENT_TYPES",
+                "deployment.success,ci.pipeline.completed",
+            );
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_LOG_LEVEL", "debug");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_JSON_LOGS", "false");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_CONCURRENT", "3");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -4545,7 +4770,9 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_TYPE");
         }
 
-        std::env::set_var("XZATOMA_WATCHER_TYPE", "generic");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_TYPE", "generic");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -4578,7 +4805,9 @@ chat_enabled: true
             poll_interval_ms: 1000,
         });
 
-        std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_OUTPUT_TOPIC", "plans.output");
+        }
         cfg.apply_env_vars();
 
         assert_eq!(
@@ -4612,7 +4841,9 @@ chat_enabled: true
             poll_interval_ms: 1000,
         });
 
-        std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_GROUP_ID", "override-group");
+        }
         cfg.apply_env_vars();
 
         assert_eq!(
@@ -4634,9 +4865,15 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_MATCH_VERSION");
         }
 
-        std::env::set_var("XZATOMA_WATCHER_MATCH_ACTION", "deploy.*");
-        std::env::set_var("XZATOMA_WATCHER_MATCH_NAME", "service-a");
-        std::env::set_var("XZATOMA_WATCHER_MATCH_VERSION", "^v1$");
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_ACTION", "deploy.*");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_NAME", "service-a");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MATCH_VERSION", "^v1$");
+        }
 
         let mut cfg = Config::default();
         cfg.apply_env_vars();
@@ -4949,10 +5186,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid subagent provider"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid subagent provider")
+        );
     }
 
     #[test]
@@ -4991,10 +5230,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("max_depth must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_depth must be greater than 0")
+        );
     }
 
     #[test]
@@ -5053,10 +5294,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("default_max_turns must be greater than 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("default_max_turns must be greater than 0")
+        );
     }
 
     #[test]
@@ -5076,10 +5319,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot exceed 100"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot exceed 100")
+        );
     }
 
     #[test]
@@ -5118,10 +5363,12 @@ agent:
         let cfg: Config = serde_yaml::from_str(config).unwrap();
         let result = cfg.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("at least 1024 bytes"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("at least 1024 bytes")
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::skills::catalog::SkillCatalog;
 use crate::tools::{ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 /// Tool name for skill activation.
@@ -416,9 +416,11 @@ mod tests {
 
         assert!(result.success);
         assert!(result.output.contains("\"skill_name\":\"example_skill\""));
-        assert!(result
-            .output
-            .contains("\"allowed_tools\":[\"read_file\",\"grep\"]"));
+        assert!(
+            result
+                .output
+                .contains("\"allowed_tools\":[\"read_file\",\"grep\"]")
+        );
         assert_eq!(
             result.metadata.get("tool"),
             Some(&ACTIVATE_SKILL_TOOL_NAME.to_string())

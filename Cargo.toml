@@ -6,8 +6,8 @@ required-features = []
 [package]
 name = "xzatoma"
 version = "0.3.0"
-edition = "2021"
-rust-version = "1.70"
+edition = "2024"
+rust-version = "1.96"
 authors = ["XZatoma Contributors"]
 description = "Autonomous AI agent CLI for task execution through conversation"
 license = "MIT"
@@ -17,57 +17,57 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 # CLI and configuration
-clap = { version = "4.4", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 
 # Async runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1.53", features = ["full"] }
 async-trait = "0.1"
 futures = "0.3"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream", "blocking"], default-features = false }
-axum = "0.7"
+reqwest = { version = "0.13", features = ["json", "stream", "blocking", "query", "form"], default-features = false }
+axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
 
 # Byte buffer utilities (used by HTTP transport SSE parsing)
-bytes = "1.5"
+bytes = "1.12"
 
 # Security and credentials
-keyring = "2.3"
+keyring = "4.1"
 chrono = { version = "0.4", features = ["serde"] }
 
 # File operations and utilities
-walkdir = "2.4"
+walkdir = "2.5"
 ignore = "0.4"
-similar = "2.3"
+similar = "3.1"
 # Fuzzy matching helpers used for path suggestion and abbreviation resolution
-strsim = "0.10"
+strsim = "0.11"
 
 # Interactive CLI
-rustyline = "13.0"
+rustyline = "18.0"
 
 # Terminal colors
-colored = "2.1"
+colored = "3.1"
 
 # Regex for validation
-regex = "1.10"
+regex = "1.13"
 
 # Semantic versioning for version constraint matching
 semver = "1.0"
 
 # Kafka client for watcher consumer, producer, and topic admin
-rdkafka = { version = "0.36", features = ["cmake-build", "ssl"] }
+rdkafka = { version = "0.39", features = ["cmake-build", "ssl"] }
 
 
 
@@ -77,24 +77,24 @@ base64 = "0.22"     # Base64 encoding for image data
 
 url = { version = "2.5.8", features = ["serde"] }
 prettytable-rs = "0.10.0"
-rusqlite = { version = "0.38.0", features = ["bundled"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 directories = "6.0.0"
-uuid = { version = "1.20.0", features = ["v4", "serde"] }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
 
 # Phase 4: Conversation Persistence
 sled = "0.34"           # Embedded key-value store for conversation history
-ulid = { version = "1.1", features = ["serde"] }  # Sortable unique IDs with serde support
+ulid = { version = "3.0", features = ["serde"] }  # Sortable unique IDs with serde support
 
 # Phase 5: Metrics and Performance
-metrics = "0.21"
-metrics-exporter-prometheus = { version = "0.13", optional = true }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", optional = true }
 glob-match = "0.2.1"
 glob = "0.3"
-tokio-util = { version = "0.7.16", features = ["codec", "compat", "rt"] }
+tokio-util = { version = "0.7.18", features = ["codec", "compat", "rt"] }
 tokio-stream = { version = "0.1", features = [] }
-sha2 = "0.10.9"
-rand = "0.9.2"
-agent-client-protocol = { version = "0.11.1", features = ["unstable_session_model", "unstable_session_usage"] }
+sha2 = "0.11.0"
+rand = "0.10.2"
+agent-client-protocol = { version = "1.2.0", default-features = false, features = ["unstable_end_turn_token_usage"] }
 
 # Unix-only: signal delivery to child processes from StdioTransport::drop
 [target.'cfg(unix)'.dependencies]
@@ -104,14 +104,14 @@ libc = "0.2"
 prometheus = ["metrics-exporter-prometheus"]
 
 [dev-dependencies]
-http = "0.2"
-mockall = "0.12"
-tempfile = "3.8"
+http = "1.4"
+mockall = "0.15"
+tempfile = "3.27"
 tokio-test = "0.4"
-wiremock = "0.5"
-assert_cmd = "2.0"
-predicates = "3.0"
-serial_test = "0.5"
+wiremock = "0.6"
+assert_cmd = "2.2"
+predicates = "3.1"
+serial_test = "3.5"
 
 [profile.release]
 opt-level = 3

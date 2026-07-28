@@ -24,12 +24,12 @@
 
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
+use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, validate_message_sequence,
     CompletionResponse, FinishReason, FunctionCall, ImagePromptSource, Message, ModelCapability,
     ModelInfo, Provider, ProviderCapabilities, ProviderMessageContentPart, ProviderTool,
-    TokenUsage, ToolCall,
+    TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
+    validate_message_sequence,
 };
 use async_trait::async_trait;
 use base64::Engine;
@@ -429,17 +429,17 @@ impl StreamAccumulator {
                         arguments_buf: String::new(),
                     });
 
-            if let Some(ref id) = tc_delta.id {
-                if entry.id.is_empty() {
-                    entry.id = id.clone();
-                }
+            if let Some(ref id) = tc_delta.id
+                && entry.id.is_empty()
+            {
+                entry.id = id.clone();
             }
 
             if let Some(ref func) = tc_delta.function {
-                if let Some(ref name) = func.name {
-                    if entry.name.is_empty() {
-                        entry.name = name.clone();
-                    }
+                if let Some(ref name) = func.name
+                    && entry.name.is_empty()
+                {
+                    entry.name = name.clone();
                 }
                 if let Some(ref args) = func.arguments {
                     entry.arguments_buf.push_str(args);
@@ -519,6 +519,7 @@ impl StreamAccumulator {
 ///     organization_id: None,
 ///     enable_streaming: false,
 ///     request_timeout_seconds: 600,
+///     stream_idle_timeout_seconds: 30,
 ///     reasoning_effort: None,
 /// };
 /// let provider = OpenAIProvider::new(config)?;
@@ -530,8 +531,47 @@ impl StreamAccumulator {
 /// ```
 pub struct OpenAIProvider {
     client: Client,
+    streaming_client: Client,
     config: Arc<RwLock<OpenAIConfig>>,
     model_cache: ModelCache,
+}
+
+/// Returns the context window size for a given OpenAI model ID.
+///
+/// Matches by prefix to handle versioned model identifiers. The fallback is
+/// 128_000 for unlisted or unknown model IDs, matching OpenAI's default
+/// context window for most current GPT-4 variants.
+///
+/// # Arguments
+///
+/// * `id` - The model ID string (e.g. `"gpt-4o"`, `"gpt-4.1-mini"`, `"o3"`)
+///
+/// # Returns
+///
+/// The context window token count for the model, or 128_000 as the default.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::openai::context_window_for_model_id;
+///
+/// assert_eq!(context_window_for_model_id("gpt-4.1"), 1_047_576);
+/// assert_eq!(context_window_for_model_id("o3-mini"), 200_000);
+/// assert_eq!(context_window_for_model_id("gpt-3.5-turbo"), 16_385);
+/// assert_eq!(context_window_for_model_id("unknown-model"), 128_000);
+/// ```
+pub fn context_window_for_model_id(id: &str) -> usize {
+    if id.starts_with("gpt-4.1") {
+        1_047_576
+    } else if id.starts_with("o1") || id.starts_with("o3") || id.starts_with("o4") {
+        200_000
+    } else if id.starts_with("gpt-4-32k") {
+        32_768
+    } else if id.starts_with("gpt-3.5-turbo-16k") || id.starts_with("gpt-3.5") {
+        16_385
+    } else {
+        128_000
+    }
 }
 
 impl OpenAIProvider {
@@ -579,6 +619,14 @@ impl OpenAIProvider {
             .build()
             .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
 
+        let streaming_client = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent("xzatoma/0.1.0")
+            .build()
+            .map_err(|e| {
+                XzatomaError::Provider(format!("Failed to create streaming HTTP client: {}", e))
+            })?;
+
         tracing::info!(
             "Initialized OpenAI provider: base_url={}, model={}",
             config.base_url,
@@ -587,6 +635,7 @@ impl OpenAIProvider {
 
         Ok(Self {
             client,
+            streaming_client,
             config: Arc::new(RwLock::new(config)),
             model_cache: new_model_cache(),
         })
@@ -727,20 +776,20 @@ impl OpenAIProvider {
     /// [`Message::assistant`] with the content, defaulting to an empty string
     /// when `content` is `None`.
     fn convert_response_message(&self, msg: OpenAIMessage) -> Message {
-        if let Some(tool_calls) = msg.tool_calls {
-            if !tool_calls.is_empty() {
-                let converted: Vec<ToolCall> = tool_calls
-                    .into_iter()
-                    .map(|tc| ToolCall {
-                        id: tc.id,
-                        function: FunctionCall {
-                            name: tc.function.name,
-                            arguments: tc.function.arguments,
-                        },
-                    })
-                    .collect();
-                return Message::assistant_with_tools(converted);
-            }
+        if let Some(tool_calls) = msg.tool_calls
+            && !tool_calls.is_empty()
+        {
+            let converted: Vec<ToolCall> = tool_calls
+                .into_iter()
+                .map(|tc| ToolCall {
+                    id: tc.id,
+                    function: FunctionCall {
+                        name: tc.function.name,
+                        arguments: tc.function.arguments,
+                    },
+                })
+                .collect();
+            return Message::assistant_with_tools(converted);
         }
         Message::assistant(match msg.content {
             Some(OpenAIMessageContent::Text(text)) => text,
@@ -769,7 +818,7 @@ impl OpenAIProvider {
     /// from the configured strings (for example, if the API key contains
     /// non-ASCII characters that are invalid in HTTP header values).
     fn build_request_headers(&self) -> Result<reqwest::header::HeaderMap> {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+        use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -791,18 +840,15 @@ impl OpenAIProvider {
             );
         }
 
-        if let Some(org_id) = organization_id {
-            if !org_id.is_empty() {
-                headers.insert(
-                    HeaderName::from_static("openai-organization"),
-                    HeaderValue::from_str(&org_id).map_err(|e| {
-                        XzatomaError::Provider(format!(
-                            "Invalid organization ID header value: {}",
-                            e
-                        ))
-                    })?,
-                );
-            }
+        if let Some(org_id) = organization_id
+            && !org_id.is_empty()
+        {
+            headers.insert(
+                HeaderName::from_static("openai-organization"),
+                HeaderValue::from_str(&org_id).map_err(|e| {
+                    XzatomaError::Provider(format!("Invalid organization ID header value: {}", e))
+                })?,
+            );
         }
 
         Ok(headers)
@@ -822,7 +868,7 @@ impl OpenAIProvider {
     /// Returns `XzatomaError::Provider` if the config lock cannot be acquired
     /// or if a constructed header value is malformed.
     fn build_get_headers(&self) -> Result<reqwest::header::HeaderMap> {
-        use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+        use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 
         let mut headers = HeaderMap::new();
 
@@ -843,18 +889,15 @@ impl OpenAIProvider {
             );
         }
 
-        if let Some(org_id) = organization_id {
-            if !org_id.is_empty() {
-                headers.insert(
-                    HeaderName::from_static("openai-organization"),
-                    HeaderValue::from_str(&org_id).map_err(|e| {
-                        XzatomaError::Provider(format!(
-                            "Invalid organization ID header value: {}",
-                            e
-                        ))
-                    })?,
-                );
-            }
+        if let Some(org_id) = organization_id
+            && !org_id.is_empty()
+        {
+            headers.insert(
+                HeaderName::from_static("openai-organization"),
+                HeaderValue::from_str(&org_id).map_err(|e| {
+                    XzatomaError::Provider(format!("Invalid organization ID header value: {}", e))
+                })?,
+            );
         }
 
         Ok(headers)
@@ -961,6 +1004,33 @@ impl OpenAIProvider {
         &self,
         request: &OpenAIRequest,
     ) -> Result<CompletionResponse> {
+        self.post_completions_streaming_with_callbacks(request, None, None)
+            .await
+    }
+
+    /// Send a streaming POST to `/chat/completions` with per-chunk callbacks.
+    ///
+    /// This is the same as `post_completions_streaming` but additionally calls
+    /// `on_reasoning_chunk` for each `delta.reasoning` fragment and
+    /// `on_content_chunk` for each `delta.content` fragment as the SSE stream
+    /// is consumed.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The OpenAI request (must have `stream: true`)
+    /// * `on_reasoning_chunk` - Optional callback for incremental reasoning tokens
+    /// * `on_content_chunk` - Optional callback for incremental content tokens
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the HTTP request fails or a stream
+    /// read error occurs.
+    async fn post_completions_streaming_with_callbacks(
+        &self,
+        request: &OpenAIRequest,
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
         use futures::StreamExt;
 
         let mut headers = self.build_request_headers()?;
@@ -971,12 +1041,12 @@ impl OpenAIProvider {
         let url = format!("{}/chat/completions", self.base_url());
 
         tracing::debug!(
-            "Sending OpenAI request (streaming): {} messages",
+            "Sending OpenAI request (streaming with callbacks): {} messages",
             request.messages.len()
         );
 
         let response = self
-            .client
+            .streaming_client
             .post(&url)
             .headers(headers)
             .json(request)
@@ -994,11 +1064,30 @@ impl OpenAIProvider {
             return Err(self.http_error("chat/completions:stream", status, body));
         }
 
+        let idle_duration = {
+            let secs = self
+                .config
+                .read()
+                .map(|c| c.stream_idle_timeout_seconds)
+                .unwrap_or(30);
+            Duration::from_secs(secs)
+        };
+
         let mut stream = response.bytes_stream();
         let mut acc = StreamAccumulator::new();
         let mut line_buf: Vec<u8> = Vec::new();
 
-        'stream: while let Some(chunk_result) = stream.next().await {
+        'stream: loop {
+            let chunk_result = match tokio::time::timeout(idle_duration, stream.next()).await {
+                Ok(Some(result)) => result,
+                Ok(None) => break 'stream,
+                Err(_elapsed) => {
+                    return Err(XzatomaError::Provider(format!(
+                        "OpenAI SSE stream idle timeout: no data received for {}s",
+                        idle_duration.as_secs()
+                    )));
+                }
+            };
             let chunk = chunk_result
                 .map_err(|e| XzatomaError::Provider(format!("Error reading SSE stream: {}", e)))?;
 
@@ -1025,6 +1114,21 @@ impl OpenAIProvider {
 
                         match serde_json::from_str::<OpenAIStreamChunk>(payload) {
                             Ok(sse_chunk) => {
+                                // Fire per-chunk callbacks before accumulating.
+                                if let Some(choice) = sse_chunk.choices.first() {
+                                    if let Some(ref r) = choice.delta.reasoning
+                                        && !r.is_empty()
+                                        && let Some(cb) = on_reasoning_chunk
+                                    {
+                                        cb(r.clone());
+                                    }
+                                    if let Some(ref c) = choice.delta.content
+                                        && !c.is_empty()
+                                        && let Some(cb) = on_content_chunk
+                                    {
+                                        cb(c.clone());
+                                    }
+                                }
                                 acc.apply_chunk(&sse_chunk);
                             }
                             Err(e) => {
@@ -1148,6 +1252,12 @@ impl Provider for OpenAIProvider {
         }
     }
 
+    fn set_model_inplace(&self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
     /// Fetch the list of available models. Delegates to the overridden
     /// `list_models`, which uses the 300-second in-process cache.
     ///
@@ -1212,6 +1322,76 @@ impl Provider for OpenAIProvider {
         }
     }
 
+    /// Complete a conversation using streaming SSE with per-chunk callbacks.
+    ///
+    /// When `enable_streaming` is true and no tool schemas are provided, the
+    /// SSE streaming path is used and callbacks are invoked per chunk.
+    /// Falls back to `complete` when streaming is disabled or tools are present,
+    /// in which case neither callback is ever called.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Conversation history
+    /// * `tools` - Available tools (as JSON schemas)
+    /// * `on_reasoning_chunk` - Called for each `delta.reasoning` token
+    /// * `on_content_chunk` - Called for each `delta.content` token
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the HTTP request fails or the
+    /// response cannot be parsed.
+    async fn complete_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        let (model, enable_streaming, reasoning_effort) = {
+            let config = self.config.read().map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
+            })?;
+            (
+                config.model.clone(),
+                config.enable_streaming,
+                config.reasoning_effort.clone(),
+            )
+        };
+
+        if messages_contain_image_content(messages)
+            && !crate::providers::openai_model_supports_vision(&model)
+        {
+            return Err(XzatomaError::Provider(format!(
+                "OpenAI-compatible model '{}' does not support image input",
+                model
+            )));
+        }
+
+        let openai_tools = convert_tools_from_json(tools);
+        let use_streaming = enable_streaming
+            && openai_tools.is_empty()
+            && (on_reasoning_chunk.is_some() || on_content_chunk.is_some());
+
+        if !use_streaming {
+            return self.complete(messages, tools).await;
+        }
+
+        let request = OpenAIRequest {
+            model,
+            messages: self.convert_messages(messages)?,
+            tools: openai_tools,
+            stream: true,
+            reasoning_effort,
+        };
+
+        self.post_completions_streaming_with_callbacks(
+            &request,
+            on_reasoning_chunk,
+            on_content_chunk,
+        )
+        .await
+    }
+
     /// List available models from the OpenAI `/v1/models` endpoint.
     ///
     /// Results are cached for 300 seconds (5 minutes). The list is sorted by
@@ -1232,13 +1412,12 @@ impl Provider for OpenAIProvider {
     /// response body cannot be deserialized, or the server returns a non-401
     /// error status.
     async fn list_models(&self) -> Result<Vec<ModelInfo>> {
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    tracing::debug!("Using cached OpenAI model list");
-                    return Ok(models.clone());
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+        {
+            tracing::debug!("Using cached OpenAI model list");
+            return Ok(models.clone());
         }
 
         let headers = self.build_get_headers()?;
@@ -1277,7 +1456,11 @@ impl Provider for OpenAIProvider {
                          falling back to the configured model '{}'",
                         model
                     );
-                    let mut info = ModelInfo::new(model.clone(), model.clone(), 0);
+                    let mut info = ModelInfo::new(
+                        model.clone(),
+                        model.clone(),
+                        context_window_for_model_id(&model),
+                    );
                     for cap in build_capabilities_from_id(&info.name) {
                         info.add_capability(cap);
                     }
@@ -1302,7 +1485,11 @@ impl Provider for OpenAIProvider {
             .into_iter()
             .filter(|entry| !is_non_chat_model(&entry.id))
             .map(|entry| {
-                let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                let mut info = ModelInfo::new(
+                    entry.id.clone(),
+                    entry.id.clone(),
+                    context_window_for_model_id(&entry.id),
+                );
                 for cap in build_capabilities_from_id(&entry.id) {
                     info.add_capability(cap);
                 }
@@ -1367,7 +1554,11 @@ impl Provider for OpenAIProvider {
 
         match response.json::<OpenAIModelEntry>().await {
             Ok(entry) => {
-                let mut info = ModelInfo::new(entry.id.clone(), entry.id.clone(), 0);
+                let mut info = ModelInfo::new(
+                    entry.id.clone(),
+                    entry.id.clone(),
+                    context_window_for_model_id(&entry.id),
+                );
                 for cap in build_capabilities_from_id(&entry.id) {
                     info.add_capability(cap);
                 }
@@ -1415,6 +1606,17 @@ impl Provider for OpenAIProvider {
         }
     }
 
+    /// Returns `true` when the OpenAI provider is configured for streaming completions.
+    ///
+    /// The value is read from `OpenAIConfig.enable_streaming`. This signals to the
+    /// agent loop that streaming callbacks are available via `complete_with_callbacks`.
+    fn supports_streaming(&self) -> bool {
+        self.config
+            .read()
+            .map(|c| c.enable_streaming)
+            .unwrap_or(false)
+    }
+
     fn set_thinking_effort(&self, effort: Option<&str>) -> crate::error::Result<()> {
         let mut config = self.config.write().map_err(|_| {
             crate::error::XzatomaError::Provider(
@@ -1453,6 +1655,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         }
     }
@@ -2282,6 +2485,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2331,6 +2535,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2373,6 +2578,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2562,6 +2768,7 @@ mod tests {
             organization_id: None,
             enable_streaming: true, // streaming enabled but tools force non-streaming
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2617,6 +2824,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2654,6 +2862,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2672,6 +2881,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2703,6 +2913,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2743,6 +2954,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2771,6 +2983,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2817,6 +3030,7 @@ mod tests {
             organization_id: None,
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2851,6 +3065,7 @@ mod tests {
             organization_id: Some("myorg".to_string()),
             enable_streaming: false,
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
         };
         let provider = OpenAIProvider::new(config).unwrap();
@@ -2947,6 +3162,303 @@ mod tests {
         assert!(
             json.contains("\"reasoning_effort\":\"high\""),
             "reasoning_effort must appear in serialized JSON when set; got: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_with_callbacks_fires_reasoning_chunk_callbacks() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        // Build a minimal SSE response with two reasoning delta chunks
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"First \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning\":\"chunk\"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"},\"finish_reason\":\"stop\",\"index\":0}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: mock_server.uri(),
+            model: "test-model".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
+            reasoning_effort: None,
+        };
+        let provider = OpenAIProvider::new(config).expect("provider should be created");
+
+        let reasoning_count = Arc::new(AtomicUsize::new(0));
+        let rc = Arc::clone(&reasoning_count);
+        let on_reasoning = move |_text: String| {
+            rc.fetch_add(1, Ordering::SeqCst);
+        };
+
+        let result = provider
+            .complete_with_callbacks(&[Message::user("hi")], &[], Some(&on_reasoning), None)
+            .await;
+
+        assert!(result.is_ok(), "streaming with callbacks should succeed");
+        assert_eq!(
+            reasoning_count.load(Ordering::SeqCst),
+            2,
+            "on_reasoning_chunk must be called once per non-empty reasoning delta"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_with_callbacks_fires_content_chunk_callbacks() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"World\"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"!\"},\"finish_reason\":\"stop\",\"index\":0}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .append_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: mock_server.uri(),
+            model: "test-model".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 30,
+            reasoning_effort: None,
+        };
+        let provider = OpenAIProvider::new(config).expect("provider should be created");
+
+        let content_count = Arc::new(AtomicUsize::new(0));
+        let cc = Arc::clone(&content_count);
+        let on_content = move |_text: String| {
+            cc.fetch_add(1, Ordering::SeqCst);
+        };
+
+        let result = provider
+            .complete_with_callbacks(&[Message::user("hi")], &[], None, Some(&on_content))
+            .await;
+
+        assert!(result.is_ok(), "streaming with callbacks should succeed");
+        assert_eq!(
+            content_count.load(Ordering::SeqCst),
+            3,
+            "on_content_chunk must be called once per non-empty content delta"
+        );
+        // The accumulated response should also contain the full content.
+        let response = result.unwrap();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Hello World!"),
+            "accumulated response content must match all content deltas"
+        );
+    }
+
+    #[test]
+    fn test_streaming_client_builds_without_error() {
+        // Verify OpenAIProvider::new succeeds (streaming_client is built internally).
+        let config = OpenAIConfig::default();
+        let result = OpenAIProvider::new(config);
+        assert!(
+            result.is_ok(),
+            "OpenAIProvider::new must succeed: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_completions_streaming_returns_idle_timeout_error_when_stream_stalls() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        // Start a TCP server that sends HTTP/1.1 headers immediately but never
+        // sends any body bytes, simulating a stream that stalls after the
+        // connection is established.
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind must succeed");
+        let addr = listener.local_addr().expect("must have local address");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                // Read and discard the HTTP request headers.
+                let mut buf = vec![0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                // Send a valid 200 OK with SSE headers immediately.
+                let headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n";
+                let _ = socket.write_all(headers).await;
+                // Hold the connection open but never write body bytes.
+                // This simulates a stalled SSE stream.
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: format!("http://{}", addr),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 600,
+            // Very short idle timeout so the test runs in ~1 s.
+            stream_idle_timeout_seconds: 1,
+            reasoning_effort: None,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let messages = vec![Message::user("Hello")];
+
+        let result = provider.complete(&messages, &[]).await;
+
+        assert!(
+            result.is_err(),
+            "A stalled SSE stream must return an error, got: {:?}",
+            result.ok()
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("idle timeout"),
+            "Error message must contain 'idle timeout': {}",
+            err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_completions_streaming_succeeds_with_slow_but_active_stream() {
+        let server = MockServer::start().await;
+
+        // A valid multi-chunk SSE response. All chunks arrive before the idle
+        // timeout fires (stream_idle_timeout_seconds: 30), so the stream must
+        // succeed and return the fully accumulated content.
+        let sse_body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Chunk \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"one \"},\"finish_reason\":null,\"index\":0}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"two\"},\"finish_reason\":\"stop\",\"index\":0}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&server)
+            .await;
+
+        let config = OpenAIConfig {
+            api_key: "test-key".to_string(),
+            base_url: server.uri(),
+            model: "gpt-4o-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 600,
+            // Generous idle timeout: all chunks arrive well within this window.
+            stream_idle_timeout_seconds: 30,
+            reasoning_effort: None,
+        };
+        let provider = OpenAIProvider::new(config).unwrap();
+        let messages = vec![Message::user("Hello")];
+
+        let result = provider.complete(&messages, &[]).await;
+
+        assert!(
+            result.is_ok(),
+            "A streaming response with active chunks must succeed: {:?}",
+            result.err()
+        );
+        let response = result.unwrap();
+        assert_eq!(
+            response.message.content.as_deref(),
+            Some("Chunk one two"),
+            "All chunks must be accumulated in order"
+        );
+        assert_eq!(
+            response.finish_reason,
+            FinishReason::Stop,
+            "Finish reason must be Stop"
+        );
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt4_1_returns_million() {
+        assert_eq!(context_window_for_model_id("gpt-4.1"), 1_047_576);
+        assert_eq!(context_window_for_model_id("gpt-4.1-mini"), 1_047_576);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_o_series_returns_200k() {
+        assert_eq!(context_window_for_model_id("o1-mini"), 200_000);
+        assert_eq!(context_window_for_model_id("o3"), 200_000);
+        assert_eq!(context_window_for_model_id("o4-turbo"), 200_000);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt35_returns_16k() {
+        assert_eq!(context_window_for_model_id("gpt-3.5-turbo"), 16_385);
+        assert_eq!(context_window_for_model_id("gpt-3.5-turbo-16k"), 16_385);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_gpt4_returns_128k() {
+        assert_eq!(context_window_for_model_id("gpt-4"), 128_000);
+        assert_eq!(context_window_for_model_id("gpt-4o"), 128_000);
+        assert_eq!(context_window_for_model_id("gpt-4-turbo"), 128_000);
+    }
+
+    #[test]
+    fn test_context_window_for_model_id_unknown_returns_128k() {
+        assert_eq!(context_window_for_model_id("unknown-model"), 128_000);
+        assert_eq!(context_window_for_model_id(""), 128_000);
+        assert_eq!(context_window_for_model_id("claude-3-5-sonnet"), 128_000);
+    }
+
+    #[test]
+    fn test_stream_idle_timeout_error_message_contains_idle_timeout() {
+        // Verify the error message format produced by the idle timeout branch.
+        let duration = std::time::Duration::from_secs(30);
+        let msg = format!(
+            "OpenAI SSE stream idle timeout: no data received for {}s",
+            duration.as_secs()
+        );
+        assert!(
+            msg.contains("idle timeout"),
+            "Error message must contain 'idle timeout'"
+        );
+        assert!(
+            msg.contains("30"),
+            "Error message must contain the timeout value"
         );
     }
 }

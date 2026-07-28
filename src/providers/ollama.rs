@@ -6,11 +6,11 @@
 
 use crate::config::OllamaConfig;
 use crate::error::{Result, XzatomaError};
-use crate::providers::cache::{is_cache_valid, new_model_cache, ModelCache};
+use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    convert_tools_from_json, messages_contain_image_content, CompletionResponse, FunctionCall,
-    Message, ModelCapability, ModelInfo, Provider, ProviderCapabilities, ProviderFunctionCall,
-    ProviderMessage, ProviderRequest, ProviderToolCall, TokenUsage, ToolCall,
+    CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
+    ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderToolCall,
+    TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
 };
 
 use async_trait::async_trait;
@@ -391,6 +391,169 @@ impl OllamaProvider {
         Ok(models)
     }
 
+    /// Complete a conversation using Ollama streaming with per-chunk callbacks.
+    ///
+    /// Sends the request with `stream: true`, parses newline-delimited JSON
+    /// chunks, and calls the appropriate callback for each partial content
+    /// token. Think-tag models (DeepSeek-R1, Qwen3) that embed `<think>` and
+    /// `</think>` markers in their output are handled by a simple state machine:
+    /// content between the tags is routed to `on_reasoning_chunk` and content
+    /// outside the tags is routed to `on_content_chunk`.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Conversation history
+    /// * `tools` - Available tools (as JSON schemas)
+    /// * `on_reasoning_chunk` - Optional callback for incremental reasoning tokens
+    /// * `on_content_chunk` - Optional callback for incremental content tokens
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError` if the HTTP request fails or a stream parse error
+    /// occurs.
+    async fn complete_streaming_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        use futures::StreamExt;
+
+        let (url, model) = {
+            let config = self.config.read().map_err(|_| {
+                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
+            })?;
+            (format!("{}/api/chat", config.host), config.model.clone())
+        };
+
+        if messages_contain_image_content(messages)
+            && !crate::providers::ollama_model_supports_vision(&model)
+        {
+            return Err(XzatomaError::Provider(format!(
+                "Ollama model '{}' does not support image input",
+                model
+            )));
+        }
+
+        let ollama_request = OllamaRequest {
+            model,
+            messages: self.convert_messages(messages),
+            tools: self.convert_tools(tools),
+            stream: true,
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&ollama_request)
+            .send()
+            .await
+            .map_err(|source| XzatomaError::ProviderHttpRequest {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat:stream".to_string(),
+                source: source.into(),
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_text =
+                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            return Err(XzatomaError::ProviderHttpStatus {
+                provider: "ollama".to_string(),
+                endpoint: "api/chat:stream".to_string(),
+                status,
+                response: error_text,
+            });
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut line_buf: Vec<u8> = Vec::new();
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let mut in_think_block = false;
+        let mut prompt_eval_count = 0usize;
+        let mut eval_count = 0usize;
+
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.map_err(|e| {
+                XzatomaError::Provider(format!("Error reading Ollama stream: {}", e))
+            })?;
+
+            for byte in chunk {
+                if byte == b'\n' {
+                    let line = String::from_utf8_lossy(&line_buf).trim().to_string();
+                    line_buf.clear();
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    match serde_json::from_str::<OllamaResponse>(&line) {
+                        Ok(chunk_resp) => {
+                            if chunk_resp.done {
+                                prompt_eval_count = chunk_resp.prompt_eval_count;
+                                eval_count = chunk_resp.eval_count;
+                                break;
+                            }
+
+                            // Each streaming chunk contains one incremental delta.
+                            // ProviderMessage.content is a String with serde default,
+                            // so empty content signals a no-content chunk.
+                            let delta = chunk_resp.message.content.clone();
+
+                            if delta.is_empty() {
+                                continue;
+                            }
+
+                            // Simple think-tag state machine. The tags are typically
+                            // emitted as whole tokens by the model, so split-tag edge
+                            // cases are uncommon but handled with prefix detection.
+                            process_ollama_think_chunk(
+                                &delta,
+                                &mut in_think_block,
+                                &mut content_acc,
+                                &mut reasoning_acc,
+                                on_reasoning_chunk,
+                                on_content_chunk,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "Failed to parse Ollama stream chunk: {} (line: {:?})",
+                                e,
+                                line
+                            );
+                        }
+                    }
+                } else {
+                    line_buf.push(byte);
+                }
+            }
+        }
+
+        // Build the final response from accumulated content and reasoning.
+        let message = if content_acc.is_empty() && reasoning_acc.is_empty() {
+            Message::assistant("")
+        } else {
+            Message::assistant(&content_acc)
+        };
+
+        let response = if prompt_eval_count > 0 || eval_count > 0 {
+            CompletionResponse::with_usage(message, TokenUsage::new(prompt_eval_count, eval_count))
+        } else {
+            CompletionResponse::new(message)
+        };
+
+        let response = if !reasoning_acc.is_empty() {
+            response.set_reasoning(reasoning_acc)
+        } else {
+            response
+        };
+
+        Ok(response)
+    }
+
     /// Get model details from Ollama's /api/show endpoint
     async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
         let host = self
@@ -496,6 +659,92 @@ impl OllamaProvider {
     }
 }
 
+/// Apply a single streaming delta from Ollama to the state machine for
+/// think-tag detection.
+///
+/// Splits the `delta` around `<think>` and `</think>` markers (or their
+/// `<|thinking|>` / `<|/thinking|>` variants), routes each segment to the
+/// appropriate callback, and accumulates into `content_acc` and
+/// `reasoning_acc` for the final [`CompletionResponse`].
+///
+/// # Arguments
+///
+/// * `delta` - The incremental content from this streaming chunk
+/// * `in_think_block` - Mutable flag tracking whether we are inside a think block
+/// * `content_acc` - Accumulator for clean response content
+/// * `reasoning_acc` - Accumulator for reasoning content
+/// * `on_reasoning_chunk` - Optional callback for reasoning tokens
+/// * `on_content_chunk` - Optional callback for content tokens
+fn process_ollama_think_chunk(
+    delta: &str,
+    in_think_block: &mut bool,
+    content_acc: &mut String,
+    reasoning_acc: &mut String,
+    on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+) {
+    // Opening tags
+    const THINK_OPEN: &[&str] = &["<think>", "<|thinking|>"];
+    // Closing tags
+    const THINK_CLOSE: &[&str] = &["</think>", "<|/thinking|>"];
+
+    let mut remaining = delta;
+
+    while !remaining.is_empty() {
+        if *in_think_block {
+            // Look for a closing tag
+            let close_pos = THINK_CLOSE
+                .iter()
+                .filter_map(|tag| remaining.find(tag).map(|p| (p, *tag)))
+                .min_by_key(|(pos, _)| *pos);
+
+            if let Some((pos, tag)) = close_pos {
+                let before = &remaining[..pos];
+                if !before.is_empty() {
+                    reasoning_acc.push_str(before);
+                    if let Some(cb) = on_reasoning_chunk {
+                        cb(before.to_string());
+                    }
+                }
+                *in_think_block = false;
+                remaining = &remaining[pos + tag.len()..];
+            } else {
+                // Entire remaining delta is reasoning
+                reasoning_acc.push_str(remaining);
+                if let Some(cb) = on_reasoning_chunk {
+                    cb(remaining.to_string());
+                }
+                remaining = "";
+            }
+        } else {
+            // Look for an opening tag
+            let open_pos = THINK_OPEN
+                .iter()
+                .filter_map(|tag| remaining.find(tag).map(|p| (p, *tag)))
+                .min_by_key(|(pos, _)| *pos);
+
+            if let Some((pos, tag)) = open_pos {
+                let before = &remaining[..pos];
+                if !before.is_empty() {
+                    content_acc.push_str(before);
+                    if let Some(cb) = on_content_chunk {
+                        cb(before.to_string());
+                    }
+                }
+                *in_think_block = true;
+                remaining = &remaining[pos + tag.len()..];
+            } else {
+                // Entire remaining delta is content
+                content_acc.push_str(remaining);
+                if let Some(cb) = on_content_chunk {
+                    cb(remaining.to_string());
+                }
+                remaining = "";
+            }
+        }
+    }
+}
+
 /// Get context window size for a model based on its name
 fn get_context_window_for_model(model_name: &str) -> usize {
     // Common context windows for popular models
@@ -571,11 +820,11 @@ fn build_model_info_from_show_response(
             } else {
                 // Fallback: find any field that ends with 'context_length'
                 for (k, v) in obj.iter() {
-                    if k.ends_with("context_length") {
-                        if let Some(val) = v.as_u64() {
-                            context_window = val as usize;
-                            break;
-                        }
+                    if k.ends_with("context_length")
+                        && let Some(val) = v.as_u64()
+                    {
+                        context_window = val as usize;
+                        break;
                     }
                 }
             }
@@ -654,6 +903,102 @@ fn format_size(bytes: u64) -> String {
     }
 
     format!("{:.1}{}", size, UNITS[unit_idx])
+}
+
+/// Ensures `config.model` names a model that is actually installed on the
+/// configured Ollama server, substituting a locally available model when it
+/// is not.
+///
+/// `OllamaConfig::model` always has a value (it defaults to
+/// `"llama3.2:latest"` when unset), so there is no way to distinguish "the
+/// user asked for this model" from "nobody configured a model." Instead of
+/// guessing intent, this queries the server's installed models and only
+/// overrides `config.model` when the configured name is not among them,
+/// preferring the most recently pulled/modified model as the replacement.
+///
+/// # Arguments
+///
+/// * `config` - Ollama configuration to validate and, if necessary, update
+///   in place.
+///
+/// # Errors
+///
+/// Returns an error if `config.host` fails URL validation. Network failures
+/// or an empty model list while querying Ollama are logged and treated as
+/// non-fatal: `config.model` is left unchanged so the caller's subsequent
+/// request surfaces a clear "model not found" error from Ollama itself.
+///
+/// # Examples
+///
+/// ```no_run
+/// use xzatoma::config::OllamaConfig;
+/// use xzatoma::providers::ollama::resolve_available_model;
+///
+/// # async fn example() -> xzatoma::error::Result<()> {
+/// let mut config = OllamaConfig {
+///     host: "http://localhost:11434".to_string(),
+///     model: "llama3.2:latest".to_string(),
+///     request_timeout_seconds: 600,
+/// };
+/// resolve_available_model(&mut config).await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn resolve_available_model(config: &mut OllamaConfig) -> Result<()> {
+    let provider = OllamaProvider::new(config.clone())?;
+
+    let available = match provider.fetch_models().await {
+        Ok(models) if !models.is_empty() => models,
+        Ok(_) => {
+            tracing::debug!(
+                host = %config.host,
+                "Ollama reported no locally available models; keeping configured model"
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            tracing::debug!(
+                host = %config.host,
+                error = %error,
+                "Failed to query Ollama for available models; keeping configured model"
+            );
+            return Ok(());
+        }
+    };
+
+    if available.iter().any(|model| model.name == config.model) {
+        return Ok(());
+    }
+
+    let selected =
+        latest_model_by_modified_at(&available).unwrap_or_else(|| available[0].name.clone());
+
+    tracing::warn!(
+        configured_model = %config.model,
+        selected_model = %selected,
+        "Configured Ollama model is not installed locally; selected the most recently modified model instead"
+    );
+    config.model = selected;
+
+    Ok(())
+}
+
+/// Picks the name of the most recently modified model from a list of
+/// Ollama models, using the `"modified_at"` provider-specific metadata
+/// populated by [`OllamaProvider`]'s `/api/tags` parsing.
+///
+/// Returns `None` when no model has a parseable `modified_at` timestamp, in
+/// which case the caller should fall back to another selection strategy.
+fn latest_model_by_modified_at(models: &[ModelInfo]) -> Option<String> {
+    models
+        .iter()
+        .filter_map(|model| {
+            let modified_at = model.provider_specific.get("modified_at")?;
+            let parsed = chrono::DateTime::parse_from_rfc3339(modified_at).ok()?;
+            Some((parsed, model.name.clone()))
+        })
+        .max_by_key(|(timestamp, _)| *timestamp)
+        .map(|(_, name)| name)
 }
 
 #[async_trait]
@@ -781,13 +1126,12 @@ impl Provider for OllamaProvider {
         tracing::debug!("Listing Ollama models");
 
         // Check cache first
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    tracing::debug!("Using cached model list");
-                    return Ok(models.clone());
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+        {
+            tracing::debug!("Using cached model list");
+            return Ok(models.clone());
         }
 
         // Cache miss or expired, fetch from API
@@ -805,14 +1149,12 @@ impl Provider for OllamaProvider {
         tracing::debug!("Getting info for model: {}", model_name);
 
         // Try to get from cache first
-        if let Ok(cache) = self.model_cache.read() {
-            if let Some((models, cached_at)) = cache.as_ref() {
-                if is_cache_valid(*cached_at) {
-                    if let Some(model) = models.iter().find(|m| m.name == model_name) {
-                        return Ok(model.clone());
-                    }
-                }
-            }
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, cached_at)) = cache.as_ref()
+            && is_cache_valid(*cached_at)
+            && let Some(model) = models.iter().find(|m| m.name == model_name)
+        {
+            return Ok(model.clone());
         }
 
         // Not in cache, fetch from API
@@ -843,6 +1185,15 @@ impl Provider for OllamaProvider {
         }
     }
 
+    /// Returns `true` because Ollama supports streaming completions.
+    ///
+    /// When `complete_with_callbacks` is called with at least one active
+    /// callback, the provider uses the Ollama streaming API (`stream: true`)
+    /// to deliver per-chunk events.
+    fn supports_streaming(&self) -> bool {
+        true
+    }
+
     /// Set the active model in memory without any API validation. Callers
     /// that need model-existence validation should call `list_models` before
     /// calling this method.
@@ -850,6 +1201,43 @@ impl Provider for OllamaProvider {
         if let Ok(mut config) = self.config.write() {
             config.model = model.to_string();
         }
+    }
+
+    fn set_model_inplace(&self, model: &str) {
+        if let Ok(mut config) = self.config.write() {
+            config.model = model.to_string();
+        }
+    }
+
+    /// Complete a conversation with per-chunk streaming callbacks.
+    ///
+    /// Enables Ollama streaming and calls `on_content_chunk` for each content
+    /// token. For models that emit `<think>` or `<|thinking|>` tags, those
+    /// tokens are routed to `on_reasoning_chunk` instead.
+    ///
+    /// Falls back to `complete` when neither callback is provided.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Provider` if the HTTP request fails or a stream
+    /// parse error occurs.
+    async fn complete_with_callbacks(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+        on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
+    ) -> Result<CompletionResponse> {
+        if on_reasoning_chunk.is_none() && on_content_chunk.is_none() {
+            return self.complete(messages, tools).await;
+        }
+        self.complete_streaming_with_callbacks(
+            messages,
+            tools,
+            on_reasoning_chunk,
+            on_content_chunk,
+        )
+        .await
     }
 }
 
@@ -1366,5 +1754,255 @@ mod tests {
         assert_eq!(converted[1].role, "assistant");
         assert_eq!(converted[2].role, "tool");
         assert_eq!(converted[2].content, "Result");
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_routes_content_outside_think_tags() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let content_calls = std::sync::Mutex::new(Vec::<String>::new());
+        let on_content = |text: String| content_calls.lock().unwrap().push(text);
+
+        process_ollama_think_chunk(
+            "Hello world",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            Some(&on_content),
+        );
+
+        assert_eq!(content_acc, "Hello world");
+        assert_eq!(reasoning_acc, "");
+        assert_eq!(*content_calls.lock().unwrap(), vec!["Hello world"]);
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_routes_reasoning_inside_think_tags() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+        let reasoning_calls = std::sync::Mutex::new(Vec::<String>::new());
+        let on_reasoning = |text: String| reasoning_calls.lock().unwrap().push(text);
+
+        // Single chunk containing the full think block and trailing content
+        process_ollama_think_chunk(
+            "<think>Let me think</think>Answer",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            Some(&on_reasoning),
+            None,
+        );
+
+        assert_eq!(reasoning_acc, "Let me think");
+        assert_eq!(content_acc, "Answer");
+        assert!(
+            reasoning_calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|s| s.contains("Let me think"))
+        );
+        assert!(
+            !in_think_block,
+            "think block should be closed after </think>"
+        );
+    }
+
+    #[test]
+    fn test_process_ollama_think_chunk_spans_multiple_calls() {
+        let mut in_think_block = false;
+        let mut content_acc = String::new();
+        let mut reasoning_acc = String::new();
+
+        // Opening tag chunk
+        process_ollama_think_chunk(
+            "<think>",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert!(in_think_block, "should be in think block after opening tag");
+
+        // Reasoning content chunk (inside think block)
+        process_ollama_think_chunk(
+            "reasoning content",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert_eq!(reasoning_acc, "reasoning content");
+
+        // Closing tag chunk
+        process_ollama_think_chunk(
+            "</think>",
+            &mut in_think_block,
+            &mut content_acc,
+            &mut reasoning_acc,
+            None,
+            None,
+        );
+        assert!(!in_think_block, "should exit think block after closing tag");
+    }
+
+    // -----------------------------------------------------------------------
+    // latest_model_by_modified_at tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_latest_model_by_modified_at_picks_most_recent() {
+        let mut a = ModelInfo::new("model-a", "Model A", 4096);
+        a.set_provider_metadata("modified_at", "2024-01-01T00:00:00Z");
+        let mut b = ModelInfo::new("model-b", "Model B", 4096);
+        b.set_provider_metadata("modified_at", "2024-06-01T00:00:00Z");
+
+        let result = latest_model_by_modified_at(&[a, b]);
+        assert_eq!(result, Some("model-b".to_string()));
+    }
+
+    #[test]
+    fn test_latest_model_by_modified_at_returns_none_without_timestamps() {
+        let model = ModelInfo::new("model-a", "Model A", 4096);
+        let result = latest_model_by_modified_at(&[model]);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_latest_model_by_modified_at_ignores_unparseable_timestamp() {
+        let mut a = ModelInfo::new("model-a", "Model A", 4096);
+        a.set_provider_metadata("modified_at", "not-a-timestamp");
+        let mut b = ModelInfo::new("model-b", "Model B", 4096);
+        b.set_provider_metadata("modified_at", "2024-06-01T00:00:00Z");
+
+        let result = latest_model_by_modified_at(&[a, b]);
+        assert_eq!(result, Some("model-b".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_available_model tests
+    // -----------------------------------------------------------------------
+
+    fn show_response_body() -> serde_json::Value {
+        serde_json::json!({
+            "model_info": {},
+            "parameters": "",
+            "template": "",
+            "details": {
+                "parameter_size": "3B",
+                "quantization_level": "Q4_0",
+                "family": "llama"
+            },
+            "capabilities": []
+        })
+    }
+
+    #[tokio::test]
+    async fn test_resolve_available_model_keeps_configured_model_when_present() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [
+                    {
+                        "name": "llama3.2:latest",
+                        "size": 100,
+                        "digest": "abc",
+                        "modified_at": "2024-01-01T00:00:00Z"
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/show"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(show_response_body()))
+            .mount(&server)
+            .await;
+
+        let mut config = OllamaConfig {
+            host: server.uri(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+
+        resolve_available_model(&mut config)
+            .await
+            .expect("resolve_available_model should succeed");
+
+        assert_eq!(config.model, "llama3.2:latest");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_available_model_switches_to_latest_when_configured_model_missing() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [
+                    {
+                        "name": "old-model:latest",
+                        "size": 100,
+                        "digest": "a",
+                        "modified_at": "2024-01-01T00:00:00Z"
+                    },
+                    {
+                        "name": "new-model:latest",
+                        "size": 100,
+                        "digest": "b",
+                        "modified_at": "2024-06-01T00:00:00Z"
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api/show"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(show_response_body()))
+            .mount(&server)
+            .await;
+
+        let mut config = OllamaConfig {
+            host: server.uri(),
+            // Not present in the mocked /api/tags response above.
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+        };
+
+        resolve_available_model(&mut config)
+            .await
+            .expect("resolve_available_model should succeed");
+
+        assert_eq!(config.model, "new-model:latest");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_available_model_keeps_configured_model_when_server_unreachable() {
+        let mut config = OllamaConfig {
+            host: "http://127.0.0.1:1".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 1,
+        };
+
+        resolve_available_model(&mut config)
+            .await
+            .expect("resolve_available_model should not propagate network errors");
+
+        assert_eq!(config.model, "llama3.2:latest");
     }
 }

@@ -109,9 +109,11 @@ async fn test_save_load_resume_with_orphan_sanitized() {
         .expect("load should work")
         .expect("conversation should exist");
     assert_eq!(saved_messages.len(), 3, "orphan should be saved in storage");
-    assert!(saved_messages
-        .iter()
-        .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_orphan")));
+    assert!(
+        saved_messages
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_orphan"))
+    );
 
     // Load conversation and recreate agent
     let (loaded_title, model, loaded_messages) = storage
@@ -335,21 +337,21 @@ async fn test_pruning_during_resume_maintains_integrity() {
 
     // Check for orphan tool messages
     for msg in final_messages {
-        if msg.role == "tool" {
-            if let Some(tool_call_id) = &msg.tool_call_id {
-                // This tool message must have a corresponding assistant message with a matching call
-                let has_matching_call = final_messages.iter().any(|m| {
-                    m.role == "assistant"
-                        && m.tool_calls
-                            .as_ref()
-                            .is_some_and(|tcs| tcs.iter().any(|tc| &tc.id == tool_call_id))
-                });
-                assert!(
-                    has_matching_call,
-                    "Orphan tool message found with ID: {} after pruning/resume",
-                    tool_call_id
-                );
-            }
+        if msg.role == "tool"
+            && let Some(tool_call_id) = &msg.tool_call_id
+        {
+            // This tool message must have a corresponding assistant message with a matching call
+            let has_matching_call = final_messages.iter().any(|m| {
+                m.role == "assistant"
+                    && m.tool_calls
+                        .as_ref()
+                        .is_some_and(|tcs| tcs.iter().any(|tc| &tc.id == tool_call_id))
+            });
+            assert!(
+                has_matching_call,
+                "Orphan tool message found with ID: {} after pruning/resume",
+                tool_call_id
+            );
         }
     }
 }
@@ -405,7 +407,9 @@ fn test_provider_parity_uses_validation() {
 
     // System should be preserved, orphan removed
     assert!(validated_sys.iter().any(|m| m.role == "system"));
-    assert!(!validated_sys
-        .iter()
-        .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("orphan")));
+    assert!(
+        !validated_sys
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("orphan"))
+    );
 }

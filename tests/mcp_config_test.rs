@@ -475,7 +475,9 @@ impl EnvGuard {
     /// value (or removes the variable) on drop.
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        unsafe {
+            std::env::set_var(key, value);
+        }
         Self { key, previous }
     }
 }
@@ -483,8 +485,12 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         match &self.previous {
-            Some(v) => std::env::set_var(self.key, v),
-            None => std::env::remove_var(self.key),
+            Some(v) => unsafe {
+                std::env::set_var(self.key, v);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
         }
     }
 }
