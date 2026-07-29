@@ -35,7 +35,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::acp::ide_bridge::IdeBridge;
+use crate::acp::ide_bridge::{IdeBridge, PermissionDecision};
 use crate::error::parse_tool_args;
 use crate::tools::{ToolExecutor, ToolRegistry, ToolResult};
 
@@ -580,11 +580,13 @@ impl ToolExecutor for IdeKillTerminalTool {
 /// and allows the user to approve or deny agent operations from within the
 /// Zed IDE without switching context.
 ///
-/// The tool returns a JSON object with `approved: true/false` that the agent
-/// can inspect before proceeding. In the current implementation the prompt
-/// is recorded as a transient log entry and permission is granted by default
-/// so that the agent can proceed while full Zed elicitation API integration
-/// is completed in a later phase.
+/// The tool issues a real ACP `session/request_permission` round-trip through
+/// the [`IdeBridge`], offering the user Allow / Allow-for-session /
+/// Reject / Reject-for-session choices. It returns a JSON object with
+/// `approved: true/false`, the originating `operation`, and an `outcome` of
+/// `approved`, `denied`, `cancelled`, or `error`. The tool fails closed: if the
+/// permission request errors out, the result is `approved: false` so the agent
+/// never proceeds on an unconfirmed operation.
 pub struct IdeRequestPermissionTool {
     bridge: Arc<IdeBridge>,
 }
@@ -608,7 +610,9 @@ impl ToolExecutor for IdeRequestPermissionTool {
             "description": "Ask the Zed user to approve a risky or irreversible operation \
                             before proceeding. Use this in safe mode before destructive writes, \
                             dangerous terminal commands, or operations with significant side effects. \
-                            Returns {\"approved\": true} when the user approves.",
+                            Presents Allow/Reject choices in the Zed UI and returns \
+                            {\"approved\": true} only when the user approves. Fails closed \
+                            (approved: false) on cancellation or error.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -626,28 +630,38 @@ impl ToolExecutor for IdeRequestPermissionTool {
         })
     }
 
+    /// Requests user approval through the ACP IDE bridge and returns the result.
+    ///
+    /// A fresh tool-call id is generated for each request. The bridge issues a
+    /// `session/request_permission` round-trip; the decision is mapped to a JSON
+    /// payload by [`permission_result_json`]. On error the tool logs a warning
+    /// and fails closed with `approved: false`.
     async fn execute(&self, args: serde_json::Value) -> crate::error::Result<ToolResult> {
         let params: IdeRequestPermissionParams = parse_tool_args(args)?;
+        let tool_call_id = format!("ide-permission-{}", ulid::Ulid::generate());
 
         tracing::info!(
+            tool_call_id = %tool_call_id,
             operation = %params.operation,
             details = %params.details,
-            has_terminal = self.bridge.capabilities().terminal,
-            "IDE permission requested for operation"
+            "Requesting IDE user permission via ACP session/request_permission"
         );
 
-        // The full Zed elicitation API (request_permission) is integrated in a
-        // later phase. For now, log the request and grant permission so that
-        // safe-mode sessions can use this tool while the elicitation flow is
-        // developed.
-        Ok(ToolResult::success(
-            serde_json::json!({
-                "approved": true,
-                "operation": params.operation,
-                "note": "Permission auto-granted; full Zed elicitation integration is pending."
-            })
-            .to_string(),
-        ))
+        let decision = self
+            .bridge
+            .request_permission(&tool_call_id, &params.operation, &params.details)
+            .await;
+
+        if let Err(ref error) = decision {
+            tracing::warn!(
+                operation = %params.operation,
+                error = %error,
+                "IDE permission request failed; failing closed (denied by default)"
+            );
+        }
+
+        let payload = permission_result_json(&params.operation, &decision);
+        Ok(ToolResult::success(payload.to_string()))
     }
 }
 
@@ -730,6 +744,50 @@ pub fn register_ide_tools(registry: &mut ToolRegistry, bridge: Arc<IdeBridge>) {
 /// not need to depend on ACP SDK internals directly.
 fn acp_terminal_id_from_str(id: &str) -> agent_client_protocol::schema::v1::TerminalId {
     agent_client_protocol::schema::v1::TerminalId::new(id.to_string())
+}
+
+/// Builds the model-visible JSON payload for an IDE permission request result.
+///
+/// This is a pure function so the decision-to-JSON mapping can be unit-tested
+/// without a live ACP connection. The `Ok` variants map to the corresponding
+/// `approved`/`outcome` pair; the `Err` variant fails closed with
+/// `approved: false` and `outcome: "error"`.
+///
+/// # Arguments
+///
+/// * `operation` - The operation description echoed back to the model.
+/// * `decision` - The result of the bridge permission request.
+///
+/// # Returns
+///
+/// Returns a JSON object describing whether the operation was approved.
+fn permission_result_json(
+    operation: &str,
+    decision: &crate::error::Result<PermissionDecision>,
+) -> serde_json::Value {
+    match decision {
+        Ok(PermissionDecision::Approved) => json!({
+            "approved": true,
+            "operation": operation,
+            "outcome": "approved",
+        }),
+        Ok(PermissionDecision::Denied) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "denied",
+        }),
+        Ok(PermissionDecision::Cancelled) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "cancelled",
+        }),
+        Err(_) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "error",
+            "note": "permission request failed; denied by default",
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1034,5 +1092,40 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_permission_result_json_approved_sets_approved_true() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Approved));
+
+        assert_eq!(value["approved"], serde_json::json!(true));
+        assert_eq!(value["operation"], serde_json::json!("delete files"));
+        assert_eq!(value["outcome"], serde_json::json!("approved"));
+    }
+
+    #[test]
+    fn test_permission_result_json_denied_sets_approved_false() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Denied));
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("denied"));
+    }
+
+    #[test]
+    fn test_permission_result_json_cancelled_sets_approved_false() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Cancelled));
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("cancelled"));
+    }
+
+    #[test]
+    fn test_permission_result_json_error_fails_closed_approved_false() {
+        let error = Err(crate::error::XzatomaError::Internal("boom".to_string()));
+        let value = permission_result_json("delete files", &error);
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("error"));
+        assert!(value["note"].is_string());
     }
 }

@@ -2892,6 +2892,16 @@ impl Config {
             ));
         }
 
+        if let Some(token) = &self.acp.auth_token {
+            let trimmed_len = token.trim().len();
+            if trimmed_len > 0 && trimmed_len < 16 {
+                return Err(XzatomaError::Config(
+                    "acp.auth_token must be at least 16 characters for adequate entropy"
+                        .to_string(),
+                ));
+            }
+        }
+
         if let Some(ref sp) = self.acp.system_prompt
             && sp.trim().is_empty()
         {
@@ -3316,6 +3326,27 @@ mod tests {
 
         let error = config.validate().expect_err("config should be invalid");
         assert!(error.to_string().contains("acp.auth_token cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_short_auth_token() {
+        let mut config = Config::default();
+        config.acp.auth_token = Some("short".to_string());
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(
+            error
+                .to_string()
+                .contains("acp.auth_token must be at least 16 characters")
+        );
+    }
+
+    #[test]
+    fn test_validate_acp_config_accepts_long_auth_token() {
+        let mut config = Config::default();
+        config.acp.auth_token = Some("0123456789abcdef0123".to_string());
+
+        assert!(config.validate().is_ok());
     }
 
     #[test]

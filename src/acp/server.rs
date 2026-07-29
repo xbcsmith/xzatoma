@@ -46,6 +46,8 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::acp::executor::{AcpExecutor, AcpExecutorOutcome};
 use crate::acp::manifest::{AcpAgentCapability, AcpAgentManifest, AcpManifestLink};
@@ -638,6 +640,36 @@ impl AcpHttpErrorBody {
     }
 }
 
+/// Compares two strings in constant time to prevent timing side channels.
+///
+/// Both inputs are hashed with SHA-256 into fixed 32-byte digests before the
+/// comparison. Hashing to a fixed-width digest avoids a length-based early exit
+/// (an attacker cannot learn the expected token length from timing) and the
+/// digests are then compared with [`subtle::ConstantTimeEq`], which does not
+/// short-circuit on the first differing byte.
+///
+/// # Arguments
+///
+/// * `a` - First string to compare (for example, a client-supplied token).
+/// * `b` - Second string to compare (for example, the configured token).
+///
+/// # Returns
+///
+/// Returns `true` only when both strings are byte-for-byte identical.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Internal helper (private): usage illustration only.
+/// assert!(constant_time_str_eq("secret-token", "secret-token"));
+/// assert!(!constant_time_str_eq("secret-token", "other-token"));
+/// ```
+fn constant_time_str_eq(a: &str, b: &str) -> bool {
+    let a_digest = Sha256::digest(a.as_bytes());
+    let b_digest = Sha256::digest(b.as_bytes());
+    a_digest[..].ct_eq(&b_digest[..]).into()
+}
+
 #[derive(Debug)]
 struct AcpHttpProtection {
     auth_token: Option<String>,
@@ -662,7 +694,7 @@ impl AcpHttpProtection {
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
-            .map(|token| token == expected_token)
+            .map(|token| constant_time_str_eq(token, expected_token))
             .unwrap_or(false);
 
         if authorized {
@@ -1446,6 +1478,33 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    #[test]
+    fn test_constant_time_str_eq_equal_tokens_returns_true() {
+        assert!(constant_time_str_eq(
+            "a-sufficiently-long-token",
+            "a-sufficiently-long-token"
+        ));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_wrong_value_same_length_returns_false() {
+        assert!(!constant_time_str_eq(
+            "token-value-aaaa",
+            "token-value-bbbb"
+        ));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_wrong_length_returns_false() {
+        assert!(!constant_time_str_eq("short", "short-plus-more"));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_empty_vs_non_empty_returns_false() {
+        assert!(!constant_time_str_eq("", "non-empty"));
+        assert!(!constant_time_str_eq("non-empty", ""));
+    }
 
     fn test_config() -> Config {
         Config::default()

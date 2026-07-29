@@ -58,6 +58,10 @@ check: ; $(info $(M) running cargo check...) @ ## Runs a cargo check
 lint: ; $(info $(M) running cargo clippy...) @ ## Runs a cargo clippy
 	$Q $(CARGO) clippy --all-targets --all-features -- -D warnings
 
+# Audit dependencies for known security vulnerabilities
+audit: ; $(info $(M) running cargo audit...) @ ## Runs cargo audit --deny warnings
+	$Q $(CARGO) audit --deny warnings
+
 # Docs validation (link checks, emoji scan, filename and code-fence checks)
 docs-check: ; $(info $(M) running docs validation scripts...) @ ## Runs documentation validation scripts
 	$Q python3 scripts/doc_link_check.py
@@ -85,4 +89,4 @@ help:
 	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
         awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: all build release run sdk test clean format check lint install megalint doc help
+.PHONY: all build release run sdk test clean format check lint audit install megalint doc help

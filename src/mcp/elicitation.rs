@@ -33,6 +33,11 @@
 //! this is set to [`open_browser`], which spawns `open` (macOS) or
 //! `xdg-open` (Linux).  In tests it must be set to [`noop_browser_opener`]
 //! so that no subprocess is ever spawned and no network request is made.
+//!
+//! Only `https` URLs are ever opened. The requested URL is checked against a
+//! scheme allowlist ([`is_allowed_elicitation_url`]) before the opener runs,
+//! so a malicious MCP server cannot make the host open `file://`, `vscode://`,
+//! `smb://`, or other non-`https` handlers.
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -303,7 +308,17 @@ impl XzatomaElicitationHandler {
     ///
     /// In headless contexts, logs a warning and returns
     /// [`ElicitationAction::Cancel`] immediately without calling
-    /// `browser_opener`.  Otherwise, prints the URL to stderr and calls
+    /// `browser_opener`.
+    ///
+    /// The requested URL is validated with [`is_allowed_elicitation_url`]
+    /// before anything is opened: only a parseable `https` URL is permitted.
+    /// Any other scheme (for example `file://`, `vscode://`, `smb://`, or
+    /// plain `http`) is rejected with a `tracing::warn!` and the request is
+    /// cancelled WITHOUT calling `browser_opener`. This prevents a malicious
+    /// MCP server from making the host open arbitrary local handlers or
+    /// filesystem paths.
+    ///
+    /// For an accepted `https` URL, prints the URL to stderr and calls
     /// `self.browser_opener` to attempt to open it in the system browser.
     /// Always returns `Cancel` because the handler cannot await an async
     /// browser OAuth redirect callback.
@@ -321,6 +336,20 @@ impl XzatomaElicitationHandler {
         }
 
         let url = params.url.as_deref().unwrap_or("(no URL provided)");
+
+        // Scheme allowlist: only https URLs may be opened. Reject anything
+        // else before touching the browser opener.
+        if !is_allowed_elicitation_url(url) {
+            tracing::warn!(
+                url = %url,
+                "MCP URL elicitation rejected: only https URLs are allowed; refusing to open"
+            );
+            return Ok(ElicitationResult {
+                action: ElicitationAction::Cancel,
+                content: None,
+            });
+        }
+
         eprintln!("MCP server requests authorization at: {}", url);
 
         // Delegate to the injected browser opener.  In production this spawns
@@ -353,6 +382,31 @@ impl XzatomaElicitationHandler {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Return `true` only when `raw` parses as a URL whose scheme is `https`.
+///
+/// This is the scheme allowlist used by [`XzatomaElicitationHandler::handle_url`]
+/// to decide whether a URL requested by an MCP server may be opened in the
+/// system browser. Any non-`https` scheme (for example `file`, `vscode`,
+/// `smb`, or plain `http`), or any string that does not parse as a URL, is
+/// rejected.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::mcp::elicitation::is_allowed_elicitation_url;
+///
+/// assert!(is_allowed_elicitation_url("https://example.com/auth"));
+/// assert!(!is_allowed_elicitation_url("http://example.com"));
+/// assert!(!is_allowed_elicitation_url("file:///etc/passwd"));
+/// assert!(!is_allowed_elicitation_url("(no URL provided)"));
+/// ```
+pub fn is_allowed_elicitation_url(raw: &str) -> bool {
+    match url::Url::parse(raw) {
+        Ok(parsed) => parsed.scheme() == "https",
+        Err(_) => false,
+    }
+}
 
 /// Extract field names from a JSON Schema `"properties"` object.
 ///
@@ -539,6 +593,56 @@ mod tests {
             ElicitationAction::Cancel,
             "URL mode must return Cancel -- cannot await browser callback"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // URL scheme allowlist (is_allowed_elicitation_url)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_is_allowed_elicitation_url_accepts_https() {
+        assert!(is_allowed_elicitation_url("https://example.com/auth"));
+    }
+
+    #[test]
+    fn test_is_allowed_elicitation_url_rejects_file_scheme() {
+        assert!(!is_allowed_elicitation_url("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn test_is_allowed_elicitation_url_rejects_vscode_scheme() {
+        assert!(!is_allowed_elicitation_url("vscode://x"));
+    }
+
+    #[test]
+    fn test_is_allowed_elicitation_url_rejects_smb_scheme() {
+        assert!(!is_allowed_elicitation_url("smb://host/share"));
+    }
+
+    #[test]
+    fn test_is_allowed_elicitation_url_rejects_http_scheme() {
+        assert!(!is_allowed_elicitation_url("http://example.com"));
+    }
+
+    #[test]
+    fn test_is_allowed_elicitation_url_rejects_unparseable() {
+        assert!(!is_allowed_elicitation_url("(no URL provided)"));
+    }
+
+    #[tokio::test]
+    async fn test_url_mode_non_https_scheme_returns_cancel_without_opening() {
+        let handler = make_handler(ExecutionMode::Interactive, false);
+        // A non-https scheme must be rejected before the browser opener runs.
+        let params = url_params(Some("file:///etc/passwd"));
+
+        let result = handler.create_elicitation(params).await.unwrap();
+
+        assert_eq!(
+            result.action,
+            ElicitationAction::Cancel,
+            "non-https URL must be cancelled without opening"
+        );
+        assert!(result.content.is_none());
     }
 
     // -----------------------------------------------------------------------

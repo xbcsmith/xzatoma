@@ -9,7 +9,7 @@
 
 use crate::error::{Result, XzatomaError};
 use futures::StreamExt;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
@@ -96,6 +96,36 @@ impl FetchedContent {
     }
 }
 
+/// A validated resolution target produced by [`SsrfValidator::validate_and_resolve`].
+///
+/// Captures the host, the effective port, and every socket address that passed
+/// SSRF validation. Callers pin their connection to one of these already
+/// validated addresses to close the DNS-rebinding time-of-check/time-of-use gap
+/// that exists when an HTTP client resolves the host a second time at send time.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::fetch::SsrfValidator;
+///
+/// let validator = SsrfValidator::new();
+/// let target = validator
+///     .validate_and_resolve("https://93.184.216.34/")
+///     .expect("public IP literal should validate");
+/// assert_eq!(target.host, "93.184.216.34");
+/// assert_eq!(target.port, 443);
+/// assert_eq!(target.socket_addrs.len(), 1);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ResolvedTarget {
+    /// The host component of the URL (a DNS name or an IP literal).
+    pub host: String,
+    /// The effective port (explicit port or scheme default).
+    pub port: u16,
+    /// Socket addresses that passed SSRF validation.
+    pub socket_addrs: Vec<std::net::SocketAddr>,
+}
+
 /// SSRF (Server-Side Request Forgery) prevention validator
 ///
 /// Prevents requests to private IP ranges and dangerous schemes.
@@ -153,6 +183,132 @@ impl SsrfValidator {
         }
 
         Ok(())
+    }
+
+    /// Validate a URL and return the validated resolved socket addresses.
+    ///
+    /// This performs the same SSRF checks as [`SsrfValidator::validate`] but also
+    /// returns the concrete socket addresses that passed validation. Callers can
+    /// pin the connection to one of these already-validated addresses to close
+    /// the DNS-rebinding time-of-check/time-of-use gap that exists when the HTTP
+    /// client resolves the host a second time at send time.
+    ///
+    /// For an IP-literal host the returned vector contains that single address.
+    /// For a DNS name the host is resolved once and every resolved address must
+    /// pass validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to validate and resolve
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`ResolvedTarget`] describing the validated host, port, and
+    /// socket addresses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the URL is invalid, the scheme is unsupported, the
+    /// host is missing, resolution fails, or any resolved address is in a
+    /// blocked range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::fetch::SsrfValidator;
+    ///
+    /// let validator = SsrfValidator::new();
+    /// let target = validator
+    ///     .validate_and_resolve("https://93.184.216.34/")
+    ///     .expect("public IP literal should validate");
+    /// assert_eq!(target.port, 443);
+    /// assert_eq!(target.socket_addrs.len(), 1);
+    /// ```
+    pub fn validate_and_resolve(&self, url: &str) -> Result<ResolvedTarget> {
+        // Parse URL
+        let parsed_url =
+            Url::parse(url).map_err(|e| XzatomaError::Fetch(format!("Invalid URL: {}", e)))?;
+
+        // Validate scheme
+        self.validate_scheme(parsed_url.scheme())?;
+
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| XzatomaError::Fetch("URL has no host".to_string()))?
+            .to_string();
+
+        // Use the explicit port or the scheme default.
+        let port = parsed_url.port_or_known_default().unwrap_or({
+            if parsed_url.scheme() == "https" {
+                443
+            } else {
+                80
+            }
+        });
+
+        // Block explicit localhost variants unless private IPs are allowed.
+        if !self.allow_private_ips && (host == "localhost" || host == "127.0.0.1" || host == "::1")
+        {
+            return Err(XzatomaError::Fetch(
+                "Requests to localhost are not allowed".to_string(),
+            ));
+        }
+
+        // IP literal: validate once and pin that single address.
+        if let Ok(ip) = IpAddr::from_str(&host) {
+            self.validate_ip(ip)?;
+            return Ok(ResolvedTarget {
+                host,
+                port,
+                socket_addrs: vec![SocketAddr::new(ip, port)],
+            });
+        }
+
+        // DNS name: resolve once and validate every resolved address.
+        let socket_addrs = self.resolve_host_socket_addrs(&host, port)?;
+        for addr in &socket_addrs {
+            self.validate_ip(addr.ip())?;
+        }
+
+        Ok(ResolvedTarget {
+            host,
+            port,
+            socket_addrs,
+        })
+    }
+
+    /// Validate the IP address a request actually connected to.
+    ///
+    /// After an HTTP client establishes a connection, the peer address should be
+    /// re-checked to reject a DNS rebinding that changed the resolved address
+    /// between validation and connection. This reuses the same per-IP blocking
+    /// logic as URL validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `ip` - The peer IP address the request connected to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address is in a blocked (private, loopback,
+    /// link-local, or otherwise disallowed) range. In private-IP test mode this
+    /// always returns `Ok`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::net::{IpAddr, Ipv4Addr};
+    /// use xzatoma::tools::fetch::SsrfValidator;
+    ///
+    /// let validator = SsrfValidator::new();
+    /// let public = IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34));
+    /// assert!(validator.validate_connected_ip(public).is_ok());
+    ///
+    /// let loopback = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    /// assert!(validator.validate_connected_ip(loopback).is_err());
+    /// ```
+    pub fn validate_connected_ip(&self, ip: std::net::IpAddr) -> Result<()> {
+        self.validate_ip(ip)
     }
 
     /// Validate URL scheme
@@ -230,6 +386,28 @@ impl SsrfValidator {
         }
 
         Ok(ips)
+    }
+
+    /// Resolve a hostname to socket addresses for the given port.
+    ///
+    /// Unlike [`SsrfValidator::resolve_host_ips`], this captures the full socket
+    /// address (IP and port) so callers can pin an HTTP connection to a
+    /// validated address.
+    fn resolve_host_socket_addrs(&self, host: &str, port: u16) -> Result<Vec<SocketAddr>> {
+        let addrs = (host, port).to_socket_addrs().map_err(|e| {
+            XzatomaError::Fetch(format!("Failed to resolve host '{}': {}", host, e))
+        })?;
+
+        let socket_addrs: Vec<SocketAddr> = addrs.collect();
+
+        if socket_addrs.is_empty() {
+            return Err(XzatomaError::Fetch(format!(
+                "Failed to resolve host '{}': no addresses",
+                host
+            )));
+        }
+
+        Ok(socket_addrs)
     }
 
     /// Validate IP address
@@ -478,16 +656,46 @@ impl FetchTool {
         // Check rate limit
         self.rate_limiter.lock().await.check_and_record()?;
 
-        // Validate URL for SSRF
-        self.ssrf_validator.validate(url)?;
+        // Validate URL for SSRF and capture the validated resolution target so
+        // the connection can be pinned to an already-validated address.
+        let target = self.ssrf_validator.validate_and_resolve(url)?;
+        let host_is_ip_literal = IpAddr::from_str(&target.host).is_ok();
 
-        // Perform HTTP request
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| XzatomaError::Fetch(format!("Failed to fetch URL: {}", e)))?;
+        // In production (not test mode) and for DNS-name hosts, pin DNS to the
+        // validated socket address so the HTTP client cannot re-resolve to a
+        // different (rebinding) address at send time. For IP-literal hosts and
+        // in test mode, use the shared client.
+        let response = if !self.ssrf_validator.allow_private_ips
+            && !host_is_ip_literal
+            && let Some(pinned) = target.socket_addrs.first()
+        {
+            let pinned_client = reqwest::Client::builder()
+                .timeout(self.timeout)
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve(&target.host, *pinned)
+                .build()
+                .map_err(|e| {
+                    XzatomaError::Fetch(format!("Failed to build pinned HTTP client: {}", e))
+                })?;
+
+            pinned_client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| XzatomaError::Fetch(format!("Failed to fetch URL: {}", e)))?
+        } else {
+            self.client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| XzatomaError::Fetch(format!("Failed to fetch URL: {}", e)))?
+        };
+
+        // Reject a rebind that slipped through by re-checking the peer address
+        // the request actually connected to.
+        if let Some(addr) = response.remote_addr() {
+            self.ssrf_validator.validate_connected_ip(addr.ip())?;
+        }
 
         self.ssrf_validator.validate(response.url().as_str())?;
 
@@ -960,5 +1168,57 @@ mod tests {
         let validator = SsrfValidator::new();
         let result = validator.validate("http://[fd00::1]");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_and_resolve_public_ip_literal_returns_addrs() {
+        let validator = SsrfValidator::new();
+        let target = validator
+            .validate_and_resolve("https://93.184.216.34/")
+            .expect("public IP literal should validate");
+        assert_eq!(target.host, "93.184.216.34");
+        assert_eq!(target.port, 443);
+        assert_eq!(target.socket_addrs.len(), 1);
+        assert_eq!(
+            target.socket_addrs[0].ip(),
+            IpAddr::V4(std::net::Ipv4Addr::new(93, 184, 216, 34))
+        );
+    }
+
+    #[test]
+    fn test_validate_and_resolve_public_ip_literal_uses_http_default_port() {
+        let validator = SsrfValidator::new();
+        let target = validator
+            .validate_and_resolve("http://1.1.1.1/")
+            .expect("public IP literal should validate");
+        assert_eq!(target.port, 80);
+    }
+
+    #[test]
+    fn test_validate_and_resolve_private_ip_literal_errors() {
+        let validator = SsrfValidator::new();
+        let result = validator.validate_and_resolve("https://192.168.1.1/");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_connected_ip_blocks_loopback() {
+        let validator = SsrfValidator::new();
+        let loopback = IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
+        assert!(validator.validate_connected_ip(loopback).is_err());
+    }
+
+    #[test]
+    fn test_validate_connected_ip_blocks_private() {
+        let validator = SsrfValidator::new();
+        let private = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 5));
+        assert!(validator.validate_connected_ip(private).is_err());
+    }
+
+    #[test]
+    fn test_validate_connected_ip_allows_private_in_test_mode() {
+        let validator = SsrfValidator::allow_private_ips();
+        let loopback = IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
+        assert!(validator.validate_connected_ip(loopback).is_ok());
     }
 }

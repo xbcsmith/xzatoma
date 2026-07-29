@@ -1224,6 +1224,7 @@ pub async fn build_mcp_manager_from_config(
         reqwest::Client::builder()
             .timeout(Duration::from_secs(config.mcp.request_timeout_seconds))
             .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(crate::security::HardenedDnsResolver))
             .build()?,
     );
     let token_store = Arc::new(TokenStore);

@@ -40,7 +40,7 @@ pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
-pub(crate) mod security;
+pub mod security;
 pub mod skills;
 pub mod storage;
 pub mod tools;

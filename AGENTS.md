@@ -45,6 +45,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test -p xzatoma --lib -- --skip providers::copilot --skip mcp::auth
 ```
 
+**Dependency audit**: run `cargo audit --deny warnings` (or `make audit`) before
+releasing or when changing dependencies. It fails on any advisory or warning in
+the dependency tree. Install the tool once with `cargo install cargo-audit`.
+
 **NEVER run `cargo test --all-features` or `cargo test -p xzatoma --lib` bare.**
 The `providers::copilot` and `mcp::auth` modules link against the macOS
 `Security.framework` via the `keyring` crate. On macOS, any freshly compiled

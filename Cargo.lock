@@ -4817,6 +4817,7 @@ dependencies = [
  "similar",
  "sled",
  "strsim",
+ "subtle",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

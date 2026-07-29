@@ -4,8 +4,11 @@
 //! tools, ACP, and MCP code paths to keep URL validation and secret redaction
 //! consistent without coupling those modules to each other.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::LazyLock;
 
+use regex::Regex;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use url::Url;
 
 use crate::error::{Result, XzatomaError};
@@ -182,6 +185,61 @@ pub(crate) async fn validate_public_https_url(url: &Url, field_name: &str) -> Re
     }
 }
 
+/// A [`reqwest`] DNS resolver that rejects private and special-use addresses.
+///
+/// This resolver closes the DNS-rebinding time-of-check/time-of-use gap for
+/// outbound HTTP clients. A URL host is validated once by the caller, but a
+/// malicious DNS server can return a public address for the validation lookup
+/// and a private address for the connection lookup. Installing this resolver on
+/// a [`reqwest::Client`] via [`reqwest::ClientBuilder::dns_resolver`] guarantees
+/// that the address the client actually connects to is filtered against the
+/// same block list used for static validation.
+///
+/// Any resolved address that is loopback, private, link-local, unspecified,
+/// multicast, carrier-grade NAT, or unique-local is discarded. If no public
+/// address remains, resolution fails so the client cannot connect to an
+/// internal target.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use xzatoma::security::HardenedDnsResolver;
+///
+/// let client = reqwest::Client::builder()
+///     .dns_resolver(Arc::new(HardenedDnsResolver))
+///     .build()
+///     .expect("client with hardened resolver should build");
+/// let _ = client;
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HardenedDnsResolver;
+
+impl Resolve for HardenedDnsResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let public: Vec<SocketAddr> = resolved
+                .filter(|socket| !is_blocked_ip(socket.ip()))
+                .collect();
+
+            if public.is_empty() {
+                let error: Box<dyn std::error::Error + Send + Sync> = format!(
+                    "host '{}' resolved only to blocked or non-public addresses",
+                    host
+                )
+                .into();
+                return Err(error);
+            }
+
+            let addrs: Addrs = Box::new(public.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
 /// Validates that two URLs have the same scheme, host, and effective port.
 pub(crate) fn validate_same_origin(expected: &Url, actual: &Url, field_name: &str) -> Result<()> {
     let expected_port = expected.port_or_known_default();
@@ -199,7 +257,28 @@ pub(crate) fn validate_same_origin(expected: &Url, actual: &Url, field_name: &st
     }
 }
 
+/// Static regex matching JSON string keys that name a credential, followed by a
+/// quoted string value.
+///
+/// Matches keys whose name (case-insensitive) contains `token` or `secret`, or
+/// equals one of `password`, `code`, `api_key`, `apikey`, `client_secret`,
+/// `access_token`, or `refresh_token`, followed by a `:` and a quoted value.
+static JSON_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
+    // SAFETY: This is a compile-time-constant pattern that is known to be a
+    // valid regular expression, so compilation cannot fail at runtime. Per
+    // AGENTS.md, expect on a static known-valid regex is acceptable with this
+    // justification.
+    Regex::new(
+        r#"(?i)"([A-Za-z0-9_]*(?:token|secret)[A-Za-z0-9_]*|password|code|api_key|apikey|client_secret|access_token|refresh_token)"\s*:\s*"[^"]*""#,
+    )
+    .expect("static JSON secret redaction regex must compile")
+});
+
 /// Redacts common credential patterns from diagnostic text.
+///
+/// This redacts both header-style markers (for example `Authorization: Bearer`)
+/// and JSON-encoded secrets such as `"access_token":"..."` or
+/// `"client_secret": "..."` by replacing the sensitive value with `[REDACTED]`.
 pub(crate) fn redact_sensitive_text(input: &str) -> String {
     let mut redacted = input.to_string();
 
@@ -215,7 +294,11 @@ pub(crate) fn redact_sensitive_text(input: &str) -> String {
         }
     }
 
-    redacted
+    // Redact JSON-encoded secrets whose value would otherwise survive the
+    // marker loop (for example `"access_token":"..."` has no trailing space).
+    JSON_SECRET_RE
+        .replace_all(&redacted, r#""${1}": "[REDACTED]""#)
+        .into_owned()
 }
 
 fn validate_http_url_components(url: &Url, field_name: &str) -> Result<()> {
@@ -407,5 +490,59 @@ mod tests {
         let redacted = redact_sensitive_text("Authorization: Bearer abc123");
         assert!(redacted.contains("[REDACTED]"));
         assert!(!redacted.contains("abc123"));
+    }
+
+    #[test]
+    fn test_redact_sensitive_text_redacts_json_access_token() {
+        let redacted = redact_sensitive_text(r#"{"access_token":"supersecretvalue"}"#);
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(!redacted.contains("supersecretvalue"));
+    }
+
+    #[test]
+    fn test_redact_sensitive_text_redacts_json_client_secret() {
+        let redacted = redact_sensitive_text(r#"{"client_secret": "abc123"}"#);
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(!redacted.contains("abc123"));
+    }
+
+    #[test]
+    fn test_redact_sensitive_text_redacts_camel_case_token_key() {
+        let redacted = redact_sensitive_text(r#"{"accessToken": "xyz789"}"#);
+        assert!(redacted.contains("[REDACTED]"));
+        assert!(!redacted.contains("xyz789"));
+    }
+
+    #[tokio::test]
+    async fn test_hardened_dns_resolver_rejects_loopback_only_host() {
+        let resolver = HardenedDnsResolver;
+        let name = "localhost"
+            .parse::<reqwest::dns::Name>()
+            .expect("localhost should parse as a DNS name");
+        let result = resolver.resolve(name).await;
+        assert!(
+            result.is_err(),
+            "a host that resolves only to loopback must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hardened_dns_resolver_allows_public_host() {
+        let resolver = HardenedDnsResolver;
+        let name = "example.com"
+            .parse::<reqwest::dns::Name>()
+            .expect("example.com should parse as a DNS name");
+        match resolver.resolve(name).await {
+            Ok(mut addrs) => {
+                assert!(
+                    addrs.next().is_some(),
+                    "a public host should yield at least one address"
+                );
+            }
+            Err(_) => {
+                // Environments without outbound DNS cannot resolve the host; the
+                // filtering behavior is covered by the loopback rejection test.
+            }
+        }
     }
 }

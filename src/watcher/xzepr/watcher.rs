@@ -355,6 +355,9 @@ impl Watcher {
 
     /// Apply security configuration to a Kafka consumer config.
     ///
+    /// Note: Kafka message payloads are untrusted input and must be validated
+    /// by downstream handlers before use.
+    ///
     /// # Arguments
     ///
     /// * `config` - The consumer config to modify
@@ -381,9 +384,23 @@ impl Watcher {
 
         // Parse and set security protocol
         config.security_protocol = match security.protocol.to_uppercase().as_str() {
-            "PLAINTEXT" => SecurityProtocol::Plaintext,
+            "PLAINTEXT" => {
+                warn!(
+                    "Kafka SecurityProtocol is PLAINTEXT: all traffic will be UNENCRYPTED and \
+                     credentials and message payloads may be exposed on the network. Use \
+                     SASL_SSL or SSL for production deployments."
+                );
+                SecurityProtocol::Plaintext
+            }
             "SSL" => SecurityProtocol::Ssl,
-            "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
+            "SASL_PLAINTEXT" => {
+                warn!(
+                    "Kafka SecurityProtocol is SASL_PLAINTEXT: SASL credentials and message \
+                     payloads travel UNENCRYPTED and may be exposed on the network. Use \
+                     SASL_SSL or SSL for production deployments."
+                );
+                SecurityProtocol::SaslPlaintext
+            }
             "SASL_SSL" => SecurityProtocol::SaslSsl,
             _ => {
                 return Err(WatcherError::InvalidSecurityProtocol {
@@ -864,6 +881,22 @@ mod tests {
             WatcherError::InvalidSecurityProtocol { .. }
         ));
         assert_eq!(error.operation(), "security configuration");
+    }
+
+    #[test]
+    fn test_apply_security_config_plaintext_returns_ok_with_warning_side_effect() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "PLAINTEXT".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+        };
+
+        // The unencrypted-traffic warning is only a side effect; the function
+        // must still succeed and return the configured protocol.
+        let result = Watcher::apply_security_config(config, &security);
+        assert!(result.is_ok());
     }
 
     #[test]

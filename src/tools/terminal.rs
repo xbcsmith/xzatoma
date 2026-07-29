@@ -16,6 +16,20 @@
 //!   - `AlwaysConfirm`: Requires explicit confirmation for terminal operations
 //!   - `NeverConfirm`: Allows operations without confirmation (YOLO mode)
 //!
+//! # Security posture
+//!
+//! The regex denylist is BEST-EFFORT defense-in-depth only. It MUST NOT be
+//! relied upon as a security boundary: regex patterns are trivially bypassed
+//! (encoding tricks, alternate binaries, whitespace, environment indirection),
+//! and treating them as a boundary invites a false sense of safety. The real
+//! containment comes from the shell-free tokenizer ([`parse_command_line`],
+//! which rejects shell operators so no `|`, `;`, `&&`, `$()`, or redirection
+//! is ever interpreted) combined with path canonicalization
+//! ([`CommandValidator::validate_paths`], which resolves symlinks and rejects
+//! any argument that escapes the working directory). The interpreter check
+//! ([`is_interpreter_invocation`]) is likewise best-effort hardening that
+//! forces confirmation for programs that can execute arbitrary code.
+//!
 //! # Examples
 //!
 //! ```
@@ -209,6 +223,14 @@ impl CommandValidator {
             ExecutionMode::FullAutonomous => {
                 // Full autonomous still must validate paths
                 self.validate_paths(&parsed)?;
+                // Best-effort hardening: interpreters can execute arbitrary
+                // code, so require confirmation even in FullAutonomous mode.
+                if is_interpreter_invocation(parsed.program.as_str()) {
+                    return Err(XzatomaError::CommandRequiresConfirmation(format!(
+                        "Interpreter '{}' can execute arbitrary code; confirm before running",
+                        parsed.program
+                    )));
+                }
                 Ok(())
             }
         }
@@ -449,6 +471,46 @@ pub fn parse_command_line(command: &str) -> std::result::Result<ParsedCommand, X
         program,
         args: tokens,
     })
+}
+
+/// Return `true` when `program` names a language interpreter or shell.
+///
+/// The basename of `program` is compared against a fixed set of interpreters:
+/// `python`, `python3`, `sh`, `bash`, `zsh`, `fish`, `node`, `deno`, `ruby`,
+/// `perl`, and `php`. Any leading directory prefix is stripped first, so
+/// `/usr/bin/python3` matches just like `python3`.
+///
+/// This is best-effort hardening used by [`CommandValidator::validate`] to
+/// force confirmation before running programs that can execute arbitrary
+/// code, even in [`ExecutionMode::FullAutonomous`]. It is NOT a security
+/// boundary.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::tools::terminal::is_interpreter_invocation;
+///
+/// assert!(is_interpreter_invocation("bash"));
+/// assert!(is_interpreter_invocation("/usr/bin/python3"));
+/// assert!(!is_interpreter_invocation("echo"));
+/// ```
+pub fn is_interpreter_invocation(program: &str) -> bool {
+    // Strip any directory prefix (handles both `/` and, defensively, `\`).
+    let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    matches!(
+        basename,
+        "python"
+            | "python3"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "node"
+            | "deno"
+            | "ruby"
+            | "perl"
+            | "php"
+    )
 }
 
 /// Terminal tool implementing `ToolExecutor`
@@ -894,5 +956,44 @@ mod tests {
         // Option value referencing outside file should be rejected
         let res = v.validate(&format!("ls --path={}", outside_file.display()));
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_is_interpreter_invocation_bare_bash_is_true() {
+        assert!(is_interpreter_invocation("bash"));
+    }
+
+    #[test]
+    fn test_is_interpreter_invocation_absolute_python3_is_true() {
+        assert!(is_interpreter_invocation("/usr/bin/python3"));
+    }
+
+    #[test]
+    fn test_is_interpreter_invocation_echo_is_false() {
+        assert!(!is_interpreter_invocation("echo"));
+    }
+
+    #[test]
+    fn test_is_interpreter_invocation_ls_is_false() {
+        assert!(!is_interpreter_invocation("ls"));
+    }
+
+    #[test]
+    fn test_validate_full_autonomous_interpreter_requires_confirmation() {
+        let tmp = PathBuf::from("/tmp");
+        let v = CommandValidator::new(ExecutionMode::FullAutonomous, tmp);
+        // bash is an interpreter: FullAutonomous must now demand confirmation.
+        assert!(matches!(
+            v.validate("bash -c 'echo hi'").unwrap_err(),
+            XzatomaError::CommandRequiresConfirmation(_)
+        ));
+    }
+
+    #[test]
+    fn test_validate_full_autonomous_non_interpreter_is_ok() {
+        let tmp = PathBuf::from("/tmp");
+        let v = CommandValidator::new(ExecutionMode::FullAutonomous, tmp);
+        // echo is not an interpreter: FullAutonomous still allows it.
+        assert!(v.validate("echo hi").is_ok());
     }
 }
