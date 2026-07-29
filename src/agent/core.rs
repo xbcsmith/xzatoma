@@ -589,6 +589,12 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    // NOTE: The only `unwrap` calls in this function are on `Mutex::lock()` in the
+    // streaming-callback closures and the streaming-events drain. Those cannot
+    // panic because the guarded critical sections are infallible (vector pushes
+    // and a `mem::take`), so the mutex can never be poisoned. The lint is allowed
+    // at function scope because those closures cannot carry statement attributes.
+    #[allow(clippy::unwrap_used)]
     pub async fn execute_with_observer(
         &mut self,
         user_prompt: impl Into<String>,
@@ -775,6 +781,10 @@ impl Agent {
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
+                // SAFETY: Lock poisoning is impossible here because the critical
+                // section only performs infallible integer accumulation, so no
+                // thread can panic while holding this mutex.
+                #[allow(clippy::unwrap_used)]
                 let mut accumulated = self.accumulated_usage.lock().unwrap();
                 if let Some(existing) = *accumulated {
                     *accumulated = Some(TokenUsage::new(
@@ -1034,6 +1044,12 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    // NOTE: The only `unwrap` calls in this function are on `Mutex::lock()` in the
+    // streaming-callback closures and the streaming-events drain. Those cannot
+    // panic because the guarded critical sections are infallible (vector pushes
+    // and a `mem::take`), so the mutex can never be poisoned. The lint is allowed
+    // at function scope because those closures cannot carry statement attributes.
+    #[allow(clippy::unwrap_used)]
     pub async fn execute_provider_messages_with_observer(
         &mut self,
         messages: Vec<Message>,
@@ -1236,6 +1252,10 @@ impl Agent {
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
 
+                // SAFETY: Lock poisoning is impossible here because the critical
+                // section only performs infallible integer accumulation, so no
+                // thread can panic while holding this mutex.
+                #[allow(clippy::unwrap_used)]
                 let mut accumulated_usage = self.accumulated_usage.lock().unwrap();
                 if let Some(existing) = *accumulated_usage {
                     *accumulated_usage = Some(TokenUsage::new(
@@ -1703,7 +1723,11 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::unwrap_used)]
     pub fn get_token_usage(&self) -> Option<TokenUsage> {
+        // SAFETY: Lock poisoning is impossible here because the critical section
+        // only copies out the accumulated usage; no thread can panic while
+        // holding this mutex.
         *self.accumulated_usage.lock().unwrap()
     }
 

@@ -2,6 +2,9 @@
 //!
 #![doc = "XZatoma - Autonomous AI agent CLI"]
 #![doc = "Main entry point for the XZatoma agent application."]
+// Enforce justified fallibility in production code. See `src/lib.rs` for the
+// rationale; test code is exempt via `clippy.toml`.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 
 use std::{fs::OpenOptions, path::Path, sync::Arc};
 

@@ -352,9 +352,9 @@ impl McpServerConfig {
     /// ```
     pub fn validate(&self) -> Result<()> {
         // Rule 1: id must match ^[a-z0-9_-]{1,64}$
-        let id_re = regex::Regex::new(r"^[a-z0-9_-]{1,64}$")
-            // SAFETY: The pattern is a compile-time constant and is always valid.
-            .expect("static regex is always valid");
+        // SAFETY: The pattern is a compile-time constant and is always valid.
+        #[allow(clippy::expect_used)]
+        let id_re = regex::Regex::new(r"^[a-z0-9_-]{1,64}$").expect("static regex is always valid");
 
         if !id_re.is_match(&self.id) {
             return Err(XzatomaError::Config(format!(

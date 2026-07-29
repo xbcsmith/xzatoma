@@ -354,7 +354,8 @@ fn format_optional_bool(value: Option<bool>) -> String {
 /// String buffer. Useful for testing and integration assertions.
 pub fn render_table_to_string(table: &Table) -> String {
     let mut buf: Vec<u8> = Vec::new();
-    // Table::print writes to any `Write` sink, so capture into a Vec<u8>.
+    // Table::print writes to the in-memory `Vec<u8>` sink, which cannot fail, so
+    // the returned result is intentionally ignored.
     let _ = table.print(&mut buf);
     String::from_utf8(buf).unwrap_or_default()
 }

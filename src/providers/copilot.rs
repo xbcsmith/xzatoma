@@ -1407,7 +1407,7 @@ impl CopilotProvider {
         if let Ok(cached) = self.get_cached_token() {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs();
 
             if cached.expires_at > now + 300 {
@@ -1429,7 +1429,7 @@ impl CopilotProvider {
             copilot_token: copilot_token.clone(),
             expires_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs()
                 + 3600,
         };
@@ -1840,7 +1840,7 @@ impl CopilotProvider {
                             // Store the refreshed Copilot token (best-effort)
                             let now = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_secs();
                             let refreshed = CachedToken {
                                 github_token: cached.github_token.clone(),
@@ -2701,7 +2701,7 @@ impl CopilotProvider {
                         copilot_token: new_token.clone(),
                         expires_at: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_secs()
                             + 3600,
                     };
@@ -2945,8 +2945,10 @@ impl Provider for CopilotProvider {
         if let Ok(cached) = self.get_cached_token() {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                // SAFETY: SystemTime::now() always returns a time after UNIX_EPOCH.
-                .unwrap()
+                // SystemTime::now() is always at or after UNIX_EPOCH; on the
+                // impossible earlier-than-epoch case, fall back to zero so the
+                // token is simply treated as expired.
+                .unwrap_or_default()
                 .as_secs();
             cached.expires_at > now + 300
         } else {

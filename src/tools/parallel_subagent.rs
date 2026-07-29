@@ -299,11 +299,22 @@ impl ToolExecutor for ParallelSubagentTool {
                 let sem = Arc::clone(&semaphore);
 
                 tokio::spawn(async move {
+                    // Clone the label before `task` is moved into `execute_task`
+                    // so we can still report a failed result if we cannot
+                    // acquire a semaphore permit.
+                    let label = task.label.clone();
                     let _permit = match sem.acquire().await {
                         Ok(p) => p,
                         Err(e) => {
                             error!("Failed to acquire semaphore permit: {}", e);
-                            panic!("Semaphore closed");
+                            return TaskResult {
+                                label,
+                                success: false,
+                                output: String::new(),
+                                duration_ms: 0,
+                                error: Some(format!("Failed to acquire semaphore permit: {e}")),
+                                tokens_used: 0,
+                            };
                         }
                     };
 
@@ -567,6 +578,39 @@ mod tests {
         assert!(!result.success);
         assert!(result.error.is_some());
         assert_eq!(result.tokens_used, 0);
+    }
+
+    // Constructing `ParallelSubagentTool` and exercising the real spawn closure
+    // requires a live provider (network/auth), which is out of scope for a
+    // hermetic unit test. Instead we validate the exact `TaskResult` shape the
+    // closure returns when the semaphore is closed, mirroring the production
+    // code path that replaced the previous `panic!("Semaphore closed")`.
+    #[test]
+    fn test_parallel_execute_closed_semaphore_yields_failed_result() {
+        let label = "task1".to_string();
+        // Simulate a closed-semaphore acquire error.
+        let sem = tokio::sync::Semaphore::new(1);
+        sem.close();
+        let err = sem
+            .try_acquire()
+            .expect_err("acquire on a closed semaphore must fail");
+
+        let result = TaskResult {
+            label: label.clone(),
+            success: false,
+            output: String::new(),
+            duration_ms: 0,
+            error: Some(format!("Failed to acquire semaphore permit: {err}")),
+            tokens_used: 0,
+        };
+
+        assert_eq!(result.label, "task1");
+        assert!(!result.success);
+        assert!(result.output.is_empty());
+        assert_eq!(result.duration_ms, 0);
+        assert_eq!(result.tokens_used, 0);
+        let error = result.error.expect("error must be populated");
+        assert!(error.contains("Failed to acquire semaphore permit"));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::storage::types::{
     StoredAcpAwaitState, StoredAcpCancellation, StoredAcpRun, StoredAcpRunEvent, StoredAcpSession,
     StoredAcpStdioSession, StoredSession,
 };
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use directories::ProjectDirs;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -460,8 +460,7 @@ impl SqliteStorage {
     /// Returns an error if session listing fails.
     pub fn list_sessions(&self) -> Result<Vec<StoredSession>> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         let mut stmt = conn
             .prepare(
@@ -469,8 +468,7 @@ impl SqliteStorage {
                  FROM conversations
                  ORDER BY updated_at DESC",
             )
-            .context("Failed to prepare statement")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("prepare sessions statement", source))?;
 
         let sessions_iter = stmt
             .query_map([], |row| {
@@ -502,8 +500,7 @@ impl SqliteStorage {
                     message_count,
                 })
             })
-            .context("Failed to query sessions")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("query sessions", source))?;
 
         let mut sessions = Vec::new();
         for session in sessions_iter.flatten() {
@@ -526,8 +523,7 @@ impl SqliteStorage {
     /// Returns an error if deletion fails.
     pub fn delete_conversation(&self, id: &str) -> Result<()> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         let (query, param) = if id.len() == 36 {
             ("DELETE FROM conversations WHERE id = ?", id.to_string())
@@ -539,8 +535,7 @@ impl SqliteStorage {
         };
 
         conn.execute(query, params![param])
-            .context("Failed to delete conversation")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("delete conversation", source))?;
 
         Ok(())
     }
@@ -584,12 +579,11 @@ impl SqliteStorage {
     /// ```
     pub fn save_acp_stdio_session(&self, session: &StoredAcpStdioSession) -> Result<()> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
-        let metadata_json = serde_json::to_string(&session.metadata)
-            .context("Failed to serialize ACP stdio session metadata")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        let metadata_json = serde_json::to_string(&session.metadata).map_err(|source| {
+            storage_serialization_error("serialize ACP stdio session metadata", source)
+        })?;
 
         conn.execute(
             "INSERT INTO acp_stdio_sessions (
@@ -621,8 +615,7 @@ impl SqliteStorage {
                 metadata_json,
             ],
         )
-        .context("Failed to save ACP stdio session")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("save ACP stdio session", source))?;
 
         Ok(())
     }
@@ -645,8 +638,7 @@ impl SqliteStorage {
         workspace_root: &str,
     ) -> Result<Option<StoredAcpStdioSession>> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         let row = conn
             .query_row(
@@ -659,8 +651,9 @@ impl SqliteStorage {
                 stored_acp_stdio_session_from_row,
             )
             .optional()
-            .context("Failed to query ACP stdio session by workspace root")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| {
+                storage_query_error("query ACP stdio session by workspace root", source)
+            })?;
 
         row.transpose()
     }
@@ -683,8 +676,7 @@ impl SqliteStorage {
         session_id: &str,
     ) -> Result<Option<StoredAcpStdioSession>> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         let row = conn
             .query_row(
@@ -695,8 +687,9 @@ impl SqliteStorage {
                 stored_acp_stdio_session_from_row,
             )
             .optional()
-            .context("Failed to query ACP stdio session by session ID")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| {
+                storage_query_error("query ACP stdio session by session ID", source)
+            })?;
 
         row.transpose()
     }
@@ -712,15 +705,13 @@ impl SqliteStorage {
     /// Returns an error if the update fails.
     pub fn touch_acp_stdio_session(&self, session_id: &str) -> Result<()> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         conn.execute(
             "UPDATE acp_stdio_sessions SET updated_at = ? WHERE session_id = ?",
             params![Utc::now().to_rfc3339(), session_id],
         )
-        .context("Failed to update ACP stdio session activity")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("update ACP stdio session activity", source))?;
 
         Ok(())
     }
@@ -741,16 +732,14 @@ impl SqliteStorage {
     /// Returns an error if pruning fails.
     pub fn prune_acp_stdio_sessions_older_than(&self, older_than: DateTime<Utc>) -> Result<usize> {
         let conn = Connection::open(&self.db_path)
-            .context("Failed to open database")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
 
         let deleted = conn
             .execute(
                 "DELETE FROM acp_stdio_sessions WHERE updated_at < ?",
                 params![older_than.to_rfc3339()],
             )
-            .context("Failed to prune ACP stdio sessions")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("prune ACP stdio sessions", source))?;
 
         Ok(deleted)
     }
@@ -792,8 +781,7 @@ impl SqliteStorage {
         let metadata_json = serialize_metadata(&session.metadata)?;
         let tx = conn
             .transaction()
-            .context("Failed to start ACP session transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("start ACP session transaction", source))?;
 
         tx.execute(
             "
@@ -824,12 +812,10 @@ impl SqliteStorage {
                 session.last_run_id
             ],
         )
-        .context("Failed to save ACP session")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("save ACP session", source))?;
 
         tx.commit()
-            .context("Failed to commit ACP session transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("commit ACP session transaction", source))?;
 
         Ok(())
     }
@@ -885,8 +871,7 @@ impl SqliteStorage {
                 },
             )
             .optional()
-            .context("Failed to load ACP session")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("load ACP session", source))?;
 
         match result {
             Some((
@@ -932,8 +917,7 @@ impl SqliteStorage {
         let metadata_json = serialize_metadata(&run.metadata)?;
         let tx = conn
             .transaction()
-            .context("Failed to start ACP run transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("start ACP run transaction", source))?;
 
         tx.execute(
             "
@@ -988,8 +972,7 @@ impl SqliteStorage {
                 metadata_json,
             ],
         )
-        .context("Failed to save ACP run")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("save ACP run", source))?;
 
         tx.execute(
             "
@@ -999,12 +982,10 @@ impl SqliteStorage {
             ",
             params![run.updated_at.to_rfc3339(), run.run_id, run.session_id],
         )
-        .context("Failed to update ACP session last_run_id")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("update ACP session last_run_id", source))?;
 
         tx.commit()
-            .context("Failed to commit ACP run transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("commit ACP run transaction", source))?;
 
         Ok(())
     }
@@ -1077,8 +1058,7 @@ impl SqliteStorage {
                 },
             )
             .optional()
-            .context("Failed to load ACP run")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("load ACP run", source))?;
 
         Ok(result)
     }
@@ -1122,8 +1102,7 @@ impl SqliteStorage {
                 ORDER BY created_at ASC
                 ",
             )
-            .context("Failed to prepare ACP runs statement")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("prepare ACP runs statement", source))?;
 
         let iter = stmt
             .query_map(params![session_id], |row| {
@@ -1153,8 +1132,7 @@ impl SqliteStorage {
                         .map_err(to_rusqlite_error)?,
                 })
             })
-            .context("Failed to query ACP runs")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("query ACP runs", source))?;
 
         let mut runs = Vec::new();
         for run in iter.flatten() {
@@ -1177,15 +1155,13 @@ impl SqliteStorage {
         let mut conn = self.open_connection()?;
         let tx = conn
             .transaction()
-            .context("Failed to start ACP event transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("start ACP event transaction", source))?;
 
         tx.execute(
             "DELETE FROM acp_run_events WHERE run_id = ?",
             params![run_id],
         )
-        .context("Failed to clear existing ACP events")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("clear existing ACP events", source))?;
 
         for event in events {
             tx.execute(
@@ -1214,13 +1190,11 @@ impl SqliteStorage {
                     bool_to_sqlite(event.terminal),
                 ],
             )
-            .context("Failed to insert ACP event")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("insert ACP event", source))?;
         }
 
         tx.commit()
-            .context("Failed to commit ACP event transaction")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("commit ACP event transaction", source))?;
 
         Ok(())
     }
@@ -1255,8 +1229,7 @@ impl SqliteStorage {
                 ORDER BY sequence ASC
                 ",
             )
-            .context("Failed to prepare ACP event query")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("prepare ACP event query", source))?;
 
         let iter = stmt
             .query_map(params![run_id], |row| {
@@ -1278,8 +1251,7 @@ impl SqliteStorage {
                     terminal: sqlite_to_bool(row.get::<_, i64>(5)?),
                 })
             })
-            .context("Failed to load ACP run events")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("load ACP run events", source))?;
 
         let mut events = Vec::new();
         for event in iter.flatten() {
@@ -1331,8 +1303,7 @@ impl SqliteStorage {
                 await_state.resume_payload_json,
             ],
         )
-        .context("Failed to save ACP await state")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("save ACP await state", source))?;
         Ok(())
     }
 
@@ -1389,8 +1360,7 @@ impl SqliteStorage {
                 },
             )
             .optional()
-            .context("Failed to load ACP await state")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("load ACP await state", source))?;
 
         Ok(result)
     }
@@ -1433,8 +1403,7 @@ impl SqliteStorage {
                 bool_to_sqlite(cancellation.acknowledged),
             ],
         )
-        .context("Failed to save ACP cancellation")
-        .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        .map_err(|source| storage_query_error("save ACP cancellation", source))?;
         Ok(())
     }
 
@@ -1491,8 +1460,7 @@ impl SqliteStorage {
                 },
             )
             .optional()
-            .context("Failed to load ACP cancellation")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("load ACP cancellation", source))?;
 
         Ok(result)
     }
@@ -1576,11 +1544,9 @@ impl SqliteStorage {
         self.save_acp_session(&session)?;
 
         let input_json = serde_json::to_string(&run.request.input)
-            .context("Failed to serialize ACP run input")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_serialization_error("serialize ACP run input", source))?;
         let output_json = serde_json::to_string(&run.output)
-            .context("Failed to serialize ACP run output")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_serialization_error("serialize ACP run output", source))?;
 
         let stored_run = StoredAcpRun {
             run_id: run.id.as_str().to_string(),
@@ -1652,12 +1618,13 @@ impl SqliteStorage {
             created_at: stored.created_at.to_rfc3339(),
         };
 
-        let input: Vec<crate::acp::AcpMessage> = serde_json::from_str(&stored.input_json)
-            .context("Failed to deserialize stored ACP input")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
-        let output: AcpRunOutput = serde_json::from_str(&stored.output_json)
-            .context("Failed to deserialize stored ACP output")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+        let input: Vec<crate::acp::AcpMessage> =
+            serde_json::from_str(&stored.input_json).map_err(|source| {
+                storage_serialization_error("deserialize stored ACP input", source)
+            })?;
+        let output: AcpRunOutput = serde_json::from_str(&stored.output_json).map_err(|source| {
+            storage_serialization_error("deserialize stored ACP output", source)
+        })?;
 
         let mut request = AcpRunCreateRequest::new(session_id, input)?;
         request.metadata = BTreeMap::new();
@@ -1706,9 +1673,9 @@ impl SqliteStorage {
         let mut restored = Vec::with_capacity(stored_events.len());
 
         for stored in stored_events {
-            let payload: Value = serde_json::from_str(&stored.payload_json)
-                .context("Failed to deserialize stored ACP event payload")
-                .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            let payload: Value = serde_json::from_str(&stored.payload_json).map_err(|source| {
+                storage_serialization_error("deserialize stored ACP event payload", source)
+            })?;
             let event = AcpEvent {
                 kind: parse_event_kind(&stored.kind)?,
                 run_id: Some(stored.run_id.clone()),
@@ -1746,8 +1713,7 @@ impl SqliteStorage {
                 params![session_id],
                 |row| row.get(0),
             )
-            .context("Failed to count ACP runs for session")
-            .map_err(|e| XzatomaError::Storage(e.to_string()))?;
+            .map_err(|source| storage_query_error("count ACP runs for session", source))?;
         usize::try_from(count)
             .map_err(|e| XzatomaError::Storage(format!("Invalid ACP run count: {}", e)))
     }
@@ -1842,9 +1808,10 @@ fn stored_acp_stdio_session_from_row(
 
     let created_at = parse_rfc3339_to_utc(&created_at_str);
     let updated_at = parse_rfc3339_to_utc(&updated_at_str);
-    let metadata = serde_json::from_str::<BTreeMap<String, String>>(&metadata_json)
-        .context("Failed to deserialize ACP stdio session metadata")
-        .map_err(|e| XzatomaError::Storage(e.to_string()));
+    let metadata =
+        serde_json::from_str::<BTreeMap<String, String>>(&metadata_json).map_err(|source| {
+            storage_serialization_error("deserialize ACP stdio session metadata", source)
+        });
 
     Ok(created_at.and_then(|created_at| {
         updated_at.and_then(|updated_at| {
@@ -2615,5 +2582,75 @@ mod tests {
         unsafe {
             std::env::remove_var("XZATOMA_HISTORY_DB");
         }
+    }
+
+    #[test]
+    fn test_list_sessions_missing_db_preserves_error_source() {
+        // Point storage at a path whose parent directory does not exist so the
+        // underlying SQLite open fails and surfaces a structured error.
+        let dir = tempdir().expect("failed to create tempdir");
+        let db_path = dir.path().join("missing_parent").join("history.db");
+        let storage = SqliteStorage { db_path };
+
+        let error = storage
+            .list_sessions()
+            .expect_err("list_sessions should fail when the database cannot be opened");
+
+        assert!(
+            matches!(error, XzatomaError::StorageDatabaseOpen { .. }),
+            "expected StorageDatabaseOpen, got {error:?}"
+        );
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "database open error must preserve its source chain"
+        );
+    }
+
+    #[test]
+    fn test_list_sessions_corrupt_db_preserves_error_source() {
+        // A file that is not a valid SQLite database causes the statement
+        // preparation to fail, exercising the query error helper.
+        let dir = tempdir().expect("failed to create tempdir");
+        let db_path = dir.path().join("corrupt.db");
+        std::fs::write(&db_path, b"this is definitely not a sqlite database")
+            .expect("failed to write corrupt database file");
+        let storage = SqliteStorage { db_path };
+
+        let error = storage
+            .list_sessions()
+            .expect_err("list_sessions should fail on a corrupt database");
+
+        assert!(
+            matches!(error, XzatomaError::StorageQuery { .. }),
+            "expected StorageQuery, got {error:?}"
+        );
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "query error must preserve its source chain"
+        );
+    }
+
+    #[test]
+    fn test_new_with_path_uncreatable_parent_preserves_error_source() {
+        // Nesting the database under an existing regular file makes directory
+        // creation fail, exercising the persistence path error helper.
+        let dir = tempdir().expect("failed to create tempdir");
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"regular file").expect("failed to write blocker file");
+        let db_path = blocker.join("nested").join("history.db");
+
+        let error = match SqliteStorage::new_with_path(db_path) {
+            Ok(_) => panic!("new_with_path should fail when the parent cannot be created"),
+            Err(error) => error,
+        };
+
+        assert!(
+            matches!(error, XzatomaError::StoragePersistencePath { .. }),
+            "expected StoragePersistencePath, got {error:?}"
+        );
+        assert!(
+            std::error::Error::source(&error).is_some(),
+            "persistence path error must preserve its source chain"
+        );
     }
 }

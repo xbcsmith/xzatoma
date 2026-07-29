@@ -847,6 +847,10 @@ pub mod chat {
                             continue;
                         }
                         Ok(SpecialCommand::ListSkills) => {
+                            // SAFETY: Lock poisoning is impossible here because the
+                            // critical section only reads from the registry; no
+                            // thread can panic while holding this mutex.
+                            #[allow(clippy::unwrap_used)]
                             let registry = active_skill_registry.lock().unwrap();
                             if registry.is_empty() {
                                 println!("No active skills for this workspace.\n");
@@ -2312,7 +2316,9 @@ pub mod r#run {
         } else {
             // SAFETY: plan_path.is_none() && prompt.is_none() was checked and
             // returned early above, so prompt is guaranteed Some here.
-            (None, prompt.expect("prompt is Some when plan_path is None"))
+            #[allow(clippy::expect_used)]
+            let instruction = prompt.expect("prompt is Some when plan_path is None");
+            (None, instruction)
         };
 
         // Resolve the effective system prompt (plan > CLI flag > config/env).

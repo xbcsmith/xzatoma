@@ -263,6 +263,7 @@ pub(crate) fn validate_same_origin(expected: &Url, actual: &Url, field_name: &st
 /// Matches keys whose name (case-insensitive) contains `token` or `secret`, or
 /// equals one of `password`, `code`, `api_key`, `apikey`, `client_secret`,
 /// `access_token`, or `refresh_token`, followed by a `:` and a quoted value.
+#[allow(clippy::expect_used)]
 static JSON_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
     // SAFETY: This is a compile-time-constant pattern that is known to be a
     // valid regular expression, so compilation cannot fail at runtime. Per

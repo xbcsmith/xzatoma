@@ -11,8 +11,69 @@ use crate::error::{Result, XzatomaError};
 use futures::StreamExt;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::Duration;
 use url::Url;
+
+// Precompiled regexes used by `html_to_markdown`. Compiling these once at
+// startup avoids re-parsing the patterns (and the associated fallible
+// `Regex::new(...).unwrap()`) on every HTML-to-Markdown conversion.
+//
+// SAFETY: Every pattern below is a constant string literal that is known-valid
+// at author time; `Regex::new` on these cannot fail at runtime, so `.expect`
+// in each initializer is unreachable in practice.
+
+// Matches `<script>...</script>` blocks (case-insensitive) so their contents
+// can be stripped before conversion.
+#[allow(clippy::expect_used)]
+static SCRIPT_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)<script[^>]*>.*?</script>").expect("valid regex"));
+
+// Matches `<style>...</style>` blocks (case-insensitive) so their contents can
+// be stripped before conversion.
+#[allow(clippy::expect_used)]
+static STYLE_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)<style[^>]*>.*?</style>").expect("valid regex"));
+
+// Matches `<p>...</p>` paragraph tags for conversion to blank-line separated
+// text.
+#[allow(clippy::expect_used)]
+static PARAGRAPH_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)<p[^>]*>(.*?)</p>").expect("valid regex"));
+
+// Matches `<a href="...">text</a>` anchors for conversion to Markdown links.
+#[allow(clippy::expect_used)]
+static ANCHOR_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"(?i)<a[^>]*href\s*=\s*['"]([^'"]*)['"'][^>]*>(.*?)</a>"#)
+        .expect("valid regex")
+});
+
+// Matches `<b>`/`<strong>` tags for conversion to Markdown bold.
+#[allow(clippy::expect_used)]
+static BOLD_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)<(?:b|strong)[^>]*>(.*?)</(?:b|strong)>").expect("valid regex")
+});
+
+// Matches `<i>`/`<em>` tags for conversion to Markdown italic.
+#[allow(clippy::expect_used)]
+static ITALIC_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"(?i)<(?:i|em)[^>]*>(.*?)</(?:i|em)>").expect("valid regex")
+});
+
+// Matches `<br>` line breaks (and trailing spaces) for conversion to newlines.
+#[allow(clippy::expect_used)]
+static LINE_BREAK_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"(?i)<br\s*/?> *").expect("valid regex"));
+
+// Matches any remaining HTML tag so it can be removed from the output.
+#[allow(clippy::expect_used)]
+static HTML_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"<[^>]+>").expect("valid regex"));
+
+// Matches runs of three or more blank lines for whitespace normalization.
+#[allow(clippy::expect_used)]
+static WHITESPACE_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\n\s*\n\s*\n+").expect("valid regex"));
 
 /// Information about fetched web content
 ///
@@ -811,14 +872,8 @@ impl FetchTool {
         let mut result = html.to_string();
 
         // Remove script and style tags
-        result = regex::Regex::new(r"(?i)<script[^>]*>.*?</script>")
-            .unwrap()
-            .replace_all(&result, "")
-            .to_string();
-        result = regex::Regex::new(r"(?i)<style[^>]*>.*?</style>")
-            .unwrap()
-            .replace_all(&result, "")
-            .to_string();
+        result = SCRIPT_TAG_RE.replace_all(&result, "").to_string();
+        result = STYLE_TAG_RE.replace_all(&result, "").to_string();
 
         // Convert headers
         for i in (1..=6).rev() {
@@ -831,46 +886,25 @@ impl FetchTool {
         }
 
         // Convert paragraph tags
-        result = regex::Regex::new(r"(?i)<p[^>]*>(.*?)</p>")
-            .unwrap()
-            .replace_all(&result, "$1\n\n")
-            .to_string();
+        result = PARAGRAPH_RE.replace_all(&result, "$1\n\n").to_string();
 
         // Convert links
-        result = regex::Regex::new(r#"(?i)<a[^>]*href\s*=\s*['"]([^'"]*)['"'][^>]*>(.*?)</a>"#)
-            .unwrap()
-            .replace_all(&result, "[$2]($1)")
-            .to_string();
+        result = ANCHOR_RE.replace_all(&result, "[$2]($1)").to_string();
 
         // Convert bold
-        result = regex::Regex::new(r"(?i)<(?:b|strong)[^>]*>(.*?)</(?:b|strong)>")
-            .unwrap()
-            .replace_all(&result, "**$1**")
-            .to_string();
+        result = BOLD_RE.replace_all(&result, "**$1**").to_string();
 
         // Convert italic
-        result = regex::Regex::new(r"(?i)<(?:i|em)[^>]*>(.*?)</(?:i|em)>")
-            .unwrap()
-            .replace_all(&result, "*$1*")
-            .to_string();
+        result = ITALIC_RE.replace_all(&result, "*$1*").to_string();
 
         // Convert line breaks
-        result = regex::Regex::new(r"(?i)<br\s*/?> *")
-            .unwrap()
-            .replace_all(&result, "\n")
-            .to_string();
+        result = LINE_BREAK_RE.replace_all(&result, "\n").to_string();
 
         // Remove remaining HTML tags
-        result = regex::Regex::new(r"<[^>]+>")
-            .unwrap()
-            .replace_all(&result, "")
-            .to_string();
+        result = HTML_TAG_RE.replace_all(&result, "").to_string();
 
         // Clean up whitespace
-        result = regex::Regex::new(r"\n\s*\n\s*\n+")
-            .unwrap()
-            .replace_all(&result, "\n\n")
-            .to_string();
+        result = WHITESPACE_RE.replace_all(&result, "\n\n").to_string();
         result = result.trim().to_string();
 
         result

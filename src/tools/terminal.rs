@@ -170,6 +170,10 @@ impl CommandValidator {
             r"\$HOME/\.ssh/",
         ];
 
+        // SAFETY: The denylist patterns are compile-time string constants whose
+        // validity is verified by existing tests, so `Regex::new` cannot fail at
+        // runtime.
+        #[allow(clippy::expect_used)]
         let denylist = denylist_patterns
             .into_iter()
             .map(|p| Regex::new(p).expect("invalid denylist regex"))

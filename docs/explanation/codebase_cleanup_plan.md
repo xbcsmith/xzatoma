@@ -279,12 +279,12 @@ and to remove production panics.
 
 #### Task 2.5 Deliverables
 
-- [ ] `storage/mod.rs` fully migrated to structured error helpers (0 remaining
+- [x] `storage/mod.rs` fully migrated to structured error helpers (0 remaining
       `Storage(e.to_string())`).
-- [ ] No production `panic!`/`.expect()` on genuinely fallible operations.
-- [ ] Static regexes in `fetch.rs`; all production `unwrap`/`expect` either
+- [x] No production `panic!`/`.expect()` on genuinely fallible operations.
+- [x] Static regexes in `fetch.rs`; all production `unwrap`/`expect` either
       removed or justified.
-- [ ] Clippy `unwrap_used`/`expect_used` enforced for production builds.
+- [x] Clippy `unwrap_used`/`expect_used` enforced for production builds.
 
 #### Task 2.6 Success Criteria
 
