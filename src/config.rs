@@ -1441,7 +1441,7 @@ pub enum ExecutionMode {
 ///
 /// `PerTask` is the default and produces better results with multi-step plans
 /// because the agent retains conversation context between tasks. `SingleShot`
-/// preserves the pre-Phase-1 behaviour for operators who need it.
+/// preserves the original single-prompt behaviour for operators who need it.
 ///
 /// # Examples
 ///
@@ -1467,7 +1467,7 @@ pub enum WatcherPlanExecutionMode {
     PerTask,
     /// Collapse the full plan into a single prompt sent to the agent once.
     ///
-    /// This is the legacy behaviour from before Phase 1. Use it when the
+    /// This is the legacy single-prompt behaviour. Use it when the
     /// plan has no structured tasks, or when operator policy requires a
     /// single-shot execution.
     SingleShot,
@@ -5607,7 +5607,7 @@ agent:
         assert_eq!(cfg.agent.subagent.default_max_turns, 5);
     }
 
-    // --- Phase 3 LogConfig tests ---
+    // --- LogConfig tests ---
 
     #[test]
     fn test_log_config_debug_field_default_false() {
@@ -6180,7 +6180,7 @@ pub struct WatcherExecutionConfig {
     ///
     /// `per_task` (default) executes each task in sequence in a shared agent
     /// session, preserving context between tasks. `single_shot` collapses the
-    /// full plan into a single prompt, which matches the pre-Phase-1 behaviour.
+    /// full plan into a single prompt, which matches the legacy single-prompt behaviour.
     #[serde(default = "default_watcher_plan_execution_mode")]
     pub execution_mode: WatcherPlanExecutionMode,
 }

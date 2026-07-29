@@ -393,7 +393,7 @@ impl AcpManifestLink {
 ///
 /// This is the protocol-facing description of an ACP-capable XZatoma
 /// agent. It is intentionally transport-independent and serializable so later
-/// phases can expose it over discovery surfaces.
+/// revisions can expose it over discovery surfaces.
 ///
 /// # Examples
 ///

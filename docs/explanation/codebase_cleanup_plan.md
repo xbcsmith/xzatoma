@@ -389,9 +389,9 @@ Mechanical, low-risk hygiene.
 
 #### Task 4.5 Deliverables
 
-- [ ] Stale "Phase N" labels removed/reworded in `src/`.
-- [ ] Phase-named implementation docs archived/renamed.
-- [ ] All touched Markdown passes lint/format checks.
+- [x] Stale "Phase N" labels removed/reworded in `src/`.
+- [x] Phase-named implementation docs archived/renamed.
+- [x] All touched Markdown passes lint/format checks.
 
 #### Task 4.6 Success Criteria
 

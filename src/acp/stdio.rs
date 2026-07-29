@@ -1176,7 +1176,7 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
             "Subagent status requires a live session.".to_string()
         }
 
-        // Phase 2: Informational Commands.
+        // Informational Commands.
         //
         // `ShowStatus`, `ListTools`, `ListSkills`, and `ShowMcpStatus` need
         // access to live session/agent state that this pure, synchronous
@@ -1201,7 +1201,7 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
             "Safety policy switching requires a live session.".to_string()
         }
 
-        // Phase 4: Model Switch and `/model` Commands.
+        // Model Switch and `/model` Commands.
         Ok(SpecialCommand::SwitchModel(_)) => {
             "Model switching requires a live session.".to_string()
         }
@@ -1211,13 +1211,13 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
             "Model info lookup requires a live session.".to_string()
         }
 
-        // Phase 5: Context Commands.
+        // Context Commands.
         Ok(SpecialCommand::ContextInfo) => "Context info requires a live session.".to_string(),
         Ok(SpecialCommand::ContextSummary { .. }) => {
             "Context summary requires a live session.".to_string()
         }
 
-        // Phase 6: Subagents Toggle and System Prompt.
+        // Subagents Toggle and System Prompt.
         Ok(SpecialCommand::ToggleSubagents(_)) => {
             "Subagent toggling requires a live session.".to_string()
         }
@@ -3377,7 +3377,7 @@ mod tests {
         let text =
             resolve_special_command_response("/help").expect("/help should resolve to a response");
         assert!(text.contains("/help"));
-        // Phase 2: /help now resolves to the full help text, not a placeholder.
+        // /help now resolves to the full help text, not a placeholder.
         assert!(text.contains("Special Commands for Interactive Chat Mode"));
         assert!(text.contains("CHAT MODE SWITCHING"));
     }
@@ -4099,7 +4099,7 @@ mod tests {
 
         assert_eq!(session.conversation_uuid(), conversation_id);
         assert_eq!(agent.conversation().title(), "Existing ACP Conversation");
-        // Phase 8 injects ACP_PLAN_INSTRUCTION as an additional system message
+        // Resuming an ACP session injects ACP_PLAN_INSTRUCTION as an additional system message
         // into every resumed ACP session that does not already contain it.
         // The two stored messages plus one injected system message = 3.
         assert_eq!(agent.conversation().messages().len(), 3);
@@ -5486,7 +5486,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2: Context Window Display tests
+    // Context Window Display tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -5584,7 +5584,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4: Thinking stream ACP observer tests
+    // Thinking stream ACP observer tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5763,7 +5763,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 8: Plan tracking tests
+    // Plan tracking tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5835,7 +5835,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 7 wire-format diagnostic logging tests
+    // Wire-format diagnostic logging tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -5884,7 +5884,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2: ACP Status Handlers tests
+    // ACP Status Handlers tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -6093,7 +6093,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3: ACP Mutating Command Handler tests
+    // ACP Mutating Command Handler tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -6286,7 +6286,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4: ACP Informational Command tests
+    // ACP Informational Command tests
     // -----------------------------------------------------------------------
 
     #[tokio::test]

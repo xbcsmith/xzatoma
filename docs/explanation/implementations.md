@@ -1788,9 +1788,9 @@ the full documentation suite: reference, tutorial, how-to, demos, and updates to
 
 **Documentation**:
 [chat_unification_implementation_plan.md](chat_unification_implementation_plan.md),
-[chat_unification_phase4_acp_informational_commands_implementation.md](chat_unification_phase4_acp_informational_commands_implementation.md),
-[chat_unification_phase5_acp_advertisement_updates_implementation.md](chat_unification_phase5_acp_advertisement_updates_implementation.md),
-[chat_unification_phase6_documentation_and_demos_implementation.md](chat_unification_phase6_documentation_and_demos_implementation.md)
+[chat_unification_phase4_acp_informational_commands_implementation.md](../archive/chat_unification_phase4_acp_informational_commands_implementation.md),
+[chat_unification_phase5_acp_advertisement_updates_implementation.md](../archive/chat_unification_phase5_acp_advertisement_updates_implementation.md),
+[chat_unification_phase6_documentation_and_demos_implementation.md](../archive/chat_unification_phase6_documentation_and_demos_implementation.md)
 
 ## ACP Model Selector and Ollama Auto-Model (2026-07-19)
 

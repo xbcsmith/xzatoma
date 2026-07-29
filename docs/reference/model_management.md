@@ -701,7 +701,3 @@ loop {
 - How-To Guide: Switching Models (docs/how-to/switch_models.md)
 - Architecture: Model Management
   (docs/explanation/model_management_implementation_plan.md)
-- Agent Integration Implementation
-  (docs/explanation/phase4_agent_integration_implementation.md)
-- Chat Mode Model Management Implementation
-  (docs/explanation/phase6_chat_mode_model_management_implementation.md)

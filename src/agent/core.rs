@@ -2361,7 +2361,7 @@ mod tests {
         }
     }
 
-    /// Mock streaming provider for Phase 4 testing.
+    /// Mock streaming provider for streaming tests.
     #[derive(Clone)]
     struct MockStreamingProvider {
         reasoning_chunks: Vec<String>,
@@ -2877,7 +2877,7 @@ mod tests {
         }
     }
 
-    // --- Phase 5 new tests ---
+    // --- Additional agent tests ---
 
     // --- ToolCallCompleted output fix tests ---
 

@@ -1831,7 +1831,7 @@ mod tests {
         }
     }
 
-    // --- Phase 1 new tests ---
+    // --- Common args and flag parsing tests ---
 
     #[test]
     #[serial_test::serial]
@@ -1900,7 +1900,7 @@ mod tests {
         assert_eq!(cli.command.common_args().config, Some("x.yaml".to_string()));
     }
 
-    // --- Phase 3 new tests ---
+    // --- Debug and trace flag tests ---
 
     #[test]
     fn test_debug_flag_after_subcommand() {
@@ -1934,7 +1934,7 @@ mod tests {
         assert!(debug);
     }
 
-    // --- Phase 4 new tests ---
+    // --- Log format flag tests ---
 
     #[test]
     fn test_log_format_json_after_chat_subcommand() {
