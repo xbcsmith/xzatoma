@@ -1974,39 +1974,6 @@ pub struct ProviderMessage {
 }
 
 impl ProviderMessage {
-    /// Builds native Ollama image payloads from multimodal content parts.
-    ///
-    /// Ollama expects user images as base64 strings in an `images` field rather
-    /// than as inline structured message content. This helper extracts inline
-    /// base64 data and encodes inline byte data. File references and remote URLs
-    /// are ignored because ACP conversion should resolve local files before the
-    /// provider request is built, and Ollama does not accept remote image URLs in
-    /// the native `images` field.
-    ///
-    /// # Returns
-    ///
-    /// Returns base64 image payloads suitable for Ollama's native `images`
-    /// message field.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use xzatoma::providers::{
-    ///     ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart,
-    /// };
-    ///
-    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
-    ///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
-    /// ]))
-    /// .unwrap();
-    ///
-    /// let provider_message = xzatoma::providers::ProviderMessage::from_message_for_ollama(&message);
-    /// assert_eq!(provider_message.images, vec!["AAAA".to_string()]);
-    /// ```
-    pub fn ollama_native_images(&self) -> Vec<String> {
-        content_parts_to_ollama_images(self.content_parts.as_deref())
-    }
-
     /// Converts a high-level provider message into the shared wire message shape
     /// with Ollama's native image field populated.
     ///

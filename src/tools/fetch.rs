@@ -686,20 +686,6 @@ impl FetchTool {
         }
     }
 
-    /// Set rate limit (requests per minute)
-    ///
-    /// # Arguments
-    ///
-    /// * `requests_per_minute` - Maximum requests per minute
-    ///
-    /// # Returns
-    ///
-    /// Returns self for chaining
-    pub async fn with_rate_limit(self, requests_per_minute: u32) -> Self {
-        *self.rate_limiter.lock().await = RateLimiter::new(requests_per_minute);
-        self
-    }
-
     /// Fetch content from a URL
     ///
     /// # Arguments

@@ -342,11 +342,11 @@ Zero-to-low-risk deletions that shrink the public surface.
 
 #### Task 3.6 Deliverables
 
-- [ ] 19 dead public items removed.
-- [ ] `run_chat` converted to `RunChatOptions`; no remaining
+- [x] 19 dead public items removed.
+- [x] `run_chat` converted to `RunChatOptions`; no remaining
       `#[allow(clippy::too_many_arguments)]`.
-- [ ] First module batch of visibility tightening merged.
-- [ ] Reference docs mentioning deleted items updated.
+- [x] First module batch of visibility tightening merged.
+- [x] Reference docs mentioning deleted items updated.
 
 #### Task 3.7 Success Criteria
 

@@ -280,15 +280,6 @@ impl ActiveSessionState {
         &self.session_id
     }
 
-    /// Returns the workspace root for the session.
-    ///
-    /// # Returns
-    ///
-    /// Returns the resolved workspace root used for tools and skill discovery.
-    pub fn workspace_root(&self) -> &Path {
-        &self.workspace_root
-    }
-
     /// Returns the XZatoma conversation UUID associated with the session.
     ///
     /// # Returns
@@ -296,24 +287,6 @@ impl ActiveSessionState {
     /// Returns the internal conversation UUID as a string slice.
     pub fn conversation_uuid(&self) -> &str {
         &self.conversation_uuid
-    }
-
-    /// Returns the provider name configured for the session.
-    ///
-    /// # Returns
-    ///
-    /// Returns the provider name as a string slice.
-    pub fn provider_name(&self) -> &str {
-        &self.provider_name
-    }
-
-    /// Returns the current model name configured for the session.
-    ///
-    /// # Returns
-    ///
-    /// Returns the model name as a string slice.
-    pub fn current_model_name(&self) -> &str {
-        &self.current_model_name
     }
 
     /// Returns the last activity timestamp.
@@ -324,15 +297,6 @@ impl ActiveSessionState {
     /// activity.
     pub fn last_activity(&self) -> &str {
         &self.last_activity
-    }
-
-    /// Returns whether an MCP manager is kept alive for this session.
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` when MCP tools are registered and require a live manager.
-    pub fn has_mcp_manager(&self) -> bool {
-        self.mcp_manager.is_some()
     }
 
     /// Returns a shared handle to the mutable XZatoma agent for this session.

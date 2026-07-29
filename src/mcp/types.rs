@@ -666,58 +666,6 @@ pub struct Task {
     pub poll_interval: Option<u64>,
 }
 
-/// Result returned when a tool call creates a new task.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateTaskResult {
-    /// The newly created task.
-    pub task: Task,
-}
-
-/// Response to a `tasks/list` request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TasksListResponse {
-    /// Tasks in this page.
-    pub tasks: Vec<Task>,
-    /// Opaque cursor for the next page; `None` means this is the last page.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-}
-
-/// Parameters for `tasks/get`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TasksGetParams {
-    /// Identifier of the task to retrieve.
-    pub task_id: String,
-}
-
-/// Parameters for `tasks/result`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TasksResultParams {
-    /// Identifier of the task whose result to retrieve.
-    pub task_id: String,
-}
-
-/// Parameters for `tasks/cancel`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TasksCancelParams {
-    /// Identifier of the task to cancel.
-    pub task_id: String,
-}
-
-/// Parameters for `tasks/list`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TasksListParams {
-    /// Opaque cursor from a previous `tasks/list` response.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Resource types
 // ---------------------------------------------------------------------------
@@ -773,22 +721,6 @@ pub struct Resource {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// MIME type, if known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-}
-
-/// A URI template for parameterized resource access.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResourceTemplate {
-    /// RFC 6570 URI template string.
-    pub uri_template: String,
-    /// Human-readable name.
-    pub name: String,
-    /// Optional description.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// MIME type of resources matched by this template.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
@@ -1211,17 +1143,6 @@ pub struct Root {
     /// Optional display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-}
-
-/// Parameters for the `notifications/cancelled` notification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CancelledParams {
-    /// The `id` of the request being cancelled.
-    pub request_id: serde_json::Value,
-    /// Human-readable reason for cancellation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
 }
 
 /// Parameters for the `notifications/progress` notification.

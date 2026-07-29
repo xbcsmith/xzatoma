@@ -111,7 +111,7 @@ struct IdeRequestPermissionParams {
 /// Reads a text file through Zed's open project buffers. When the IDE bridge is
 /// active, this tool uses `fs/read_text_file` so that the file content reflects
 /// unsaved editor buffer state rather than only the on-disk snapshot.
-pub struct IdeReadTextFileTool {
+pub(crate) struct IdeReadTextFileTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -121,7 +121,7 @@ impl IdeReadTextFileTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -186,7 +186,7 @@ impl ToolExecutor for IdeReadTextFileTool {
 /// Writes a full text file through Zed's editor buffer system so that edits appear
 /// in the open editor and are saved consistently. This makes agent file writes
 /// visible as first-class editor operations that the user can review or undo.
-pub struct IdeWriteTextFileTool {
+pub(crate) struct IdeWriteTextFileTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -196,7 +196,7 @@ impl IdeWriteTextFileTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -255,7 +255,7 @@ impl ToolExecutor for IdeWriteTextFileTool {
 /// captures the output, and releases the terminal handle. When `wait_for_exit`
 /// is `false`, it returns the terminal ID so subsequent calls to
 /// `ide_terminal_output` and `ide_wait_for_terminal_exit` can track the session.
-pub struct IdeOpenTerminalTool {
+pub(crate) struct IdeOpenTerminalTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -265,7 +265,7 @@ impl IdeOpenTerminalTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -392,7 +392,7 @@ impl ToolExecutor for IdeOpenTerminalTool {
 /// Reads the current buffered output of a running or completed IDE terminal
 /// command. The terminal must have been created with `ide_open_terminal` using
 /// `wait_for_exit: false` to obtain a terminal ID.
-pub struct IdeTerminalOutputTool {
+pub(crate) struct IdeTerminalOutputTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -402,7 +402,7 @@ impl IdeTerminalOutputTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -451,7 +451,7 @@ impl ToolExecutor for IdeTerminalOutputTool {
 /// Blocks until a running IDE terminal command finishes and returns its exit
 /// code. The terminal must have been created with `ide_open_terminal` using
 /// `wait_for_exit: false`.
-pub struct IdeWaitForTerminalExitTool {
+pub(crate) struct IdeWaitForTerminalExitTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -461,7 +461,7 @@ impl IdeWaitForTerminalExitTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -516,7 +516,7 @@ impl ToolExecutor for IdeWaitForTerminalExitTool {
 ///
 /// Terminates a running IDE terminal command by sending a kill signal.
 /// After killing, use `ide_open_terminal` to start a new terminal.
-pub struct IdeKillTerminalTool {
+pub(crate) struct IdeKillTerminalTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -526,7 +526,7 @@ impl IdeKillTerminalTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -587,7 +587,7 @@ impl ToolExecutor for IdeKillTerminalTool {
 /// `approved`, `denied`, `cancelled`, or `error`. The tool fails closed: if the
 /// permission request errors out, the result is `approved: false` so the agent
 /// never proceeds on an unconfirmed operation.
-pub struct IdeRequestPermissionTool {
+pub(crate) struct IdeRequestPermissionTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -597,7 +597,7 @@ impl IdeRequestPermissionTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }

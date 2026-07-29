@@ -9,9 +9,8 @@ use xzatoma::mcp::types::{
     JsonRpcRequest, JsonRpcResponse, LATEST_PROTOCOL_VERSION, LoggingLevel, McpTool,
     MessageContent, NOTIF_TOOLS_LIST_CHANGED, PROTOCOL_VERSION_2025_03_26, PaginatedParams,
     ProgressParams, PromptMessage, ProtocolVersion, ResourceContents, Role,
-    SUPPORTED_PROTOCOL_VERSIONS, ServerCapabilities, Task, TaskStatus, TaskSupport,
-    TasksListResponse, TextContent, TextResourceContents, ToolAnnotations, ToolChoiceMode,
-    ToolExecution, ToolResponseContent,
+    SUPPORTED_PROTOCOL_VERSIONS, ServerCapabilities, Task, TaskStatus, TaskSupport, TextContent,
+    TextResourceContents, ToolAnnotations, ToolChoiceMode, ToolExecution, ToolResponseContent,
 };
 
 // ---------------------------------------------------------------------------
@@ -573,29 +572,6 @@ fn test_task_roundtrip() {
     let back: Task = serde_json::from_value(val).unwrap();
     assert_eq!(back.task_id, "task-001");
     assert_eq!(back.ttl, Some(3600));
-}
-
-// ---------------------------------------------------------------------------
-// TasksListResponse round-trip
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_tasks_list_response_roundtrip() {
-    let resp = TasksListResponse {
-        tasks: vec![Task {
-            task_id: "t1".to_string(),
-            status: TaskStatus::Completed,
-            status_message: None,
-            created_at: None,
-            last_updated_at: None,
-            ttl: None,
-            poll_interval: None,
-        }],
-        next_cursor: None,
-    };
-    let val = serde_json::to_value(&resp).unwrap();
-    assert_eq!(val["tasks"][0]["taskId"], "t1");
-    assert!(val.get("nextCursor").is_none());
 }
 
 // ---------------------------------------------------------------------------

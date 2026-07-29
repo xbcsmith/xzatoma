@@ -123,53 +123,6 @@ impl Agent {
         })
     }
 
-    /// Creates a new agent instance with a boxed provider
-    ///
-    /// Useful when the provider type is not known at compile time,
-    /// or when working with dynamically created providers.
-    ///
-    /// # Arguments
-    ///
-    /// * `provider` - A boxed provider instance
-    /// * `tools` - The tool registry with available tools
-    /// * `config` - Agent configuration (limits, timeouts, etc.)
-    ///
-    /// # Returns
-    ///
-    /// Returns a new Agent instance or an error if configuration is invalid
-    ///
-    /// # Errors
-    ///
-    /// Returns `XzatomaError::Config` if configuration validation fails
-    pub fn new_boxed(
-        provider: Box<dyn Provider>,
-        tools: ToolRegistry,
-        config: AgentConfig,
-    ) -> Result<Self> {
-        // Validate configuration
-        if config.max_turns == 0 {
-            return Err(XzatomaError::Config(
-                "max_turns must be greater than 0".to_string(),
-            ));
-        }
-
-        let conversation = Conversation::new(
-            config.conversation.max_tokens,
-            config.conversation.min_retain_turns,
-            config.conversation.prune_threshold.into(),
-        );
-
-        Ok(Self {
-            provider: Arc::from(provider),
-            conversation,
-            tools,
-            config,
-            accumulated_usage: Arc::new(Mutex::new(None)),
-            transient_system_messages: Vec::new(),
-            last_iteration_count: 0,
-        })
-    }
-
     /// Creates a new agent instance sharing an existing provider
     ///
     /// This constructor allows multiple agents to share the same
@@ -1584,14 +1537,6 @@ impl Agent {
     /// completion request and are not stored in `Conversation.messages`.
     pub fn set_transient_system_messages(&mut self, messages: Vec<String>) {
         self.transient_system_messages = messages;
-    }
-
-    /// Clears all transient system messages.
-    ///
-    /// This removes any runtime-only prompt injections without modifying
-    /// `Conversation.messages`.
-    pub fn clear_transient_system_messages(&mut self) {
-        self.transient_system_messages.clear();
     }
 
     /// Returns the current transient system messages.

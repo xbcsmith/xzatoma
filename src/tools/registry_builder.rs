@@ -180,23 +180,6 @@ impl ToolRegistryBuilder {
         self
     }
 
-    /// Register an optional `activate_skill` tool.
-    ///
-    /// The tool is registered only when explicitly provided by the command
-    /// layer after skill discovery and visibility filtering.
-    ///
-    /// # Arguments
-    ///
-    /// * `tool` - Optional activate_skill tool executor
-    ///
-    /// # Returns
-    ///
-    /// Returns self for method chaining
-    pub fn with_activate_skill_tool(mut self, tool: Option<Arc<dyn ToolExecutor>>) -> Self {
-        self.activate_skill_tool = tool;
-        self
-    }
-
     /// Build a tool registry for the current mode
     ///
     /// Automatically selects the appropriate registry based on `mode`.

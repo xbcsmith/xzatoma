@@ -554,15 +554,6 @@ impl TerminalTool {
         self.safety_mode = mode;
         self
     }
-
-    /// Set the safety mode for this tool (mutating)
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - The safety mode to use
-    pub fn set_safety_mode(&mut self, mode: SafetyMode) {
-        self.safety_mode = mode;
-    }
 }
 
 #[async_trait]

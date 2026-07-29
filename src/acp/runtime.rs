@@ -1985,26 +1985,6 @@ pub fn assistant_text_message(content: String) -> Result<AcpMessage> {
     )
 }
 
-/// Builds a synthetic system ACP message from plain text.
-///
-/// # Arguments
-///
-/// * `content` - System output text
-///
-/// # Returns
-///
-/// Returns an ACP system message with one text part.
-///
-/// # Errors
-///
-/// Returns an error if the content is empty or invalid.
-pub fn system_text_message(content: String) -> Result<AcpMessage> {
-    AcpMessage::new(
-        AcpRole::System,
-        vec![AcpMessagePart::Text(crate::acp::AcpTextPart::new(content))],
-    )
-}
-
 /// Builds a lifecycle snapshot payload for polling surfaces.
 ///
 /// # Arguments

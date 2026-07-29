@@ -99,13 +99,14 @@ async fn main() -> Result<()> {
             // Moves `config` into the handler (match arms are exclusive)
             commands::chat::run_chat(
                 config,
-                provider,
-                mode,
-                safe,
-                resume,
-                thinking_effort,
-                system_prompt,
-                streaming,
+                commands::chat::RunChatOptions {
+                    provider_name: provider,
+                    mode,
+                    resume,
+                    thinking_effort,
+                    system_prompt,
+                    streaming,
+                },
             )
             .await?;
             Ok(())

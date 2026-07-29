@@ -25,7 +25,7 @@ use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{CopilotProvider, OllamaProvider, create_provider};
+use crate::providers::{CopilotProvider, create_provider};
 use crate::skills::{
     ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
     discover_skills, render_skill_catalog,
@@ -462,45 +462,78 @@ pub mod chat {
         }
     }
 
+    /// Options controlling an interactive [`run_chat`] session.
+    ///
+    /// Groups the optional overrides for a chat session into a single value so
+    /// the entry point stays readable and avoids a long positional argument
+    /// list. Construct with [`RunChatOptions::default`] and override individual
+    /// fields with struct-update syntax.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::chat::RunChatOptions;
+    ///
+    /// let options = RunChatOptions {
+    ///     provider_name: Some("ollama".to_string()),
+    ///     streaming: true,
+    ///     ..RunChatOptions::default()
+    /// };
+    /// assert_eq!(options.provider_name.as_deref(), Some("ollama"));
+    /// assert!(options.streaming);
+    /// ```
+    #[derive(Debug, Clone, Default)]
+    pub struct RunChatOptions {
+        /// Optional override for the configured provider.
+        pub provider_name: Option<String>,
+        /// Optional override for the chat mode ("planning" or "write").
+        pub mode: Option<String>,
+        /// Optional conversation ID to resume.
+        pub resume: Option<String>,
+        /// Optional thinking effort level for models that support extended
+        /// reasoning. Accepted values: `none`, `low`, `medium`, `high`,
+        /// `extra_high`. When `Some("none")`, reasoning parameters are cleared.
+        /// When `None`, the provider default is used.
+        pub thinking_effort: Option<String>,
+        /// Optional system prompt override for this session.
+        pub system_prompt: Option<String>,
+        /// When true, response and reasoning tokens are streamed to stdout as
+        /// they arrive. Requires the configured provider to support streaming.
+        pub streaming: bool,
+    }
+
     /// Start interactive chat mode
     ///
     /// # Arguments
     ///
     /// * `config` - Global configuration (consumed)
-    /// * `provider_name` - Optional override for the configured provider
-    /// * `mode` - Optional override for the chat mode ("planning" or "write")
-    /// * `safe` - If true, enable safety mode (always confirm dangerous operations)
-    /// * `resume` - Optional conversation ID to resume
-    /// * `thinking_effort` - Optional thinking effort level for models that support
-    ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
-    ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
-    ///   When `None`, the provider default is used.
-    /// * `system_prompt` - Optional system prompt override for this session.
-    /// * `streaming` - When true, response and reasoning tokens are printed
-    ///   progressively to stdout as they arrive. Requires the configured
-    ///   provider to support streaming.
+    /// * `options` - Session overrides; see [`RunChatOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if provider creation, storage initialization, or the
+    /// interactive loop fails.
     ///
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::commands::chat;
+    /// use xzatoma::commands::chat::{self, RunChatOptions};
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None, None, None, false).await?;
+    /// // chat::run_chat(Config::default(), RunChatOptions::default()).await?;
     /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run_chat(
-        mut config: Config,
-        provider_name: Option<String>,
-        mode: Option<String>,
-        _safe: bool,
-        resume: Option<String>,
-        thinking_effort: Option<String>,
-        system_prompt: Option<String>,
-        streaming: bool,
-    ) -> Result<()> {
+    pub async fn run_chat(mut config: Config, options: RunChatOptions) -> Result<()> {
         use crate::storage::SqliteStorage;
+
+        let RunChatOptions {
+            provider_name,
+            mode,
+            resume,
+            thinking_effort,
+            system_prompt,
+            streaming,
+        } = options;
 
         tracing::info!("Starting interactive chat mode");
         // Keep the CLI flag value separate from config so we can distinguish
@@ -1880,7 +1913,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None, None, None, false).await;
+            let res = run_chat(cfg, RunChatOptions::default()).await;
             assert!(res.is_err());
         }
 
@@ -2387,86 +2420,6 @@ pub mod r#run {
                 eprintln!("Execution failed: {}", e);
                 Err(e)
             }
-        }
-    }
-
-    /// Creates a provider instance for a specific model
-    ///
-    /// This helper function creates a new provider configured to use the specified model.
-    /// It's used for automatic summarization when a different summary model is configured.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The global configuration
-    /// * `model_name` - The model name to configure the provider with
-    ///
-    /// # Returns
-    ///
-    /// Returns an Arc-wrapped provider instance
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Provider type is unsupported
-    /// - Provider initialization fails
-    pub async fn create_provider_for_model(
-        config: &Config,
-        model_name: &str,
-    ) -> Result<Arc<dyn crate::providers::Provider>> {
-        match config.provider.provider_type.as_str() {
-            "copilot" => {
-                let mut copilot_config = config.provider.copilot.clone();
-                copilot_config.model = model_name.to_string();
-                let provider = CopilotProvider::new(copilot_config)?;
-                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
-            }
-            "ollama" => {
-                let mut ollama_config = config.provider.ollama.clone();
-                ollama_config.model = model_name.to_string();
-                let provider = OllamaProvider::new(ollama_config)?;
-                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
-            }
-            _ => Err(XzatomaError::Provider(format!(
-                "Unsupported provider type: {}",
-                config.provider.provider_type
-            ))),
-        }
-    }
-
-    /// Creates a summary provider if needed for a different model
-    ///
-    /// Checks if the summary model differs from the current provider's model.
-    /// If they're the same, returns the current provider. Otherwise creates
-    /// a new provider for the summary model.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The global configuration
-    /// * `current_provider` - The current provider instance
-    /// * `summary_model` - The model to use for summarization
-    ///
-    /// # Returns
-    ///
-    /// Returns the provider to use for summarization
-    ///
-    /// # Errors
-    ///
-    /// Returns error if creating a new provider fails
-    pub async fn create_summary_provider_if_needed(
-        config: &Config,
-        current_provider: &Arc<dyn crate::providers::Provider>,
-        summary_model: &str,
-    ) -> Result<Arc<dyn crate::providers::Provider>> {
-        if current_provider.get_current_model() == summary_model {
-            // Same model, use existing provider
-            Ok(Arc::clone(current_provider))
-        } else {
-            // Different model or unknown current model, create new provider
-            tracing::debug!(
-                "Creating separate provider for summarization model: {}",
-                summary_model
-            );
-            create_provider_for_model(config, summary_model).await
         }
     }
 
