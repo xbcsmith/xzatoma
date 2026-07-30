@@ -5,7 +5,7 @@
 
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
-use crate::providers::{CompletionResponse, Message, ModelInfo, Provider, ProviderCapabilities};
+use crate::providers::{CompletionResponse, Message, ModelInfo, Provider};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -152,6 +152,12 @@ agent:
 /// trait for use in unit tests. The builder pattern lets each test configure
 /// only the behavior it cares about without boilerplate.
 ///
+/// The builder can also configure the two behaviors that provider-trait tests
+/// exercise on the default trait methods: whether `current_model` reports a
+/// model (so the default `get_current_model` returns the `"none"` sentinel),
+/// and whether `fetch_models` fails (so the default `list_models` propagates an
+/// error).
+///
 /// # Examples
 ///
 /// ```no_run
@@ -170,6 +176,8 @@ pub struct TestProviderBuilder {
     model: String,
     authenticated: bool,
     completion_text: String,
+    report_current_model: bool,
+    fetch_models_error: Option<String>,
 }
 
 impl TestProviderBuilder {
@@ -179,6 +187,8 @@ impl TestProviderBuilder {
     /// - `model`: `"test-model"`
     /// - `authenticated`: `true`
     /// - `completion_text`: `"test response"`
+    /// - `current_model` is reported (returns `Some(model)`)
+    /// - `fetch_models` succeeds
     ///
     /// # Examples
     ///
@@ -192,6 +202,8 @@ impl TestProviderBuilder {
             model: "test-model".to_string(),
             authenticated: true,
             completion_text: "test response".to_string(),
+            report_current_model: true,
+            fetch_models_error: None,
         }
     }
 
@@ -225,12 +237,36 @@ impl TestProviderBuilder {
         self
     }
 
+    /// Configure `current_model` to return `None`.
+    ///
+    /// Used to exercise the default `get_current_model` implementation, which
+    /// returns the sentinel `"none"` when `current_model` reports no model.
+    pub fn without_current_model(mut self) -> Self {
+        self.report_current_model = false;
+        self
+    }
+
+    /// Configure `fetch_models` to fail with the given error message.
+    ///
+    /// The error is returned as `XzatomaError::Provider`. Used to exercise the
+    /// default `list_models` implementation, which delegates to `fetch_models`.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The provider error message to return
+    pub fn with_fetch_models_error(mut self, message: &str) -> Self {
+        self.fetch_models_error = Some(message.to_string());
+        self
+    }
+
     /// Build and return a configured `TestProvider`.
     pub fn build(self) -> TestProvider {
         TestProvider {
             model: self.model,
             authenticated: self.authenticated,
             completion_text: self.completion_text,
+            report_current_model: self.report_current_model,
+            fetch_models_error: self.fetch_models_error,
         }
     }
 }
@@ -266,6 +302,8 @@ pub struct TestProvider {
     model: String,
     authenticated: bool,
     completion_text: String,
+    report_current_model: bool,
+    fetch_models_error: Option<String>,
 }
 
 #[async_trait]
@@ -275,7 +313,11 @@ impl Provider for TestProvider {
     }
 
     fn current_model(&self) -> Option<&str> {
-        Some(&self.model)
+        if self.report_current_model {
+            Some(&self.model)
+        } else {
+            None
+        }
     }
 
     fn set_model(&mut self, model: &str) {
@@ -283,6 +325,9 @@ impl Provider for TestProvider {
     }
 
     async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
+        if let Some(message) = &self.fetch_models_error {
+            return Err(XzatomaError::Provider(message.clone()));
+        }
         Ok(vec![ModelInfo::new(
             self.model.clone(),
             self.model.clone(),
@@ -297,14 +342,6 @@ impl Provider for TestProvider {
     ) -> Result<CompletionResponse> {
         let message = Message::assistant(&self.completion_text);
         Ok(CompletionResponse::new(message))
-    }
-
-    fn get_current_model(&self) -> String {
-        self.model.clone()
-    }
-
-    fn get_provider_capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities::default()
     }
 }
 

@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::{self, PathValidator};
-use crate::tools::{TOOL_COPY_PATH, ToolExecutor, ToolResult, parse_tool_args};
+use crate::tools::{TOOL_COPY_PATH, ToolExecutor, ToolResult, parse_tool_args, validate_or_err};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -52,61 +52,13 @@ impl CopyPathTool {
     pub fn working_dir(&self) -> &Path {
         self.path_validator.working_dir()
     }
-}
 
-#[derive(Debug, Deserialize)]
-struct CopyPathParams {
-    source_path: String,
-    destination_path: String,
-    #[serde(default)]
-    overwrite: bool,
-}
-
-#[async_trait]
-impl ToolExecutor for CopyPathTool {
-    fn tool_definition(&self) -> serde_json::Value {
-        serde_json::json!({
-            "name": TOOL_COPY_PATH,
-            "description": "Copies a file or directory (recursively). Creates destination parent directories automatically.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source_path": {
-                        "type": "string",
-                        "description": "Relative path to the source file or directory"
-                    },
-                    "destination_path": {
-                        "type": "string",
-                        "description": "Relative path to the destination"
-                    },
-                    "overwrite": {
-                        "type": "boolean",
-                        "description": "Whether to overwrite existing destination (default: false)",
-                        "default": false
-                    }
-                },
-                "required": ["source_path", "destination_path"]
-            }
-        })
-    }
-
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: CopyPathParams = parse_tool_args(args)?;
-
-        let source = match self.path_validator.validate(&params.source_path) {
-            Ok(path) => path,
-            Err(e) => return Ok(ToolResult::error(format!("Invalid source path: {}", e))),
-        };
-
-        let mut destination = match self.path_validator.validate(&params.destination_path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Invalid destination path: {}",
-                    e
-                )));
-            }
-        };
+    /// Performs the copy; the `Err(ToolResult)` arm lets path validation use `?`.
+    async fn copy(&self, params: CopyPathParams) -> std::result::Result<ToolResult, ToolResult> {
+        let pv = &self.path_validator;
+        let source = validate_or_err(pv, &params.source_path, "Invalid source path")?;
+        let mut destination =
+            validate_or_err(pv, &params.destination_path, "Invalid destination path")?;
 
         if !source.exists() {
             return Ok(ToolResult::error(format!(
@@ -149,15 +101,11 @@ impl ToolExecutor for CopyPathTool {
                 e
             )));
         }
-        destination = match self.path_validator.validate(&params.destination_path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Invalid destination path after parent creation: {}",
-                    e
-                )));
-            }
-        };
+        destination = validate_or_err(
+            pv,
+            &params.destination_path,
+            "Invalid destination path after parent creation",
+        )?;
 
         if source.is_file() {
             match tokio::fs::copy(&source, &destination).await {
@@ -184,6 +132,48 @@ impl ToolExecutor for CopyPathTool {
                 params.source_path
             )))
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CopyPathParams {
+    source_path: String,
+    destination_path: String,
+    #[serde(default)]
+    overwrite: bool,
+}
+
+#[async_trait]
+impl ToolExecutor for CopyPathTool {
+    fn tool_definition(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": TOOL_COPY_PATH,
+            "description": "Copies a file or directory (recursively). Creates destination parent directories automatically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": {
+                        "type": "string",
+                        "description": "Relative path to the source file or directory"
+                    },
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Relative path to the destination"
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Whether to overwrite existing destination (default: false)",
+                        "default": false
+                    }
+                },
+                "required": ["source_path", "destination_path"]
+            }
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        let params: CopyPathParams = parse_tool_args(args)?;
+        Ok(self.copy(params).await.unwrap_or_else(|err| err))
     }
 }
 

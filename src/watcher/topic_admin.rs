@@ -51,9 +51,7 @@
 
 use crate::config::{KafkaSecurityConfig, KafkaWatcherConfig};
 use crate::error::{Result, XzatomaError};
-use crate::watcher::xzepr::consumer::config::{
-    SaslConfig, SaslMechanism, SecurityProtocol, SslConfig,
-};
+use crate::watcher::kafka_security::{SaslConfig, SecurityProtocol, SslConfig};
 use rdkafka::ClientConfig;
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic, TopicReplication};
 use rdkafka::client::DefaultClientContext;
@@ -474,42 +472,10 @@ impl WatcherTopicAdmin {
     }
 
     fn apply_security_config(&mut self, security: &KafkaSecurityConfig) -> Result<()> {
-        self.security_protocol = parse_security_protocol(&security.protocol)?;
-
-        if matches!(
-            self.security_protocol,
-            SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
-        ) {
-            self.ssl_config = Some(SslConfig {
-                ca_location: None,
-                certificate_location: None,
-                key_location: None,
-            });
-        }
-
-        if let Some(mechanism) = &security.sasl_mechanism {
-            let username = security.sasl_username.clone().ok_or_else(|| {
-                XzatomaError::Config("SASL username is required when mechanism is set".to_string())
-            })?;
-
-            let password = security
-                .sasl_password
-                .clone()
-                .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
-                .ok_or_else(|| {
-                    XzatomaError::Config(
-                        "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
-                            .to_string(),
-                    )
-                })?;
-
-            self.sasl_config = Some(SaslConfig {
-                mechanism: parse_sasl_mechanism(mechanism)?,
-                username,
-                password,
-            });
-        }
-
+        let resolved = crate::watcher::kafka_security::apply_security_config(security)?;
+        self.security_protocol = resolved.security_protocol;
+        self.sasl_config = resolved.sasl_config;
+        self.ssl_config = resolved.ssl_config;
         Ok(())
     }
 }
@@ -524,31 +490,6 @@ fn validate_topic_name(topic: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
-    match protocol.to_uppercase().as_str() {
-        "PLAINTEXT" => Ok(SecurityProtocol::Plaintext),
-        "SSL" => Ok(SecurityProtocol::Ssl),
-        "SASL_PLAINTEXT" => Ok(SecurityProtocol::SaslPlaintext),
-        "SASL_SSL" => Ok(SecurityProtocol::SaslSsl),
-        _ => Err(XzatomaError::Config(format!(
-            "Invalid security protocol: {}",
-            protocol
-        ))),
-    }
-}
-
-fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
-    match mechanism.to_uppercase().as_str() {
-        "PLAIN" => Ok(SaslMechanism::Plain),
-        "SCRAM-SHA-256" => Ok(SaslMechanism::ScramSha256),
-        "SCRAM-SHA-512" => Ok(SaslMechanism::ScramSha512),
-        _ => Err(XzatomaError::Config(format!(
-            "Invalid SASL mechanism: {}",
-            mechanism
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,16 +497,8 @@ mod tests {
 
     fn base_kafka_config() -> KafkaWatcherConfig {
         KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
-            group_id: "xzatoma-watcher".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         }
     }
 
@@ -789,16 +722,8 @@ mod tests {
     #[tokio::test]
     async fn test_ensure_topics_returns_error_for_empty_topic_name() {
         let config = KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "".to_string(),
-            output_topic: None,
-            group_id: "xzatoma-watcher".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         };
 
         let admin = WatcherTopicAdmin::new(&config).unwrap();

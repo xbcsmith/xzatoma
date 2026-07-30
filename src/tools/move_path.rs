@@ -4,7 +4,7 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::{self, PathValidator};
-use crate::tools::{TOOL_MOVE_PATH, ToolExecutor, ToolResult, parse_tool_args};
+use crate::tools::{TOOL_MOVE_PATH, ToolExecutor, ToolResult, parse_tool_args, validate_or_err};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -53,54 +53,13 @@ impl MovePathTool {
     pub fn working_dir(&self) -> &Path {
         self.path_validator.working_dir()
     }
-}
 
-#[derive(Debug, Deserialize)]
-struct MovePathParams {
-    source_path: String,
-    destination_path: String,
-}
-
-#[async_trait]
-impl ToolExecutor for MovePathTool {
-    fn tool_definition(&self) -> serde_json::Value {
-        serde_json::json!({
-            "name": TOOL_MOVE_PATH,
-            "description": "Moves or renames a file or directory. Creates parent directories automatically. Falls back to copy+delete for cross-filesystem moves.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "source_path": {
-                        "type": "string",
-                        "description": "Relative path to the source file or directory"
-                    },
-                    "destination_path": {
-                        "type": "string",
-                        "description": "Relative path to the destination"
-                    }
-                },
-                "required": ["source_path", "destination_path"]
-            }
-        })
-    }
-
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let params: MovePathParams = parse_tool_args(args)?;
-
-        let source = match self.path_validator.validate(&params.source_path) {
-            Ok(path) => path,
-            Err(e) => return Ok(ToolResult::error(format!("Invalid source path: {}", e))),
-        };
-
-        let mut destination = match self.path_validator.validate(&params.destination_path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Invalid destination path: {}",
-                    e
-                )));
-            }
-        };
+    /// Performs the move; the `Err(ToolResult)` arm lets path validation use `?`.
+    async fn rename(&self, params: MovePathParams) -> std::result::Result<ToolResult, ToolResult> {
+        let pv = &self.path_validator;
+        let source = validate_or_err(pv, &params.source_path, "Invalid source path")?;
+        let mut destination =
+            validate_or_err(pv, &params.destination_path, "Invalid destination path")?;
 
         if !source.exists() {
             return Ok(ToolResult::error(format!(
@@ -124,15 +83,11 @@ impl ToolExecutor for MovePathTool {
                 e
             )));
         }
-        destination = match self.path_validator.validate(&params.destination_path) {
-            Ok(path) => path,
-            Err(e) => {
-                return Ok(ToolResult::error(format!(
-                    "Invalid destination path after parent creation: {}",
-                    e
-                )));
-            }
-        };
+        destination = validate_or_err(
+            pv,
+            &params.destination_path,
+            "Invalid destination path after parent creation",
+        )?;
 
         // Try direct rename first
         if tokio::fs::rename(&source, &destination).await.is_ok() {
@@ -184,6 +139,41 @@ impl ToolExecutor for MovePathTool {
                 params.source_path
             )))
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct MovePathParams {
+    source_path: String,
+    destination_path: String,
+}
+
+#[async_trait]
+impl ToolExecutor for MovePathTool {
+    fn tool_definition(&self) -> serde_json::Value {
+        serde_json::json!({
+            "name": TOOL_MOVE_PATH,
+            "description": "Moves or renames a file or directory. Creates parent directories automatically. Falls back to copy+delete for cross-filesystem moves.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": {
+                        "type": "string",
+                        "description": "Relative path to the source file or directory"
+                    },
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Relative path to the destination"
+                    }
+                },
+                "required": ["source_path", "destination_path"]
+            }
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        let params: MovePathParams = parse_tool_args(args)?;
+        Ok(self.rename(params).await.unwrap_or_else(|err| err))
     }
 }
 

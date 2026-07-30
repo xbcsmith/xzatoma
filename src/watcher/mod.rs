@@ -16,6 +16,12 @@
 //! # Module Layout
 //!
 //! - [`generic`]: Generic Kafka watcher backend
+//! - [`kafka_security`]: Canonical Kafka security types and helpers shared
+//!   across all watcher backends (`SecurityProtocol`, `SaslMechanism`,
+//!   `SaslConfig`, `SslConfig`, and the security resolution helpers)
+//! - [`lifecycle`]: Shared watcher startup helpers (output-topic resolution,
+//!   execution-semaphore construction, and result-producer construction) reused
+//!   by both watcher backends
 //! - [`logging`]: Structured logging helpers shared across all watcher backends
 //! - [`plan_executor`]: Shared per-task plan execution logic (`TaskOutcome`,
 //!   `execute_tasks_sequentially`) used by both watcher backends
@@ -33,6 +39,8 @@
 //! call site used in `commands::watch::run_watch`.
 
 pub mod generic;
+pub mod kafka_security;
+pub mod lifecycle;
 pub mod logging;
 pub mod plan_executor;
 pub mod topic_admin;

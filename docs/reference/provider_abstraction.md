@@ -247,12 +247,27 @@ print(response.message.content)
 
 ```text
 providers/
-├── base.rs         # Provider trait and base types
+├── mod.rs           # Module root and re-exports
+├── trait_mod.rs     # The Provider trait (definition and default methods)
+├── types.rs         # Shared domain types and OpenAI-style chat wire structs
+├── conversion.rs    # Shared message/tool-call conversion helpers
+├── streaming.rs     # Shared SSE reader, LineBuffer, and ChatDeltaAccumulator
+├── http.rs          # Shared HTTP error helpers (UNAUTHORIZED handling, redaction)
+├── util.rs          # Shared provider utilities (config read-lock helper)
+├── factory.rs       # ProviderFactory and backward-compatible free functions
+├── cache.rs         # Model cache helpers
+├── capabilities.rs  # Vision-capability detection helpers
 ├── copilot.rs       # GitHub Copilot (OAuth) implementation
 ├── ollama.rs        # Ollama local/remote provider
-├── openai.rs        # OpenAI and OpenAI-compatible provider
-└── mod.rs          # Module root and re-exports
+└── openai.rs        # OpenAI and OpenAI-compatible provider
 ```
+
+The canonical OpenAI-style chat wire types (`ChatToolCall`, `ChatFunctionCall`)
+live in `types.rs`; `copilot.rs` and `openai.rs` alias them (byte-compatible)
+rather than redefining them, following the pattern `ollama.rs` uses for its
+shared types. Shared streaming state (`ChatDeltaAccumulator<K>`) and SSE parsing
+(`LineBuffer`, `parse_sse_line`, `next_sse_data`) live in `streaming.rs`; the
+`/responses` endpoint keeps its own `ResponsesAccumulator` in `copilot.rs`.
 
 ---
 

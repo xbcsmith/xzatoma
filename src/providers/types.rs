@@ -1913,6 +1913,65 @@ fn provider_tool_call_type() -> String {
     "function".to_string()
 }
 
+/// A single tool call in an OpenAI-style chat completions message.
+///
+/// The Copilot `/chat/completions` and OpenAI Chat Completions wire formats use
+/// this identical JSON shape. This single type replaces the formerly duplicated
+/// `CopilotToolCall`/`OpenAIToolCall` structs.
+///
+/// Unlike [`ProviderToolCall`] (used by Ollama, which stores arguments as a
+/// native JSON value), the `arguments` field of [`ChatFunctionCall`] is a
+/// pre-serialized JSON string, matching the OpenAI Chat Completions contract.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{ChatToolCall, ChatFunctionCall};
+///
+/// let tc = ChatToolCall {
+///     id: "call_abc".to_string(),
+///     r#type: "function".to_string(),
+///     function: ChatFunctionCall {
+///         name: "read_file".to_string(),
+///         arguments: r#"{"path":"a.rs"}"#.to_string(),
+///     },
+/// };
+/// assert_eq!(tc.function.name, "read_file");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatToolCall {
+    /// Unique identifier for this tool call, assigned by the provider.
+    pub id: String,
+    /// Always `"function"` for current providers.
+    pub r#type: String,
+    /// Function name and serialized JSON arguments.
+    pub function: ChatFunctionCall,
+}
+
+/// Function name and serialized JSON arguments within a [`ChatToolCall`].
+///
+/// `arguments` is the raw JSON string exactly as it appears on the wire; it is
+/// not parsed or re-serialized during conversion.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ChatFunctionCall;
+///
+/// let fc = ChatFunctionCall {
+///     name: "greet".to_string(),
+///     arguments: r#"{"name":"Alice"}"#.to_string(),
+/// };
+/// assert_eq!(fc.name, "greet");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatFunctionCall {
+    /// Name of the function being called.
+    pub name: String,
+    /// Arguments as a serialized JSON string.
+    pub arguments: String,
+}
+
 /// Unified message type for provider request and response serialization.
 ///
 /// The `tool_call_id` field is present only in Copilot's wire format; Ollama

@@ -7,9 +7,10 @@ use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    CompletionResponse, FinishReason, FunctionCall, Message, ModelCapability, ModelInfo,
-    ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool, TokenUsage,
-    ToolCall, messages_contain_image_content,
+    ChatToolCall, CompletionResponse, FinishReason, FunctionCall, Message, ModelCapability,
+    ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool,
+    TokenUsage, ToolCall, chat_tool_calls_from_message, chat_tool_calls_to_domain,
+    messages_contain_image_content, read_config_lock,
 };
 
 use async_trait::async_trait;
@@ -226,20 +227,12 @@ type CopilotTool = ProviderTool;
 /// Function metadata within a Copilot tool definition.
 type CopilotFunction = ProviderFunction;
 
-/// Tool call in Copilot format
-#[derive(Debug, Serialize, Deserialize)]
-struct CopilotToolCall {
-    id: String,
-    r#type: String,
-    function: CopilotFunctionCall,
-}
-
-/// Function call details in Copilot format
-#[derive(Debug, Serialize, Deserialize)]
-struct CopilotFunctionCall {
-    name: String,
-    arguments: String,
-}
+/// Tool call in Copilot format.
+///
+/// Aliased to the shared [`ChatToolCall`] wire type, which is byte-compatible
+/// with the former hand-written `CopilotToolCall` struct. Its `function` field
+/// is a [`ChatFunctionCall`].
+type CopilotToolCall = ChatToolCall;
 
 /// Response structure from Copilot API
 #[derive(Debug, Deserialize)]
@@ -1005,6 +998,12 @@ pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
 
 /// Parse SSE (Server-Sent Events) line
 ///
+/// Delegates to the shared
+/// [`streaming::parse_sse_line`](crate::providers::streaming::parse_sse_line),
+/// preserving this function's original contract exactly: `data: ` payloads are
+/// returned as-is, the `[DONE]` sentinel is normalized to `"[DONE]"`, and
+/// empty, comment, and metadata lines yield `None`.
+///
 /// # Arguments
 ///
 /// * `line` - Line from SSE stream
@@ -1013,27 +1012,13 @@ pub(crate) fn convert_tool_choice(choice: Option<&str>) -> Option<ToolChoice> {
 ///
 /// Returns optional parsed event data
 fn parse_sse_line(line: &str) -> Option<String> {
-    let line = line.trim();
+    use crate::providers::streaming::SseLine;
 
-    if line.is_empty() {
-        return None;
+    match crate::providers::streaming::parse_sse_line(line) {
+        SseLine::Done => Some("[DONE]".to_string()),
+        SseLine::Data(data) => Some(data),
+        SseLine::Comment | SseLine::Empty => None,
     }
-
-    // Handle data: lines
-    if let Some(data) = line.strip_prefix("data: ") {
-        // Check for [DONE] sentinel
-        if data.trim() == "[DONE]" {
-            return Some("[DONE]".to_string());
-        }
-        return Some(data.to_string());
-    }
-
-    // Ignore event:, id:, and other SSE fields
-    if line.starts_with("event:") || line.starts_with("id:") || line.starts_with(":") {
-        return None;
-    }
-
-    None
 }
 
 /// Parse SSE data line to StreamEvent
@@ -1212,29 +1197,22 @@ impl ResponsesAccumulator {
 
 /// Accumulator for the `/chat/completions` endpoint SSE stream.
 ///
-/// Collects text content and tool-call fragments from successive
-/// [`StreamEvent`]s and produces a [`CompletionResponse`] via [`finalize`].
-/// When the same `call_id` appears in multiple events, argument fragments are
-/// concatenated in arrival order.
+/// This is a thin adapter over the shared
+/// [`ChatDeltaAccumulator`](crate::providers::streaming::ChatDeltaAccumulator)
+/// keyed by `call_id` (`String`), which preserves the identifier ordering of
+/// finalized tool calls. It collects text content and tool-call fragments from
+/// successive [`StreamEvent`]s and produces a [`CompletionResponse`] via
+/// [`finalize`]. When the same `call_id` appears in multiple events, argument
+/// fragments are concatenated in arrival order.
 struct ChatCompletionsAccumulator {
-    /// Accumulated text content from `Message` events.
-    content: String,
-    /// Partial tool calls keyed by `call_id`.
-    tool_calls: HashMap<String, PartialToolCall>,
-    /// Token usage, populated when the endpoint provides it.
-    usage: Option<TokenUsage>,
-    /// Finish reason; defaults to `Stop`.
-    finish_reason: FinishReason,
+    inner: crate::providers::streaming::ChatDeltaAccumulator<String>,
 }
 
 impl ChatCompletionsAccumulator {
     /// Create a new, empty [`ChatCompletionsAccumulator`].
     fn new() -> Self {
         Self {
-            content: String::new(),
-            tool_calls: HashMap::new(),
-            usage: None,
-            finish_reason: FinishReason::Stop,
+            inner: crate::providers::streaming::ChatDeltaAccumulator::new(),
         }
     }
 
@@ -1243,6 +1221,7 @@ impl ChatCompletionsAccumulator {
     /// Appends text content from `Message` events and accumulates tool-call
     /// argument fragments from `FunctionCall` events. When the same `call_id`
     /// appears in multiple events, the `arguments` strings are concatenated.
+    /// `Reasoning`, `Status`, and `Done` events are ignored.
     ///
     /// # Arguments
     ///
@@ -1254,7 +1233,7 @@ impl ChatCompletionsAccumulator {
                     match item {
                         ResponseInputContent::OutputText { text }
                         | ResponseInputContent::InputText { text } => {
-                            self.content.push_str(text);
+                            self.inner.push_content(text);
                         }
                         ResponseInputContent::InputImage { .. } => {}
                     }
@@ -1265,18 +1244,8 @@ impl ChatCompletionsAccumulator {
                 name,
                 arguments,
             } => {
-                let entry =
-                    self.tool_calls
-                        .entry(call_id.clone())
-                        .or_insert_with(|| PartialToolCall {
-                            call_id: call_id.clone(),
-                            name: name.clone(),
-                            arguments: String::new(),
-                        });
-                if entry.name.is_empty() {
-                    entry.name = name.clone();
-                }
-                entry.arguments.push_str(arguments);
+                self.inner
+                    .apply_tool_call(call_id.clone(), Some(call_id), Some(name), arguments);
             }
             StreamEvent::Reasoning { .. } | StreamEvent::Status { .. } | StreamEvent::Done => {}
         }
@@ -1284,48 +1253,23 @@ impl ChatCompletionsAccumulator {
 
     /// Consume the accumulator and produce a [`CompletionResponse`].
     ///
-    /// When tool calls were accumulated, the message is built with
-    /// [`Message::assistant_with_tools`] ordered by `call_id`. Otherwise the
-    /// accumulated text content is used. Usage and finish reason are always set.
+    /// Delegates to
+    /// [`ChatDeltaAccumulator::finalize`](crate::providers::streaming::ChatDeltaAccumulator::finalize),
+    /// which orders any tool calls by `call_id` and applies the finish reason.
     fn finalize(self) -> CompletionResponse {
-        let message = if !self.tool_calls.is_empty() {
-            let mut tc_list: Vec<PartialToolCall> = self.tool_calls.into_values().collect();
-            tc_list.sort_by(|a, b| a.call_id.cmp(&b.call_id));
-            let tool_calls: Vec<ToolCall> = tc_list
-                .into_iter()
-                .map(|p| ToolCall {
-                    id: p.call_id,
-                    function: FunctionCall {
-                        name: p.name,
-                        arguments: p.arguments,
-                    },
-                })
-                .collect();
-            Message::assistant_with_tools(tool_calls)
-        } else {
-            Message::assistant(self.content)
-        };
-
-        let base = if let Some(usage) = self.usage {
-            CompletionResponse::with_usage(message, usage)
-        } else {
-            CompletionResponse::new(message)
-        };
-
-        base.with_finish_reason(self.finish_reason)
+        self.inner.finalize()
     }
 }
 
 fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
-    let body = crate::security::redact_sensitive_text(body);
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        XzatomaError::Authentication(format!(
-            "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
-            status, body
-        ))
-    } else {
-        XzatomaError::Provider(format!("Copilot returned error {}: {}", status, body))
-    }
+    crate::providers::http::api_error(
+        "Copilot",
+        status,
+        body,
+        Some(
+            "Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
+        ),
+    )
 }
 
 impl CopilotProvider {
@@ -1657,19 +1601,7 @@ impl CopilotProvider {
                     return None;
                 }
 
-                let tool_calls = m.tool_calls.as_ref().map(|calls| {
-                    calls
-                        .iter()
-                        .map(|tc| CopilotToolCall {
-                            id: tc.id.clone(),
-                            r#type: "function".to_string(),
-                            function: CopilotFunctionCall {
-                                name: tc.function.name.clone(),
-                                arguments: tc.function.arguments.clone(),
-                            },
-                        })
-                        .collect()
-                });
+                let tool_calls = chat_tool_calls_from_message(m);
 
                 Some(CopilotMessage {
                     role: m.role.clone(),
@@ -1770,18 +1702,7 @@ impl CopilotProvider {
     /// Convert Copilot response message back to XZatoma format
     fn convert_response_message(&self, copilot_msg: CopilotMessage) -> Message {
         if let Some(tool_calls) = copilot_msg.tool_calls {
-            let converted_calls: Vec<ToolCall> = tool_calls
-                .into_iter()
-                .map(|tc| ToolCall {
-                    id: tc.id,
-                    function: FunctionCall {
-                        name: tc.function.name,
-                        arguments: tc.function.arguments,
-                    },
-                })
-                .collect();
-
-            Message::assistant_with_tools(converted_calls)
+            Message::assistant_with_tools(chat_tool_calls_to_domain(tool_calls))
         } else {
             Message::assistant(copilot_msg.content)
         }
@@ -2894,9 +2815,7 @@ impl Provider for CopilotProvider {
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let (model, enable_streaming) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (config.model.clone(), config.enable_streaming)
         }; // Drop the read guard before awaits
 
@@ -3098,6 +3017,7 @@ fn parse_github_token_poll(value: &serde_json::Value) -> Result<Option<String>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::ChatFunctionCall;
 
     /// Returns true when the `XZATOMA_RUN_KEYCHAIN_TESTS` environment variable
     /// is set, indicating that tests which read from or write to the OS keyring
@@ -3254,7 +3174,7 @@ mod tests {
             tool_calls: Some(vec![CopilotToolCall {
                 id: "call_123".to_string(),
                 r#type: "function".to_string(),
-                function: CopilotFunctionCall {
+                function: ChatFunctionCall {
                     name: "read_file".to_string(),
                     arguments: r#"{"path":"test.txt"}"#.to_string(),
                 },

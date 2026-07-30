@@ -26,16 +26,15 @@ use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
-    CompletionResponse, FinishReason, FunctionCall, ImagePromptSource, Message, ModelCapability,
+    ChatToolCall, CompletionResponse, FinishReason, ImagePromptSource, Message, ModelCapability,
     ModelInfo, Provider, ProviderCapabilities, ProviderMessageContentPart, ProviderTool,
-    TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
-    validate_message_sequence,
+    TokenUsage, chat_tool_calls_from_message, chat_tool_calls_to_domain, convert_tools_from_json,
+    messages_contain_image_content, read_config_lock, validate_message_sequence,
 };
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -102,19 +101,11 @@ struct OpenAIImageUrl {
 }
 
 /// A single tool call inside an OpenAI assistant message.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OpenAIToolCall {
-    id: String,
-    r#type: String,
-    function: OpenAIFunctionCall,
-}
-
-/// Function name and serialized JSON arguments within an [`OpenAIToolCall`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct OpenAIFunctionCall {
-    name: String,
-    arguments: String,
-}
+///
+/// Aliased to the shared [`ChatToolCall`] wire type, which is byte-compatible
+/// with the former hand-written `OpenAIToolCall` struct. Its `function` field
+/// is a [`ChatFunctionCall`].
+type OpenAIToolCall = ChatToolCall;
 
 /// Top-level OpenAI Chat Completions response body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,49 +313,23 @@ fn encode_path_segment(s: &str) -> String {
 // Streaming accumulator helper types
 // ---------------------------------------------------------------------------
 
-/// Accumulated tool-call state built up across SSE streaming chunks.
+/// Streaming completion accumulator for the OpenAI Chat Completions SSE stream.
 ///
-/// Each entry in the tool-call map keyed by `index` collects the `id`,
-/// function `name`, and incrementally appended `arguments_buf` from the delta
-/// stream, producing a fully formed [`ToolCall`] after the stream ends.
-struct AccumulatedToolCall {
-    id: String,
-    name: String,
-    arguments_buf: String,
-}
-
-/// Streaming completion accumulator.
-///
-/// Collects incremental `content`, optional `reasoning`, `tool_calls`,
-/// `usage`, and `finish_reason` from successive [`OpenAIStreamChunk`]s parsed
-/// out of the SSE event stream, then produces a single [`CompletionResponse`]
-/// via [`StreamAccumulator::finalize`].
-///
-/// Replace the inline per-field buffers in the streaming loop with a single
-/// `StreamAccumulator::new()`, call [`apply_chunk`] for each parsed chunk,
-/// and call [`finalize`] to produce the response.
+/// This is a thin adapter over the shared
+/// [`ChatDeltaAccumulator`](crate::providers::streaming::ChatDeltaAccumulator)
+/// keyed by the delta `index` (`u32`), which preserves OpenAI's numeric tool-
+/// call ordering. It maps each parsed [`OpenAIStreamChunk`] onto the generic
+/// accumulator and produces a single [`CompletionResponse`] via
+/// [`StreamAccumulator::finalize`].
 struct StreamAccumulator {
-    /// Accumulated text content from `delta.content` fields.
-    content: String,
-    /// Accumulated reasoning content from `delta.reasoning` fields, if any.
-    reasoning: Option<String>,
-    /// Partial tool-call state keyed by the delta `index` field.
-    tool_calls: HashMap<u32, AccumulatedToolCall>,
-    /// Token usage, populated from the `usage` field of the final chunk when present.
-    usage: Option<TokenUsage>,
-    /// Last-seen finish reason; defaults to [`FinishReason::Stop`].
-    finish_reason: FinishReason,
+    inner: crate::providers::streaming::ChatDeltaAccumulator<u32>,
 }
 
 impl StreamAccumulator {
     /// Create a new, empty [`StreamAccumulator`].
     fn new() -> Self {
         Self {
-            content: String::new(),
-            reasoning: None,
-            tool_calls: HashMap::new(),
-            usage: None,
-            finish_reason: FinishReason::Stop,
+            inner: crate::providers::streaming::ChatDeltaAccumulator::new(),
         }
     }
 
@@ -372,7 +337,7 @@ impl StreamAccumulator {
     ///
     /// Appends `delta.content` to the content buffer, appends
     /// `delta.reasoning` to the reasoning buffer (creating it on first use),
-    /// delegates tool-call deltas to [`apply_tool_call_chunk`], captures
+    /// applies each tool-call delta keyed by its `index`, captures
     /// `finish_reason` when present, and records `usage` when the chunk
     /// carries a usage object.
     ///
@@ -384,110 +349,46 @@ impl StreamAccumulator {
             let delta = &choice.delta;
 
             if let Some(ref c) = delta.content {
-                self.content.push_str(c);
+                self.inner.push_content(c);
             }
 
             if let Some(ref r) = delta.reasoning {
-                self.reasoning.get_or_insert_with(String::new).push_str(r);
+                self.inner.push_reasoning(r);
             }
 
             if let Some(ref tc_deltas) = delta.tool_calls {
-                self.apply_tool_call_chunk(tc_deltas);
+                for tc_delta in tc_deltas {
+                    let (name, args): (Option<&str>, &str) = match &tc_delta.function {
+                        Some(f) => (f.name.as_deref(), f.arguments.as_deref().unwrap_or("")),
+                        None => (None, ""),
+                    };
+                    self.inner
+                        .apply_tool_call(tc_delta.index, tc_delta.id.as_deref(), name, args);
+                }
             }
 
             if let Some(ref fr_str) = choice.finish_reason {
-                self.finish_reason = map_finish_reason(fr_str);
+                self.inner.set_finish_reason(map_finish_reason(fr_str));
             }
         }
 
         // The usage object lives at the chunk level, outside the choices array.
         if let Some(ref u) = chunk.usage {
-            self.usage = Some(TokenUsage::new(
+            self.inner.set_usage(TokenUsage::new(
                 u.prompt_tokens as usize,
                 u.completion_tokens as usize,
             ));
         }
     }
 
-    /// Apply incremental tool-call delta entries to the accumulator map.
-    ///
-    /// Each delta is keyed by its `index` field. The first delta for each
-    /// index supplies the `id` and function `name`; subsequent deltas append
-    /// additional `arguments` fragments to the buffer.
-    ///
-    /// # Arguments
-    ///
-    /// * `tc_deltas` - Slice of tool-call deltas from `delta.tool_calls`
-    fn apply_tool_call_chunk(&mut self, tc_deltas: &[OpenAIStreamToolCallDelta]) {
-        for tc_delta in tc_deltas {
-            let entry =
-                self.tool_calls
-                    .entry(tc_delta.index)
-                    .or_insert_with(|| AccumulatedToolCall {
-                        id: String::new(),
-                        name: String::new(),
-                        arguments_buf: String::new(),
-                    });
-
-            if let Some(ref id) = tc_delta.id
-                && entry.id.is_empty()
-            {
-                entry.id = id.clone();
-            }
-
-            if let Some(ref func) = tc_delta.function {
-                if let Some(ref name) = func.name
-                    && entry.name.is_empty()
-                {
-                    entry.name = name.clone();
-                }
-                if let Some(ref args) = func.arguments {
-                    entry.arguments_buf.push_str(args);
-                }
-            }
-        }
-    }
-
     /// Consume the accumulator and produce a [`CompletionResponse`].
     ///
-    /// When the accumulator contains any tool calls, the response message is
-    /// built via [`Message::assistant_with_tools`] with tool calls ordered
-    /// by their delta `index`. Otherwise the accumulated `content` string is
-    /// used. Token usage and `finish_reason` are always included. When
-    /// reasoning content was captured it is set on the response.
+    /// Delegates to
+    /// [`ChatDeltaAccumulator::finalize`](crate::providers::streaming::ChatDeltaAccumulator::finalize),
+    /// which orders any tool calls by their delta `index`, sets usage and
+    /// finish reason, and applies captured reasoning when present.
     fn finalize(self) -> CompletionResponse {
-        let message = if !self.tool_calls.is_empty() {
-            let mut tc_list: Vec<(u32, AccumulatedToolCall)> =
-                self.tool_calls.into_iter().collect();
-            tc_list.sort_by_key(|(idx, _)| *idx);
-            let tool_calls: Vec<ToolCall> = tc_list
-                .into_iter()
-                .map(|(_, acc)| ToolCall {
-                    id: acc.id,
-                    function: FunctionCall {
-                        name: acc.name,
-                        arguments: acc.arguments_buf,
-                    },
-                })
-                .collect();
-            Message::assistant_with_tools(tool_calls)
-        } else {
-            Message::assistant(self.content)
-        };
-
-        let base = if let Some(usage) = self.usage {
-            CompletionResponse::with_usage(message, usage)
-        } else {
-            CompletionResponse::new(message)
-        };
-
-        let base = base.with_finish_reason(self.finish_reason);
-
-        if let Some(reasoning) = self.reasoning {
-            base.set_reasoning(reasoning)
-        } else {
-            base
-        }
+        self.inner.finalize()
     }
 }
 
@@ -700,19 +601,7 @@ impl OpenAIProvider {
             }
 
             let content = self.convert_message_content(&m)?;
-            let tool_calls = m.tool_calls.as_ref().map(|calls| {
-                calls
-                    .iter()
-                    .map(|tc| OpenAIToolCall {
-                        id: tc.id.clone(),
-                        r#type: "function".to_string(),
-                        function: OpenAIFunctionCall {
-                            name: tc.function.name.clone(),
-                            arguments: tc.function.arguments.clone(),
-                        },
-                    })
-                    .collect()
-            });
+            let tool_calls = chat_tool_calls_from_message(&m);
 
             converted.push(OpenAIMessage {
                 role: m.role,
@@ -779,17 +668,7 @@ impl OpenAIProvider {
         if let Some(tool_calls) = msg.tool_calls
             && !tool_calls.is_empty()
         {
-            let converted: Vec<ToolCall> = tool_calls
-                .into_iter()
-                .map(|tc| ToolCall {
-                    id: tc.id,
-                    function: FunctionCall {
-                        name: tc.function.name,
-                        arguments: tc.function.arguments,
-                    },
-                })
-                .collect();
-            return Message::assistant_with_tools(converted);
+            return Message::assistant_with_tools(chat_tool_calls_to_domain(tool_calls));
         }
         Message::assistant(match msg.content {
             Some(OpenAIMessageContent::Text(text)) => text,
@@ -824,9 +703,7 @@ impl OpenAIProvider {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
         let (api_key, organization_id) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (config.api_key.clone(), config.organization_id.clone())
         };
 
@@ -873,9 +750,7 @@ impl OpenAIProvider {
         let mut headers = HeaderMap::new();
 
         let (api_key, organization_id) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (config.api_key.clone(), config.organization_id.clone())
         };
 
@@ -1031,8 +906,6 @@ impl OpenAIProvider {
         on_reasoning_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
         on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<CompletionResponse> {
-        use futures::StreamExt;
-
         let mut headers = self.build_request_headers()?;
         headers.insert(
             reqwest::header::ACCEPT,
@@ -1075,73 +948,49 @@ impl OpenAIProvider {
 
         let mut stream = response.bytes_stream();
         let mut acc = StreamAccumulator::new();
-        let mut line_buf: Vec<u8> = Vec::new();
+        let mut buffer = crate::providers::streaming::LineBuffer::new();
 
-        'stream: loop {
-            let chunk_result = match tokio::time::timeout(idle_duration, stream.next()).await {
-                Ok(Some(result)) => result,
-                Ok(None) => break 'stream,
-                Err(_elapsed) => {
-                    return Err(XzatomaError::Provider(format!(
+        loop {
+            let event = crate::providers::streaming::next_sse_data(
+                &mut stream,
+                &mut buffer,
+                idle_duration,
+                |secs| {
+                    XzatomaError::Provider(format!(
                         "OpenAI SSE stream idle timeout: no data received for {}s",
-                        idle_duration.as_secs()
-                    )));
-                }
+                        secs
+                    ))
+                },
+            )
+            .await?;
+
+            let payload = match event {
+                Some(crate::providers::streaming::SseDataEvent::Payload(payload)) => payload,
+                Some(crate::providers::streaming::SseDataEvent::Done) => break,
+                None => break,
             };
-            let chunk = chunk_result
-                .map_err(|e| XzatomaError::Provider(format!("Error reading SSE stream: {}", e)))?;
 
-            for byte in chunk {
-                if byte == b'\n' {
-                    let raw_line = String::from_utf8_lossy(&line_buf).to_string();
-                    line_buf.clear();
-                    let line = raw_line.trim_start().to_string();
-
-                    if line.is_empty() {
-                        continue;
-                    }
-
-                    if line.starts_with(':') {
-                        continue;
-                    }
-
-                    if let Some(after_prefix) = line.strip_prefix("data:") {
-                        let payload = after_prefix.trim();
-
-                        if payload == "[DONE]" {
-                            break 'stream;
+            match serde_json::from_str::<OpenAIStreamChunk>(&payload) {
+                Ok(sse_chunk) => {
+                    // Fire per-chunk callbacks before accumulating.
+                    if let Some(choice) = sse_chunk.choices.first() {
+                        if let Some(ref r) = choice.delta.reasoning
+                            && !r.is_empty()
+                            && let Some(cb) = on_reasoning_chunk
+                        {
+                            cb(r.clone());
                         }
-
-                        match serde_json::from_str::<OpenAIStreamChunk>(payload) {
-                            Ok(sse_chunk) => {
-                                // Fire per-chunk callbacks before accumulating.
-                                if let Some(choice) = sse_chunk.choices.first() {
-                                    if let Some(ref r) = choice.delta.reasoning
-                                        && !r.is_empty()
-                                        && let Some(cb) = on_reasoning_chunk
-                                    {
-                                        cb(r.clone());
-                                    }
-                                    if let Some(ref c) = choice.delta.content
-                                        && !c.is_empty()
-                                        && let Some(cb) = on_content_chunk
-                                    {
-                                        cb(c.clone());
-                                    }
-                                }
-                                acc.apply_chunk(&sse_chunk);
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    "Failed to parse SSE chunk: {} (payload: {:?})",
-                                    e,
-                                    payload
-                                );
-                            }
+                        if let Some(ref c) = choice.delta.content
+                            && !c.is_empty()
+                            && let Some(cb) = on_content_chunk
+                        {
+                            cb(c.clone());
                         }
                     }
-                } else {
-                    line_buf.push(byte);
+                    acc.apply_chunk(&sse_chunk);
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to parse SSE chunk: {} (payload: {:?})", e, payload);
                 }
             }
         }
@@ -1205,12 +1054,7 @@ impl OpenAIProvider {
                 );
             }
         }
-        XzatomaError::ProviderHttpStatus {
-            provider: "openai".to_string(),
-            endpoint: endpoint.to_string(),
-            status,
-            response,
-        }
+        crate::providers::http::provider_http_status("openai", endpoint, status, response)
     }
 }
 
@@ -1285,9 +1129,7 @@ impl Provider for OpenAIProvider {
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let (model, enable_streaming, reasoning_effort) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (
                 config.model.clone(),
                 config.enable_streaming,
@@ -1348,9 +1190,7 @@ impl Provider for OpenAIProvider {
         on_content_chunk: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         let (model, enable_streaming, reasoning_effort) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (
                 config.model.clone(),
                 config.enable_streaming,
@@ -1639,6 +1479,7 @@ impl Provider for OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::{ChatFunctionCall, FunctionCall, ToolCall};
     use serde_json::json;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2326,7 +2167,7 @@ mod tests {
             tool_calls: Some(vec![OpenAIToolCall {
                 id: "call_xyz".to_string(),
                 r#type: "function".to_string(),
-                function: OpenAIFunctionCall {
+                function: ChatFunctionCall {
                     name: "write_file".to_string(),
                     arguments: r#"{"path":"out.txt","content":"data"}"#.to_string(),
                 },

@@ -34,9 +34,7 @@ use crate::watcher::generic::consumer::{
 use crate::watcher::generic::event_handler::{GenericEventHandler, GenericTask};
 use crate::watcher::generic::matcher::GenericMatcher;
 use crate::watcher::generic::result_event::GenericPlanResult;
-use crate::watcher::generic::result_producer::{
-    FakeResultProducer, GenericResultProducer, ResultProducerTrait,
-};
+use crate::watcher::generic::result_producer::ResultProducerTrait;
 use crate::watcher::plan_executor::execute_tasks_sequentially;
 
 use serde_json::json;
@@ -194,18 +192,13 @@ impl GenericWatcher {
 
         let event_handler = GenericEventHandler::new(Some(matcher), None);
 
-        let producer: Arc<dyn ResultProducerTrait> = if dry_run {
-            Arc::new(FakeResultProducer::new())
-        } else {
-            Arc::new(
-                GenericResultProducer::new(&kafka_config)
-                    .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
-            )
-        };
+        let producer: Arc<dyn ResultProducerTrait> =
+            crate::watcher::lifecycle::build_producer(&kafka_config, dry_run)
+                .map_err(|e| GenericWatcherError::Producer(e.to_string()))?;
 
-        let execution_semaphore = Arc::new(Semaphore::new(
+        let execution_semaphore = crate::watcher::lifecycle::build_execution_semaphore(
             watcher_config.execution.max_concurrent_executions,
-        ));
+        );
 
         Ok(Self {
             config: Arc::new(config),
@@ -789,16 +782,10 @@ mod tests {
             watcher: WatcherConfig {
                 watcher_type: crate::config::WatcherType::Generic,
                 kafka: Some(KafkaWatcherConfig {
-                    brokers: "localhost:9092".to_string(),
                     topic: "generic.input".to_string(),
                     output_topic: Some("generic.output".to_string()),
                     group_id: "xzatoma-generic-test".to_string(),
-                    auto_create_topics: true,
-                    security: None,
-                    num_partitions: 1,
-                    replication_factor: 1,
-                    broker_address_family: "v4".to_string(),
-                    poll_interval_ms: 1000,
+                    ..Default::default()
                 }),
                 generic_match: match_config,
                 filters: Default::default(),
@@ -1050,21 +1037,16 @@ mod tests {
     fn test_generic_watcher_get_kafka_config_includes_security_settings() {
         let mut config = test_config(GenericMatchConfig::default());
         config.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "generic.input".to_string(),
             output_topic: Some("generic.output".to_string()),
             group_id: "xzatoma-generic-test".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
             security: Some(KafkaSecurityConfig {
                 protocol: "SASL_SSL".to_string(),
                 sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
                 sasl_username: Some("user".to_string()),
                 sasl_password: Some("pass".to_string()),
             }),
+            ..Default::default()
         });
 
         let watcher = GenericWatcher::new(config, true).unwrap();

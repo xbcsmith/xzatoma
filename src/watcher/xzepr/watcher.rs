@@ -15,9 +15,7 @@ use super::filter::EventFilter;
 use super::plan_extractor::{PlanExtractionError, PlanExtractor};
 use crate::config::{Config, KafkaWatcherConfig, WatcherConfig};
 use crate::watcher::generic::result_event::GenericPlanResult;
-use crate::watcher::generic::result_producer::{
-    FakeResultProducer, GenericResultProducer, ResultProducerTrait,
-};
+use crate::watcher::generic::result_producer::ResultProducerTrait;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -223,14 +221,9 @@ impl Watcher {
 
         debug!("Kafka consumer created successfully");
 
-        let producer: Arc<dyn ResultProducerTrait> = if dry_run {
-            Arc::new(FakeResultProducer::new())
-        } else {
-            Arc::new(
-                GenericResultProducer::new(&kafka_config)
-                    .map_err(|e| WatcherError::Producer(e.to_string()))?,
-            )
-        };
+        let producer: Arc<dyn ResultProducerTrait> =
+            crate::watcher::lifecycle::build_producer(&kafka_config, dry_run)
+                .map_err(|e| WatcherError::Producer(e.to_string()))?;
 
         // Create event filter
         let filter = Arc::new(
@@ -243,7 +236,8 @@ impl Watcher {
 
         // Create execution semaphore for concurrency control
         let max_concurrent = watcher_config.execution.max_concurrent_executions;
-        let execution_semaphore = Arc::new(Semaphore::new(max_concurrent));
+        let execution_semaphore =
+            crate::watcher::lifecycle::build_execution_semaphore(max_concurrent);
 
         debug!(
             max_concurrent = max_concurrent,
@@ -288,10 +282,7 @@ impl Watcher {
     ///
     /// The effective output topic.
     pub fn output_topic(&self) -> &str {
-        self.kafka_config
-            .output_topic
-            .as_deref()
-            .unwrap_or(self.kafka_config.topic.as_str())
+        crate::watcher::lifecycle::resolve_output_topic(&self.kafka_config)
     }
 
     /// Start watching for and processing events from the Kafka topic.
@@ -821,16 +812,9 @@ mod tests {
     fn test_watcher_creation_with_valid_config() {
         let mut config = Config::default();
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "test-topic".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            security: None,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let result = Watcher::new(config, false);
@@ -847,16 +831,9 @@ mod tests {
     fn test_watcher_creation_with_dry_run() {
         let mut config = Config::default();
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "test-topic".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            security: None,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let result = Watcher::new(config, true);
@@ -945,16 +922,10 @@ mod tests {
     fn test_watcher_output_topic_uses_explicit_output_topic_when_configured() {
         let mut config = Config::default();
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "xzepr.events".to_string(),
             output_topic: Some("xzepr.results".to_string()),
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            security: None,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let watcher = Watcher::new(config, false).unwrap();
@@ -965,16 +936,9 @@ mod tests {
     fn test_watcher_output_topic_falls_back_to_input_topic() {
         let mut config = Config::default();
         config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "xzepr.events".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            security: None,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let watcher = Watcher::new(config, false).unwrap();

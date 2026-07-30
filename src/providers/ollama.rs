@@ -11,6 +11,7 @@ use crate::providers::{
     CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
     ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderToolCall,
     TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
+    read_config_lock,
 };
 
 use async_trait::async_trait;
@@ -313,14 +314,7 @@ impl OllamaProvider {
 
     /// Fetch models from Ollama's /api/tags endpoint
     async fn fetch_models_from_api(&self) -> Result<Vec<ModelInfo>> {
-        let host = self
-            .config
-            .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?
-            .host
-            .clone();
+        let host = read_config_lock(&self.config)?.host.clone();
 
         let url = format!("{}/api/tags", host);
         tracing::debug!("Fetching models from Ollama: {}", url);
@@ -336,15 +330,11 @@ impl OllamaProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text =
-                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            let error_text = crate::providers::http::redacted_body(response).await;
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::ProviderHttpStatus {
-                provider: "ollama".to_string(),
-                endpoint: "api/tags".to_string(),
-                status,
-                response: error_text,
-            });
+            return Err(crate::providers::http::provider_http_status(
+                "ollama", "api/tags", status, error_text,
+            ));
         }
 
         let ollama_response: OllamaTagsResponse = response.json().await.map_err(|source| {
@@ -421,9 +411,7 @@ impl OllamaProvider {
         use futures::StreamExt;
 
         let (url, model) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (format!("{}/api/chat", config.host), config.model.clone())
         };
 
@@ -455,20 +443,11 @@ impl OllamaProvider {
                 source: source.into(),
             })?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text =
-                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
-            return Err(XzatomaError::ProviderHttpStatus {
-                provider: "ollama".to_string(),
-                endpoint: "api/chat:stream".to_string(),
-                status,
-                response: error_text,
-            });
-        }
+        let response =
+            crate::providers::http::check_response(response, "ollama", "api/chat:stream").await?;
 
         let mut stream = response.bytes_stream();
-        let mut line_buf: Vec<u8> = Vec::new();
+        let mut buffer = crate::providers::streaming::LineBuffer::new();
         let mut content_acc = String::new();
         let mut reasoning_acc = String::new();
         let mut in_think_block = false;
@@ -480,54 +459,51 @@ impl OllamaProvider {
                 XzatomaError::Provider(format!("Error reading Ollama stream: {}", e))
             })?;
 
-            for byte in chunk {
-                if byte == b'\n' {
-                    let line = String::from_utf8_lossy(&line_buf).trim().to_string();
-                    line_buf.clear();
+            buffer.push_bytes(&chunk);
 
-                    if line.is_empty() {
-                        continue;
-                    }
+            while let Some(raw_line) = buffer.next_line() {
+                let line = raw_line.trim().to_string();
 
-                    match serde_json::from_str::<OllamaResponse>(&line) {
-                        Ok(chunk_resp) => {
-                            if chunk_resp.done {
-                                prompt_eval_count = chunk_resp.prompt_eval_count;
-                                eval_count = chunk_resp.eval_count;
-                                break;
-                            }
+                if line.is_empty() {
+                    continue;
+                }
 
-                            // Each streaming chunk contains one incremental delta.
-                            // ProviderMessage.content is a String with serde default,
-                            // so empty content signals a no-content chunk.
-                            let delta = chunk_resp.message.content.clone();
-
-                            if delta.is_empty() {
-                                continue;
-                            }
-
-                            // Simple think-tag state machine. The tags are typically
-                            // emitted as whole tokens by the model, so split-tag edge
-                            // cases are uncommon but handled with prefix detection.
-                            process_ollama_think_chunk(
-                                &delta,
-                                &mut in_think_block,
-                                &mut content_acc,
-                                &mut reasoning_acc,
-                                on_reasoning_chunk,
-                                on_content_chunk,
-                            );
+                match serde_json::from_str::<OllamaResponse>(&line) {
+                    Ok(chunk_resp) => {
+                        if chunk_resp.done {
+                            prompt_eval_count = chunk_resp.prompt_eval_count;
+                            eval_count = chunk_resp.eval_count;
+                            break;
                         }
-                        Err(e) => {
-                            tracing::debug!(
-                                "Failed to parse Ollama stream chunk: {} (line: {:?})",
-                                e,
-                                line
-                            );
+
+                        // Each streaming chunk contains one incremental delta.
+                        // ProviderMessage.content is a String with serde default,
+                        // so empty content signals a no-content chunk.
+                        let delta = chunk_resp.message.content.clone();
+
+                        if delta.is_empty() {
+                            continue;
                         }
+
+                        // Simple think-tag state machine. The tags are typically
+                        // emitted as whole tokens by the model, so split-tag edge
+                        // cases are uncommon but handled with prefix detection.
+                        process_ollama_think_chunk(
+                            &delta,
+                            &mut in_think_block,
+                            &mut content_acc,
+                            &mut reasoning_acc,
+                            on_reasoning_chunk,
+                            on_content_chunk,
+                        );
                     }
-                } else {
-                    line_buf.push(byte);
+                    Err(e) => {
+                        tracing::debug!(
+                            "Failed to parse Ollama stream chunk: {} (line: {:?})",
+                            e,
+                            line
+                        );
+                    }
                 }
             }
         }
@@ -556,14 +532,7 @@ impl OllamaProvider {
 
     /// Get model details from Ollama's /api/show endpoint
     async fn fetch_model_details(&self, model_name: &str) -> Result<ModelInfo> {
-        let host = self
-            .config
-            .read()
-            .map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?
-            .host
-            .clone();
+        let host = read_config_lock(&self.config)?.host.clone();
 
         let url = format!("{}/api/show", host);
         tracing::debug!("Fetching model details for: {}", model_name);
@@ -592,15 +561,14 @@ impl OllamaProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_text =
-                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
+            let error_text = crate::providers::http::redacted_body(response).await;
             tracing::error!("Ollama returned error {}: {}", status, error_text);
-            return Err(XzatomaError::ProviderHttpStatus {
-                provider: "ollama".to_string(),
-                endpoint: "api/show".to_string(),
+            return Err(crate::providers::http::provider_http_status(
+                "ollama",
+                "api/show",
                 status,
-                response: format!("model={}: {}", model_name, error_text),
-            });
+                format!("model={}: {}", model_name, error_text),
+            ));
         }
 
         // Read the response body as text first so we can handle varying response shapes
@@ -1009,9 +977,7 @@ impl Provider for OllamaProvider {
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         let (url, model) = {
-            let config = self.config.read().map_err(|_| {
-                XzatomaError::Provider("Failed to acquire read lock on config".to_string())
-            })?;
+            let config = read_config_lock(&self.config)?;
             (format!("{}/api/chat", config.host), config.model.clone())
         };
 
@@ -1051,17 +1017,8 @@ impl Provider for OllamaProvider {
                 source: source.into(),
             })?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let error_text =
-                crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
-            return Err(XzatomaError::ProviderHttpStatus {
-                provider: "ollama".to_string(),
-                endpoint: "api/chat".to_string(),
-                status,
-                response: error_text,
-            });
-        }
+        let response =
+            crate::providers::http::check_response(response, "ollama", "api/chat").await?;
 
         let ollama_response: OllamaResponse = response.json().await.map_err(|source| {
             tracing::error!("Failed to parse Ollama response: {}", source);

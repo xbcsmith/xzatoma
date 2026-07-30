@@ -19,6 +19,11 @@
 use std::time::Duration;
 use thiserror::Error;
 
+// The canonical Kafka security types live in `crate::watcher::kafka_security`.
+// They are re-exported here so existing
+// `crate::watcher::xzepr::consumer::config::{...}` import paths keep working.
+pub use crate::watcher::kafka_security::{SaslConfig, SaslMechanism, SecurityProtocol, SslConfig};
+
 /// Errors that can occur during configuration.
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -33,85 +38,6 @@ pub enum ConfigError {
     /// Invalid SASL mechanism specified.
     #[error("Invalid SASL mechanism: {0}")]
     InvalidSaslMechanism(String),
-}
-
-/// Security protocol for Kafka connection.
-///
-/// Determines how the client connects to Kafka brokers.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SecurityProtocol {
-    /// No encryption or authentication.
-    #[default]
-    Plaintext,
-    /// TLS encryption without SASL.
-    Ssl,
-    /// SASL authentication without TLS.
-    SaslPlaintext,
-    /// SASL authentication with TLS encryption.
-    SaslSsl,
-}
-
-impl SecurityProtocol {
-    /// Returns the Kafka configuration string for this protocol.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plaintext => "PLAINTEXT",
-            Self::Ssl => "SSL",
-            Self::SaslPlaintext => "SASL_PLAINTEXT",
-            Self::SaslSsl => "SASL_SSL",
-        }
-    }
-}
-
-/// SASL authentication mechanism.
-///
-/// Supported mechanisms for SASL authentication with Kafka.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SaslMechanism {
-    /// PLAIN mechanism (username/password in clear text).
-    Plain,
-    /// SCRAM-SHA-256 mechanism (recommended).
-    #[default]
-    ScramSha256,
-    /// SCRAM-SHA-512 mechanism.
-    ScramSha512,
-}
-
-impl SaslMechanism {
-    /// Returns the Kafka configuration string for this mechanism.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plain => "PLAIN",
-            Self::ScramSha256 => "SCRAM-SHA-256",
-            Self::ScramSha512 => "SCRAM-SHA-512",
-        }
-    }
-}
-
-/// SASL authentication configuration.
-///
-/// Contains credentials and mechanism for SASL authentication.
-#[derive(Debug, Clone)]
-pub struct SaslConfig {
-    /// Authentication mechanism to use.
-    pub mechanism: SaslMechanism,
-    /// SASL username.
-    pub username: String,
-    /// SASL password.
-    pub password: String,
-}
-
-/// SSL/TLS configuration.
-///
-/// Contains paths to certificates for TLS connections.
-#[derive(Debug, Clone)]
-pub struct SslConfig {
-    /// Path to CA certificate file.
-    pub ca_location: Option<String>,
-    /// Path to client certificate file (for mTLS).
-    pub certificate_location: Option<String>,
-    /// Path to client key file (for mTLS).
-    pub key_location: Option<String>,
 }
 
 /// Kafka consumer configuration.
@@ -484,21 +410,6 @@ mod tests {
             KafkaConsumerConfig::new("localhost:9092", "topic", "service").with_manual_commit();
 
         assert!(!config.enable_auto_commit);
-    }
-
-    #[test]
-    fn test_security_protocol_as_str() {
-        assert_eq!(SecurityProtocol::Plaintext.as_str(), "PLAINTEXT");
-        assert_eq!(SecurityProtocol::Ssl.as_str(), "SSL");
-        assert_eq!(SecurityProtocol::SaslPlaintext.as_str(), "SASL_PLAINTEXT");
-        assert_eq!(SecurityProtocol::SaslSsl.as_str(), "SASL_SSL");
-    }
-
-    #[test]
-    fn test_sasl_mechanism_as_str() {
-        assert_eq!(SaslMechanism::Plain.as_str(), "PLAIN");
-        assert_eq!(SaslMechanism::ScramSha256.as_str(), "SCRAM-SHA-256");
-        assert_eq!(SaslMechanism::ScramSha512.as_str(), "SCRAM-SHA-512");
     }
 
     #[test]

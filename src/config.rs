@@ -3989,16 +3989,10 @@ kafka:
     #[test]
     fn test_kafka_watcher_config_roundtrip_output_topic() {
         let original = KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.in".to_string(),
             output_topic: Some("plans.out".to_string()),
             group_id: "watchers".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -4014,16 +4008,11 @@ kafka:
     #[test]
     fn test_kafka_watcher_config_roundtrip_auto_create_topics_false() {
         let original = KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.in".to_string(),
             output_topic: None,
             group_id: "watchers".to_string(),
             auto_create_topics: false,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -4824,16 +4813,9 @@ chat_enabled: true
 
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         unsafe {
@@ -4860,16 +4842,9 @@ chat_enabled: true
 
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "original-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         unsafe {
@@ -4928,16 +4903,9 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         assert!(cfg.validate().is_ok());
@@ -4948,16 +4916,10 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
             output_topic: Some("plans.output".to_string()),
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
         cfg.watcher.generic_match = GenericMatchConfig {
             action: Some("deploy.*".to_string()),
@@ -4973,16 +4935,9 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
 
@@ -4994,16 +4949,9 @@ chat_enabled: true
     fn test_config_validate_empty_group_id_returns_error() {
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "   ".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let err = cfg.validate().unwrap_err().to_string();
@@ -6045,6 +5993,46 @@ pub struct KafkaWatcherConfig {
 /// Default broker address family for rdkafka connections.
 fn default_broker_address_family() -> String {
     "v4".to_string()
+}
+
+impl Default for KafkaWatcherConfig {
+    /// Returns a `KafkaWatcherConfig` populated with the same defaults used by
+    /// the serde `#[serde(default = ...)]` field attributes.
+    ///
+    /// Production code always constructs this struct explicitly (or via
+    /// deserialization), so this impl exists primarily to reduce boilerplate
+    /// in tests and documentation examples that only need to override a few
+    /// fields via functional-update syntax (`..Default::default()`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::KafkaWatcherConfig;
+    ///
+    /// let config = KafkaWatcherConfig {
+    ///     topic: "plans.input".to_string(),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// assert_eq!(config.topic, "plans.input");
+    /// assert_eq!(config.brokers, "localhost:9092");
+    /// assert_eq!(config.group_id, "xzatoma-watcher");
+    /// assert!(config.auto_create_topics);
+    /// ```
+    fn default() -> Self {
+        Self {
+            brokers: "localhost:9092".to_string(),
+            topic: "xzepr.dev.events".to_string(),
+            output_topic: None,
+            group_id: default_watcher_group_id(),
+            auto_create_topics: default_auto_create_topics(),
+            num_partitions: default_num_partitions(),
+            replication_factor: default_replication_factor(),
+            security: None,
+            broker_address_family: default_broker_address_family(),
+            poll_interval_ms: default_poll_interval_ms(),
+        }
+    }
 }
 
 /// Default consumer poll interval in milliseconds.

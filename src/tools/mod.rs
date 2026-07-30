@@ -17,6 +17,8 @@ pub mod ide_tools;
 pub mod list_directory;
 pub mod move_path;
 pub mod parallel_subagent;
+/// Shared path-validation helpers for file-oriented tools.
+pub mod path_tool;
 pub mod plan;
 pub mod plan_format;
 pub mod read_file;
@@ -48,6 +50,7 @@ pub use file_metadata::{
 pub use file_utils::{
     FileUtilsError, PathValidator, check_file_size, ensure_parent_dirs, generate_diff,
 };
+pub use path_tool::validate_or_err;
 
 use crate::error::Result;
 use async_trait::async_trait;
