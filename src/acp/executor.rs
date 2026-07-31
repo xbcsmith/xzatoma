@@ -441,7 +441,7 @@ impl AcpExecutor {
         let _mcp_manager = env.mcp_manager;
 
         let provider_box =
-            create_provider(&self.config.provider.provider_type, &self.config.provider)?;
+            create_provider(&self.config.provider.provider_type, &self.config.provider).await?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
 
         let subagent_tool = crate::tools::SubagentTool::new_with_config(
@@ -450,7 +450,8 @@ impl AcpExecutor {
             self.config.agent.clone(),
             tools.clone(),
             0,
-        )?;
+        )
+        .await?;
         tools.register("subagent", Arc::new(subagent_tool));
 
         let mut agent =

@@ -562,10 +562,9 @@ impl MessageHandler for WatcherMessageHandler {
             )
             .await?;
 
-            let provider = crate::providers::create_provider(
-                &config.provider.provider_type,
-                &config.provider,
-            )?;
+            let provider =
+                crate::providers::create_provider(&config.provider.provider_type, &config.provider)
+                    .await?;
 
             let mut agent = crate::agent::Agent::new_with_mode(
                 provider,

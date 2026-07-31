@@ -523,7 +523,7 @@ pub mod chat {
     /// // In application code:
     /// // chat::run_chat(Config::default(), RunChatOptions::default()).await?;
     /// ```
-    pub async fn run_chat(mut config: Config, options: RunChatOptions) -> Result<()> {
+    pub async fn run_chat(config: Config, options: RunChatOptions) -> Result<()> {
         use crate::storage::SqliteStorage;
 
         let RunChatOptions {
@@ -541,25 +541,9 @@ pub mod chat {
         // config/env prompts (which only apply to new sessions).
         let cli_system_prompt = system_prompt;
 
-        // Owned so it does not keep `config` borrowed below, since resolving
-        // the Ollama model (when applicable) needs to mutate `config` in place.
         let provider_type_owned: String =
             provider_name.unwrap_or_else(|| config.provider.provider_type.clone());
         let provider_type: &str = &provider_type_owned;
-
-        // If the configured Ollama model is not actually installed on the
-        // target server (e.g. the default "llama3.2:latest" was never
-        // pulled), query Ollama for locally available models and switch to
-        // the most recently modified one instead of failing at first prompt.
-        if provider_type == "ollama"
-            && let Err(error) =
-                crate::providers::ollama::resolve_available_model(&mut config.provider.ollama).await
-        {
-            tracing::warn!(
-                error = %error,
-                "Failed to validate configured Ollama model; continuing with configured value"
-            );
-        }
 
         let working_dir = std::env::current_dir()?;
         let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
@@ -616,7 +600,7 @@ pub mod chat {
         };
 
         // Create provider
-        let provider_box = create_provider(provider_type, &config.provider)?;
+        let provider_box = create_provider(provider_type, &config.provider).await?;
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
@@ -648,7 +632,8 @@ pub mod chat {
             config.agent.clone(),  // Agent config with subagent settings
             tools.clone(),         // Parent registry for filtering
             0,                     // Root depth (main agent is depth 0)
-        )?;
+        )
+        .await?;
         tools.register("subagent", Arc::new(subagent_tool));
 
         // Track whether a previous conversation was successfully loaded from storage.
@@ -856,7 +841,8 @@ pub mod chat {
                                 &config,
                                 &working_dir,
                                 provider_type,
-                            )?;
+                            )
+                            .await?;
                             continue;
                         }
                         Ok(SpecialCommand::SwitchSafety(new_safety)) => {
@@ -1654,7 +1640,7 @@ pub mod chat {
                 }
 
                 // Create new provider
-                let mut new_provider = create_provider(provider_type, &config.provider)?;
+                let mut new_provider = create_provider(provider_type, &config.provider).await?;
 
                 // Switch model
                 new_provider.set_model(&model_info.name);
@@ -1859,7 +1845,7 @@ pub mod chat {
     /// # Returns
     ///
     /// Returns Ok if the switch succeeded, or an error if it failed
-    fn handle_mode_switch(
+    async fn handle_mode_switch(
         agent: &mut Agent,
         mode_state: &mut ChatModeState,
         new_mode: ChatMode,
@@ -1886,7 +1872,7 @@ pub mod chat {
         let conversation = agent.conversation().clone();
 
         // Create new provider
-        let new_provider = create_provider(provider_type, &config.provider)?;
+        let new_provider = create_provider(provider_type, &config.provider).await?;
 
         // Create new agent with same conversation but new tools
         let new_agent =
@@ -1978,8 +1964,8 @@ pub mod chat {
             assert!(registry_yolo.get("terminal").is_some());
         }
 
-        #[test]
-        fn test_handle_mode_switch_planning_to_write() {
+        #[tokio::test]
+        async fn test_handle_mode_switch_planning_to_write() {
             use crate::providers::Message;
             use async_trait::async_trait;
 
@@ -2016,7 +2002,15 @@ pub mod chat {
                 }
             }
 
-            let config = Config::default();
+            let mut config = Config::default();
+            // Point at a local port nothing listens on and keep a configured
+            // model, so provider re-creation on mode switch falls back to
+            // the configured model instead of requiring a real Ollama server.
+            config.provider.ollama = crate::config::OllamaConfig {
+                host: "http://127.0.0.1:9".to_string(),
+                model: "llama3.2:3b".to_string(),
+                request_timeout_seconds: 1,
+            };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;
             let tools = build_tools_for_mode(
@@ -2036,7 +2030,8 @@ pub mod chat {
                 &config,
                 &working_dir,
                 "ollama",
-            );
+            )
+            .await;
 
             assert!(result.is_ok());
             assert_eq!(mode_state.chat_mode, ChatMode::Write);
@@ -2316,7 +2311,8 @@ pub mod r#run {
         let _mcp_manager = env.mcp_manager;
 
         // Create agent using the shared provider factory.
-        let provider_box = create_provider(&config.provider.provider_type, &config.provider)?;
+        let provider_box =
+            create_provider(&config.provider.provider_type, &config.provider).await?;
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
         // Apply thinking effort from CLI flag if provided.

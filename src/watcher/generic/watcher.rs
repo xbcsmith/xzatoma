@@ -595,6 +595,7 @@ impl GenericWatcher {
 
         let provider =
             crate::providers::create_provider(&config.provider.provider_type, &config.provider)
+                .await
                 .map_err(|e| {
                     GenericWatcherError::Execution(format!("failed to create provider: {}", e))
                 })?;

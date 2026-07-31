@@ -52,7 +52,7 @@ pub async fn list_models(
 
     tracing::info!("Listing models from provider: {}", provider_type);
 
-    let provider = providers::create_provider(provider_type, &config.provider)?;
+    let provider = providers::create_provider(provider_type, &config.provider).await?;
 
     // Branch on summary flag
     if summary {
@@ -147,7 +147,7 @@ pub async fn show_model_info(
         provider_type
     );
 
-    let provider = providers::create_provider(provider_type, &config.provider)?;
+    let provider = providers::create_provider(provider_type, &config.provider).await?;
 
     if summary {
         // Get full summary data
@@ -204,7 +204,7 @@ pub async fn show_current_model(config: &Config, provider_name: Option<&str>) ->
 
     tracing::info!("Getting current model from provider: {}", provider_type);
 
-    let provider = providers::create_provider(provider_type, &config.provider)?;
+    let provider = providers::create_provider(provider_type, &config.provider).await?;
 
     let current_model = provider.get_current_model();
 

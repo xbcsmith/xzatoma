@@ -375,7 +375,7 @@ impl SubagentTool {
     /// use std::sync::Arc;
     ///
     /// # use xzatoma::providers::CopilotProvider;
-    /// # fn example() -> xzatoma::error::Result<()> {
+    /// # async fn example() -> xzatoma::error::Result<()> {
     /// # let provider = CopilotProvider::new(CopilotConfig::default()).unwrap();
     /// let provider_config = ProviderConfig {
     ///     provider_type: "copilot".to_string(),
@@ -389,11 +389,11 @@ impl SubagentTool {
     ///     AgentConfig::default(),
     ///     ToolRegistry::new(),
     ///     0,
-    /// )?;
+    /// ).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new_with_config(
+    pub async fn new_with_config(
         parent_provider: Arc<dyn Provider>,
         provider_config: &crate::config::ProviderConfig,
         agent_config: AgentConfig,
@@ -408,7 +408,8 @@ impl SubagentTool {
                 provider_config,
                 Some(provider_type),
                 model_override,
-            )?;
+            )
+            .await?;
             Arc::from(new_provider)
         } else {
             // No override - share parent provider

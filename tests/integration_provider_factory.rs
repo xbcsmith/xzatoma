@@ -4,6 +4,18 @@
 //! - Provider factory with overrides
 //! - SubagentTool instantiation with different providers
 //! - Nested subagent provider inheritance
+//!
+//! Provider construction now resolves the effective model against the
+//! provider's live model list (see `xzatoma::providers::factory`), so these
+//! tests use Ollama and OpenAI pointed at an unreachable local port with a
+//! configured model: the model-list fetch fails, and since a model is
+//! configured, resolution falls back to it (mirroring today's behavior when
+//! a real server is briefly unreachable) without requiring a live server.
+//! Copilot is deliberately not exercised here because
+//! `CopilotProvider::authenticate()` reads/writes the real OS keyring and,
+//! absent a cached token, performs a live GitHub OAuth device flow -- see
+//! `tests/copilot_integration.rs` for the opt-in, keyring-gated pattern used
+//! to test Copilot safely.
 
 use std::sync::Arc;
 use xzatoma::config::{
@@ -13,10 +25,16 @@ use xzatoma::providers::create_provider_with_override;
 use xzatoma::tools::ToolRegistry;
 use xzatoma::tools::subagent::SubagentTool;
 
-/// Helper to create a test provider config
+/// A local port that is never listening in test/CI environments, used so
+/// tests exercise a fast, local, deterministic connection failure instead of
+/// reaching a real external host.
+const UNREACHABLE_HOST: &str = "http://127.0.0.1:9";
+
+/// Helper to create a test provider config. Defaults to Ollama pointed at an
+/// unreachable host with a configured model.
 fn create_test_provider_config() -> ProviderConfig {
     ProviderConfig {
-        provider_type: "copilot".to_string(),
+        provider_type: "ollama".to_string(),
         copilot: CopilotConfig {
             model: "gpt-5.3-codex".to_string(),
             api_base: None,
@@ -26,11 +44,20 @@ fn create_test_provider_config() -> ProviderConfig {
             include_reasoning: false,
         },
         ollama: OllamaConfig {
-            host: "http://localhost:11434".to_string(),
+            host: UNREACHABLE_HOST.to_string(),
             model: "llama3.2:3b".to_string(),
-            request_timeout_seconds: 600,
+            request_timeout_seconds: 1,
         },
-        openai: OpenAIConfig::default(),
+        openai: OpenAIConfig {
+            api_key: String::new(),
+            base_url: UNREACHABLE_HOST.to_string(),
+            model: "gpt-4.1-mini".to_string(),
+            organization_id: None,
+            enable_streaming: true,
+            request_timeout_seconds: 1,
+            stream_idle_timeout_seconds: 1,
+            reasoning_effort: None,
+        },
     }
 }
 
@@ -47,58 +74,58 @@ fn create_test_agent_config() -> AgentConfig {
     }
 }
 
-#[test]
-fn test_create_provider_with_override_no_override() {
+#[tokio::test]
+async fn test_create_provider_with_override_no_override() {
     let config = create_test_provider_config();
 
     // No overrides - should use config defaults
-    let result = create_provider_with_override(&config, None, None);
+    let result = create_provider_with_override(&config, None, None).await;
     assert!(result.is_ok());
 
     let provider = result.unwrap();
-    // Should use copilot provider from config
+    // Should use ollama provider from config
     assert!(!provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_create_provider_with_override_provider_only() {
+#[tokio::test]
+async fn test_create_provider_with_override_provider_only() {
     let config = create_test_provider_config();
 
-    // Override to ollama provider
-    let result = create_provider_with_override(&config, Some("ollama"), None);
+    // Override to openai provider
+    let result = create_provider_with_override(&config, Some("openai"), None).await;
     assert!(result.is_ok());
 
     let provider = result.unwrap();
     assert!(!provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_create_provider_with_override_both() {
+#[tokio::test]
+async fn test_create_provider_with_override_both() {
     let config = create_test_provider_config();
 
     // Override both provider and model
-    let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:3b"));
+    let result = create_provider_with_override(&config, Some("ollama"), Some("llama3.2:3b")).await;
     assert!(result.is_ok());
 
     let provider = result.unwrap();
     assert!(!provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_create_provider_with_override_model_only_copilot() {
+#[tokio::test]
+async fn test_create_provider_with_override_model_only_ollama() {
     let config = create_test_provider_config();
 
-    // Override model only (uses copilot from config)
-    let result = create_provider_with_override(&config, None, Some("gpt-5.1-codex-mini"));
+    // Override model only (uses ollama from config)
+    let result = create_provider_with_override(&config, None, Some("llama3.2:1b")).await;
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_create_provider_with_override_invalid_provider() {
+#[tokio::test]
+async fn test_create_provider_with_override_invalid_provider() {
     let config = create_test_provider_config();
 
     // Invalid provider type
-    let result = create_provider_with_override(&config, Some("invalid"), None);
+    let result = create_provider_with_override(&config, Some("invalid"), None).await;
     assert!(result.is_err());
 
     if let Err(e) = result {
@@ -107,13 +134,14 @@ fn test_create_provider_with_override_invalid_provider() {
     }
 }
 
-#[test]
-fn test_subagent_tool_new_with_config_no_override() {
+#[tokio::test]
+async fn test_subagent_tool_new_with_config_no_override() {
     let provider_config = create_test_provider_config();
     let agent_config = create_test_agent_config();
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -124,21 +152,23 @@ fn test_subagent_tool_new_with_config_no_override() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_subagent_tool_new_with_config_provider_override() {
+#[tokio::test]
+async fn test_subagent_tool_new_with_config_provider_override() {
     let provider_config = create_test_provider_config();
     let mut agent_config = create_test_agent_config();
 
-    // Configure subagent to use ollama provider
-    agent_config.subagent.provider = Some("ollama".to_string());
+    // Configure subagent to use openai provider
+    agent_config.subagent.provider = Some("openai".to_string());
 
-    // Create parent provider (copilot)
+    // Create parent provider (ollama)
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -149,22 +179,24 @@ fn test_subagent_tool_new_with_config_provider_override() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_ok());
-    // Subagent should have created its own ollama provider instance
+    // Subagent should have created its own openai provider instance
 }
 
-#[test]
-fn test_subagent_tool_new_with_config_model_override() {
+#[tokio::test]
+async fn test_subagent_tool_new_with_config_model_override() {
     let provider_config = create_test_provider_config();
     let mut agent_config = create_test_agent_config();
 
     // Configure subagent to use different model with same provider
-    agent_config.subagent.model = Some("gpt-5.1-codex-mini".to_string());
+    agent_config.subagent.model = Some("llama3.2:1b".to_string());
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -175,22 +207,24 @@ fn test_subagent_tool_new_with_config_model_override() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_subagent_tool_new_with_config_provider_and_model_override() {
+#[tokio::test]
+async fn test_subagent_tool_new_with_config_provider_and_model_override() {
     let provider_config = create_test_provider_config();
     let mut agent_config = create_test_agent_config();
 
-    // Configure subagent to use ollama with specific model
-    agent_config.subagent.provider = Some("ollama".to_string());
-    agent_config.subagent.model = Some("llama3.2:3b".to_string());
+    // Configure subagent to use openai with specific model
+    agent_config.subagent.provider = Some("openai".to_string());
+    agent_config.subagent.model = Some("gpt-4.1-mini".to_string());
 
-    // Create parent provider (copilot)
+    // Create parent provider (ollama)
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -201,13 +235,14 @@ fn test_subagent_tool_new_with_config_provider_and_model_override() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_subagent_tool_new_with_config_invalid_provider_override() {
+#[tokio::test]
+async fn test_subagent_tool_new_with_config_invalid_provider_override() {
     let provider_config = create_test_provider_config();
     let mut agent_config = create_test_agent_config();
 
@@ -216,6 +251,7 @@ fn test_subagent_tool_new_with_config_invalid_provider_override() {
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -226,7 +262,8 @@ fn test_subagent_tool_new_with_config_invalid_provider_override() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_err());
     if let Err(e) = result {
@@ -245,18 +282,20 @@ fn test_subagent_config_defaults() {
     assert!(!config.chat_enabled);
 }
 
-#[test]
-fn test_provider_override_copilot_to_ollama() {
+#[tokio::test]
+async fn test_provider_override_ollama_to_openai() {
     let mut provider_config = create_test_provider_config();
-    provider_config.provider_type = "copilot".to_string();
+    provider_config.provider_type = "ollama".to_string();
 
-    // Parent uses copilot
+    // Parent uses ollama
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
 
-    // Subagent overrides to ollama
+    // Subagent overrides to openai
     let subagent_provider =
-        create_provider_with_override(&provider_config, Some("ollama"), Some("llama3.2:3b"))
+        create_provider_with_override(&provider_config, Some("openai"), Some("gpt-4.1-mini"))
+            .await
             .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
@@ -264,48 +303,49 @@ fn test_provider_override_copilot_to_ollama() {
     assert!(!subagent_provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_provider_override_ollama_to_copilot() {
+#[tokio::test]
+async fn test_provider_override_openai_to_ollama() {
     let mut provider_config = create_test_provider_config();
-    provider_config.provider_type = "ollama".to_string();
+    provider_config.provider_type = "openai".to_string();
 
-    // Parent uses ollama
+    // Parent uses openai
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
 
-    // Subagent overrides to copilot
-    let subagent_provider = create_provider_with_override(
-        &provider_config,
-        Some("copilot"),
-        Some("gpt-5.1-codex-mini"),
-    )
-    .expect("Failed to create subagent provider");
+    // Subagent overrides to ollama
+    let subagent_provider =
+        create_provider_with_override(&provider_config, Some("ollama"), Some("llama3.2:3b"))
+            .await
+            .expect("Failed to create subagent provider");
 
     // Both should be valid but different providers
     assert!(!parent_provider.get_current_model().is_empty());
     assert!(!subagent_provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_model_override_same_provider() {
+#[tokio::test]
+async fn test_model_override_same_provider() {
     let provider_config = create_test_provider_config();
 
     // Create provider with default model
     let default_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create default provider");
 
     // Create provider with model override
     let custom_provider =
-        create_provider_with_override(&provider_config, None, Some("gpt-5.1-codex-mini"))
+        create_provider_with_override(&provider_config, None, Some("llama3.2:1b"))
+            .await
             .expect("Failed to create custom provider");
 
-    // Both should be valid copilot providers
+    // Both should be valid ollama providers
     assert!(!default_provider.get_current_model().is_empty());
     assert!(!custom_provider.get_current_model().is_empty());
 }
 
-#[test]
-fn test_backward_compatibility_no_subagent_config() {
+#[tokio::test]
+async fn test_backward_compatibility_no_subagent_config() {
     let provider_config = create_test_provider_config();
     let agent_config = AgentConfig::default();
 
@@ -315,6 +355,7 @@ fn test_backward_compatibility_no_subagent_config() {
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -325,25 +366,27 @@ fn test_backward_compatibility_no_subagent_config() {
         agent_config,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(result.is_ok());
 }
 
-#[test]
-fn test_multiple_subagent_tools_different_providers() {
+#[tokio::test]
+async fn test_multiple_subagent_tools_different_providers() {
     let provider_config = create_test_provider_config();
     let mut agent_config1 = create_test_agent_config();
     let mut agent_config2 = create_test_agent_config();
 
-    // First subagent uses copilot
-    agent_config1.subagent.provider = Some("copilot".to_string());
+    // First subagent uses ollama
+    agent_config1.subagent.provider = Some("ollama".to_string());
 
-    // Second subagent uses ollama
-    agent_config2.subagent.provider = Some("ollama".to_string());
+    // Second subagent uses openai
+    agent_config2.subagent.provider = Some("openai".to_string());
 
     // Create parent provider
     let parent_provider = create_provider_with_override(&provider_config, None, None)
+        .await
         .expect("Failed to create parent provider");
     let parent_provider_arc = Arc::from(parent_provider);
 
@@ -354,7 +397,8 @@ fn test_multiple_subagent_tools_different_providers() {
         agent_config1,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     let tool2 = SubagentTool::new_with_config(
         Arc::clone(&parent_provider_arc),
@@ -362,7 +406,8 @@ fn test_multiple_subagent_tools_different_providers() {
         agent_config2,
         ToolRegistry::new(),
         0,
-    );
+    )
+    .await;
 
     assert!(tool1.is_ok());
     assert!(tool2.is_ok());

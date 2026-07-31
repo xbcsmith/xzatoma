@@ -417,35 +417,6 @@ impl AcpStdioServerState {
         let workspace_root = normalize_workspace_root(&workspace_root);
         let provider_name = self.config.provider.provider_type.clone();
 
-        // Determine the effective provider, accounting for a CLI override.
-        let effective_provider = self
-            .options
-            .provider
-            .as_deref()
-            .unwrap_or(&self.config.provider.provider_type);
-
-        // When the effective provider is Ollama and no explicit model was
-        // specified, mirror chat mode: query Ollama for locally installed
-        // models and select the most recently modified one if the configured
-        // default (e.g. "llama3.2:latest") is not installed.  This prevents
-        // agent mode from hard-failing with a model-not-found error when the
-        // user has a different model pulled locally.
-        let resolved_ollama_model = resolve_agent_ollama_model(
-            effective_provider,
-            &self.config.provider.ollama,
-            self.options.model.as_deref(),
-        )
-        .await;
-
-        // Priority: explicit CLI model override > Ollama auto-resolved model > config default.
-        let model_name = self
-            .options
-            .model
-            .as_deref()
-            .or(resolved_ollama_model.as_deref())
-            .unwrap_or_else(|| current_model_name(&self.config))
-            .to_string();
-
         let resumed_conversation =
             load_resumable_conversation(self.storage.as_ref(), &workspace_root, &self.config);
 
@@ -522,19 +493,21 @@ impl AcpStdioServerState {
             }
         }
 
-        // Apply the same priority for provider construction: explicit CLI
-        // model override wins; fall back to the Ollama-resolved model.
-        let effective_model = self
-            .options
-            .model
-            .as_deref()
-            .or(resolved_ollama_model.as_deref());
+        // Provider construction resolves the effective model itself: an
+        // explicit CLI override wins, otherwise the provider factory queries
+        // the provider's model list and selects the latest available model
+        // (or keeps the configured one, if still present in that list).
         let provider_box = create_provider_with_override(
             &self.config.provider,
             self.options.provider.as_deref(),
-            effective_model,
-        )?;
+            self.options.model.as_deref(),
+        )
+        .await?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
+        let model_name = provider
+            .current_model()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| current_model_name(&self.config).to_string());
 
         // Create the session ID early so it can be used by the IDE bridge and
         // passed through to the agent, storage, and prompt worker consistently.
@@ -606,7 +579,8 @@ impl AcpStdioServerState {
                 self.config.agent.clone(),
                 tools.clone(),
                 0,
-            )?;
+            )
+            .await?;
             tools.register("subagent", Arc::new(subagent_tool));
         }
 
@@ -2396,42 +2370,6 @@ fn current_model_name(config: &Config) -> &str {
         "openai" => &config.provider.openai.model,
         _ => "unknown",
     }
-}
-
-/// Resolves the Ollama model to use for an agent session when no explicit
-/// model override was provided on the CLI.
-///
-/// This mirrors the behavior of chat mode: if the default configured model
-/// (e.g. `llama3.2:latest`) is not installed locally, the Ollama server is
-/// queried and the most recently modified installed model is selected instead.
-/// When the server is unreachable the configured model is returned unchanged,
-/// so the error surfaces later at the first prompt rather than at session
-/// creation time.
-///
-/// Returns `None` when:
-/// - `effective_provider` is not `"ollama"`
-/// - `model_override` is `Some` (an explicit CLI override takes precedence
-///   without any server query)
-///
-/// Returns `Some(model_name)` containing the resolved model name when the
-/// provider is Ollama and no explicit override was given.
-async fn resolve_agent_ollama_model(
-    effective_provider: &str,
-    ollama_config: &crate::config::OllamaConfig,
-    model_override: Option<&str>,
-) -> Option<String> {
-    if effective_provider != "ollama" || model_override.is_some() {
-        return None;
-    }
-    let mut cfg = ollama_config.clone();
-    if let Err(error) = crate::providers::ollama::resolve_available_model(&mut cfg).await {
-        tracing::warn!(
-            error = %error,
-            configured_model = %cfg.model,
-            "ACP stdio: failed to validate configured Ollama model; using configured value"
-        );
-    }
-    Some(cfg.model)
 }
 
 /// Determines the initial ACP session mode ID from the effective configuration.
@@ -6348,141 +6286,6 @@ mod tests {
         assert!(
             text.contains("summarized"),
             "context summary must confirm summarization; got: {text}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // resolve_agent_ollama_model tests
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn test_resolve_agent_ollama_model_returns_none_for_non_ollama_provider() {
-        let cfg = crate::config::OllamaConfig::default();
-        let result = resolve_agent_ollama_model("copilot", &cfg, None).await;
-        assert!(
-            result.is_none(),
-            "should return None when provider is not ollama"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_resolve_agent_ollama_model_returns_none_when_explicit_model_override_given() {
-        let cfg = crate::config::OllamaConfig::default();
-        let result = resolve_agent_ollama_model("ollama", &cfg, Some("explicit-model")).await;
-        assert!(
-            result.is_none(),
-            "should return None when an explicit model override is provided"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_resolve_agent_ollama_model_falls_back_to_config_when_server_unreachable() {
-        // When Ollama is unreachable the function should return the configured
-        // model rather than propagating the error, matching chat mode behavior.
-        let cfg = crate::config::OllamaConfig {
-            host: "http://127.0.0.1:1".to_string(),
-            model: "llama3.2:latest".to_string(),
-            request_timeout_seconds: 1,
-        };
-        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
-        assert_eq!(
-            result,
-            Some("llama3.2:latest".to_string()),
-            "should return the configured model when the server is unreachable"
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires network (wiremock MockServer)"]
-    async fn test_resolve_agent_ollama_model_selects_installed_model_when_default_unavailable() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let mock_server = MockServer::start().await;
-
-        // Simulate Ollama having granite4:3b locally but not llama3.2:latest.
-        let body = serde_json::json!({
-            "models": [{
-                "name": "granite4:3b",
-                "model": "granite4:3b",
-                "modified_at": "2024-06-01T00:00:00Z",
-                "size": 2_000_000_000u64,
-                "digest": "sha256:abc123",
-                "details": {
-                    "parent_model": "",
-                    "format": "gguf",
-                    "family": "granite",
-                    "families": ["granite"],
-                    "parameter_size": "3B",
-                    "quantization_level": "Q4_0"
-                }
-            }]
-        });
-
-        Mock::given(method("GET"))
-            .and(path("/api/tags"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&mock_server)
-            .await;
-
-        let cfg = crate::config::OllamaConfig {
-            host: mock_server.uri(),
-            model: "llama3.2:latest".to_string(),
-            request_timeout_seconds: 5,
-        };
-
-        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
-        assert_eq!(
-            result,
-            Some("granite4:3b".to_string()),
-            "should auto-select granite4:3b when llama3.2:latest is not installed"
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires network (wiremock MockServer)"]
-    async fn test_resolve_agent_ollama_model_keeps_configured_model_when_already_installed() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let mock_server = MockServer::start().await;
-
-        // Simulate Ollama having the configured model already available.
-        let body = serde_json::json!({
-            "models": [{
-                "name": "granite4:3b",
-                "model": "granite4:3b",
-                "modified_at": "2024-06-01T00:00:00Z",
-                "size": 2_000_000_000u64,
-                "digest": "sha256:abc123",
-                "details": {
-                    "parent_model": "",
-                    "format": "gguf",
-                    "family": "granite",
-                    "families": ["granite"],
-                    "parameter_size": "3B",
-                    "quantization_level": "Q4_0"
-                }
-            }]
-        });
-
-        Mock::given(method("GET"))
-            .and(path("/api/tags"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
-            .mount(&mock_server)
-            .await;
-
-        let cfg = crate::config::OllamaConfig {
-            host: mock_server.uri(),
-            model: "granite4:3b".to_string(),
-            request_timeout_seconds: 5,
-        };
-
-        let result = resolve_agent_ollama_model("ollama", &cfg, None).await;
-        assert_eq!(
-            result,
-            Some("granite4:3b".to_string()),
-            "should return the configured model unchanged when it is already installed"
         );
     }
 }

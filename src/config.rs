@@ -79,7 +79,10 @@ pub struct ProviderConfig {
 /// GitHub Copilot provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotConfig {
-    /// Model to use for Copilot
+    /// Model to use for Copilot.
+    ///
+    /// Empty string means "not specified": the provider factory queries the
+    /// Copilot models API and selects the latest available model.
     #[serde(default = "default_copilot_model")]
     pub model: String,
 
@@ -123,7 +126,7 @@ pub struct CopilotConfig {
 }
 
 fn default_copilot_model() -> String {
-    "gpt-5-mini".to_string()
+    String::new()
 }
 
 fn default_enable_streaming() -> bool {
@@ -162,7 +165,10 @@ pub struct OllamaConfig {
     #[serde(default = "default_ollama_host")]
     pub host: String,
 
-    /// Model to use for Ollama
+    /// Model to use for Ollama.
+    ///
+    /// Empty string means "not specified": the provider factory queries the
+    /// Ollama server and selects the most recently modified installed model.
     #[serde(default = "default_ollama_model")]
     pub model: String,
 
@@ -186,7 +192,7 @@ fn default_ollama_host() -> String {
 }
 
 fn default_ollama_model() -> String {
-    "llama3.2:latest".to_string()
+    String::new()
 }
 
 fn default_ollama_request_timeout() -> u64 {
@@ -217,14 +223,14 @@ impl Default for OllamaConfig {
 /// let config = OpenAIConfig {
 ///     api_key: "sk-example".to_string(),
 ///     base_url: "https://api.openai.com/v1".to_string(),
-///     model: "gpt-4o-mini".to_string(),
+///     model: "gpt-4.1-mini".to_string(),
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
 ///     stream_idle_timeout_seconds: 30,
 ///     reasoning_effort: None,
 /// };
-/// assert_eq!(config.model, "gpt-4o-mini");
+/// assert_eq!(config.model, "gpt-4.1-mini");
 /// assert_eq!(config.base_url, "https://api.openai.com/v1");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,9 +258,11 @@ pub struct OpenAIConfig {
 
     /// Model identifier sent in the `model` field of every request body.
     ///
-    /// Defaults to `"gpt-4o-mini"`. For local servers, use the name of the
-    /// model that was loaded on the server (e.g., `"llama-3.2-3b"`).
-    /// Set via the `XZATOMA_OPENAI_MODEL` environment variable.
+    /// Empty string means "not specified": the provider factory queries the
+    /// `/models` endpoint and selects the latest available model. For local
+    /// servers, set this to the name of the model loaded on the server (e.g.,
+    /// `"llama-3.2-3b"`). Set via the `XZATOMA_OPENAI_MODEL` environment
+    /// variable.
     #[serde(default = "default_openai_model")]
     pub model: String,
 
@@ -321,7 +329,7 @@ fn default_openai_base_url() -> String {
 }
 
 fn default_openai_model() -> String {
-    "gpt-4o-mini".to_string()
+    String::new()
 }
 
 fn default_openai_streaming() -> bool {
@@ -4386,7 +4394,7 @@ output_max_size: 4096
         let config = OpenAIConfig::default();
         assert_eq!(config.api_key, "");
         assert_eq!(config.base_url, "https://api.openai.com/v1");
-        assert_eq!(config.model, "gpt-4o-mini");
+        assert_eq!(config.model, "");
         assert!(config.organization_id.is_none());
         assert!(config.enable_streaming);
     }

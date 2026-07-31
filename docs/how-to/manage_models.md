@@ -323,15 +323,23 @@ xzatoma auth --provider copilot
 
 ### Setting Default Model
 
-Edit your `config/config.yaml`:
+The `model` field for every provider is optional. Edit your `config/config.yaml`
+to pin a specific model:
 
 ```yaml
 provider:
   type: ollama
   ollama:
     host: http://localhost:11434
-    model: llama3.2:latest # Default model
+    model: llama3.2:latest # optional; pins the model to use
 ```
+
+If `model` is left unset (or omitted entirely), XZatoma queries the provider's
+model list when it constructs the provider and automatically selects the
+latest available model — no need to keep this value in sync with whatever is
+actually installed or deployed. If a pinned model isn't found in the
+provider's list, XZatoma logs an error and falls back to the latest available
+model rather than failing.
 
 ### Multiple Providers
 

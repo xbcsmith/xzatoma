@@ -32,12 +32,17 @@ and
 
 ## Provider Comparison
 
-| Provider  | Status             | Auth Method    | Base URL              | Default Model     | Context Limit   | Streaming  | Tool Calls        |
-| --------- | ------------------ | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
-| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | gpt-5-mini        | 128K            | SSE        | OpenAI-compatible |
-| Ollama    | Implemented        | None (local)   | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
-| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | gpt-4o-mini       | Model-dependent | SSE        | OpenAI-compatible |
-| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Content blocks    |
+| Provider  | Status             | Auth Method    | Base URL              | Default Model             | Context Limit   | Streaming  | Tool Calls        |
+| --------- | ------------------ | -------------- | --------------------- | -------------------------- | --------------- | ---------- | ----------------- |
+| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | Auto-selected (latest)     | 128K            | SSE        | OpenAI-compatible |
+| Ollama    | Implemented        | None (local)   | localhost:11434       | Auto-selected (latest)     | Model-dependent | JSON Lines | Limited           |
+| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | Auto-selected (latest)     | Model-dependent | SSE        | OpenAI-compatible |
+| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0          | 200K            | SSE        | Content blocks    |
+
+"Auto-selected (latest)" means: when no model is configured (or the configured
+model isn't found on the provider), XZatoma queries the provider's model list
+when constructing the provider and selects the latest one. See
+[Automatic model selection](../how-to/configure_providers.md#automatic-model-selection).
 
 ---
 
@@ -87,7 +92,7 @@ OpenAI (and OpenAI-compatible servers)
 ```bash
 export XZATOMA_OPENAI_API_KEY="sk-..."                       # Required for hosted API
 export XZATOMA_OPENAI_BASE_URL="https://api.openai.com/v1"   # Default
-export XZATOMA_OPENAI_MODEL="gpt-4o-mini"                    # Default model
+export XZATOMA_OPENAI_MODEL="gpt-4.1-mini"                   # Optional; auto-selects the latest model when unset
 export XZATOMA_OPENAI_ORG_ID="org-..."                       # Optional
 export XZATOMA_OPENAI_STREAMING="true"                       # Default
 ```

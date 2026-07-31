@@ -145,6 +145,10 @@ struct OpenAIModelsResponse {
 struct OpenAIModelEntry {
     id: String,
     owned_by: Option<String>,
+    /// Unix epoch seconds the model was created, when the server provides it.
+    /// Used to pick the "latest" model when no model is configured.
+    #[serde(default)]
+    created: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -576,7 +580,10 @@ impl OpenAIProvider {
     /// use xzatoma::config::OpenAIConfig;
     /// use xzatoma::providers::OpenAIProvider;
     ///
-    /// let config = OpenAIConfig::default();
+    /// let config = OpenAIConfig {
+    ///     model: "gpt-4o-mini".to_string(),
+    ///     ..Default::default()
+    /// };
     /// let provider = OpenAIProvider::new(config).unwrap();
     /// assert_eq!(provider.model(), "gpt-4o-mini");
     /// ```
@@ -1335,6 +1342,9 @@ impl Provider for OpenAIProvider {
                 for cap in build_capabilities_from_id(&entry.id) {
                     info.add_capability(cap);
                 }
+                if let Some(created) = entry.created {
+                    info.set_provider_metadata("created", created.to_string());
+                }
                 info
             })
             .collect();
@@ -1572,7 +1582,10 @@ mod tests {
 
     #[test]
     fn test_openai_provider_model() {
-        let config = OpenAIConfig::default();
+        let config = OpenAIConfig {
+            model: "gpt-4o-mini".to_string(),
+            ..Default::default()
+        };
         let provider = OpenAIProvider::new(config).unwrap();
         assert_eq!(provider.model(), "gpt-4o-mini");
     }
@@ -2222,7 +2235,10 @@ mod tests {
 
     #[test]
     fn test_get_current_model() {
-        let config = OpenAIConfig::default();
+        let config = OpenAIConfig {
+            model: "gpt-4o-mini".to_string(),
+            ..Default::default()
+        };
         let provider = OpenAIProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "gpt-4o-mini");
     }

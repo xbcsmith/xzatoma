@@ -1262,14 +1262,30 @@ impl ChatCompletionsAccumulator {
     }
 }
 
-fn format_copilot_api_error(status: reqwest::StatusCode, body: &str) -> XzatomaError {
-    crate::providers::http::api_error(
-        "Copilot",
+/// Build an error for a non-success Copilot API response.
+///
+/// Uses `http::provider_http_status` (rather than the plain string-based
+/// `http::api_error`) for every status except 401, so that callers such as
+/// the provider factory's model-resolution logic can pattern-match on the
+/// carried `reqwest::StatusCode` (e.g. to detect a missing/unsupported
+/// models endpoint) instead of parsing an error message.
+fn format_copilot_api_error(
+    endpoint: &str,
+    status: reqwest::StatusCode,
+    body: &str,
+) -> XzatomaError {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        let redacted = crate::security::redact_sensitive_text(body);
+        return XzatomaError::Authentication(format!(
+            "Copilot returned error {}: {}. Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
+            status, redacted
+        ));
+    }
+    crate::providers::http::provider_http_status(
+        "copilot",
+        endpoint,
         status,
-        body,
-        Some(
-            "Token may have expired; please re-authenticate with `xzatoma auth --provider copilot`",
-        ),
+        crate::security::redact_sensitive_text(body),
     )
 }
 
@@ -1813,7 +1829,11 @@ impl CopilotProvider {
                                 {
                                     tracing::warn!("Failed to clear cached Copilot token: {}", e);
                                 }
-                                return Err(format_copilot_api_error(status2, &error_text2));
+                                return Err(format_copilot_api_error(
+                                    "models",
+                                    status2,
+                                    &error_text2,
+                                ));
                             }
 
                             // Parse and return models from the successful retry response
@@ -1889,7 +1909,7 @@ impl CopilotProvider {
                             if let Err(e) = self.clear_cached_token() {
                                 tracing::warn!("Failed to clear cached Copilot token: {}", e);
                             }
-                            return Err(format_copilot_api_error(status, &error_text));
+                            return Err(format_copilot_api_error("models", status, &error_text));
                         }
                     }
                 } else {
@@ -1897,12 +1917,12 @@ impl CopilotProvider {
                     if let Err(e) = self.clear_cached_token() {
                         tracing::warn!("Failed to clear cached Copilot token: {}", e);
                     }
-                    return Err(format_copilot_api_error(status, &error_text));
+                    return Err(format_copilot_api_error("models", status, &error_text));
                 }
             }
 
             // Non-auth failures fall back to provider error
-            return Err(format_copilot_api_error(status, &error_text));
+            return Err(format_copilot_api_error("models", status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -1991,7 +2011,7 @@ impl CopilotProvider {
                 status,
                 error_text
             );
-            return Err(format_copilot_api_error(status, &error_text));
+            return Err(format_copilot_api_error("models", status, &error_text));
         }
 
         let models_response: CopilotModelsResponse = response.json().await.map_err(|e| {
@@ -2474,7 +2494,7 @@ impl CopilotProvider {
             let error_text =
                 crate::security::redact_sensitive_text(&response.text().await.unwrap_or_default());
             tracing::error!("/responses returned error {}: {}", status, error_text);
-            return Err(format_copilot_api_error(status, &error_text));
+            return Err(format_copilot_api_error("responses", status, &error_text));
         }
 
         // Parse response - for /responses endpoint, we expect a message-like response
@@ -2657,7 +2677,11 @@ impl CopilotProvider {
                             retry_status,
                             error_text
                         );
-                        return Err(format_copilot_api_error(retry_status, &error_text));
+                        return Err(format_copilot_api_error(
+                            "chat/completions",
+                            retry_status,
+                            &error_text,
+                        ));
                     }
 
                     let copilot_response: CopilotResponse =
@@ -2687,7 +2711,11 @@ impl CopilotProvider {
                 }
             }
 
-            return Err(format_copilot_api_error(status, &error_text));
+            return Err(format_copilot_api_error(
+                "chat/completions",
+                status,
+                &error_text,
+            ));
         }
 
         let copilot_response: CopilotResponse = response.json().await.map_err(|e| {
@@ -3067,7 +3095,7 @@ mod tests {
     #[test]
     fn test_copilot_config_default_model() {
         let config = CopilotConfig::default();
-        assert_eq!(config.model, "gpt-5-mini");
+        assert_eq!(config.model, "");
     }
 
     #[test]
@@ -3083,7 +3111,10 @@ mod tests {
 
     #[test]
     fn test_copilot_provider_model() {
-        let config = CopilotConfig::default();
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            ..Default::default()
+        };
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
@@ -3268,7 +3299,10 @@ mod tests {
 
     #[test]
     fn test_get_current_model() {
-        let config = CopilotConfig::default();
+        let config = CopilotConfig {
+            model: "gpt-5-mini".to_string(),
+            ..Default::default()
+        };
         let provider = CopilotProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "gpt-5-mini");
     }
@@ -3424,6 +3458,7 @@ mod tests {
         use crate::error::XzatomaError;
 
         let err = format_copilot_api_error(
+            "models",
             reqwest::StatusCode::UNAUTHORIZED,
             "unauthorized: token expired",
         );
@@ -3438,9 +3473,12 @@ mod tests {
     fn test_format_copilot_api_error_other() {
         use crate::error::XzatomaError;
 
-        let err =
-            format_copilot_api_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "internal error");
-        assert!(matches!(err, XzatomaError::Provider(_)));
+        let err = format_copilot_api_error(
+            "models",
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error",
+        );
+        assert!(matches!(err, XzatomaError::ProviderHttpStatus { .. }));
         assert!(err.to_string().contains("internal error"));
     }
 
@@ -4599,7 +4637,7 @@ mod tests {
     #[test]
     fn test_copilot_config_defaults() {
         let config = CopilotConfig::default();
-        assert_eq!(config.model, "gpt-5-mini");
+        assert_eq!(config.model, "");
         assert!(config.enable_streaming);
         assert!(config.enable_endpoint_fallback);
         assert!(!config.include_reasoning);
