@@ -2900,16 +2900,10 @@ pub mod watch {
         fn test_apply_cli_overrides_topic() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "original.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -2931,16 +2925,10 @@ pub mod watch {
         fn test_apply_cli_overrides_event_types() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -2973,16 +2961,10 @@ pub mod watch {
         fn test_apply_cli_overrides_json_logs() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
             config.watcher.logging.json_format = false;
 
@@ -3002,16 +2984,10 @@ pub mod watch {
         fn test_apply_cli_overrides_multiple_settings() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "original".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3034,16 +3010,10 @@ pub mod watch {
         fn test_apply_cli_overrides_event_types_with_whitespace() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3064,16 +3034,10 @@ pub mod watch {
         fn test_apply_cli_overrides_watcher_type() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3095,16 +3059,10 @@ pub mod watch {
         fn test_apply_cli_overrides_output_topic() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3132,16 +3090,10 @@ pub mod watch {
         fn test_apply_cli_overrides_group_id() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3163,16 +3115,10 @@ pub mod watch {
         fn test_apply_cli_overrides_create_topics() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3191,16 +3137,10 @@ pub mod watch {
         fn test_apply_cli_overrides_generic_match_action() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3222,16 +3162,10 @@ pub mod watch {
         fn test_apply_cli_overrides_generic_match_name() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3253,16 +3187,10 @@ pub mod watch {
         fn test_apply_cli_overrides_brokers() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3284,16 +3212,10 @@ pub mod watch {
         fn test_apply_cli_overrides_match_version() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3323,16 +3245,10 @@ pub mod watch {
 
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3359,16 +3275,10 @@ pub mod watch {
         fn test_apply_cli_overrides_filter_config_missing_file() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3392,16 +3302,10 @@ pub mod watch {
         fn test_apply_cli_overrides_system_prompt() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(

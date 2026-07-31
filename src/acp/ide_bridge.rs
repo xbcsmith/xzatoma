@@ -987,4 +987,97 @@ mod tests {
         assert!(!PermissionDecision::Denied.approved());
         assert!(!PermissionDecision::Cancelled.approved());
     }
+
+    // -----------------------------------------------------------------------
+    // Live-connection test: `request_permission` wire shape
+    //
+    // Drives `IdeBridge::request_permission` over a real in-memory ACP
+    // `Channel::duplex()` connection with a fake "Zed" client on the other
+    // end, so the emitted `RequestPermissionRequest` is inspected exactly as
+    // it crosses the wire rather than reconstructed by hand. The fake client
+    // approves the request so the full round trip (request -> user choice ->
+    // decision mapping) is exercised, not just the request shape.
+    // -----------------------------------------------------------------------
+
+    use agent_client_protocol::{Agent as AcpAgentRole, Channel, Responder};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    #[tokio::test]
+    async fn test_request_permission_live_connection_carries_four_options_and_title() {
+        let (server_channel, client_channel) = Channel::duplex();
+        let captured: Arc<StdMutex<Option<acp::RequestPermissionRequest>>> =
+            Arc::new(StdMutex::new(None));
+        let captured_clone = Arc::clone(&captured);
+
+        // Fake Zed client: records the incoming request and approves it via
+        // the "allow-once" option.
+        let fake_client = tokio::spawn(async move {
+            AcpClientRole
+                .builder()
+                .name("fake-zed-client")
+                .on_receive_request(
+                    async move |req: acp::RequestPermissionRequest,
+                                responder: Responder<acp::RequestPermissionResponse>,
+                                _cx: ConnectionTo<AcpAgentRole>| {
+                        *captured_clone.lock().unwrap() = Some(req);
+                        let outcome = acp::RequestPermissionOutcome::Selected(
+                            acp::SelectedPermissionOutcome::new("allow-once"),
+                        );
+                        responder.respond(acp::RequestPermissionResponse::new(outcome))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(client_channel)
+                .await
+        });
+
+        // Agent side: builds a real `IdeBridge` over the connection and
+        // issues the permission request under test.
+        let session_id = acp::SessionId::new("ide-bridge-test-session");
+        let outcome = AcpAgentRole
+            .builder()
+            .name("fake-agent-under-test")
+            .connect_with(
+                server_channel,
+                async move |connection: ConnectionTo<AcpClientRole>| {
+                    let bridge = IdeBridge::new(connection, session_id, IdeCapabilities::none());
+                    let decision = bridge
+                        .request_permission("tc-1", "Delete build cache", "Removes target/")
+                        .await
+                        .expect("live permission request should succeed");
+                    assert_eq!(decision, PermissionDecision::Approved);
+                    Ok(())
+                },
+            )
+            .await;
+
+        assert!(
+            outcome.is_ok(),
+            "agent-side connection should complete cleanly: {:?}",
+            outcome.err()
+        );
+        fake_client.abort();
+
+        let request = captured
+            .lock()
+            .unwrap()
+            .take()
+            .expect("fake client must have received a RequestPermissionRequest");
+
+        assert_eq!(request.options.len(), 4, "must offer exactly four options");
+        let option_ids: Vec<String> = request
+            .options
+            .iter()
+            .map(|o| o.option_id.0.to_string())
+            .collect();
+        assert_eq!(
+            option_ids,
+            vec!["allow-once", "allow-always", "reject-once", "reject-always"]
+        );
+        assert_eq!(
+            request.tool_call.fields.title.as_deref(),
+            Some("Delete build cache"),
+            "the tool-call title must be the full operation description"
+        );
+    }
 }

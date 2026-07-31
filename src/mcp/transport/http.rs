@@ -46,6 +46,26 @@ use crate::mcp::transport::Transport;
 /// The mandatory MCP protocol version sent on every POST.
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
+/// Map a reqwest client-construction failure to [`XzatomaError::McpTransport`].
+///
+/// Factored out of [`HttpTransport::new`] so the error branch of the fallible
+/// client build can be unit-tested directly. A real `reqwest::Client::build`
+/// failure only occurs on fatal TLS backend initialisation, which cannot be
+/// triggered from a hermetic unit test. The helper is generic over any
+/// [`Display`](std::fmt::Display) error so the exact production message
+/// formatting is exercised without fabricating a `reqwest::Error`.
+///
+/// # Arguments
+///
+/// * `error` - The underlying client-build error.
+///
+/// # Returns
+///
+/// An [`XzatomaError::McpTransport`] whose message wraps `error`.
+fn map_client_build_error<E: std::fmt::Display>(error: E) -> XzatomaError {
+    XzatomaError::McpTransport(format!("failed to build MCP HTTP client: {error}"))
+}
+
 /// Streamable HTTP/SSE transport implementing the `2025-11-25` MCP spec.
 ///
 /// # Examples
@@ -122,9 +142,7 @@ impl HttpTransport {
             reqwest::Client::builder()
                 .timeout(timeout)
                 .build()
-                .map_err(|e| {
-                    XzatomaError::McpTransport(format!("failed to build MCP HTTP client: {e}"))
-                })?,
+                .map_err(map_client_build_error)?,
         );
 
         let (response_tx, response_rx) = mpsc::unbounded_channel();
@@ -565,6 +583,29 @@ mod tests {
             Duration::from_secs(5),
         );
         assert!(result.is_ok());
+    }
+
+    /// The client-build error branch maps to `XzatomaError::McpTransport`.
+    ///
+    /// This drives the exact mapping used by `new()`'s `map_err`, exercising the
+    /// production failure path (message formatting and error variant) rather
+    /// than a reconstruction of the error shape.
+    #[test]
+    fn test_map_client_build_error_returns_mcp_transport() {
+        let err = map_client_build_error("simulated TLS initialisation failure");
+        match err {
+            XzatomaError::McpTransport(msg) => {
+                assert!(
+                    msg.contains("failed to build MCP HTTP client"),
+                    "unexpected message: {msg}"
+                );
+                assert!(
+                    msg.contains("simulated TLS initialisation failure"),
+                    "underlying error not propagated: {msg}"
+                );
+            }
+            other => panic!("expected McpTransport, got {other:?}"),
+        }
     }
 
     /// `new()` constructs a transport without panicking.

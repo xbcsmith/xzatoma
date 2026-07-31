@@ -467,13 +467,13 @@ provider-layer refactor.
 
 #### Task 5.6 Deliverables
 
-- [ ] Single Kafka-security module; duplicates deleted (P3).
-- [ ] Shared config read-lock helper (P7).
-- [ ] Inline mock providers and Kafka config literals replaced by builders (P6).
-- [ ] Canonical provider wire types and shared conversion helpers (P1).
-- [ ] Shared streaming reader/accumulator (P2) and HTTP error helpers (P8).
-- [ ] Shared watcher/tool helpers (P4/P5).
-- [ ] Provider and watcher reference docs updated for the new module layout.
+- [x] Single Kafka-security module; duplicates deleted (P3).
+- [x] Shared config read-lock helper (P7).
+- [x] Inline mock providers and Kafka config literals replaced by builders (P6).
+- [x] Canonical provider wire types and shared conversion helpers (P1).
+- [x] Shared streaming reader/accumulator (P2) and HTTP error helpers (P8).
+- [x] Shared watcher/tool helpers (P4/P5).
+- [x] Provider and watcher reference docs updated for the new module layout.
 
 #### Task 5.7 Success Criteria
 
@@ -553,13 +553,13 @@ and every edited file must pass the AGENTS.md Rule 4 lint/format gate.
 
 #### Task 6.5 Deliverables
 
-- [ ] `architecture.md` module trees (top-level, watcher, ACP, providers, tools,
+- [x] `architecture.md` module trees (top-level, watcher, ACP, providers, tools,
       agent) match the real `src/` tree, including Phase 5's new modules.
-- [ ] `provider_abstraction.md`, `api.md`, `mcp_configuration.md`,
+- [x] `provider_abstraction.md`, `api.md`, `mcp_configuration.md`,
       `chat_commands.md`, `model_management.md`, `cli.md`, `quick_reference.md`,
       `watcher_environment_variables.md`, `copilot_provider.md` corrected.
-- [ ] No reference doc names a nonexistent file, symbol, command, or env var.
-- [ ] All edited Markdown passes lint/format checks.
+- [x] No reference doc names a nonexistent file, symbol, command, or env var.
+- [x] All edited Markdown passes lint/format checks.
 
 #### Task 6.6 Success Criteria
 
@@ -567,6 +567,107 @@ and every edited file must pass the AGENTS.md Rule 4 lint/format gate.
   reflect three providers (Copilot/Ollama/OpenAI), the true module layout after
   the refactor, and the actual command/env-var surface; no "Phase N" or
   aspirational "not yet implemented" statements remain where the feature exists.
+
+### Phase 7: Open-Issue Remediation
+
+Closes the residual partial items surfaced by a post-implementation audit of
+Phases 1-6. These are the security-confirmation gate and Kafka payload bound
+left partial in Phase 1, the two failure-path tests approximated in Phase 2, the
+IDE-permission test gaps from Phase 1, and the dangling documentation links left
+after Phase 4's archival. No new features -- hardening, completeness, and test
+fidelity only.
+
+#### Task 7.1 Feature Work
+
+- **M1 - URL open confirmation (finish the partial)**: In
+  [`src/mcp/elicitation.rs`](../../src/mcp/elicitation.rs) (`handle_url`, ~lines
+  342-358) the `https` scheme allowlist is already enforced, but the URL is
+  printed to stderr and opened without an approval gate. Require explicit user
+  confirmation showing the full URL before invoking the OS opener, and fail
+  closed (do not open) when confirmation is declined or the session is
+  non-interactive/headless. Reuse the existing headless fail-closed branch
+  (~lines 330-336) so headless sessions never auto-open.
+- **L2 - Kafka payload size bound (finish the partial)**: Add a configurable
+  maximum payload size enforced when ingesting untrusted Kafka messages in both
+  [`src/watcher/generic/event.rs`](../../src/watcher/generic/event.rs)
+  (`GenericPlanEvent::new`, ~line 158) and the XZepr consumer ingestion path.
+  Reject oversized payloads with a logged, source-preserving error (using the
+  structured error helpers, not a flattened string) before parsing. Default to a
+  sane cap (for example 1 MiB).
+
+#### Task 7.2 Integrate Feature
+
+- Thread the max-payload bound through the watcher configuration so both the
+  generic and XZepr backends read the same limit, alongside the shared
+  `kafka_security` insecure-protocol warning added in the Phase 5 completion
+  pass.
+- Route the URL confirmation through a small, injectable prompt abstraction so
+  the decision can be driven by a fake responder in tests without touching the
+  real OS opener.
+
+#### Task 7.3 Configuration Updates
+
+- Add a watcher config field plus environment variable for the max payload size
+  (for example `XZATOMA_WATCHER_MAX_PAYLOAD_BYTES`) with a documented default,
+  and validate it (non-zero) in `validate`.
+- No other configuration changes expected.
+
+#### Task 7.4 Testing Requirements
+
+- **M1**: unit tests for `handle_url` proving it opens only after an approving
+  confirmation, does NOT open on decline, and fails closed in non-interactive
+  mode (via a fake confirmation responder); assert the confirmation surface
+  receives the full URL.
+- **L2**: tests that an over-limit payload is rejected with a handled error and
+  an at-or-under-limit payload parses normally, in both the generic and XZepr
+  ingestion paths.
+- **Phase 2 backfill**: replace the two approximated failure-path tests with
+  real coverage -- `mcp/transport/http.rs` client construction failure returns
+  `Err` (via an injectable/mockable client-builder factory) rather than
+  panicking, and `tools/parallel_subagent.rs` drives the actual spawn closure
+  against a closed semaphore and asserts a handled failed `TaskResult`.
+- **Phase 1 backfill**: add tests using a fake ACP connection/bridge asserting
+  the emitted `RequestPermissionRequest` carries the four permission options and
+  the operation title, and that a missing client capability fails closed to
+  `approved: false`.
+
+#### Task 7.5 Documentation Updates
+
+- Reconcile [`docs/explanation/implementations.md`](implementations.md): remove
+  or repoint the ~19 dangling `phaseN_` links to files that do not exist in the
+  tree (archive real targets under `docs/archive/` if any exist; otherwise
+  delete the dead index entries). Confirm every remaining link resolves.
+- Document the new max-payload config field/env var in
+  [`watcher_environment_variables.md`](../reference/watcher_environment_variables.md)
+  and [`configuration.md`](../reference/configuration.md).
+- Update the M1/L2 wording in
+  [`phase1_security_hardening_implementation.md`](phase1_security_hardening_implementation.md)
+  so it no longer overstates the confirmation gate / payload bound as complete
+  (or notes they were finished in Phase 7).
+- Run `markdownlint --fix --config .markdownlint.json` and
+  `prettier --write --parser markdown --prose-wrap always` on every touched
+  Markdown file per AGENTS.md Rule 4.
+
+#### Task 7.6 Deliverables
+
+- [x] `handle_url` requires full-URL user confirmation and fails closed on
+      decline / non-interactive input (M1 complete).
+- [x] Bounded, config-driven Kafka payload size enforced in both watcher
+      ingestion paths (L2 complete).
+- [x] Real failure-path tests for `http.rs` client construction and
+      `parallel_subagent` closed semaphore (Phase 2 backfill).
+- [x] Fake-connection IDE-permission tests asserting the four options + the
+      operation title and missing-capability fail-closed (Phase 1 backfill).
+- [x] `docs/explanation/implementations.md` has zero dangling `phaseN_` links.
+- [x] New payload-size config documented; all touched Markdown passes
+      lint/format checks.
+
+#### Task 7.7 Success Criteria
+
+- The full AGENTS.md quality gate is green; no untrusted URL opens without
+  explicit approval; oversized Kafka payloads cannot reach the parser; the
+  previously-approximated tests exercise the real failing code paths; and no
+  documentation index links to a nonexistent file.
 
 ## Suggested Sequencing and Dependencies
 
@@ -578,13 +679,18 @@ graph TD
     P4[Phase 4: Stale References]
     P5[Phase 5: Consolidation]
     P6[Phase 6: Reference Docs]
+    P7[Phase 7: Open-Issue Remediation]
     P1 --> P2
     P2 --> P3
     P3 --> P4
     P4 --> P5
     P5 --> P6
+    P6 --> P7
     P3 -.docs impact.-> P6
     P4 -.docs impact.-> P6
+    P1 -.reopened finding.-> P7
+    P2 -.reopened finding.-> P7
+    P4 -.reopened finding.-> P7
 ```
 
 Phases 1-4 are independent enough to parallelize across contributors if desired;
@@ -594,6 +700,12 @@ must reflect Phase 5's new module layout, but the docs that are stale today
 (independent of the refactor) can be corrected at any time. Each phase updates
 the reference docs it touches in-place; Phase 6 is the final reconciliation
 sweep. Run the full AGENTS.md quality gate after each task, not just each phase.
+
+Phase 7 runs after the audit of Phases 1-6 and depends on no earlier phase
+structurally; it exists solely to finish the partial items and test-fidelity
+gaps that the audit reopened (M1 confirmation, L2 payload bound, the two Phase 2
+failure-path tests, the Phase 1 IDE-permission assertions, and the Phase 4
+documentation links). Its work items are independent and can be parallelized.
 
 ## Out of Scope / No Action Needed
 

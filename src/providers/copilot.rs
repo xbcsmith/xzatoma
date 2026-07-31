@@ -6,11 +6,12 @@
 use crate::config::CopilotConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
+use crate::providers::conversion::assistant_message_from_wire;
 use crate::providers::{
     ChatToolCall, CompletionResponse, FinishReason, FunctionCall, Message, ModelCapability,
     ModelInfo, ModelInfoSummary, Provider, ProviderCapabilities, ProviderFunction, ProviderTool,
-    TokenUsage, ToolCall, chat_tool_calls_from_message, chat_tool_calls_to_domain,
-    messages_contain_image_content, read_config_lock,
+    TokenUsage, ToolCall, chat_tool_calls_from_message, messages_contain_image_content,
+    read_config_lock,
 };
 
 use async_trait::async_trait;
@@ -1700,12 +1701,14 @@ impl CopilotProvider {
     }
 
     /// Convert Copilot response message back to XZatoma format
+    ///
+    /// Delegates the shared tool-call-vs-text assembly to
+    /// [`assistant_message_from_wire`]. The Copilot divergence is preserved by
+    /// forwarding `tool_calls` unchanged (an empty `Some` still yields a
+    /// tool-call message) and by supplying the plain `content` string as the
+    /// fallback text.
     fn convert_response_message(&self, copilot_msg: CopilotMessage) -> Message {
-        if let Some(tool_calls) = copilot_msg.tool_calls {
-            Message::assistant_with_tools(chat_tool_calls_to_domain(tool_calls))
-        } else {
-            Message::assistant(copilot_msg.content)
-        }
+        assistant_message_from_wire(copilot_msg.tool_calls, || copilot_msg.content)
     }
 
     /// Fetch the list of available Copilot models from the API.

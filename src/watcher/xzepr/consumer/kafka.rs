@@ -60,6 +60,10 @@ pub enum ConsumerError {
     #[error("Deserialization error: {0}")]
     Deserialization(#[from] serde_json::Error),
 
+    /// Payload exceeded the configured maximum size.
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
+
     /// Consumer is not running.
     #[error("Consumer not running")]
     NotRunning,
@@ -343,7 +347,13 @@ impl XzeprConsumer {
                 Some(Ok(borrowed_message)) => {
                     match borrowed_message.payload_view::<str>() {
                         Some(Ok(payload)) => {
-                            if let Err(e) = Self::process_message(payload, &*handler).await {
+                            if let Err(e) = Self::process_message(
+                                payload,
+                                &*handler,
+                                self.config.max_payload_bytes,
+                            )
+                            .await
+                            {
                                 error!(
                                     service = %self.config.service_name,
                                     "Failed to process message: {}", e
@@ -453,6 +463,14 @@ impl XzeprConsumer {
                 Some(Ok(borrowed_message)) => {
                     let mut receiver_dropped = false;
                     match borrowed_message.payload_view::<str>() {
+                        Some(Ok(payload)) if payload.len() > self.config.max_payload_bytes => {
+                            error!(
+                                service = %self.config.service_name,
+                                payload_bytes = payload.len(),
+                                max_payload_bytes = self.config.max_payload_bytes,
+                                "Rejecting oversized Kafka payload"
+                            );
+                        }
                         Some(Ok(payload)) => {
                             match serde_json::from_str::<CloudEventMessage>(payload) {
                                 Ok(event) => {
@@ -538,15 +556,18 @@ impl XzeprConsumer {
 
     /// Processes a single message payload.
     ///
-    /// Deserializes the JSON payload into a `CloudEventMessage` and passes it
-    /// to the handler. If deserialization fails, returns a `ConsumerError`. If
-    /// the handler returns an error, it is logged but the method still returns
-    /// `Ok(())` so the consumer can continue processing subsequent messages.
+    /// Rejects payloads larger than `max_payload_bytes` before parsing.
+    /// Otherwise deserializes the JSON payload into a `CloudEventMessage` and
+    /// passes it to the handler. If deserialization fails, returns a
+    /// `ConsumerError`. If the handler returns an error, it is logged but the
+    /// method still returns `Ok(())` so the consumer can continue processing
+    /// subsequent messages.
     ///
     /// # Arguments
     ///
     /// * `payload` - JSON payload as a string
     /// * `handler` - Handler to process the message
+    /// * `max_payload_bytes` - Maximum accepted payload size, in bytes
     ///
     /// # Returns
     ///
@@ -555,12 +576,22 @@ impl XzeprConsumer {
     ///
     /// # Errors
     ///
-    /// Returns `ConsumerError::Deserialization` if the payload is not valid
-    /// JSON or does not match the `CloudEventMessage` schema.
+    /// Returns `ConsumerError::PayloadTooLarge` if `payload` exceeds
+    /// `max_payload_bytes`. Returns `ConsumerError::Deserialization` if the
+    /// payload is not valid JSON or does not match the `CloudEventMessage`
+    /// schema.
     pub async fn process_message<H: MessageHandler>(
         payload: &str,
         handler: &H,
+        max_payload_bytes: usize,
     ) -> Result<(), ConsumerError> {
+        if let Err(e) =
+            crate::watcher::kafka_security::validate_payload_size(payload, max_payload_bytes)
+        {
+            error!("Rejecting oversized Kafka payload: {}", e);
+            return Err(ConsumerError::PayloadTooLarge(e.to_string()));
+        }
+
         match serde_json::from_str::<CloudEventMessage>(payload) {
             Ok(event) => {
                 debug!(
@@ -587,6 +618,7 @@ impl XzeprConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::watcher::kafka_security::DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct TestHandler {
         received: Arc<tokio::sync::Mutex<Vec<CloudEventMessage>>>,
@@ -708,7 +740,8 @@ mod tests {
             }
         }"#;
 
-        let result = XzeprConsumer::process_message(payload, &handler).await;
+        let result =
+            XzeprConsumer::process_message(payload, &handler, DEFAULT_MAX_PAYLOAD_BYTES).await;
         assert!(result.is_ok());
 
         let received = handler.received.lock().await;
@@ -720,8 +753,53 @@ mod tests {
     #[tokio::test]
     async fn test_process_message_invalid_json() {
         let handler = TestHandler::new();
-        let result = XzeprConsumer::process_message("invalid json", &handler).await;
+        let result =
+            XzeprConsumer::process_message("invalid json", &handler, DEFAULT_MAX_PAYLOAD_BYTES)
+                .await;
         assert!(matches!(result, Err(ConsumerError::Deserialization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_process_message_oversized_payload_returns_err() {
+        let handler = TestHandler::new();
+        let payload = "x".repeat(100);
+        let result = XzeprConsumer::process_message(&payload, &handler, 64).await;
+        assert!(matches!(result, Err(ConsumerError::PayloadTooLarge(_))));
+
+        let received = handler.received.lock().await;
+        assert!(
+            received.is_empty(),
+            "handler must not be invoked for an oversized payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_message_at_limit_payload_parses_normally() {
+        let handler = TestHandler::new();
+        let payload = r#"{
+            "success": true,
+            "id": "at-limit-id",
+            "specversion": "1.0.1",
+            "type": "test.event",
+            "source": "test-source",
+            "api_version": "v1",
+            "name": "test.event",
+            "version": "1.0.0",
+            "release": "1.0.0",
+            "platform_id": "test",
+            "package": "testpkg",
+            "data": {
+                "events": [],
+                "event_receivers": [],
+                "event_receiver_groups": []
+            }
+        }"#;
+
+        let result = XzeprConsumer::process_message(payload, &handler, payload.len()).await;
+        assert!(result.is_ok(), "a payload exactly at the bound must parse");
+
+        let received = handler.received.lock().await;
+        assert_eq!(received.len(), 1);
     }
 
     #[tokio::test]
@@ -831,7 +909,8 @@ mod tests {
             }
         }"#;
 
-        let result = XzeprConsumer::process_message(payload, &handler).await;
+        let result =
+            XzeprConsumer::process_message(payload, &handler, DEFAULT_MAX_PAYLOAD_BYTES).await;
         assert!(result.is_ok());
     }
 

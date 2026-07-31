@@ -17,8 +17,8 @@ sub-tasks and execute them in parallel or sequence.
 
 ## Prerequisites
 
-- XZatoma installed and configured with a working AI provider (Copilot or
-  Ollama)
+- XZatoma installed and configured with a working AI provider (Copilot, Ollama,
+  or OpenAI)
 - Basic familiarity with XZatoma chat mode
 - A text editor to create configuration files
 

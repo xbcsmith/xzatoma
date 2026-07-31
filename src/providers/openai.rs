@@ -25,10 +25,11 @@
 use crate::config::OpenAIConfig;
 use crate::error::{Result, XzatomaError};
 use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
+use crate::providers::conversion::assistant_message_from_wire;
 use crate::providers::{
     ChatToolCall, CompletionResponse, FinishReason, ImagePromptSource, Message, ModelCapability,
     ModelInfo, Provider, ProviderCapabilities, ProviderMessageContentPart, ProviderTool,
-    TokenUsage, chat_tool_calls_from_message, chat_tool_calls_to_domain, convert_tools_from_json,
+    TokenUsage, chat_tool_calls_from_message, convert_tools_from_json,
     messages_contain_image_content, read_config_lock, validate_message_sequence,
 };
 use async_trait::async_trait;
@@ -664,13 +665,14 @@ impl OpenAIProvider {
     /// [`Message::assistant_with_tools`]. Otherwise returns
     /// [`Message::assistant`] with the content, defaulting to an empty string
     /// when `content` is `None`.
+    ///
+    /// Delegates the shared assembly to [`assistant_message_from_wire`]. The
+    /// OpenAI divergence is preserved by filtering an empty tool-call vector to
+    /// `None` before the call and by supplying a closure that folds OpenAI's
+    /// multimodal content parts into plain text as the fallback.
     fn convert_response_message(&self, msg: OpenAIMessage) -> Message {
-        if let Some(tool_calls) = msg.tool_calls
-            && !tool_calls.is_empty()
-        {
-            return Message::assistant_with_tools(chat_tool_calls_to_domain(tool_calls));
-        }
-        Message::assistant(match msg.content {
+        let tool_calls = msg.tool_calls.filter(|tc| !tc.is_empty());
+        assistant_message_from_wire(tool_calls, || match msg.content {
             Some(OpenAIMessageContent::Text(text)) => text,
             Some(OpenAIMessageContent::Parts(parts)) => parts
                 .into_iter()

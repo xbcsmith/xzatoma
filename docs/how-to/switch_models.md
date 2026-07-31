@@ -2,12 +2,14 @@
 
 ## Overview
 
-This guide shows you how to switch between different AI models in XZatoma. You can switch models via CLI configuration, during interactive chat sessions, or programmatically through the API.
+This guide shows you how to switch between different AI models in XZatoma. You
+can switch models via CLI configuration, during interactive chat sessions, or
+programmatically through the API.
 
 ## Prerequisites
 
 - XZatoma installed and configured
-- At least one provider configured (GitHub Copilot or Ollama)
+- At least one provider configured (GitHub Copilot, Ollama, or OpenAI)
 - Multiple models available (verify with `xzatoma models list`)
 
 ## Quick Start
@@ -16,7 +18,7 @@ This guide shows you how to switch between different AI models in XZatoma. You c
 
 During an interactive chat session:
 
-```
+```bash
 /model gpt-4o
 ```
 
@@ -26,9 +28,9 @@ Edit `config/config.yaml`:
 
 ```yaml
 provider:
- provider_type: ollama
- ollama:
-  model: qwen2.5-coder:14b # Change this line
+  type: ollama
+  ollama:
+    model: qwen2.5-coder:14b # Change this line
 ```
 
 ## Switching Models in Interactive Chat
@@ -41,13 +43,13 @@ xzatoma chat
 
 ### Step 2: List Available Models
 
-```
+```bash
 /models list
 ```
 
 Example output:
 
-```
+```text
 Model Name      Display Name     Context Window  Capabilities
 qwen2.5-coder:7b   Qwen 2.5 Coder 7B   32768 tokens   FunctionCalling
 qwen2.5-coder:14b   Qwen 2.5 Coder 14B  32768 tokens   FunctionCalling
@@ -58,19 +60,19 @@ Note: Current model is highlighted in green
 
 ### Step 3: Switch to Different Model
 
-```
+```bash
 /model qwen2.5-coder:14b
 ```
 
 Expected response:
 
-```
+```text
 Switched to model: qwen2.5-coder:14b (32768 token context)
 ```
 
 ### Step 4: Verify Switch
 
-```
+```bash
 /context
 ```
 
@@ -88,9 +90,10 @@ When you switch models, your conversation history is preserved:
 
 ### Context Window Warnings
 
-If your current conversation is larger than the new model's context window, you'll see a warning:
+If your current conversation is larger than the new model's context window,
+you'll see a warning:
 
-```
+```text
 WARNING: Current conversation (45000 tokens) exceeds new model context (32768 tokens)
 Messages will be pruned to fit the new context window.
 
@@ -127,14 +130,18 @@ Edit `config/config.yaml`:
 
 ```yaml
 provider:
- provider_type: ollama # or 'copilot'
+  type: ollama # or 'copilot' or 'openai'
 
- ollama:
-  host: http://localhost:11434
-  model: qwen2.5-coder:14b # Change default model
+  ollama:
+    host: http://localhost:11434
+    model: qwen2.5-coder:14b # Change default model
 
- copilot:
-  model: gpt-4o # Copilot default model
+  copilot:
+    model: gpt-5-mini # Copilot default model
+
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini # OpenAI default model
 ```
 
 Restart XZatoma to use the new default.
@@ -145,7 +152,7 @@ Restart XZatoma to use the new default.
 
 In chat mode:
 
-```
+```bash
 /help
 ```
 
@@ -159,7 +166,7 @@ Or update config:
 
 ```yaml
 provider:
- provider_type: copilot
+  type: copilot
 ```
 
 ### From Copilot to Ollama
@@ -174,7 +181,7 @@ Update config:
 
 ```yaml
 provider:
- provider_type: ollama
+  type: ollama
 ```
 
 Or use override:
@@ -189,13 +196,13 @@ xzatoma chat --provider ollama
 
 Monitor context usage and switch proactively:
 
-```
+```bash
 /context
 ```
 
 If approaching the limit:
 
-```
+```text
 Context usage: 85.3%
 
 Usage Level: 85.3%
@@ -203,7 +210,7 @@ Usage Level: 85.3%
 
 Switch to a model with larger context:
 
-```
+```bash
 /model claude-3.5-sonnet
 ```
 
@@ -211,19 +218,19 @@ Switch to a model with larger context:
 
 For code-heavy tasks:
 
-```
+```bash
 /model qwen2.5-coder:14b
 ```
 
 For general conversation:
 
-```
+```bash
 /model llama3.2:3b
 ```
 
 For tasks requiring large context:
 
-```
+```bash
 /model gemini-2.0-flash-exp
 ```
 
@@ -252,13 +259,13 @@ println!("Now using: {}", current);
 
 Use smaller models for simple tasks:
 
-```
+```bash
 /model llama3.2:3b
 ```
 
 Switch to larger models when needed:
 
-```
+```bash
 /model qwen2.5-coder:14b
 ```
 
@@ -266,13 +273,13 @@ Switch to larger models when needed:
 
 Start with efficient models:
 
-```
+```bash
 /model gpt-4-turbo
 ```
 
 Upgrade for complex tasks:
 
-```
+```bash
 /model o1-preview
 ```
 
@@ -280,13 +287,13 @@ Upgrade for complex tasks:
 
 Small context for focused tasks:
 
-```
+```bash
 /model gpt-4 # 8k context
 ```
 
 Large context for comprehensive analysis:
 
-```
+```bash
 /model gpt-4o # 128k context
 ```
 
@@ -299,19 +306,22 @@ Large context for comprehensive analysis:
 **Solution**:
 
 1. List available models:
-  ```
-  /models list
-  ```
 
-2. Use exact model name (case-sensitive):
-  ```
-  /model qwen2.5-coder:7b
-  ```
+```bash
+/models list
+```
 
-3. For Ollama, ensure model is installed:
-  ```bash
-  ollama pull qwen2.5-coder:7b
-  ```
+1. Use exact model name (case-sensitive):
+
+```bash
+/model qwen2.5-coder:7b
+```
+
+1. For Ollama, ensure model is installed:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
 
 ### Model Switch Fails Silently
 
@@ -320,53 +330,61 @@ Large context for comprehensive analysis:
 **Solution**:
 
 1. Check provider capabilities:
-  ```bash
-  xzatoma models list
-  ```
 
-2. Verify you have permission to switch models
+```bash
+xzatoma models list
+```
 
-3. Check logs for errors:
-  ```bash
-  RUST_LOG=debug xzatoma chat
-  ```
+1. Verify you have permission to switch models
+
+2. Check logs for errors:
+
+```bash
+RUST_LOG=debug xzatoma chat
+```
 
 ### Context Pruning After Switch
 
 **Problem**: Messages disappear after switching to smaller context model
 
-**Explanation**: This is expected behavior. When switching to a model with smaller context, older messages are automatically pruned to fit.
+**Explanation**: This is expected behavior. When switching to a model with
+smaller context, older messages are automatically pruned to fit.
 
 **Prevention**:
 
 1. Check new model context before switching:
-  ```bash
-  xzatoma models info --model target-model
-  ```
 
-2. Save important context before switching:
-  - Copy important messages
-  - Export conversation if needed
+```bash
+xzatoma models info --model target-model
+```
 
-3. Choose models with adequate context for your needs
+1. Save important context before switching:
+
+- Copy important messages
+- Export conversation if needed
+
+1. Choose models with adequate context for your needs
 
 ### Provider Switch Not Working
 
 **Problem**: Chat mode doesn't switch providers
 
-**Explanation**: Provider switching requires restarting the session. Use `/exit` and start a new session.
+**Explanation**: Provider switching requires restarting the session. Use `/exit`
+and start a new session.
 
 **Solution**:
 
 1. Exit current session:
-  ```
-  /exit
-  ```
 
-2. Start new session with different provider:
-  ```bash
-  xzatoma chat --provider copilot
-  ```
+```bash
+/exit
+```
+
+1. Start new session with different provider:
+
+```bash
+xzatoma chat --provider copilot
+```
 
 Or update config permanently.
 
@@ -381,6 +399,7 @@ xzatoma models info --model target-model
 ```
 
 Look for:
+
 - `FunctionCalling` capability (required for XZatoma tools)
 - Adequate context window
 - Appropriate capabilities for your task
@@ -389,7 +408,7 @@ Look for:
 
 Check current usage:
 
-```
+```bash
 /context
 ```
 
@@ -411,7 +430,7 @@ Don't wait until you hit context limits:
 
 Try different models for your use case:
 
-```
+```bash
 /model model-a
 How do I implement a binary tree?
 
@@ -425,7 +444,7 @@ Compare quality and speed.
 
 In long sessions, note which model produced which results:
 
-```
+```bash
 /context # Shows current model
 ```
 
@@ -435,5 +454,6 @@ This helps when reviewing conversation history.
 
 ### Example 1: Switch to Larger Context
 
-```
+```text
 User: I need to analyze a large codebase
+```

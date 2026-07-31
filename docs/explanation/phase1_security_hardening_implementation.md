@@ -75,8 +75,11 @@ All work in this document is complete. Every quality gate in `AGENTS.md` passes:
 - H2: `src/acp/server.rs` `constant_time_str_eq` hashes both tokens with SHA-256
   and compares digests with `subtle::ConstantTimeEq`. `validate_acp_config`
   (`src/config.rs`) enforces a minimum token length of 16 characters.
-- M1: `src/mcp/elicitation.rs` `is_allowed_elicitation_url` allows only `https`
-  URLs, and `handle_url` requires confirmation with the full URL.
+- M1 (partial): `src/mcp/elicitation.rs` `is_allowed_elicitation_url` allows
+  only `https` URLs. The explicit full-URL confirmation gate on `handle_url` was
+  left unbuilt at this point (the URL was opened without asking) and was
+  completed in Phase 7 -- see
+  [`phase7_open_issue_remediation_implementation.md`](phase7_open_issue_remediation_implementation.md).
 - IDE permission: `src/tools/ide_tools.rs` `IdeRequestPermissionTool::execute`
   now calls `IdeBridge::request_permission`, offers four options (allow once,
   allow always, reject once, reject always), maps the outcome via
@@ -93,8 +96,11 @@ All work in this document is complete. Every quality gate in `AGENTS.md` passes:
 - M2: `src/tools/terminal.rs` documents the denylist as best-effort defense in
   depth and requires confirmation for interpreter invocations
   (`is_interpreter_invocation`) even in `FullAutonomous` mode.
-- L2: `src/watcher/xzepr/watcher.rs` `apply_security_config` warns when the
-  Kafka security protocol is `PLAINTEXT`.
+- L2 (partial): `src/watcher/xzepr/watcher.rs` `apply_security_config` warns
+  when the Kafka security protocol is `PLAINTEXT`. A configurable maximum Kafka
+  payload size bound was not yet added at this point and was completed in Phase
+  7 -- see
+  [`phase7_open_issue_remediation_implementation.md`](phase7_open_issue_remediation_implementation.md).
 
 #### Task 1.4 Testing Requirements
 
@@ -111,13 +117,15 @@ All work in this document is complete. Every quality gate in `AGENTS.md` passes:
 
 - [x] Fetch tool and OAuth/MCP path pin validated IPs (H1).
 - [x] Constant-time ACP bearer-token comparison plus minimum-length check (H2).
-- [x] MCP `handle_url` scheme allowlist with confirmation (M1).
+- [x] MCP `handle_url` `https` scheme allowlist (M1 partial in Phase 1; the
+      full-URL confirmation gate was completed in Phase 7).
 - [x] `IdeBridge::request_permission` implemented; `IdeRequestPermissionTool`
       issues a real Zed `session/request_permission` prompt and honors the
       user's choice, failing closed on error.
 - [x] JSON-aware secret redaction (M3).
 - [x] Interpreter-invocation confirmation and best-effort denylist docs (M2).
-- [x] Kafka plaintext transport warning (L2).
+- [x] Kafka plaintext transport warning (L2 partial in Phase 1; the configurable
+      payload size bound was completed in Phase 7).
 - [x] `cargo audit --deny warnings` wired into the `Makefile` (`make audit`),
       documented in `AGENTS.md`, with justified ignores for unmaintained
       transitive advisories in `.cargo/audit.toml` (L1).

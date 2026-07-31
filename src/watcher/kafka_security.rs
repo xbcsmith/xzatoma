@@ -20,6 +20,51 @@
 
 use crate::config::KafkaSecurityConfig;
 use crate::error::{Result, XzatomaError};
+use tracing::warn;
+
+/// Default maximum accepted size, in bytes, of an inbound Kafka message
+/// payload before parsing.
+///
+/// Used as the fallback bound for [`crate::watcher::generic::event_handler::GenericEventHandler`]
+/// and [`crate::watcher::xzepr::consumer::KafkaConsumerConfig`] when no
+/// explicit override is configured. Production callers normally override this
+/// with the value from `watcher.execution.max_payload_bytes`
+/// (`XZATOMA_WATCHER_MAX_PAYLOAD_BYTES`).
+pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
+
+/// Validates that a raw Kafka payload does not exceed `max_bytes`.
+///
+/// Both watcher backends (generic and XZepr) call this before handing an
+/// untrusted payload to their respective parsers, so an oversized message is
+/// rejected with a handled, source-preserving error rather than reaching the
+/// parser at all.
+///
+/// # Arguments
+///
+/// * `payload` - The raw UTF-8 Kafka message payload.
+/// * `max_bytes` - The maximum accepted payload size, in bytes.
+///
+/// # Errors
+///
+/// Returns [`XzatomaError::Watcher`] when `payload.len() > max_bytes`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::watcher::kafka_security::validate_payload_size;
+///
+/// assert!(validate_payload_size("small", 1024).is_ok());
+/// assert!(validate_payload_size(&"x".repeat(2048), 1024).is_err());
+/// ```
+pub fn validate_payload_size(payload: &str, max_bytes: usize) -> Result<()> {
+    let actual = payload.len();
+    if actual > max_bytes {
+        return Err(XzatomaError::Watcher(format!(
+            "Kafka payload of {actual} bytes exceeds the configured maximum of {max_bytes} bytes"
+        )));
+    }
+    Ok(())
+}
 
 /// Security protocol for a Kafka connection.
 ///
@@ -195,6 +240,58 @@ pub fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
     }
 }
 
+/// Returns whether a security protocol transmits data without encryption.
+///
+/// `PLAINTEXT` and `SASL_PLAINTEXT` send credentials and message payloads over
+/// the wire unencrypted, so they are considered insecure for production use.
+/// This is the pure predicate backing [`warn_if_insecure`].
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::watcher::kafka_security::{is_insecure_protocol, SecurityProtocol};
+///
+/// assert!(is_insecure_protocol(&SecurityProtocol::Plaintext));
+/// assert!(is_insecure_protocol(&SecurityProtocol::SaslPlaintext));
+/// assert!(!is_insecure_protocol(&SecurityProtocol::Ssl));
+/// assert!(!is_insecure_protocol(&SecurityProtocol::SaslSsl));
+/// ```
+pub fn is_insecure_protocol(protocol: &SecurityProtocol) -> bool {
+    matches!(
+        protocol,
+        SecurityProtocol::Plaintext | SecurityProtocol::SaslPlaintext
+    )
+}
+
+/// Emit a warning when the resolved protocol transmits data unencrypted.
+///
+/// This is the single shared apply-time warning used by every production path
+/// that applies a Kafka security protocol (the generic producer via
+/// [`apply_security_config`] and the XZepr consumer). It should be called once,
+/// at the point where the protocol is applied, rather than during pure parsing
+/// which may run repeatedly at config-load time.
+///
+/// Protocols that are already encrypted (`SSL`, `SASL_SSL`) produce no output.
+pub fn warn_if_insecure(protocol: &SecurityProtocol) {
+    match protocol {
+        SecurityProtocol::Plaintext => {
+            warn!(
+                "Kafka SecurityProtocol is PLAINTEXT: all traffic will be UNENCRYPTED and \
+                 credentials and message payloads may be exposed on the network. Use \
+                 SASL_SSL or SSL for production deployments."
+            );
+        }
+        SecurityProtocol::SaslPlaintext => {
+            warn!(
+                "Kafka SecurityProtocol is SASL_PLAINTEXT: SASL credentials and message \
+                 payloads travel UNENCRYPTED and may be exposed on the network. Use \
+                 SASL_SSL or SSL for production deployments."
+            );
+        }
+        SecurityProtocol::Ssl | SecurityProtocol::SaslSsl => {}
+    }
+}
+
 /// Resolve a [`KafkaSecurityConfig`] into concrete security settings.
 ///
 /// This is the shared resolution logic reused by the topic admin helper and
@@ -236,6 +333,9 @@ pub fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
 /// ```
 pub fn apply_security_config(security: &KafkaSecurityConfig) -> Result<ResolvedSecurity> {
     let security_protocol = parse_security_protocol(&security.protocol)?;
+
+    // Warn once, at the apply step, if the resolved protocol is unencrypted.
+    warn_if_insecure(&security_protocol);
 
     let ssl_config = if matches!(
         security_protocol,
@@ -446,5 +546,38 @@ mod tests {
         };
 
         assert!(apply_security_config(&security).is_err());
+    }
+
+    #[test]
+    fn test_is_insecure_protocol_flags_unencrypted_protocols() {
+        assert!(is_insecure_protocol(&SecurityProtocol::Plaintext));
+        assert!(is_insecure_protocol(&SecurityProtocol::SaslPlaintext));
+        assert!(!is_insecure_protocol(&SecurityProtocol::Ssl));
+        assert!(!is_insecure_protocol(&SecurityProtocol::SaslSsl));
+    }
+
+    #[test]
+    fn test_validate_payload_size_at_limit_is_ok() {
+        let payload = "x".repeat(1024);
+        assert!(validate_payload_size(&payload, 1024).is_ok());
+    }
+
+    #[test]
+    fn test_validate_payload_size_under_limit_is_ok() {
+        assert!(validate_payload_size("small payload", 1024).is_ok());
+    }
+
+    #[test]
+    fn test_validate_payload_size_over_limit_is_err() {
+        let payload = "x".repeat(1025);
+        let error = validate_payload_size(&payload, 1024).unwrap_err();
+        assert!(matches!(error, XzatomaError::Watcher(_)));
+        assert!(error.to_string().contains("1025"));
+        assert!(error.to_string().contains("1024"));
+    }
+
+    #[test]
+    fn test_default_max_payload_bytes_is_one_mebibyte() {
+        assert_eq!(DEFAULT_MAX_PAYLOAD_BYTES, 1024 * 1024);
     }
 }

@@ -54,6 +54,7 @@ use crate::tools::plan::{Plan, PlanParser};
 use crate::watcher::generic::consumer::RawKafkaMessage;
 use crate::watcher::generic::event::GenericPlanEvent;
 use crate::watcher::generic::matcher::GenericMatcher;
+use crate::watcher::kafka_security::{DEFAULT_MAX_PAYLOAD_BYTES, validate_payload_size};
 use chrono::{DateTime, Utc};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
@@ -136,6 +137,14 @@ pub struct GenericEventHandler {
     /// When set, the handler attempts to load `{dir}/{name}-{version}.yaml`
     /// then `{dir}/{name}.yaml` before falling back to the embedded plan.
     pub plan_directory: Option<PathBuf>,
+
+    /// Maximum accepted size, in bytes, of a raw Kafka payload.
+    ///
+    /// Enforced by [`Self::handle`] before the payload is handed to
+    /// [`GenericPlanEvent::new`]. Defaults to
+    /// [`DEFAULT_MAX_PAYLOAD_BYTES`]; production callers override this with
+    /// [`Self::with_max_payload_bytes`] using `watcher.execution.max_payload_bytes`.
+    pub max_payload_bytes: usize,
 }
 
 impl GenericEventHandler {
@@ -171,15 +180,42 @@ impl GenericEventHandler {
         Self {
             matcher,
             plan_directory,
+            max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
         }
     }
 
-    /// Run the five-step pipeline for a single raw Kafka message.
+    /// Overrides the maximum accepted raw Kafka payload size.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_payload_bytes` - The new maximum payload size, in bytes.
+    ///
+    /// # Returns
+    ///
+    /// `self` with the payload size bound replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::generic::event_handler::GenericEventHandler;
+    ///
+    /// let handler = GenericEventHandler::new(None, None).with_max_payload_bytes(2048);
+    /// assert_eq!(handler.max_payload_bytes, 2048);
+    /// ```
+    #[must_use]
+    pub fn with_max_payload_bytes(mut self, max_payload_bytes: usize) -> Self {
+        self.max_payload_bytes = max_payload_bytes;
+        self
+    }
+
+    /// Run the payload-size check followed by the five-step pipeline for a
+    /// single raw Kafka message.
     ///
     /// Returns:
     /// - `Ok(Some(task))` when the message parsed, matched, and produced a task.
     /// - `Ok(None)` when the event was valid but filtered out by the matcher.
-    /// - `Err(e)` when parsing, validation, or plan file loading failed.
+    /// - `Err(e)` when the payload exceeds `max_payload_bytes`, or parsing,
+    ///   validation, or plan file loading failed.
     ///
     /// # Arguments
     ///
@@ -187,9 +223,9 @@ impl GenericEventHandler {
     ///
     /// # Errors
     ///
-    /// Returns an error if the payload cannot be parsed as a [`Plan`], if a
-    /// located plan file cannot be parsed, or if the resolved plan fails
-    /// validation.
+    /// Returns an error if `msg.payload` exceeds [`Self::max_payload_bytes`],
+    /// if the payload cannot be parsed as a [`Plan`], if a located plan file
+    /// cannot be parsed, or if the resolved plan fails validation.
     ///
     /// # Examples
     ///
@@ -212,6 +248,9 @@ impl GenericEventHandler {
     /// # }
     /// ```
     pub async fn handle(&self, msg: RawKafkaMessage) -> Result<Option<GenericTask>> {
+        // Step 0: Reject oversized untrusted payloads before parsing.
+        validate_payload_size(&msg.payload, self.max_payload_bytes)?;
+
         // Step 1: Parse the raw payload into a GenericPlanEvent.
         debug!(
             topic = %msg.topic,
@@ -603,5 +642,54 @@ mod tests {
             result.is_err(),
             "raw plan without CloudEvents envelope must fail"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // L2: Kafka payload size bound
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_new_defaults_to_default_max_payload_bytes() {
+        let handler = GenericEventHandler::new(None, None);
+        assert_eq!(
+            handler.max_payload_bytes,
+            crate::watcher::kafka_security::DEFAULT_MAX_PAYLOAD_BYTES
+        );
+    }
+
+    #[test]
+    fn test_with_max_payload_bytes_overrides_default() {
+        let handler = GenericEventHandler::new(None, None).with_max_payload_bytes(512);
+        assert_eq!(handler.max_payload_bytes, 512);
+    }
+
+    #[tokio::test]
+    async fn test_handle_oversized_payload_returns_err() {
+        // The valid CloudEvent payload is well over 64 bytes; bound it tightly
+        // so it is rejected before ever reaching the plan parser.
+        let handler = GenericEventHandler::new(None, None).with_max_payload_bytes(64);
+        let result = handler.handle(raw_msg(VALID_CE)).await;
+        assert!(
+            result.is_err(),
+            "payload exceeding max_payload_bytes must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_at_limit_payload_parses_normally() {
+        // Bound set to exactly the payload's byte length: at-limit must pass.
+        let handler = GenericEventHandler::new(None, None).with_max_payload_bytes(VALID_CE.len());
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap();
+        assert!(
+            task.is_some(),
+            "a payload exactly at the size bound must still parse"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_under_limit_payload_parses_normally() {
+        let handler = GenericEventHandler::new(None, None).with_max_payload_bytes(1024 * 1024);
+        let task = handler.handle(raw_msg(VALID_CE)).await.unwrap();
+        assert!(task.is_some(), "a payload under the size bound must parse");
     }
 }

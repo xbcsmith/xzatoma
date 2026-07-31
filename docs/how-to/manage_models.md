@@ -2,12 +2,14 @@
 
 ## Overview
 
-This guide shows you how to discover, inspect, and manage AI models in XZatoma. You'll learn how to list available models, view detailed model information, and check which model is currently active.
+This guide shows you how to discover, inspect, and manage AI models in XZatoma.
+You'll learn how to list available models, view detailed model information, and
+check which model is currently active.
 
 ## Prerequisites
 
 - XZatoma installed and configured
-- At least one provider configured (GitHub Copilot or Ollama)
+- At least one provider configured (GitHub Copilot, Ollama, or OpenAI)
 - For Ollama: Ollama service running with at least one model installed
 
 ## Listing Available Models
@@ -22,7 +24,7 @@ xzatoma models list
 
 Example output:
 
-```
+```text
 Available models from ollama:
 
 +-------------------+-------------------+----------------+-------------------+
@@ -48,7 +50,7 @@ This shows GitHub Copilot's available models even if your config uses Ollama.
 
 During a chat session, use the special command:
 
-```
+```text
 /models list
 ```
 
@@ -66,7 +68,7 @@ xzatoma models info --model gpt-4o
 
 Example output:
 
-```
+```text
 Model Information (GPT-4o)
 
 Name:      gpt-4o
@@ -85,7 +87,7 @@ xzatoma models info --model granite4:3b --provider ollama
 
 Example output:
 
-```
+```text
 Model Information (Llama 3.2 13B)
 
 Name:      granite4:3b
@@ -111,7 +113,7 @@ xzatoma models current
 
 Example output:
 
-```
+```text
 Current Model Information
 
 Provider:    ollama
@@ -127,14 +129,15 @@ xzatoma models current --provider copilot
 ### In Interactive Chat Mode
 
 Use the `/context` command to see the current model along with context usage:
+context usage:
 
-```
+```text
 /context
 ```
 
 Example output:
 
-```
+```text
 ╔════════════════════════════════════╗
 ║   Context Window Information   ║
 ╚════════════════════════════════════╝
@@ -166,7 +169,8 @@ When listing models, check the Capabilities column:
 xzatoma models list
 ```
 
-Models with `FunctionCalling` can use XZatoma's tools (file operations, terminal commands, etc.).
+Models with `FunctionCalling` can use XZatoma's tools (file operations, terminal
+commands, etc.).
 
 ## Choosing the Right Model
 
@@ -241,13 +245,13 @@ ollama pull llama3.2:3b
 curl http://localhost:11434/api/tags
 ```
 
-2. Install a model if none are available:
+1. Install a model if none are available:
 
 ```bash
 ollama pull granite4:3b
 ```
 
-3. Check Ollama host in config:
+1. Check Ollama host in config:
 
 ```yaml
 provider:
@@ -263,11 +267,11 @@ provider:
 xzatoma auth --provider copilot
 ```
 
-2. Check provider configuration:
+1. Check provider configuration:
 
 ```yaml
 provider:
-  provider_type: copilot
+  type: copilot
 ```
 
 ### Model Not Found
@@ -282,8 +286,8 @@ provider:
 xzatoma models list
 ```
 
-2. Use exact model name from the list
-3. Model names are case-sensitive
+1. Use exact model name from the list
+2. Model names are case-sensitive
 
 ### Connection Errors
 
@@ -297,13 +301,13 @@ xzatoma models list
 ollama list
 ```
 
-2. Start Ollama if needed:
+1. Start Ollama if needed:
 
 ```bash
 ollama serve
 ```
 
-3. Check firewall settings if using custom host
+1. Check firewall settings if using custom host
 
 **For Copilot**:
 
@@ -323,7 +327,7 @@ Edit your `config/config.yaml`:
 
 ```yaml
 provider:
-  provider_type: ollama
+  type: ollama
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest # Default model
@@ -335,7 +339,7 @@ You can configure multiple providers and switch between them:
 
 ```yaml
 provider:
-  provider_type: ollama # Active provider
+  type: ollama # Active provider
 
   copilot:
     model: gpt-4o
@@ -343,6 +347,10 @@ provider:
   ollama:
     host: http://localhost:11434
     model: llama3.2:latest
+
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
 ```
 
 Use `--provider` flag to override:
@@ -353,17 +361,21 @@ xzatoma models list --provider copilot
 
 ## Best Practices
 
-1. **Check Available Models First**: Always list models before trying to use a specific one
+1. **Check Available Models First**: Always list models before trying to use a
+   specific one
 
-2. **Use Model Info for Planning**: Check context window size before starting large tasks
+2. **Use Model Info for Planning**: Check context window size before starting
+   large tasks
 
 3. **Monitor Context Usage**: Use `/context` in chat mode to track token usage
 
 4. **Match Model to Task**: Use appropriate models for different task types
 
-5. **Keep Ollama Models Updated**: Regularly update local models for improvements
+5. **Keep Ollama Models Updated**: Regularly update local models for
+   improvements
 
-6. **Verify Capabilities**: Check that the model supports required features (function calling, etc.)
+6. **Verify Capabilities**: Check that the model supports required features
+   (function calling, etc.)
 
 ## Examples
 
@@ -396,7 +408,8 @@ xzatoma chat
 
 ### Exporting Model Data
 
-You can export model data for analysis, reporting, or integration with other tools using the `--json` and `--summary` flags.
+You can export model data for analysis, reporting, or integration with other
+tools using the `--json` and `--summary` flags.
 
 - Export all models to pretty JSON:
 
@@ -404,7 +417,8 @@ You can export model data for analysis, reporting, or integration with other too
 xzatoma models list --json > all_models.json
 ```
 
-- Export all models including summary fields (state, limits, capabilities, raw provider data when available):
+- Export all models including summary fields (state, limits, capabilities, raw
+  provider data when available):
 
 ```bash
 xzatoma models list --json --summary > all_models_with_summary.json
@@ -424,14 +438,19 @@ xzatoma models info --model gpt-4 --json --summary > gpt4_summary.json
 
 Tips:
 
-- The JSON output is pretty-printed and intended for human readability or piping into tools like `jq`.
-- The `--summary` flag augments outputs with additional fields such as `state`, `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and a `raw_data` field that mirrors provider API payloads when present.
+- The JSON output is pretty-printed and intended for human readability or piping
+  into tools like `jq`.
+- The `--summary` flag augments outputs with additional fields such as `state`,
+  `max_prompt_tokens`, `max_completion_tokens`, `supports_tool_calls`,
+  `supports_vision`, and a `raw_data` field that mirrors provider API payloads
+  when present.
 
 ---
 
 ### Comparing Models
 
-There are two common approaches to comparing models: manual inspection and script-based comparison.
+There are two common approaches to comparing models: manual inspection and
+script-based comparison.
 
 1. View a side-by-side detailed comparison (manual)
 
@@ -445,7 +464,7 @@ jq '.context_window, .capabilities, .provider_specific' gpt4.json
 jq '.context_window, .capabilities, .provider_specific' granite4:3b.json
 ```
 
-2. Script-based comparison using `jq`
+1. Script-based comparison using `jq`
 
 - List models and show name + context window (sorted by context window):
 
@@ -453,7 +472,8 @@ jq '.context_window, .capabilities, .provider_specific' granite4:3b.json
 xzatoma models list --json | jq -r '.[] | "\(.display_name)\t\(.context_window)"' | sort -k2 -n -r
 ```
 
-- Compare support for tool calls across models (uses `--summary` to expose `supports_tool_calls`):
+- Compare support for tool calls across models (uses `--summary` to expose
+  `supports_tool_calls`):
 
 ```bash
 xzatoma models list --json --summary \
@@ -468,29 +488,36 @@ xzatoma models list --json \
   | column -t -s $'\t'
 ```
 
-3. Tips for robust comparisons
+1. Tips for robust comparisons
 
-- Use `--json --summary` to ensure summary fields (like `supports_tool_calls` and `supports_vision`) are available in the exported data.
-- When comparing across providers, include the `--provider` flag or filter the JSON output by provider-specific identifiers.
-- For automated scripts, rely on JSON fields rather than human-oriented tables (tables are for quick manual inspection).
+- Use `--json --summary` to ensure summary fields (like `supports_tool_calls`
+  and `supports_vision`) are available in the exported data.
+- When comparing across providers, include the `--provider` flag or filter the
+  JSON output by provider-specific identifiers.
+- For automated scripts, rely on JSON fields rather than human-oriented tables
+  (tables are for quick manual inspection).
 
 ---
 
-These short recipes cover exporting and comparing model metadata. If you'd like, I can add a small example script in `examples/` that demonstrates the export + `jq` comparison workflow.
+These short recipes cover exporting and comparing model metadata. If you'd like,
+I can add a small example script in `examples/` that demonstrates the export +
+`jq` comparison workflow.
+
+```bash
 xzatoma models list --provider ollama | grep "Context Window"
 
 # View specific model details
-
 xzatoma models info --model gpt-4o --provider copilot
 xzatoma models info --model granite4:3b --provider ollama
-
 ```
 
 ## Next Steps
 
 - Learn how to switch models: See [How to Switch Models](switch_models.md)
-- Understand the API: See [Model Management API Reference](../reference/model_management.md)
-- Learn about providers: See [Provider API Comparison](../reference/provider_api_comparison.md)
+- Understand the API: See
+  [Model Management API Reference](../reference/model_management.md)
+- Learn about providers: See
+  [Provider API Comparison](../reference/provider_api_comparison.md)
 
 ## Related Commands
 
@@ -503,4 +530,7 @@ xzatoma models info --model granite4:3b --provider ollama
 - Model Management API Reference: `docs/reference/model_management.md`
 - Configuration Guide: `docs/reference/quick_reference.md`
 - Chat Modes Guide: `docs/how-to/use_chat_modes.md`
+
+```text
+
 ```

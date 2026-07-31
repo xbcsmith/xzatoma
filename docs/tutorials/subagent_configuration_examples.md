@@ -679,15 +679,15 @@ agent:
 # Wrong
 agent:
   subagent:
-    provider: openai # Not "copilot" or "ollama"
+    provider: anthropic # Not a supported provider
 ```
 
-**Fix**: Use only configured providers:
+**Fix**: Use only supported providers:
 
 ```yaml
 agent:
   subagent:
-    provider: copilot # or "ollama"
+    provider: copilot # Use "copilot", "ollama", or "openai"
 ```
 
 ## Next Steps

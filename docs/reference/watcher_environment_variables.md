@@ -488,6 +488,25 @@ Example:
 export XZATOMA_WATCHER_EXECUTION_MODE="per_task"
 ```
 
+### `XZATOMA_WATCHER_MAX_PAYLOAD_BYTES`
+
+Maximum accepted size, in bytes, of a raw inbound Kafka message payload.
+Enforced by both the generic and XZepr watcher backends before the payload is
+parsed; oversized payloads are rejected with a handled error instead of reaching
+the plan parser.
+
+- Maps to: `watcher.execution.max_payload_bytes`
+- Default: `1048576` (1 MiB)
+- Must be greater than `0`; validation fails otherwise
+- Invalid (non-numeric) values are ignored with a warning and leave the
+  configured value unchanged
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_MAX_PAYLOAD_BYTES="2097152"
+```
+
 ## Generic Watcher Examples
 
 ### Minimal generic watcher environment setup

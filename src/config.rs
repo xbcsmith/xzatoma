@@ -2116,6 +2116,24 @@ impl Config {
             }
         }
 
+        if let Ok(max_payload) = std::env::var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES") {
+            match max_payload.parse::<usize>() {
+                Ok(v) => {
+                    self.watcher.execution.max_payload_bytes = v;
+                    tracing::debug!(
+                        max_payload_bytes = v,
+                        "Env override: XZATOMA_WATCHER_MAX_PAYLOAD_BYTES"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_MAX_PAYLOAD_BYTES: {}",
+                        max_payload
+                    );
+                }
+            }
+        }
+
         // ---------------------------------------------------------------------
         // Kafka overrides from XZEPR_KAFKA_* environment variables
         // These can populate or override the watcher.kafka block.
@@ -2746,6 +2764,12 @@ impl Config {
                     valid_providers.join(", ")
                 )));
             }
+        }
+
+        if self.watcher.execution.max_payload_bytes == 0 {
+            return Err(XzatomaError::Config(
+                "watcher.execution.max_payload_bytes must be greater than 0".to_string(),
+            ));
         }
 
         if let Some(kafka) = &self.watcher.kafka {
@@ -4068,6 +4092,7 @@ kafka:
             max_concurrent_executions: 1,
             execution_timeout_secs: 300,
             execution_mode: WatcherPlanExecutionMode::SingleShot,
+            ..Default::default()
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         assert!(yaml.contains("single_shot"));
@@ -4781,6 +4806,64 @@ chat_enabled: true
             std::env::remove_var("XZATOMA_WATCHER_JSON_LOGS");
             std::env::remove_var("XZATOMA_WATCHER_MAX_CONCURRENT");
         }
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_max_payload_bytes() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES", "2048");
+        }
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(cfg.watcher.execution.max_payload_bytes, 2048);
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_ignores_invalid_max_payload_bytes() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES", "not-a-number");
+        }
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.execution.max_payload_bytes,
+            default_max_payload_bytes()
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_max_payload_bytes() {
+        let mut config = Config::default();
+        config.watcher.execution.max_payload_bytes = 0;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_payload_bytes")
+        );
     }
 
     #[test]
@@ -6171,6 +6254,15 @@ pub struct WatcherExecutionConfig {
     /// full plan into a single prompt, which matches the legacy single-prompt behaviour.
     #[serde(default = "default_watcher_plan_execution_mode")]
     pub execution_mode: WatcherPlanExecutionMode,
+
+    /// Maximum accepted size, in bytes, of an inbound Kafka message payload.
+    ///
+    /// Enforced by both watcher backends (generic and XZepr) before the raw
+    /// payload is parsed, so an oversized untrusted message is rejected with a
+    /// handled error instead of being handed to the plan parser. Defaults to
+    /// 1 MiB. Overridable via `XZATOMA_WATCHER_MAX_PAYLOAD_BYTES`.
+    #[serde(default = "default_max_payload_bytes")]
+    pub max_payload_bytes: usize,
 }
 
 /// Default watcher consumer group ID
@@ -6213,6 +6305,11 @@ fn default_watcher_plan_execution_mode() -> WatcherPlanExecutionMode {
     WatcherPlanExecutionMode::PerTask
 }
 
+/// Default maximum inbound Kafka payload size: 1 MiB.
+fn default_max_payload_bytes() -> usize {
+    1024 * 1024
+}
+
 impl Default for WatcherLoggingConfig {
     fn default() -> Self {
         Self {
@@ -6231,6 +6328,7 @@ impl Default for WatcherExecutionConfig {
             max_concurrent_executions: default_max_concurrent(),
             execution_timeout_secs: default_execution_timeout(),
             execution_mode: default_watcher_plan_execution_mode(),
+            max_payload_bytes: default_max_payload_bytes(),
         }
     }
 }

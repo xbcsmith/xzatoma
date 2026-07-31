@@ -701,8 +701,17 @@ watcher-triggered plans.
   - Default: `1`
 
 - `execution_timeout_secs`
+
   - Type: integer
   - Default: `300`
+
+- `max_payload_bytes`
+  - Type: integer
+  - Default: `1048576` (1 MiB)
+  - Maximum accepted size, in bytes, of a raw inbound Kafka message payload.
+    Enforced by both the generic and XZepr watcher backends before the payload
+    is parsed; oversized payloads are rejected with a handled error. Must be
+    greater than `0`.
 
 ### Example
 
@@ -712,6 +721,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 5
     execution_timeout_secs: 1800
+    max_payload_bytes: 1048576
 ```
 
 ## MCP Configuration
@@ -1069,6 +1079,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 1
     execution_timeout_secs: 300
+    max_payload_bytes: 1048576
 ```
 
 ## Example Complete XZepr Watcher Configuration
@@ -1100,6 +1111,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 1
     execution_timeout_secs: 300
+    max_payload_bytes: 1048576
 ```
 
 ## Security Guidance

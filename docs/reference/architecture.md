@@ -147,13 +147,30 @@ Implemented providers:
 - Ollama
 - OpenAI-compatible providers
 
-Important files:
+Provider trait and implementations:
 
-- `src/providers/trait_mod.rs`
-- `src/providers/types.rs`
-- `src/providers/copilot.rs`
-- `src/providers/ollama.rs`
-- `src/providers/openai.rs`
+- `src/providers/trait_mod.rs` - the `Provider` trait all backends implement
+- `src/providers/copilot.rs` - GitHub Copilot provider
+- `src/providers/ollama.rs` - Ollama provider
+- `src/providers/openai.rs` - OpenAI-compatible provider
+
+Provider creation and metadata:
+
+- `src/providers/factory.rs` - provider factory/creation from a provider-type
+  string and `ProviderConfig`
+- `src/providers/cache.rs` - shared model caching (`ModelCache`, TTL helper)
+- `src/providers/capabilities.rs` - provider capability descriptors and
+  heuristics
+
+Shared provider infrastructure:
+
+- `src/providers/types.rs` - shared/canonical OpenAI-style wire types
+  (`ChatToolCall`, `ChatFunctionCall`, `Message`, and related types)
+- `src/providers/conversion.rs` - shared message/tool-call conversion helpers
+- `src/providers/streaming.rs` - generic SSE reader and `ChatDeltaAccumulator`
+- `src/providers/http.rs` - shared HTTP error helpers (`api_error` /
+  `check_response`)
+- `src/providers/util.rs` - shared config read-lock helper (`read_config_lock`)
 
 ### Agent Layer
 

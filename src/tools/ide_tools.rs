@@ -798,9 +798,11 @@ fn permission_result_json(
 mod tests {
     use super::*;
 
-    // We cannot construct a live IdeBridge (requires an active ACP connection),
-    // so these tests focus on tool definition correctness and parameter
-    // deserialization.
+    // Most tests here focus on tool definition correctness and parameter
+    // deserialization, since constructing a live `IdeBridge` requires an
+    // active ACP connection. The one exception is
+    // `test_ide_request_permission_live_connection_unsupported_client_fails_closed`,
+    // which drives a real in-memory connection end-to-end.
 
     fn required_fields(definition: &serde_json::Value) -> Vec<String> {
         definition["parameters"]["required"]
@@ -1127,5 +1129,84 @@ mod tests {
         assert_eq!(value["approved"], serde_json::json!(false));
         assert_eq!(value["outcome"], serde_json::json!("error"));
         assert!(value["note"].is_string());
+    }
+
+    // -----------------------------------------------------------------------
+    // Live-connection test: missing-capability fail-closed
+    //
+    // Drives `IdeRequestPermissionTool::execute` over a real in-memory ACP
+    // `Channel::duplex()` connection whose fake "Zed" client rejects the
+    // `session/request_permission` call with a protocol error, simulating a
+    // client that does not support permission requests. This exercises the
+    // production error path end-to-end rather than reconstructing the JSON
+    // mapping by hand.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ide_request_permission_live_connection_unsupported_client_fails_closed() {
+        use crate::acp::ide_bridge::IdeCapabilities;
+        use agent_client_protocol::schema::v1 as acp;
+        use agent_client_protocol::{
+            Agent as AcpAgentRole, Channel, Client as AcpClientRole, ConnectionTo, Responder,
+        };
+
+        let (server_channel, client_channel) = Channel::duplex();
+
+        // This fake client explicitly rejects the permission request, as a
+        // client that does not support `session/request_permission` would.
+        let fake_client = tokio::spawn(async move {
+            AcpClientRole
+                .builder()
+                .name("fake-unsupported-zed-client")
+                .on_receive_request(
+                    async move |_req: acp::RequestPermissionRequest,
+                                responder: Responder<acp::RequestPermissionResponse>,
+                                _cx: ConnectionTo<AcpAgentRole>| {
+                        responder.respond_with_internal_error(
+                            "client does not support session/request_permission",
+                        )
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(client_channel)
+                .await
+        });
+
+        let session_id = acp::SessionId::new("ide-tools-test-session");
+        let outcome = AcpAgentRole
+            .builder()
+            .name("fake-agent-under-test")
+            .connect_with(
+                server_channel,
+                async move |connection: ConnectionTo<AcpClientRole>| {
+                    let bridge = Arc::new(IdeBridge::new(
+                        connection,
+                        session_id,
+                        IdeCapabilities::none(),
+                    ));
+                    let tool = IdeRequestPermissionTool::new(bridge);
+                    let result = tool
+                        .execute(serde_json::json!({
+                            "operation": "Delete build cache",
+                            "details": "Removes target/",
+                        }))
+                        .await
+                        .expect("tool execution itself must not error");
+
+                    let payload: serde_json::Value = serde_json::from_str(&result.output)
+                        .expect("tool output must be valid JSON");
+                    assert_eq!(payload["approved"], serde_json::json!(false));
+                    assert_eq!(payload["outcome"], serde_json::json!("error"));
+                    Ok(())
+                },
+            )
+            .await;
+
+        assert!(
+            outcome.is_ok(),
+            "agent-side connection should complete cleanly: {:?}",
+            outcome.err()
+        );
+        fake_client.abort();
     }
 }

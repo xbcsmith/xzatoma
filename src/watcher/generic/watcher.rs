@@ -190,7 +190,8 @@ impl GenericWatcher {
         let matcher = GenericMatcher::new(watcher_config.generic_match.clone())
             .map_err(|e| GenericWatcherError::Matcher(e.to_string()))?;
 
-        let event_handler = GenericEventHandler::new(Some(matcher), None);
+        let event_handler = GenericEventHandler::new(Some(matcher), None)
+            .with_max_payload_bytes(watcher_config.execution.max_payload_bytes);
 
         let producer: Arc<dyn ResultProducerTrait> =
             crate::watcher::lifecycle::build_producer(&kafka_config, dry_run)
@@ -795,6 +796,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     execution_timeout_secs: 30,
                     execution_mode: WatcherPlanExecutionMode::PerTask,
+                    ..Default::default()
                 },
             },
             mcp: McpConfig::default(),

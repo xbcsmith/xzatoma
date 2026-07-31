@@ -206,7 +206,8 @@ impl Watcher {
                 .with_broker_address_family(&kafka_config.broker_address_family)
                 .with_poll_interval(std::time::Duration::from_millis(
                     kafka_config.poll_interval_ms,
-                ));
+                ))
+                .with_max_payload_bytes(watcher_config.execution.max_payload_bytes);
 
         // Apply security settings if configured
         let consumer_config = if let Some(security) = &kafka_config.security {
@@ -366,39 +367,25 @@ impl Watcher {
         mut config: KafkaConsumerConfig,
         security: &crate::config::KafkaSecurityConfig,
     ) -> WatcherResult<KafkaConsumerConfig> {
-        use super::consumer::config::{SaslConfig, SaslMechanism, SecurityProtocol};
+        use super::consumer::config::SaslConfig;
+        use crate::watcher::kafka_security::{
+            parse_sasl_mechanism, parse_security_protocol, warn_if_insecure,
+        };
 
         debug!(
             protocol = %security.protocol,
             "Applying security configuration"
         );
 
-        // Parse and set security protocol
-        config.security_protocol = match security.protocol.to_uppercase().as_str() {
-            "PLAINTEXT" => {
-                warn!(
-                    "Kafka SecurityProtocol is PLAINTEXT: all traffic will be UNENCRYPTED and \
-                     credentials and message payloads may be exposed on the network. Use \
-                     SASL_SSL or SSL for production deployments."
-                );
-                SecurityProtocol::Plaintext
+        // Parse and set security protocol via the shared helper.
+        config.security_protocol = parse_security_protocol(&security.protocol).map_err(|_| {
+            WatcherError::InvalidSecurityProtocol {
+                protocol: security.protocol.clone(),
             }
-            "SSL" => SecurityProtocol::Ssl,
-            "SASL_PLAINTEXT" => {
-                warn!(
-                    "Kafka SecurityProtocol is SASL_PLAINTEXT: SASL credentials and message \
-                     payloads travel UNENCRYPTED and may be exposed on the network. Use \
-                     SASL_SSL or SSL for production deployments."
-                );
-                SecurityProtocol::SaslPlaintext
-            }
-            "SASL_SSL" => SecurityProtocol::SaslSsl,
-            _ => {
-                return Err(WatcherError::InvalidSecurityProtocol {
-                    protocol: security.protocol.clone(),
-                });
-            }
-        };
+        })?;
+
+        // Warn once, at the apply step, if the protocol is unencrypted.
+        warn_if_insecure(&config.security_protocol);
 
         // Apply SASL settings if present
         if let Some(mechanism) = &security.sasl_mechanism {
@@ -416,16 +403,11 @@ impl Watcher {
 
             debug!(mechanism = %mechanism, "Applying SASL configuration");
 
-            let sasl_mechanism = match mechanism.to_uppercase().as_str() {
-                "PLAIN" => SaslMechanism::Plain,
-                "SCRAM-SHA-256" => SaslMechanism::ScramSha256,
-                "SCRAM-SHA-512" => SaslMechanism::ScramSha512,
-                _ => {
-                    return Err(WatcherError::InvalidSaslMechanism {
-                        mechanism: mechanism.clone(),
-                    });
+            let sasl_mechanism = parse_sasl_mechanism(mechanism).map_err(|_| {
+                WatcherError::InvalidSaslMechanism {
+                    mechanism: mechanism.clone(),
                 }
-            };
+            })?;
 
             config.sasl_config = Some(SaslConfig {
                 mechanism: sasl_mechanism,

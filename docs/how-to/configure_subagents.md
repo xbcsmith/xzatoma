@@ -1,10 +1,13 @@
 # Configuring Subagents
 
-Subagents are separate AI agent instances that can be delegated tasks to handle parallel work, specialized operations, or cost optimization. This guide covers how to configure subagent providers, models, and behavior.
+Subagents are separate AI agent instances that can be delegated tasks to handle
+parallel work, specialized operations, or cost optimization. This guide covers
+how to configure subagent providers, models, and behavior.
 
 ## Overview
 
-XZatoma supports configuring subagents with different providers and models than your main agent, enabling powerful scenarios:
+XZatoma supports configuring subagents with different providers and models than
+your main agent, enabling powerful scenarios:
 
 - **Cost Optimization**: Use cheaper models for subagent work
 - **Provider Mixing**: Copilot for main tasks, local Ollama for subagents
@@ -31,7 +34,8 @@ agent:
 
 #### `provider` (Optional)
 
-Override the provider used for subagent instances. If not specified, subagents use the main provider.
+Override the provider used for subagent instances. If not specified, subagents
+use the main provider.
 
 **Valid values**: `copilot`, `ollama`
 
@@ -45,7 +49,8 @@ agent:
 
 #### `model` (Optional)
 
-Override the model for subagent instances. Must be available in the configured provider.
+Override the model for subagent instances. Must be available in the configured
+provider.
 
 **Example**:
 
@@ -57,12 +62,14 @@ agent:
 
 #### `chat_enabled` (Optional)
 
-Enable subagent functionality in interactive chat mode. Default is `false` (disabled).
+Enable subagent functionality in interactive chat mode. Default is `false`
+(disabled).
 
 When enabled, users can:
 
 - Use `/subagents on|off` to toggle subagent delegation
-- Mention subagent keywords to auto-enable (`/subagents`, `delegate`, `spawn agent`, etc.)
+- Mention subagent keywords to auto-enable (`/subagents`, `delegate`,
+  `spawn agent`, etc.)
 
 **Example**:
 
@@ -88,7 +95,8 @@ agent:
 
 #### `max_depth` (Optional)
 
-Maximum delegation nesting level. Prevents infinite recursion where subagents spawn subagents.
+Maximum delegation nesting level. Prevents infinite recursion where subagents
+spawn subagents.
 
 **Default**: `3`
 
@@ -130,7 +138,8 @@ agent:
 
 ### Cost Optimization: Cheap Model for Subagents
 
-Use an expensive model (GPT-4) for main tasks but delegate heavy lifting to cheaper models:
+Use an expensive model (GPT-4) for main tasks but delegate heavy lifting to
+cheaper models:
 
 ```yaml
 provider:
@@ -228,7 +237,7 @@ agent:
 ```yaml
 agent:
   subagent:
-    provider: unknown-provider # ERROR: not "copilot" or "ollama"
+    provider: unknown-provider # ERROR: must be "copilot", "ollama", or "openai"
     model: some-model
 ```
 
@@ -250,9 +259,11 @@ agent:
 
 ### "Subagent provider not configured"
 
-**Cause**: Subagent config exists but provider field is missing while trying to use subagents.
+**Cause**: Subagent config exists but provider field is missing while trying to
+use subagents.
 
-**Solution**: Specify `provider` field or leave it unset to use the main provider:
+**Solution**: Specify `provider` field or leave it unset to use the main
+provider:
 
 ```yaml
 agent:
@@ -316,7 +327,8 @@ agent:
 
 ## Migration from Previous Versions
 
-If you have an existing XZatoma config without subagent settings, subagents are disabled by default. To enable:
+If you have an existing XZatoma config without subagent settings, subagents are
+disabled by default. To enable:
 
 1. Add subagent configuration:
 
@@ -328,11 +340,12 @@ agent:
     max_depth: 3
 ```
 
-2. Test in chat mode: `/subagents on`
+1. Test in chat mode: `/subagents on`
 
-3. Adjust provider/model if needed
+2. Adjust provider/model if needed
 
-**Backward compatibility**: Existing configs without subagent sections work unchanged. Subagents are opt-in.
+**Backward compatibility**: Existing configs without subagent sections work
+unchanged. Subagents are opt-in.
 
 ## Performance Considerations
 
@@ -353,13 +366,11 @@ Default `max_executions: 5` balances parallelism vs. resource usage:
 
 ### Model Selection Impact
 
-<<<<<<< Updated upstream
-| Model            | Speed     | Quality   | Cost     | Best For          |
-| ---------------- | --------- | --------- | -------- | ----------------- |
-| granite3.2:2b    | Very Fast | Good      | Free     | Quick tasks       |
-| llama3.2:3b      | Fast      | Good      | Free     | General work      |
-| gpt-5.1-codex-mini | Moderate  | Excellent | Low      | Analysis          |
-| gpt-5.3-codex       | Fast      | Best      | Moderate | Complex reasoning |
+<<<<<<< Updated upstream | Model | Speed | Quality | Cost | Best For | |
+---------------- | --------- | --------- | -------- | ----------------- | |
+granite3.2:2b | Very Fast | Good | Free | Quick tasks | | llama3.2:3b | Fast |
+Good | Free | General work | | gpt-5.1-codex-mini | Moderate | Excellent | Low |
+Analysis | | gpt-5.3-codex | Fast | Best | Moderate | Complex reasoning |
 
 ## Best Practices
 
@@ -457,16 +468,16 @@ xzatoma chat
 
 ## Related Documentation
 
-- **Chat Mode Usage**: See `docs/how-to/use_subagents_in_chat.md` for interactive chat mode subagent control
-- **Provider Setup**: See `docs/how-to/configure_providers.md` for configuring main provider
-- **Model Management**: See `docs/how-to/manage_models.md` for listing and selecting models
-- **Examples**: See `docs/tutorials/subagent_configuration_examples.md` for working examples
+- **Chat Mode Usage**: See `docs/how-to/use_subagents_in_chat.md` for
+  interactive chat mode subagent control
+- **Provider Setup**: See `docs/how-to/configure_providers.md` for configuring
+  main provider
+- **Model Management**: See `docs/how-to/manage_models.md` for listing and
+  selecting models
+- **Examples**: See `docs/tutorials/subagent_configuration_examples.md` for
+  working examples
 
 ---
 
-**Last updated**: 2024
-**For questions**: See the troubleshooting section above or check project issues
-
-```
-
----
+**Last updated**: 2024 **For questions**: See the troubleshooting section above
+or check project issues

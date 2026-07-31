@@ -2,25 +2,36 @@
 
 ## Overview
 
-This how-to describes how to generate documentation for a repository using XZatoma's plan-based workflow model. The recommended approach today is to author a small plan that includes a `generate_documentation` step and then run it with the `run` subcommand. This guide shows example plans, a suggested `context` schema, run commands, and troubleshooting tips.
+This how-to describes how to generate documentation for a repository using
+XZatoma's plan-based workflow model. The recommended approach today is to author
+a small plan that includes a `generate_documentation` step and then run it with
+the `run` subcommand. This guide shows example plans, a suggested `context`
+schema, run commands, and troubleshooting tips.
 
 ## When to use
 
 - You want to generate docs for a repo programmatically using the agent.
-- You want to integrate documentation generation into a repeatable workflow (CI, scheduled runs, local development).
-- You want to iterate on documentation generation by changing plan content and re-running the agent.
+- You want to integrate documentation generation into a repeatable workflow (CI,
+  scheduled runs, local development).
+- You want to iterate on documentation generation by changing plan content and
+  re-running the agent.
 
 ## Prerequisites
 
 - Rust toolchain (rustup + cargo) if running from source
-- `xzatoma` binary available on PATH (via `cargo install --path .` or a packaged binary)
-- Optional: configured AI provider (Copilot, Ollama) and valid authentication if you plan to use provider-backed plan interpretation or content generation. Use `xzatoma auth --provider copilot` to authenticate Copilot.
+- `xzatoma` binary available on PATH (via `cargo install --path .` or a packaged
+  binary)
+- Optional: configured AI provider (Copilot, Ollama, or OpenAI) and valid
+  authentication if you plan to use provider-backed plan interpretation or
+  content generation. Use `xzatoma auth --provider copilot` to authenticate
+  Copilot.
 
 ---
 
 ## Quick start
 
-1. Create a plan file that contains a `generate_documentation` step (YAML or Markdown).
+1. Create a plan file that contains a `generate_documentation` step (YAML or
+   Markdown).
 2. Run the plan:
 
 ```bash
@@ -28,7 +39,8 @@ This how-to describes how to generate documentation for a repository using XZato
 xzatoma run --plan plans/generate_docs.yaml
 ```
 
-3. Inspect the produced artifacts in the configured output directory (e.g., `docs/generated`).
+1. Inspect the produced artifacts in the configured output directory (e.g.,
+   `docs/generated`).
 
 ---
 
@@ -71,19 +83,24 @@ steps:
 
 ### Markdown example
 
-A compact Markdown plan (saved as `plans/generate_docs.md`) is convenient for authoring:
+A compact Markdown plan (saved as `plans/generate_docs.md`) is convenient for
+authoring:
 
-```markdown
+````markdown
 # Generate Documentation
+
 Scan the repository and produce documentation artifacts.
 
 ## Scan repository
+
 Collect file and symbol metadata
 
 ## Analyze code
+
 Extract documentation hints and API surface
 
 ## Generate documentation
+
 Write docs to docs/generated/
 
 ```yaml
@@ -91,21 +108,28 @@ repository: .
 output_dir: docs/generated
 categories: [reference, how_to]
 ```
-```
+````
 
 Notes:
-- Markdown plan parsing rules: H1 → plan name; H2 → steps; first non-empty line under a step is the `action`; fenced code blocks under a step become `context`.
-- The `context` field is free-form text that the agent or tooling can interpret — YAML or JSON are common choices.
+
+- Markdown plan parsing rules: H1 → plan name; H2 → steps; first non-empty line
+  under a step is the `action`; fenced code blocks under a step become
+  `context`.
+- The `context` field is free-form text that the agent or tooling can interpret
+  — YAML or JSON are common choices.
 
 ---
 
 ## Suggested `context` schema for `generate_documentation`
 
-The agent/router that performs `generate_documentation` should expect a small set of conventional parameters encoded in the `context` field. Use YAML or JSON inside the `context` block for clarity:
+The agent/router that performs `generate_documentation` should expect a small
+set of conventional parameters encoded in the `context` field. Use YAML or JSON
+inside the `context` block for clarity:
 
 - `repository` (string) — path or URL of the repository (default: `.`)
 - `output_dir` (string) — where to write generated docs (relative to repo root)
-- `categories` (list[string]) — which Diataxis categories to generate (e.g., `tutorials`, `how_to`, `reference`)
+- `categories` (list[string]) — which Diataxis categories to generate (e.g.,
+  `tutorials`, `how_to`, `reference`)
 - `deliverables` (list[string]) — files to produce (optional)
 - `include_tests` (bool) — whether to parse/test files in tests/ (optional)
 - `ignore_patterns` (list[string]) — globs to exclude (optional)
@@ -114,16 +138,18 @@ Example context snippet:
 
 ```yaml
 context: |
- repository: .
- output_dir: docs/generated
- categories:
-  - reference
-  - tutorials
- deliverables:
-  - docs/reference/api.md
+  repository: .
+  output_dir: docs/generated
+  categories:
+   - reference
+   - tutorials
+  deliverables:
+   - docs/reference/api.md
 ```
 
-Implementation note: PlanParser treats `context` as an opaque string; if you need structured parameters, encode them as YAML/JSON text in `context` and document the expected schema for your consumers.
+Implementation note: PlanParser treats `context` as an opaque string; if you
+need structured parameters, encode them as YAML/JSON text in `context` and
+document the expected schema for your consumers.
 
 ---
 
@@ -147,16 +173,18 @@ xzatoma run --prompt "Analyze the repository at . and generate a short reference
 RUST_LOG=debug xzatoma run --plan plans/generate_docs.yaml
 ```
 
-- If a plan fails validation you'll see clear errors produced by the PlanParser, e.g.:
- - "Plan name cannot be empty"
- - "Plan must have at least one step"
- - "Step 'X' has no action"
+- If a plan fails validation you'll see clear errors produced by the PlanParser,
+  e.g.:
+- "Plan name cannot be empty"
+- "Plan must have at least one step"
+- "Step 'X' has no action"
 
 ---
 
 ## Programmatic usage (Rust example)
 
-You can invoke plan execution programmatically from a Rust binary if you want fine-grained control or integration:
+You can invoke plan execution programmatically from a Rust binary if you want
+fine-grained control or integration:
 
 ```rust
 use xzatoma::config::Config;
@@ -176,35 +204,42 @@ async fn main() -> xzatoma::error::Result<()> {
 }
 ```
 
-Note: handle errors and configuration according to your environment and use cases.
+Note: handle errors and configuration according to your environment and use
+cases.
 
 ---
 
 ## Testing & verification
 
 - Unit tests:
- - Add tests for parsing and interpreting `context` payloads if you implement a `docgen` module.
- - Test plan parsing for YAML, JSON, and Markdown cases (edge cases: empty name, empty steps).
+- Add tests for parsing and interpreting `context` payloads if you implement a
+  `docgen` module.
+- Test plan parsing for YAML, JSON, and Markdown cases (edge cases: empty name,
+  empty steps).
 - Integration tests:
- - Use temporary directories and assertions to validate files were created in `output_dir`.
- - Mock provider completions if your generation relies on external models.
+- Use temporary directories and assertions to validate files were created in
+  `output_dir`.
+- Mock provider completions if your generation relies on external models.
 - Local validation:
- - Run `xzatoma run --plan plans/generate_docs.yaml` and inspect `docs/generated/` for expected artifacts.
+- Run `xzatoma run --plan plans/generate_docs.yaml` and inspect
+  `docs/generated/` for expected artifacts.
 
 ---
 
 ## Troubleshooting
 
 - No artifacts created:
- - Check the `output_dir` in `context`.
- - Re-run with `RUST_LOG=debug` and inspect logs.
+- Check the `output_dir` in `context`.
+- Re-run with `RUST_LOG=debug` and inspect logs.
 - Provider authentication errors:
- - Re-run `xzatoma auth --provider copilot` or verify Ollama host settings in `config/config.yaml`.
+- Re-run `xzatoma auth --provider copilot` or verify Ollama host settings in
+  `config/config.yaml`.
 - Plan validation errors:
- - Ensure `name` is non-empty and each step has `name` and `action`.
+- Ensure `name` is non-empty and each step has `name` and `action`.
 - Step didn't run as expected:
- - Verify the `context` contains the right structured data the `docgen` expects (YAML/JSON).
- - Simplify the step (smaller scope) and iterate.
+- Verify the `context` contains the right structured data the `docgen` expects
+  (YAML/JSON).
+- Simplify the step (smaller scope) and iterate.
 
 ---
 

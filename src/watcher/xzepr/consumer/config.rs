@@ -24,6 +24,11 @@ use thiserror::Error;
 // `crate::watcher::xzepr::consumer::config::{...}` import paths keep working.
 pub use crate::watcher::kafka_security::{SaslConfig, SaslMechanism, SecurityProtocol, SslConfig};
 
+// Parsing is delegated to the shared helpers rather than duplicated inline.
+use crate::watcher::kafka_security::{
+    DEFAULT_MAX_PAYLOAD_BYTES, parse_sasl_mechanism, parse_security_protocol,
+};
+
 /// Errors that can occur during configuration.
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -95,6 +100,17 @@ pub struct KafkaConsumerConfig {
     /// How long the consumer loop waits for a message before re-checking the
     /// shutdown flag. Defaults to 1 second.
     pub poll_interval: Duration,
+
+    /// Maximum accepted size, in bytes, of a raw Kafka message payload.
+    ///
+    /// Enforced before the payload is parsed into a [`CloudEventMessage`]
+    /// (see [`crate::watcher::xzepr::consumer::XzeprConsumer::process_message`]).
+    /// Defaults to [`DEFAULT_MAX_PAYLOAD_BYTES`]; production callers override
+    /// this with [`Self::with_max_payload_bytes`] using
+    /// `watcher.execution.max_payload_bytes`.
+    ///
+    /// [`CloudEventMessage`]: crate::watcher::xzepr::consumer::CloudEventMessage
+    pub max_payload_bytes: usize,
 }
 
 impl KafkaConsumerConfig {
@@ -131,6 +147,7 @@ impl KafkaConsumerConfig {
             session_timeout: Duration::from_secs(30),
             broker_address_family: "v4".to_string(),
             poll_interval: Duration::from_secs(1),
+            max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
         }
     }
 
@@ -143,6 +160,22 @@ impl KafkaConsumerConfig {
     /// Sets the consumer poll interval.
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
+        self
+    }
+
+    /// Sets the maximum accepted raw Kafka payload size, in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "my-service")
+    ///     .with_max_payload_bytes(2048);
+    /// assert_eq!(config.max_payload_bytes, 2048);
+    /// ```
+    pub fn with_max_payload_bytes(mut self, max_payload_bytes: usize) -> Self {
+        self.max_payload_bytes = max_payload_bytes;
         self
     }
 
@@ -280,13 +313,8 @@ impl KafkaConsumerConfig {
         let protocol = std::env::var("XZEPR_KAFKA_SECURITY_PROTOCOL")
             .unwrap_or_else(|_| "PLAINTEXT".to_string());
 
-        config.security_protocol = match protocol.to_uppercase().as_str() {
-            "PLAINTEXT" => SecurityProtocol::Plaintext,
-            "SSL" => SecurityProtocol::Ssl,
-            "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
-            "SASL_SSL" => SecurityProtocol::SaslSsl,
-            _ => return Err(ConfigError::InvalidSecurityProtocol(protocol)),
-        };
+        config.security_protocol = parse_security_protocol(&protocol)
+            .map_err(|_| ConfigError::InvalidSecurityProtocol(protocol.clone()))?;
 
         // Load SASL config if needed
         if matches!(
@@ -301,12 +329,8 @@ impl KafkaConsumerConfig {
             let mechanism = std::env::var("XZEPR_KAFKA_SASL_MECHANISM")
                 .unwrap_or_else(|_| "SCRAM-SHA-256".to_string());
 
-            let sasl_mechanism = match mechanism.to_uppercase().as_str() {
-                "PLAIN" => SaslMechanism::Plain,
-                "SCRAM-SHA-256" => SaslMechanism::ScramSha256,
-                "SCRAM-SHA-512" => SaslMechanism::ScramSha512,
-                _ => return Err(ConfigError::InvalidSaslMechanism(mechanism)),
-            };
+            let sasl_mechanism = parse_sasl_mechanism(&mechanism)
+                .map_err(|_| ConfigError::InvalidSaslMechanism(mechanism.clone()))?;
 
             config.sasl_config = Some(SaslConfig {
                 mechanism: sasl_mechanism,
@@ -353,6 +377,15 @@ mod tests {
         assert_eq!(config.auto_offset_reset, "earliest");
         assert!(!config.enable_auto_commit);
         assert_eq!(config.session_timeout, Duration::from_secs(30));
+        assert_eq!(config.max_payload_bytes, DEFAULT_MAX_PAYLOAD_BYTES);
+    }
+
+    #[test]
+    fn test_with_max_payload_bytes() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "service")
+            .with_max_payload_bytes(2048);
+
+        assert_eq!(config.max_payload_bytes, 2048);
     }
 
     #[test]

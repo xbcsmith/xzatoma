@@ -3,10 +3,9 @@
 ## Overview
 
 This how-to explains how to configure AI providers for XZatoma so the agent can
-make completions, stream responses, and (when allowed) call tools. It covers
-supported providers (OpenAI, Anthropic, GitHub Copilot, and Ollama), environment
-variables, CLI authentication flows, quick validation steps, and troubleshooting
-tips.
+make completions, stream responses, and (when allowed) call tools. It covers the
+supported providers (GitHub Copilot, Ollama, and OpenAI), environment variables,
+CLI authentication flows, quick validation steps, and troubleshooting tips.
 
 Intended audience: users who want to set up a provider for interactive chat
 sessions, model discovery, or running plans that require provider completions.
@@ -18,13 +17,6 @@ sessions, model discovery, or running plans that require provider completions.
 ```bash
 export XZATOMA_OPENAI_API_KEY="sk-..."
 xzatoma chat --provider openai
-```
-
-- Anthropic (env var)
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-xzatoma chat --provider anthropic
 ```
 
 - GitHub Copilot (device OAuth)
@@ -52,10 +44,6 @@ xzatoma chat --provider ollama
     `XZATOMA_OPENAI_MODEL` for model selection
   - Typical use: cloud-hosted OpenAI API or local inference servers (llama.cpp,
     vLLM, Mistral.rs)
-
-- Anthropic
-- Auth: API key via `ANTHROPIC_API_KEY`
-- Optional: `ANTHROPIC_HOST`
 
 - GitHub Copilot
 - Auth: OAuth device flow (recommended) via `xzatoma auth --provider copilot`
@@ -87,13 +75,6 @@ export XZATOMA_OPENAI_BASE_URL="https://api.openai.com/v1"  # default; override 
 export XZATOMA_OPENAI_MODEL="gpt-4o-mini"                   # default model
 export XZATOMA_OPENAI_ORG_ID="org-..."                      # optional
 export XZATOMA_OPENAI_STREAMING="true"                      # default
-```
-
-- Anthropic
-
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export ANTHROPIC_HOST="https://api.anthropic.com"
 ```
 
 - GitHub Copilot (alternatives)
@@ -148,7 +129,7 @@ xzatoma models current --provider copilot
 - Start an interactive chat with a specific provider
 
 ```bash
-xzatoma chat --provider ollama # or openai, copilot, anthropic
+xzatoma chat --provider ollama # or openai, copilot
 ```
 
 If the above commands return errors (authentication or network), consult the
@@ -256,7 +237,7 @@ For step-by-step config file examples for each of these servers see
   `xzatoma auth --provider copilot`.
 
 - Provider not reachable / network errors
-- Verify `XZATOMA_OPENAI_BASE_URL`/`ANTHROPIC_HOST`/`OLLAMA_HOST` are reachable.
+- Verify `XZATOMA_OPENAI_BASE_URL`/`OLLAMA_HOST` are reachable.
 - For Ollama ensure the local service is running. Example: `curl $OLLAMA_HOST`
   (should respond).
 
@@ -280,7 +261,7 @@ For step-by-step config file examples for each of these servers see
 - Never store API keys in plaintext in the repository.
 - Use environment variables or secure key storage (system keyring or secrets
   manager).
-- For remote providers use HTTPS endpoints (OpenAI, Anthropic).
+- For remote providers use HTTPS endpoints (OpenAI, Copilot).
 - Avoid printing secrets in logs or error messages.
 - When authorizing Copilot, be mindful of token scopes and expiration.
 
