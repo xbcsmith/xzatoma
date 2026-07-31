@@ -2,20 +2,26 @@
 
 ## Overview
 
-Context mentions are a core feature of XZatoma that allow users to inject relevant file contents, search results, and web content directly into agent prompts. This document explains the architectural design, implementation strategy, and integration points.
+Context mentions are a core feature of XZatoma that allow users to inject
+relevant file contents, search results, and web content directly into agent
+prompts. This document explains the architectural design, implementation
+strategy, and integration points.
 
 ## Design Goals
 
-1. **Seamless Context Injection** - Users reference content using natural `@mention` syntax
-2. **Multi-Source Support** - Handle files, search results, grep patterns, and URLs
+1. **Seamless Context Injection** - Users reference content using natural
+   `@mention` syntax
+2. **Multi-Source Support** - Handle files, search results, grep patterns, and
+   URLs
 3. **Performance** - Cache content to avoid redundant operations
-4. **Error Resilience** - Gracefully handle failures (missing files, network timeouts, etc.)
+4. **Error Resilience** - Gracefully handle failures (missing files, network
+   timeouts, etc.)
 5. **Security** - Prevent SSRF attacks, validate inputs, respect rate limits
 6. **Clarity** - Provide helpful error messages and suggestions to users
 
 ## Architecture Diagram
 
-```
+```text
 User Input with @mentions
      |
      v
@@ -90,21 +96,20 @@ pub struct LoadError {
 }
 ```
 
-### File Operations Tool (`src/tools/file_ops.rs`)
+### File Loading (`src/mention_parser.rs`)
 
-Handles filesystem operations:
+File mention resolution is handled directly by the mention parser through
+`load_file_content`, which:
 
-- List directory contents
-- Read file contents
-- Write/modify files
-- Delete files
-- Compare file differences
+- Resolves the mention path against the working directory
+- Verifies the file exists and is within the configured size limit
+- Detects and rejects binary files
+- Reads the file contents (optionally a line range)
 
-Used by mention parser for:
-
-- Resolving file paths
-- Loading file contents
-- Getting file metadata (size, modification time)
+The per-file filesystem tools the agent uses elsewhere live under `src/tools/`
+(for example `read_file.rs`, `list_directory.rs`, `edit_file.rs`) and share
+path-validation and metadata helpers in `src/tools/file_utils.rs` and
+`src/tools/file_metadata.rs`.
 
 ### Fetch Tool (`src/tools/fetch.rs`)
 
@@ -150,7 +155,7 @@ pub enum LoadErrorKind {
 
 When user input contains `@` symbols, the parser extracts mentions:
 
-```
+```text
 Input: "Review @config.yaml and search for @search:\"error\""
 Output: [
   Mention::File(FileMention { path: "config.yaml", ... }),
@@ -211,7 +216,7 @@ For each mention, appropriate content loader is called:
 
 When all mentions are loaded, content is injected into the augmented prompt:
 
-```
+```text
 Original: "Review @config.yaml"
 
 Augmented: "Review this file:
@@ -228,22 +233,22 @@ The agent sees the augmented prompt with full context.
 
 ## Component Interactions
 
-### Parser → File Operations
+### Parser → File Loading
 
-File mention resolution uses file operations:
+File mention resolution loads content directly in the mention parser:
 
-```
+```text
 parse_mentions()
  -> load_file_content()
-  -> file_ops::read_file()
-  -> file_ops::get_file_metadata()
+  -> resolve_mention_path()
+  -> read and validate file (size limit, binary detection)
 ```
 
 ### Parser → Fetch Tool
 
 URL mention loading uses fetch tool:
 
-```
+```text
 parse_mentions()
  -> load_url_content()
   -> fetch_tool::fetch()
@@ -254,7 +259,7 @@ parse_mentions()
 
 Agent calls augmentation before sending to provider:
 
-```
+```text
 agent::chat()
  -> augment_prompt_with_mentions()
   -> parse_mentions()
@@ -315,7 +320,7 @@ When a mention fails to load:
 
 Example placeholder for missing file:
 
-```
+```text
 Failed to include file foo.rs:
 
 <file not found: foo.rs>
@@ -329,7 +334,7 @@ Try one of these suggestions:
 
 CLI displays structured error information:
 
-```
+```text
 Mention Loading Summary
 =======================
 Loaded: config.yaml, src/main.rs
@@ -400,7 +405,8 @@ Network requests are the slowest operation:
 - **Timeout**: 60 seconds
 - **Size limit**: 1 MB
 
-**Optimization**: Results are cached; subsequent mentions of same URL are instant
+**Optimization**: Results are cached; subsequent mentions of same URL are
+instant
 
 ### Mention Parsing
 
@@ -424,7 +430,7 @@ Augmented prompts can get large with many mentions:
 
 When fuzzy matching finds multiple candidates:
 
-```
+```text
 Which file did you mean?
 1. src/config.rs
 2. config/prod.yaml
@@ -437,7 +443,7 @@ Enter number or 'none' to skip:
 
 Allow users to define shortcuts:
 
-```
+```text
 @docs = src/docs/
 @handlers = src/handlers/*.rs
 
@@ -466,7 +472,7 @@ Rank search results by relevance:
 
 Better HTML → Markdown conversion using libraries like `html2md`:
 
-```
+```text
 Better formatting and structure preservation
 vs current simple HTML stripping
 ```
@@ -475,7 +481,7 @@ vs current simple HTML stripping
 
 For large files/pages, optional auto-summarization:
 
-```
+```text
 @url:https://example.com#summary
 Provides key points instead of full content
 ```
@@ -484,7 +490,7 @@ Provides key points instead of full content
 
 Pre-check mentions in plan files before execution:
 
-```
+```text
 Parse plan.yaml
 Check all @mentions exist
 Report missing references before starting
@@ -494,7 +500,7 @@ Report missing references before starting
 
 When agent mentions a file it read, track that:
 
-```
+```text
 Agent: "I reviewed src/main.rs..."
 [Implied: @src/main.rs was mentioned]
 ```
@@ -503,7 +509,7 @@ Agent: "I reviewed src/main.rs..."
 
 Show user what was included in augmented prompt:
 
-```
+```text
 Augmented Prompt Coverage:
 - 3 files (total 450 lines)
 - 2 search results (45 matches)
@@ -517,7 +523,7 @@ Total context: ~25 KB sent to provider
 
 Allow conditional inclusion based on file existence:
 
-```
+```text
 @if:src/config.dev.yaml
 @then:include this for development setup
 @else:use default configuration
@@ -562,7 +568,7 @@ loop {
 
 Mention help is available via special commands:
 
-```
+```text
 /help    - General help including mentions syntax
 /mentions  - Detailed mention help and examples
 ```
@@ -603,8 +609,10 @@ Typical performance on a medium project (~10K files, ~1M lines):
 
 ## References
 
-- **File Mention Feature Plan**: `docs/explanation/file_mention_feature_implementation_plan.md`
+- **File Mention Feature Plan**:
+  `docs/explanation/file_mention_feature_implementation_plan.md`
 - **Phase 4 Fetch Tool**: `docs/explanation/phase4_fetch_tool_implementation.md`
 - **Phase 3 Grep Tool**: `docs/explanation/phase3_grep_tool_implementation.md`
-- **Phase 5 Error Handling**: `docs/explanation/phase5_error_handling_and_user_feedback.md`
+- **Phase 5 Error Handling**:
+  `docs/explanation/phase5_error_handling_and_user_feedback.md`
 - **Chat Modes**: `docs/explanation/chat_modes_architecture.md`

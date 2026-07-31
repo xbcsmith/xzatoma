@@ -352,7 +352,7 @@ xzatoma models list [--provider <provider>] [--json] [--summary]
 
 **Options:**
 
-- `--provider`, `-p`: Override configured provider (copilot, ollama)
+- `--provider`, `-p`: Override configured provider (copilot, ollama, openai)
 - `--json`, `-j`: Output in pretty JSON format (useful for scripting and
   exporting). When used with `--summary`, JSON will include summary fields such
   as `info`, `state`, `max_prompt_tokens`, `max_completion_tokens`,
@@ -403,7 +403,7 @@ xzatoma models info --model <name> [--provider <provider>] [--json] [--summary]
 **Options:**
 
 - `--model`, `-m`: Model name or identifier (required)
-- `--provider`, `-p`: Override configured provider (copilot, ollama)
+- `--provider`, `-p`: Override configured provider (copilot, ollama, openai)
 - `--json`, `-j`: Output in pretty JSON format. When used with `--summary`, JSON
   will include summary fields such as `info`, `state`, `max_prompt_tokens`,
   `max_completion_tokens`, `supports_tool_calls`, `supports_vision`, and
@@ -450,7 +450,7 @@ xzatoma models current [--provider <provider>]
 
 **Options:**
 
-- `--provider`, `-p`: Override configured provider (copilot, ollama)
+- `--provider`, `-p`: Override configured provider (copilot, ollama, openai)
 
 **Example:**
 
@@ -539,7 +539,7 @@ percentage, and color-coded usage level.
 provider:
   provider_type: copilot
   copilot:
-    model: gpt-4o
+    model: gpt-5-mini
 ```
 
 ### Ollama
@@ -570,6 +570,36 @@ provider:
 
 Ollama queries the running Ollama instance to discover available models
 dynamically.
+
+### OpenAI
+
+**Supported Models:**
+
+Chat-capable models reported by the OpenAI API (or any OpenAI-compatible
+server). The `list_models` implementation filters out non-chat models
+(embedding, TTS, Whisper, DALL-E, and moderation).
+
+**Capabilities:**
+
+- Model listing: Yes (queries the OpenAI-compatible `/models` endpoint)
+- Model details: No (metadata beyond the model `id` is not exposed by the
+  standard `/models` endpoint)
+- Model switching: Yes (updates config)
+- Token counts: Yes (usage is reported by the OpenAI API)
+- Streaming: Yes (configurable via `enable_streaming`)
+
+**Configuration:**
+
+```yaml
+provider:
+  provider_type: openai
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
+```
+
+The OpenAI provider also targets OpenAI-compatible local inference servers
+(e.g., llama.cpp, vLLM, Mistral.rs) by pointing `base_url` at the local server.
 
 ## Error Handling
 

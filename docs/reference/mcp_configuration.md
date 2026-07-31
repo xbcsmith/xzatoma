@@ -130,8 +130,7 @@ retrieve prompt templates exposed by this server.
 - **Default:** `false`
 
 Allow the server to request LLM sampling from the client. See
-[Sampling and elicitation limitations](#sampling-and-elicitation-limitations)
-for current implementation status.
+[Sampling and elicitation](#sampling-and-elicitation) for details.
 
 ### `mcp.servers[].elicitation_enabled`
 
@@ -139,8 +138,7 @@ for current implementation status.
 - **Default:** `true`
 
 Allow the server to request structured user input via elicitation. See
-[Sampling and elicitation limitations](#sampling-and-elicitation-limitations)
-for current implementation status.
+[Sampling and elicitation](#sampling-and-elicitation) for details.
 
 ## Transport options
 
@@ -295,20 +293,24 @@ automatically by `Config::validate`). The following rules are enforced:
 Validation runs eagerly at startup. If any rule fails, XZatoma exits with a
 configuration error before connecting to any servers.
 
-## Sampling and elicitation limitations
+## Sampling and elicitation
 
 ### Sampling
 
-The sampling handler is not yet implemented. Servers that require sampling
-capability will fail at runtime. Set `sampling_enabled: false` (the default) for
-servers that do not require sampling.
+Sampling is implemented by `XzatomaSamplingHandler` in `src/mcp/sampling.rs`.
+When a connected server sends a `sampling/createMessage` request, the handler
+converts the MCP message format to provider messages, runs a completion through
+the active AI provider, and returns the result. Set `sampling_enabled: true` for
+servers that need to request LLM sampling from the client.
 
 ### Elicitation
 
-The elicitation handler is not yet fully implemented. All elicitation requests
-currently receive a `Cancel` response. Servers that depend on successful
-elicitation may not function as expected. The `elicitation_enabled` field
-defaults to `true` to maintain forward compatibility.
+Elicitation is implemented by `XzatomaElicitationHandler` in
+`src/mcp/elicitation.rs`. It handles `elicitation/create` requests in two modes:
+form mode prompts the user for each field declared in the requested schema, and
+URL mode displays a URL and opens it in the default browser. In headless or
+other non-interactive contexts the handler returns a `Cancel` action with no
+content. The `elicitation_enabled` field defaults to `true`.
 
 ## Complete example
 

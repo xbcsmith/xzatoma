@@ -61,6 +61,19 @@ Example:
 export XZEPR_KAFKA_GROUP_ID="xzatoma-watcher-prod"
 ```
 
+### `XZATOMA_WATCHER_GROUP_ID`
+
+Kafka consumer group identifier, using the `XZATOMA_WATCHER_` prefix. Overrides
+the same setting as `XZEPR_KAFKA_GROUP_ID`.
+
+- Maps to: `watcher.kafka.group_id`
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_GROUP_ID="xzatoma-watcher-prod"
+```
+
 ### `XZEPR_KAFKA_SECURITY_PROTOCOL`
 
 Kafka security protocol.
@@ -119,6 +132,47 @@ Example:
 
 ```bash
 export XZEPR_KAFKA_SASL_PASSWORD="supersecret"
+```
+
+### `XZEPR_KAFKA_SSL_CA_LOCATION`
+
+Filesystem path to the CA certificate used to verify the Kafka broker when SSL
+is enabled.
+
+- Used by: the XZepr Kafka consumer SSL configuration
+- Sensitive: points to certificate material; protect access accordingly
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SSL_CA_LOCATION="/etc/xzatoma/certs/ca.pem"
+```
+
+### `XZEPR_KAFKA_SSL_CERT_LOCATION`
+
+Filesystem path to the client certificate presented to the Kafka broker when
+mutual TLS is used.
+
+- Used by: the XZepr Kafka consumer SSL configuration
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SSL_CERT_LOCATION="/etc/xzatoma/certs/client.pem"
+```
+
+### `XZEPR_KAFKA_SSL_KEY_LOCATION`
+
+Filesystem path to the client private key that matches
+`XZEPR_KAFKA_SSL_CERT_LOCATION` when mutual TLS is used.
+
+- Used by: the XZepr Kafka consumer SSL configuration
+- Sensitive: prefer secret injection or a secret manager
+
+Example:
+
+```bash
+export XZEPR_KAFKA_SSL_KEY_LOCATION="/etc/xzatoma/certs/client.key"
 ```
 
 ## Generic Watcher Configuration
@@ -415,6 +469,23 @@ Example:
 
 ```bash
 export XZATOMA_WATCHER_EXECUTION_TIMEOUT="600"
+```
+
+### `XZATOMA_WATCHER_EXECUTION_MODE`
+
+Controls how watcher-triggered plans are executed.
+
+- Maps to: `watcher.execution.execution_mode`
+- Accepted values (case-insensitive):
+  - `per_task`
+  - `single_shot`
+- Invalid values are ignored with a warning and leave the configured value
+  unchanged
+
+Example:
+
+```bash
+export XZATOMA_WATCHER_EXECUTION_MODE="per_task"
 ```
 
 ## Generic Watcher Examples

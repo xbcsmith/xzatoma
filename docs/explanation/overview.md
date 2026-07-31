@@ -193,7 +193,7 @@ $ xzatoma run --prompt "Count lines of code in all Rust files"
 Total lines of code: 2,347
 - src/main.rs: 150 lines
 - src/lib.rs: 200 lines
-- src/agent/agent.rs: 450 lines
+- src/agent/core.rs: 450 lines
 ... (full breakdown)
 ```
 

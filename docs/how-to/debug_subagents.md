@@ -117,7 +117,7 @@ Turns Used: 7
 Tokens Consumed: 1250
 Status: complete
 Max Turns Reached: false
-Allowed Tools: ["file_ops", "grep"]
+Allowed Tools: ["read_file", "grep"]
 ```
 
 ## View Conversation Tree

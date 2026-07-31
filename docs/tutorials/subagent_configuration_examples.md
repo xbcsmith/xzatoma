@@ -1,21 +1,24 @@
 # Subagent Configuration Examples
 
-This tutorial provides practical, tested examples of subagent configuration for common use cases. Each example includes the full configuration, how to test it, and what to expect.
+This tutorial provides practical, tested examples of subagent configuration for
+common use cases. Each example includes the full configuration, how to test it,
+and what to expect.
 
 ## Quick Reference
 
-| Use Case                                                     | Best For             | Config Complexity | Cost Impact   |
-| ------------------------------------------------------------ | -------------------- | ----------------- | ------------- |
-| [Cost Optimization](#example-1-cost-optimization)            | High volume work     | Simple            | 70% savings   |
-| [Provider Mixing](#example-2-provider-mixing)                | Hybrid workflows     | Moderate          | Variable      |
-| [Speed Optimization](#example-3-speed-optimization)          | Real-time operations | Simple            | Minimal       |
-| [Chat Mode with Manual Control](#example-4-chat-mode-manual) | Interactive work     | Simple            | Control-based |
+| Use Case                                                                  | Best For             | Config Complexity | Cost Impact   |
+| ------------------------------------------------------------------------- | -------------------- | ----------------- | ------------- |
+| [Cost Optimization](#example-1-cost-optimization)                         | High volume work     | Simple            | 70% savings   |
+| [Provider Mixing](#example-2-provider-mixing)                             | Hybrid workflows     | Moderate          | Variable      |
+| [Speed Optimization](#example-3-speed-optimization)                       | Real-time operations | Simple            | Minimal       |
+| [Chat Mode with Manual Control](#example-4-chat-mode-with-manual-control) | Interactive work     | Simple            | Control-based |
 
 ## Example 1: Cost Optimization
 
 ### Use Case
 
-You have a Copilot subscription and want to use a powerful model for main reasoning but delegate routine work to a cheaper model.
+You have a Copilot subscription and want to use a powerful model for main
+reasoning but delegate routine work to a cheaper model.
 
 ### Configuration
 
@@ -87,7 +90,8 @@ Use subagents to speed up the work.
 
 ### Use Case
 
-You want to use Copilot for strategic work but delegate to your local Ollama instance (free) for parallel processing.
+You want to use Copilot for strategic work but delegate to your local Ollama
+instance (free) for parallel processing.
 
 ### Configuration
 
@@ -290,7 +294,8 @@ Use subagents to read and summarize these 5 text files.
 
 ### Use Case
 
-You want subagents available in chat mode but want to control them manually. No automatic enablement.
+You want subagents available in chat mode but want to control them manually. No
+automatic enablement.
 
 ### Configuration
 
@@ -347,11 +352,12 @@ Delegate file processing to subagents
 
 ### Use Case
 
-You want different configurations for different scenarios. Create multiple config files.
+You want different configurations for different scenarios. Create multiple
+config files.
 
 ### Setup Structure
 
-```
+```text
 ~/.xzatoma/
 ├── config.yaml                 # Default (cost-optimized)
 ├── config-local.yaml           # Local-only (Ollama)
@@ -428,7 +434,8 @@ xzatoma run "process files" --config ~/.xzatoma/config-local.yaml
 
 ### Use Case
 
-You're deploying XZatoma in production and need safety, monitoring, and cost controls.
+You're deploying XZatoma in production and need safety, monitoring, and cost
+controls.
 
 ### Configuration
 
@@ -442,7 +449,6 @@ provider:
 agent:
   # Main agent settings
   max_turns: 10
-  max_depth: 3
 
   # Subagent settings with production guardrails
   subagent:
@@ -454,19 +460,17 @@ agent:
     max_total_tokens: 10000 # Hard cost cap per session
     default_max_turns: 5 # Quick completion
 
-  # Safety settings
+  # Tool limits
   tools:
-    file_ops:
-      allowed_dirs:
-        - /data/input
-        - /data/output
-      max_file_size: 10485760 # 10MB
-    terminal:
-      allowed_commands:
-        - ls
-        - cat
-        - find
-        - grep
+    max_file_read_size: 10485760 # 10MB
+    max_output_size: 5242880 # 5MB
+    fetch_allowed_domains:
+      - docs.example.com
+
+  # Terminal limits
+  terminal:
+    timeout_seconds: 30
+    max_stdout_bytes: 1048576 # 1MB
 ```
 
 ### Testing
@@ -496,7 +500,8 @@ xzatoma chat --config config-production.yaml
 
 ### Use Case
 
-You're developing and testing features. You want fast iteration with good quality.
+You're developing and testing features. You want fast iteration with good
+quality.
 
 ### Configuration
 
@@ -701,5 +706,5 @@ agent:
 
 ---
 
-**Last updated**: 2024
-**Have questions?**: Check the configuration guide or troubleshooting sections
+**Last updated**: 2024 **Have questions?**: Check the configuration guide or
+troubleshooting sections

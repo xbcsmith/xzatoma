@@ -4,23 +4,30 @@
 
 XZatoma exposes a set of slash commands in interactive chat sessions. All
 commands follow a unified UX contract described below. This reference covers all
-thirteen commands, their arguments, and any ACP-specific notes.
+fifteen commands, their arguments, aliases, and any ACP-specific notes.
 
 | Command      | Description                                  | Bare behavior            | Status behavior                    | Example action             |
 | ------------ | -------------------------------------------- | ------------------------ | ---------------------------------- | -------------------------- |
 | `/mode`      | Switch the operation mode                    | Shows mode help          | Shows current mode and description | `/mode write`              |
 | `/model`     | Switch the active AI model                   | Shows model help         | Shows current model and provider   | `/model granite4:3b`       |
+| `/models`    | List models or show model info               | Shows models help        | n/a                                | `/models list`             |
 | `/safety`    | Change the safety confirmation policy        | Shows safety help        | Shows current safety policy        | `/safety off`              |
 | `/tools`     | List available agent tools                   | Lists tools              | n/a                                | n/a                        |
 | `/context`   | Inspect or manage context window usage       | Shows token stats        | n/a                                | `/context summary`         |
-| `/summarize` | Summarize the current conversation           | Summarizes conversation  | n/a                                | n/a                        |
 | `/skills`    | List active agent skills                     | Lists skills             | n/a                                | n/a                        |
 | `/mcp`       | List connected MCP servers                   | Lists MCP servers        | n/a                                | n/a                        |
+| `/mentions`  | Show available @-mention references          | Lists mentions           | n/a                                | n/a                        |
+| `/auth`      | Authenticate with a provider                 | Authenticates default    | n/a                                | `/auth copilot`            |
 | `/help`      | Show the global command list                 | Shows command list       | n/a                                | n/a                        |
 | `/status`    | Show mode, safety, model, and subagent state | Shows full status        | n/a                                | n/a                        |
 | `/subagents` | Toggle subagent delegation                   | Shows subagents help     | Shows enabled or disabled          | `/subagents on`            |
 | `/system`    | Inspect or replace the active system prompt  | Shows system prompt help | Shows current system prompt        | `/system You are concise.` |
-| `/streaming` | Show streaming information                   | Shows streaming help     | n/a (ACP read-only)                | n/a                        |
+| `/streaming` | Toggle or show streaming state               | Shows streaming help     | Shows current streaming state      | `/streaming on`            |
+
+Several commands also accept short aliases: `/planning` and `/write` for
+`/mode planning` and `/mode write`; `/safe` and `/yolo` for `/safety on` and
+`/safety off`; and `/?` for `/help`. Typing `exit`, `quit`, `/exit`, or `/quit`
+ends the session.
 
 ## Unified UX Contract
 
@@ -54,8 +61,8 @@ Every command follows this three-tier contract:
 **Arguments:**
 
 - `status` — print the current mode and a short description
-- `planning` — switch to planning mode
-- `write` — switch to write mode
+- `planning` — switch to planning mode (alias: `/planning`)
+- `write` — switch to write mode (alias: `/write`)
 
 **ACP notes:** None. Mode switching works the same in ACP (Zed) and CLI modes.
 
@@ -83,6 +90,30 @@ Every command follows this three-tier contract:
 
 ---
 
+### /models
+
+**Purpose:** List the models available from the active provider or show details
+for a specific model. This is distinct from `/model`, which switches the active
+model.
+
+**Usage:**
+
+```text
+/models
+/models list
+/models info <model_name>
+```
+
+**Arguments:**
+
+- (bare) — print models help
+- `list` — list the models available from the active provider
+- `info <model_name>` — show details for the named model
+
+**ACP notes:** None.
+
+---
+
 ### /safety
 
 **Purpose:** Show or change the safety confirmation policy that governs whether
@@ -100,8 +131,8 @@ dangerous operations require explicit user approval.
 **Arguments:**
 
 - `status` — print the current safety policy
-- `on` — enable safety confirmations
-- `off` — disable safety confirmations
+- `on` — enable safety confirmations (alias: `/safe`)
+- `off` — disable safety confirmations (alias: `/yolo`)
 
 **ACP notes:** None.
 
@@ -135,31 +166,17 @@ conversation to reclaim context space.
 /context
 /context info
 /context summary
+/context summary --model <model_name>
+/context summary -m <model_name>
 ```
 
 **Arguments:**
 
 - `info` — print token counts for the current conversation (used, available, and
-  maximum)
+  maximum). Bare `/context` is equivalent to `/context info`.
 - `summary` — ask the model to summarize the conversation and reset the context
-  window to the summary
-
-**ACP notes:** None.
-
----
-
-### /summarize
-
-**Purpose:** Request an immediate summarization of the current conversation.
-Equivalent to `/context summary` but available as a standalone command.
-
-**Usage:**
-
-```text
-/summarize
-```
-
-**Arguments:** None.
+  window to the summary. Optionally pass `--model <name>` or `-m <name>` to use
+  a specific model for the summary.
 
 **ACP notes:** None.
 
@@ -198,6 +215,45 @@ connected.
 
 ---
 
+### /mentions
+
+**Purpose:** List the available `@`-mention references that can be used to pull
+files or other context into the conversation.
+
+**Usage:**
+
+```text
+/mentions
+```
+
+**Arguments:** None. `/mentions status` is not supported.
+
+**ACP notes:** None.
+
+---
+
+### /auth
+
+**Purpose:** Authenticate with an AI provider. With no argument, authenticates
+the default provider; with a provider name, authenticates that provider.
+
+**Usage:**
+
+```text
+/auth
+/auth <provider>
+```
+
+**Arguments:**
+
+- (bare) — authenticate the default provider
+- `<provider>` — authenticate the named provider (for example, `copilot`)
+
+**ACP notes:** Not supported in ACP mode. Authentication is managed outside the
+ACP session.
+
+---
+
 ### /help
 
 **Purpose:** Print the global command list with a one-line description of each
@@ -209,7 +265,7 @@ command.
 /help
 ```
 
-**Arguments:** None. `/help status` is not supported.
+**Arguments:** None. `/help status` is not supported. Alias: `/?`.
 
 **ACP notes:** In Zed ACP mode, the Zed completion menu also surfaces commands
 through its autocomplete mechanism. `/help` remains available as an in-chat
@@ -254,8 +310,8 @@ primary agent loop.
 **Arguments:**
 
 - `status` — print whether subagent delegation is currently enabled or disabled
-- `on` — enable subagent delegation
-- `off` — disable subagent delegation
+- `on` — enable subagent delegation (alias: `/subagents enable`)
+- `off` — disable subagent delegation (alias: `/subagents disable`)
 
 **ACP notes:** None.
 
@@ -287,24 +343,25 @@ prompt is prepended to every conversation turn and shapes agent behavior.
 
 ### /streaming
 
-**Purpose:** Show information about the streaming configuration for the current
-session.
+**Purpose:** Show or toggle whether responses are streamed incrementally.
 
 **Usage:**
 
 ```text
 /streaming
 /streaming status
+/streaming on
+/streaming off
 ```
 
 **Arguments:**
 
-- `status` — displays the ACP note described below
+- `status` — print the current streaming state
+- `on` — enable streaming (alias: `/streaming enable`)
+- `off` — disable streaming (alias: `/streaming disable`)
 
-**ACP notes:** In ACP mode (Zed), streaming is controlled by the Zed client and
-cannot be toggled from within the chat session. The `/streaming` command and
-`/streaming status` both report this constraint rather than offering an on/off
-toggle. The following commands are also not supported in ACP mode:
+**ACP notes:** In ACP mode (Zed), streaming is controlled by the Zed client. The
+following commands are also not supported in ACP mode:
 
 - `/auth` — authentication is managed outside the ACP session
 - `/exit` — use the Zed UI to close the chat session
@@ -314,13 +371,12 @@ toggle. The following commands are also not supported in ACP mode:
 The following commands perform their entire function when run bare. They do not
 accept a `status` argument:
 
-| Command      | Reason                                                                |
-| ------------ | --------------------------------------------------------------------- |
-| `/tools`     | Always lists all tools; no single current value to inspect            |
-| `/context`   | Bare shows token stats; use `info` or `summary` for specific actions  |
-| `/summarize` | Performs an action; there is no summarization state to inspect        |
-| `/skills`    | Always lists all active skills; no on/off toggle                      |
-| `/mcp`       | Always lists connected servers; no single value to inspect            |
-| `/help`      | Always shows the global list; there is no help state                  |
-| `/status`    | Is itself a status command; no nested status subcommand               |
-| `/streaming` | ACP read-only; status prints the ACP note rather than a mutable value |
+| Command     | Reason                                                               |
+| ----------- | -------------------------------------------------------------------- |
+| `/tools`    | Always lists all tools; no single current value to inspect           |
+| `/context`  | Bare shows token stats; use `info` or `summary` for specific actions |
+| `/skills`   | Always lists all active skills; no on/off toggle                     |
+| `/mcp`      | Always lists connected servers; no single value to inspect           |
+| `/mentions` | Always lists available mentions; no single value to inspect          |
+| `/help`     | Always shows the global list; there is no help state                 |
+| `/status`   | Is itself a status command; no nested status subcommand              |

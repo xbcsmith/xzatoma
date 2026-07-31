@@ -34,7 +34,7 @@ and
 
 | Provider  | Status             | Auth Method    | Base URL              | Default Model     | Context Limit   | Streaming  | Tool Calls        |
 | --------- | ------------------ | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
-| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | gpt-5.3-codex     | 128K            | SSE        | OpenAI-compatible |
+| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | gpt-5-mini        | 128K            | SSE        | OpenAI-compatible |
 | Ollama    | Implemented        | None (local)   | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
 | OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | gpt-4o-mini       | Model-dependent | SSE        | OpenAI-compatible |
 | Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Content blocks    |

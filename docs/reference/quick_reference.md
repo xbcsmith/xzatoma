@@ -63,71 +63,94 @@ src/
 ├── cli.rs               # CLI parsing and user interface
 ├── config.rs            # Configuration management
 ├── error.rs             # Error types and conversions
+├── security.rs          # Path and input hardening helpers
 ├── chat_mode.rs         # Chat mode logic
 ├── mention_parser.rs    # Context mention (@file:, @search:, @grep:, @url:) parsing
 ├── test_utils.rs        # Test utilities
 ├── prompts/             # Prompt templates
 ├── agent/               # Autonomous execution loop
 │   ├── mod.rs
-│   ├── agent.rs         # Main agent logic
+│   ├── core.rs          # Main agent logic
 │   ├── conversation.rs  # Message history
-│   └── executor.rs      # Tool execution
+│   ├── persistence.rs   # Session persistence
+│   ├── metrics.rs       # Execution metrics
+│   ├── quota.rs         # Turn and token quotas
+│   ├── plan_tracker.rs  # Plan state tracking
+│   ├── system_prompt.rs # System prompt assembly
+│   ├── thinking.rs      # Reasoning handling
+│   └── events.rs        # Agent events
 ├── providers/           # AI provider abstraction
 │   ├── mod.rs
-│   ├── base.rs          # Provider trait
+│   ├── trait_mod.rs     # Provider trait
+│   ├── types.rs         # Shared provider types
+│   ├── factory.rs       # Provider construction
+│   ├── cache.rs         # Model list caching
+│   ├── capabilities.rs  # Provider capabilities
+│   ├── conversion.rs    # Message conversion
+│   ├── streaming.rs     # Streaming accumulation
 │   ├── copilot.rs       # GitHub Copilot
-│   └── ollama.rs        # Ollama
+│   ├── ollama.rs        # Ollama
+│   └── openai.rs        # OpenAI-compatible
 ├── tools/               # Agent tools
 │   ├── mod.rs           # ToolExecutor trait and ToolRegistry
-│   ├── file_ops.rs      # File operations
+│   ├── read_file.rs     # File reads
+│   ├── write_file.rs    # File writes
+│   ├── edit_file.rs     # File edits
 │   ├── terminal.rs      # Terminal execution
-│   ├── plan.rs          # Plan parsing
 │   ├── grep.rs          # Grep / search
-│   └── fetch.rs         # HTTP fetch
+│   ├── find_path.rs     # Path search
+│   ├── fetch.rs         # HTTP fetch
+│   ├── plan.rs          # Plan parsing
+│   └── subagent.rs      # Subagent delegation
 ├── commands/            # Command handlers
-│   ├── chat.rs          # Interactive chat
-│   ├── run.rs           # Plan / prompt execution
-│   ├── watch.rs         # Kafka event watcher
-│   ├── auth.rs          # Provider authentication
+│   ├── mod.rs           # Command dispatch (chat, run, watch, auth)
+│   ├── agent.rs         # ACP stdio agent
 │   ├── models.rs        # Model management
 │   ├── history.rs       # Conversation history
 │   ├── replay.rs        # Subagent replay
 │   ├── mcp.rs           # MCP server listing
 │   ├── acp.rs           # ACP server management
-│   └── skills.rs        # Skills management
+│   ├── environment.rs   # Environment inspection
+│   ├── skills.rs        # Skills management
+│   └── special_commands.rs # In-chat slash commands
 ├── mcp/                 # Model Context Protocol
 │   ├── client.rs        # MCP client
 │   ├── server.rs        # MCP server
-│   ├── transport.rs     # Transport layer
-│   ├── auth.rs          # MCP authentication
+│   ├── manager.rs       # MCP server manager
+│   ├── transport/       # Transport layer (stdio, http, fake)
+│   ├── auth/            # MCP authentication
 │   ├── tool_bridge.rs   # Tool bridging
 │   ├── sampling.rs      # Sampling support
 │   ├── elicitation.rs   # Elicitation support
-│   ├── protocol.rs      # Protocol definitions
-│   └── task_manager.rs  # Task management
-├── acp/                 # Agent Communication Protocol
-│   ├── server.rs        # ACP server
+│   ├── approval.rs      # Approval handling
+│   └── protocol.rs      # Protocol definitions
+├── acp/                 # Agent Client Protocol
+│   ├── server.rs        # ACP HTTP server
+│   ├── stdio.rs         # ACP stdio transport
 │   ├── runtime.rs       # ACP runtime
-│   ├── handlers.rs      # Request handlers
-│   ├── routes.rs        # HTTP routes
-│   ├── events.rs        # Event system
+│   ├── executor.rs      # Plan and tool execution
 │   ├── session.rs       # Session management
 │   ├── streaming.rs     # Streaming support
 │   └── manifest.rs      # Agent manifest
 ├── skills/              # Skill system
 │   ├── discovery.rs     # Skill discovery
-│   ├── parsing.rs       # Skill parsing
+│   ├── parser.rs        # Skill parsing
 │   ├── activation.rs    # Skill activation
 │   ├── trust.rs         # Trust management
 │   ├── validation.rs    # Skill validation
 │   └── catalog.rs       # Skill catalog
 ├── storage/             # Persistence layer
+│   ├── mod.rs           # Storage entry point
 │   └── types.rs         # Storage types
-├── watcher/             # Kafka-backed event watcher
-│   ├── logging.rs       # Watcher logging
-│   ├── generic/         # Generic plan-event watcher
-│   └── xzepr/           # XZepr CloudEvents watcher
-└── xzepr/               # Backward-compatible shim
+└── watcher/             # Kafka-backed event watcher
+    ├── mod.rs
+    ├── logging.rs       # Watcher logging
+    ├── kafka_security.rs # Kafka security config
+    ├── lifecycle.rs     # Watcher lifecycle
+    ├── plan_executor.rs # Plan execution
+    ├── topic_admin.rs   # Topic administration
+    ├── generic/         # Generic plan-event watcher
+    └── xzepr/           # XZepr CloudEvents watcher
 ```
 
 ## Module Organization
@@ -142,11 +165,11 @@ src/
 | `chat_mode`      | Interactive chat logic                            |
 | `mention_parser` | Context mention parsing (@file:, @search:, @url:) |
 | `agent`          | Autonomous agent execution loop                   |
-| `providers`      | AI provider abstraction (Copilot, Ollama)         |
+| `providers`      | AI provider abstraction (Copilot, Ollama, OpenAI) |
 | `tools`          | File ops, grep, terminal, plan, fetch             |
 | `commands`       | CLI command handlers                              |
 | `mcp`            | Model Context Protocol client and server          |
-| `acp`            | Agent Communication Protocol server               |
+| `acp`            | Agent Client Protocol server and stdio transport  |
 | `skills`         | Skill discovery, trust, and activation            |
 | `storage`        | Persistence layer                                 |
 | `watcher`        | Kafka-backed event watcher                        |
@@ -232,12 +255,15 @@ Configuration file location: `~/.config/xzatoma/config.yaml`
 
 ```yaml
 provider:
-  type: copilot # or 'ollama'
+  type: copilot # or 'ollama' or 'openai'
   copilot:
     model: gpt-5.3-codex
   ollama:
     host: http://localhost:11434
     model: llama3.2:3b
+  openai:
+    base_url: https://api.openai.com/v1
+    model: gpt-4o-mini
 
 agent:
   max_turns: 50
@@ -265,6 +291,11 @@ XZATOMA_PROVIDER=copilot
 XZATOMA_COPILOT_MODEL=gpt-5.3-codex
 XZATOMA_OLLAMA_HOST=http://localhost:11434
 XZATOMA_OLLAMA_MODEL=llama3.2:3b
+XZATOMA_OPENAI_API_KEY=sk-...
+XZATOMA_OPENAI_BASE_URL=https://api.openai.com/v1
+XZATOMA_OPENAI_MODEL=gpt-4o-mini
+XZATOMA_OPENAI_ORG_ID=org-...
+XZATOMA_OPENAI_STREAMING=true
 
 # Agent settings
 XZATOMA_MAX_TURNS=50
@@ -299,6 +330,9 @@ xzatoma chat
 
 # Chat with a specific provider
 xzatoma chat --provider ollama
+
+# Chat with OpenAI (or an OpenAI-compatible server)
+xzatoma chat --provider openai
 
 # Chat in planning mode (no writes)
 xzatoma chat --mode planning

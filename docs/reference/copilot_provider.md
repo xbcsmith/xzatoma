@@ -2,7 +2,10 @@
 
 ## Overview
 
-The Copilot provider implements the GitHub Copilot API with support for both `/chat/completions` and `/responses` endpoints. It automatically selects the best endpoint based on model capabilities and provides streaming support for improved performance.
+The Copilot provider implements the GitHub Copilot API with support for both
+`/chat/completions` and `/responses` endpoints. It automatically selects the
+best endpoint based on model capabilities and provides streaming support for
+improved performance.
 
 ## Configuration
 
