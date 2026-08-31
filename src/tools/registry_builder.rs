@@ -15,9 +15,11 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
-use crate::config::{TerminalConfig, ToolsConfig};
+use crate::config::{AcpClientConfig, TerminalConfig, ToolsConfig};
 use crate::error::Result;
 
+use crate::tools::acp_agent::AcpAgentTool;
+use crate::tools::acp_discover::DiscoverAcpAgentsTool;
 use crate::tools::copy_path::CopyPathTool;
 use crate::tools::create_directory::CreateDirectoryTool;
 use crate::tools::delete_path::DeletePathTool;
@@ -97,6 +99,8 @@ pub fn terminal_tool_names() -> &'static [&'static str] {
 ///
 /// Constructs a `ToolRegistry` filtered by chat mode and safety settings.
 /// Planning mode registers only read-only tools, while Write mode registers all tools.
+/// When an `AcpClientConfig` is provided with `default_timeout_seconds > 0`, the
+/// inter-agent tools `call_acp_agent` and `discover_acp_agents` are also registered.
 ///
 /// # Examples
 ///
@@ -127,6 +131,11 @@ pub struct ToolRegistryBuilder {
     terminal_config: TerminalConfig,
     /// Optional activate_skill tool registration
     activate_skill_tool: Option<Arc<dyn ToolExecutor>>,
+    /// Optional outbound ACP client configuration.
+    ///
+    /// When `Some` and `default_timeout_seconds > 0`, `call_acp_agent` and
+    /// `discover_acp_agents` are registered in Write mode.
+    acp_client_config: Option<Arc<AcpClientConfig>>,
 }
 
 impl ToolRegistryBuilder {
@@ -149,6 +158,7 @@ impl ToolRegistryBuilder {
             tools_config: ToolsConfig::default(),
             terminal_config: TerminalConfig::default(),
             activate_skill_tool: None,
+            acp_client_config: None,
         }
     }
 
@@ -177,6 +187,40 @@ impl ToolRegistryBuilder {
     /// Returns self for method chaining
     pub fn with_terminal_config(mut self, config: TerminalConfig) -> Self {
         self.terminal_config = config;
+        self
+    }
+
+    /// Set the outbound ACP client configuration.
+    ///
+    /// When `config.default_timeout_seconds > 0`, the inter-agent tools
+    /// `call_acp_agent` and `discover_acp_agents` are conditionally registered
+    /// in Write mode builds.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Outbound ACP client configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::registry_builder::ToolRegistryBuilder;
+    /// use xzatoma::chat_mode::{ChatMode, SafetyMode};
+    /// use xzatoma::config::AcpClientConfig;
+    /// use std::path::PathBuf;
+    /// use std::sync::Arc;
+    ///
+    /// let builder = ToolRegistryBuilder::new(
+    ///     ChatMode::Write,
+    ///     SafetyMode::NeverConfirm,
+    ///     PathBuf::from("."),
+    /// ).with_acp_client_config(Arc::new(AcpClientConfig::default()));
+    /// ```
+    pub fn with_acp_client_config(mut self, config: Arc<AcpClientConfig>) -> Self {
+        self.acp_client_config = Some(config);
         self
     }
 
@@ -387,8 +431,25 @@ impl ToolRegistryBuilder {
         registry.register("terminal", terminal_tool_executor);
 
         self.register_activate_skill_tool(&mut registry);
+        self.register_acp_inter_agent_tools(&mut registry);
 
         Ok(registry)
+    }
+
+    /// Register `call_acp_agent` and `discover_acp_agents` when the ACP client
+    /// is configured and `default_timeout_seconds > 0`.
+    fn register_acp_inter_agent_tools(&self, registry: &mut ToolRegistry) {
+        if let Some(acp_config) = &self.acp_client_config {
+            if acp_config.default_timeout_seconds > 0 {
+                debug!("Registering ACP inter-agent tools (call_acp_agent, discover_acp_agents)");
+                let call_tool = AcpAgentTool::new(Arc::clone(acp_config));
+                registry.register("call_acp_agent", Arc::new(call_tool));
+                let discover_tool = DiscoverAcpAgentsTool::new(Arc::clone(acp_config));
+                registry.register("discover_acp_agents", Arc::new(discover_tool));
+            } else {
+                debug!("ACP inter-agent tools disabled (default_timeout_seconds = 0)");
+            }
+        }
     }
 
     fn register_activate_skill_tool(&self, registry: &mut ToolRegistry) {
@@ -651,5 +712,73 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_acp_inter_agent_tools_registered_when_timeout_nonzero() {
+        use crate::config::AcpClientConfig;
+
+        let config = AcpClientConfig {
+            default_timeout_seconds: 30,
+            allowed_base_urls: vec!["http://agent1:8765".to_string()],
+        };
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::NeverConfirm,
+            PathBuf::from("."),
+        )
+        .with_acp_client_config(Arc::new(config));
+
+        let registry = builder.build_for_write().unwrap();
+        assert!(
+            registry.get("call_acp_agent").is_some(),
+            "call_acp_agent should be registered when default_timeout_seconds > 0"
+        );
+        assert!(
+            registry.get("discover_acp_agents").is_some(),
+            "discover_acp_agents should be registered when default_timeout_seconds > 0"
+        );
+        // Base tools still present.
+        assert_eq!(registry.len(), 12); // 10 standard + 2 ACP inter-agent
+    }
+
+    #[test]
+    fn test_acp_inter_agent_tools_absent_when_timeout_zero() {
+        use crate::config::AcpClientConfig;
+
+        let config = AcpClientConfig {
+            default_timeout_seconds: 0,
+            allowed_base_urls: vec![],
+        };
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::NeverConfirm,
+            PathBuf::from("."),
+        )
+        .with_acp_client_config(Arc::new(config));
+
+        let registry = builder.build_for_write().unwrap();
+        assert!(
+            registry.get("call_acp_agent").is_none(),
+            "call_acp_agent should be absent when default_timeout_seconds = 0"
+        );
+        assert!(
+            registry.get("discover_acp_agents").is_none(),
+            "discover_acp_agents should be absent when default_timeout_seconds = 0"
+        );
+        assert_eq!(registry.len(), 10);
+    }
+
+    #[test]
+    fn test_acp_inter_agent_tools_absent_when_no_acp_config() {
+        let builder = ToolRegistryBuilder::new(
+            ChatMode::Write,
+            SafetyMode::NeverConfirm,
+            PathBuf::from("."),
+        );
+        let registry = builder.build_for_write().unwrap();
+        assert!(registry.get("call_acp_agent").is_none());
+        assert!(registry.get("discover_acp_agents").is_none());
+        assert_eq!(registry.len(), 10);
     }
 }

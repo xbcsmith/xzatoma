@@ -577,6 +577,19 @@ pub struct AcpConfig {
     /// seconds before forcing the server to exit.
     #[serde(default)]
     pub graceful_shutdown_timeout: Option<u64>,
+
+    /// Named per-agent configuration entries.
+    ///
+    /// When non-empty each entry describes one agent with optional provider,
+    /// system-prompt, and thinking-mode overrides. When empty,
+    /// `effective_agents()` synthesises a single `"xzatoma"` entry that
+    /// describes the default single-agent deployment.
+    #[serde(default)]
+    pub agents: Vec<AcpAgentConfig>,
+
+    /// Outbound ACP client configuration for inter-agent tool calls.
+    #[serde(default)]
+    pub client: AcpClientConfig,
 }
 
 fn default_acp_enabled() -> bool {
@@ -642,11 +655,161 @@ impl Default for AcpConfig {
             session_eviction_poll_seconds: default_acp_session_eviction_poll_seconds(),
             cors_origins: Vec::new(),
             graceful_shutdown_timeout: None,
+            agents: Vec::new(),
+            client: AcpClientConfig::default(),
         }
     }
 }
 
-/// ACP route compatibility mode.
+/// Per-agent configuration entry for ACP multi-agent deployments.
+///
+/// Each entry in `AcpConfig::agents` describes one named agent with optional
+/// provider, system-prompt, and thinking-mode overrides that take precedence
+/// over the global `AcpConfig` values when the named agent handles a run.
+///
+/// When `agents` is empty, `AcpConfig::effective_agents` synthesises a single
+/// entry with `name = "xzatoma"` to describe the default agent.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpAgentConfig;
+///
+/// let agent = AcpAgentConfig {
+///     name: "reviewer".to_string(),
+///     description: "Code review agent".to_string(),
+///     provider: Some("ollama".to_string()),
+///     input_content_types: vec!["text/plain".to_string()],
+///     output_content_types: vec!["text/plain".to_string()],
+///     thinking_mode: None,
+///     system_prompt: Some("You are a strict code reviewer.".to_string()),
+/// };
+/// assert_eq!(agent.name, "reviewer");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpAgentConfig {
+    /// RFC 1123 label identifying this agent (e.g. `"xzatoma"`, `"reviewer"`).
+    pub name: String,
+
+    /// Human-readable description of this agent's purpose.
+    #[serde(default)]
+    pub description: String,
+
+    /// Optional provider override for this agent.
+    ///
+    /// When set, runs targeting this agent use the specified provider instead
+    /// of the global `provider.provider_type`. Supported values are `"copilot"`,
+    /// `"ollama"`, and `"openai"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Declared accepted input content types.
+    #[serde(default)]
+    pub input_content_types: Vec<String>,
+
+    /// Declared produced output content types.
+    #[serde(default)]
+    pub output_content_types: Vec<String>,
+
+    /// Optional thinking mode override (e.g. `"auto"`, `"fast"`, `"thorough"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
+
+    /// Optional system prompt override for runs targeting this agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+}
+
+/// Outbound ACP client configuration for inter-agent tool calls.
+///
+/// Controls the HTTP client used by `call_acp_agent` and
+/// `discover_acp_agents`. Setting `default_timeout_seconds` to `0` disables
+/// registration of those tools entirely.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpClientConfig;
+///
+/// let cfg = AcpClientConfig::default();
+/// assert_eq!(cfg.default_timeout_seconds, 30);
+/// assert!(cfg.allowed_base_urls.is_empty());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpClientConfig {
+    /// Per-request HTTP timeout in seconds for outbound ACP calls.
+    ///
+    /// A value of `0` disables registration of `call_acp_agent` and
+    /// `discover_acp_agents` tools entirely.
+    #[serde(default = "default_acp_client_timeout")]
+    pub default_timeout_seconds: u64,
+
+    /// SSRF allow-list of base URLs that may be contacted by inter-agent tools.
+    ///
+    /// An empty list blocks all outbound calls (any URL is rejected at
+    /// validation time, before any network request is made).
+    #[serde(default)]
+    pub allowed_base_urls: Vec<String>,
+}
+
+fn default_acp_client_timeout() -> u64 {
+    30
+}
+
+impl Default for AcpClientConfig {
+    fn default() -> Self {
+        Self {
+            default_timeout_seconds: default_acp_client_timeout(),
+            allowed_base_urls: Vec::new(),
+        }
+    }
+}
+
+impl AcpConfig {
+    /// Returns the effective agent list for the given provider type.
+    ///
+    /// When `agents` is empty, returns a single synthesised entry with
+    /// `name = "xzatoma"` and `provider = Some(provider_type)` so callers
+    /// always have at least one agent to work with.
+    ///
+    /// When `agents` is non-empty, returns the configured list as-is.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_type` - The global provider type string (e.g. `"copilot"`,
+    ///   `"ollama"`) used when synthesising the default entry.
+    ///
+    /// # Returns
+    ///
+    /// Returns a non-empty `Vec<AcpAgentConfig>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::AcpConfig;
+    ///
+    /// let config = AcpConfig::default();
+    /// let agents = config.effective_agents("ollama");
+    /// assert_eq!(agents.len(), 1);
+    /// assert_eq!(agents[0].name, "xzatoma");
+    /// assert_eq!(agents[0].provider, Some("ollama".to_string()));
+    /// ```
+    pub fn effective_agents(&self, provider_type: &str) -> Vec<AcpAgentConfig> {
+        if self.agents.is_empty() {
+            vec![AcpAgentConfig {
+                name: "xzatoma".to_string(),
+                description: String::new(),
+                provider: Some(provider_type.to_string()),
+                input_content_types: Vec::new(),
+                output_content_types: Vec::new(),
+                thinking_mode: None,
+                system_prompt: None,
+            }]
+        } else {
+            self.agents.clone()
+        }
+    }
+}
 ///
 /// `Versioned` serves ACP endpoints beneath a configurable versioned base path.
 /// `RootCompatible` reserves ACP-spec-style root paths such as `/ping` and
@@ -3285,6 +3448,32 @@ impl Config {
                     "acp.stdio.allowed_image_mime_types value '{}' must start with 'image/'",
                     mime_type
                 )));
+            }
+        }
+
+        // Validate per-agent entries.
+        for agent in &self.acp.agents {
+            if agent.name.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.agents[].name cannot be empty".to_string(),
+                ));
+            }
+            if let Some(ref sp) = agent.system_prompt
+                && sp.trim().is_empty()
+            {
+                return Err(XzatomaError::Config(format!(
+                    "acp.agents[].system_prompt for agent '{}' cannot be blank",
+                    agent.name
+                )));
+            }
+        }
+
+        // Validate outbound ACP client allow-list entries.
+        for url in &self.acp.client.allowed_base_urls {
+            if url.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.client.allowed_base_urls cannot contain empty values".to_string(),
+                ));
             }
         }
 
@@ -6393,6 +6582,165 @@ ssl_ca_location: "/etc/ssl/certs/ca.pem"
             config.acp.system_prompt.as_deref(),
             Some("you are a senior engineer")
         );
+    }
+
+    #[test]
+    fn test_acp_config_agents_defaults_empty() {
+        let config = AcpConfig::default();
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn test_effective_agents_empty_list_synthesises_xzatoma_entry() {
+        let config = AcpConfig::default();
+        let agents = config.effective_agents("ollama");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "xzatoma");
+        assert_eq!(agents[0].provider, Some("ollama".to_string()));
+        assert!(agents[0].input_content_types.is_empty());
+    }
+
+    #[test]
+    fn test_effective_agents_non_empty_list_returned_as_is() {
+        let config = AcpConfig {
+            agents: vec![
+                AcpAgentConfig {
+                    name: "agent-a".to_string(),
+                    description: "Agent A".to_string(),
+                    provider: Some("ollama".to_string()),
+                    input_content_types: vec!["text/plain".to_string()],
+                    output_content_types: vec![],
+                    thinking_mode: None,
+                    system_prompt: None,
+                },
+                AcpAgentConfig {
+                    name: "agent-b".to_string(),
+                    description: String::new(),
+                    provider: None,
+                    input_content_types: vec![],
+                    output_content_types: vec![],
+                    thinking_mode: Some("auto".to_string()),
+                    system_prompt: None,
+                },
+            ],
+            ..AcpConfig::default()
+        };
+        let agents = config.effective_agents("copilot");
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0].name, "agent-a");
+        assert_eq!(agents[1].name, "agent-b");
+    }
+
+    #[test]
+    fn test_acp_client_config_defaults() {
+        let cfg = AcpClientConfig::default();
+        assert_eq!(cfg.default_timeout_seconds, 30);
+        assert!(cfg.allowed_base_urls.is_empty());
+    }
+
+    #[test]
+    fn test_acp_config_client_defaults() {
+        let config = AcpConfig::default();
+        assert_eq!(config.client.default_timeout_seconds, 30);
+        assert!(config.client.allowed_base_urls.is_empty());
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_blank_agent_name() {
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "  ".to_string(),
+            description: String::new(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("acp.agents[].name cannot be empty")
+        );
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_blank_agent_system_prompt() {
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "myagent".to_string(),
+            description: String::new(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: Some("   ".to_string()),
+        }];
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("system_prompt"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_empty_allowed_base_url() {
+        let mut config = Config::default();
+        config.acp.client.allowed_base_urls = vec!["".to_string()];
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("allowed_base_urls cannot contain empty values")
+        );
+    }
+
+    #[test]
+    fn test_acp_agent_config_deserializes_from_yaml() {
+        let yaml = r#"
+name: reviewer
+description: "Code review agent"
+provider: ollama
+input_content_types:
+  - text/plain
+thinking_mode: auto
+system_prompt: "You are a reviewer."
+"#;
+        let agent: AcpAgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(agent.name, "reviewer");
+        assert_eq!(agent.provider, Some("ollama".to_string()));
+        assert_eq!(agent.thinking_mode, Some("auto".to_string()));
+    }
+
+    #[test]
+    fn test_acp_client_config_deserializes_from_yaml() {
+        let yaml = r#"
+default_timeout_seconds: 60
+allowed_base_urls:
+  - "http://agent1:8765"
+  - "http://agent2:8765"
+"#;
+        let cfg: AcpClientConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.default_timeout_seconds, 60);
+        assert_eq!(cfg.allowed_base_urls.len(), 2);
+    }
+
+    #[test]
+    fn test_acp_config_deserializes_with_agents_and_client() {
+        let yaml = r#"
+enabled: true
+host: "127.0.0.1"
+port: 8765
+agents:
+  - name: default
+    description: "Default agent"
+    provider: ollama
+client:
+  default_timeout_seconds: 45
+  allowed_base_urls:
+    - "http://localhost:9000"
+"#;
+        let config: AcpConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.agents.len(), 1);
+        assert_eq!(config.agents[0].name, "default");
+        assert_eq!(config.client.default_timeout_seconds, 45);
+        assert_eq!(config.client.allowed_base_urls[0], "http://localhost:9000");
     }
 }
 

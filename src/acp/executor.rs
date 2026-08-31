@@ -48,7 +48,7 @@ use crate::acp::runtime::{
 use crate::agent::Agent;
 use crate::chat_mode::SafetyMode;
 use crate::commands::build_agent_environment;
-use crate::config::{AcpSessionMode, Config};
+use crate::config::{AcpAgentConfig, AcpSessionMode, Config};
 use crate::error::Result;
 use crate::providers::{Provider, create_provider};
 
@@ -441,6 +441,31 @@ impl AcpExecutor {
 
         let working_dir = std::env::current_dir()?;
 
+        // Resolve per-agent configuration overrides (if any).
+        // The run record stores the agent_name set at run-creation time.
+        let agent_override: Option<AcpAgentConfig> = self
+            .runtime
+            .agent_name_for_run(run_id)
+            .ok()
+            .flatten()
+            .and_then(|name| {
+                self.config
+                    .acp
+                    .agents
+                    .iter()
+                    .find(|a| a.name == name)
+                    .cloned()
+            });
+
+        if let Some(ref agent) = agent_override {
+            tracing::debug!(
+                agent_name = %agent.name,
+                provider_override = ?agent.provider,
+                thinking_mode_override = ?agent.thinking_mode,
+                "Applying per-agent ACP config overrides"
+            );
+        }
+
         // Determine safety mode override based on allow_dangerous config.
         let safety_mode_override = if self.config.acp.allow_dangerous {
             Some(SafetyMode::NeverConfirm)
@@ -466,8 +491,13 @@ impl AcpExecutor {
         // McpToolExecutor instances (registered in tools) can call back to it.
         let _mcp_manager = env.mcp_manager;
 
-        let provider_box =
-            create_provider(&self.config.provider.provider_type, &self.config.provider).await?;
+        // Apply per-agent provider override when specified.
+        let effective_provider_type = agent_override
+            .as_ref()
+            .and_then(|a| a.provider.as_deref())
+            .unwrap_or(self.config.provider.provider_type.as_str());
+
+        let provider_box = create_provider(effective_provider_type, &self.config.provider).await?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
 
         let subagent_tool = crate::tools::SubagentTool::new_with_config(
@@ -480,17 +510,24 @@ impl AcpExecutor {
         .await?;
         tools.register("subagent", Arc::new(subagent_tool));
 
+        // Register the per-run await_input tool so the agent can pause execution
+        // and wait for an external resume payload.
+        let await_input_tool = crate::tools::await_input::AwaitInputTool::new(
+            self.runtime.clone(),
+            run_id.to_string(),
+        );
+        tools.register("await_input", Arc::new(await_input_tool));
+
         let mut agent =
             Agent::new_from_shared_provider(provider, tools, self.config.agent.clone())?;
 
         // Inject user-defined system prompt before execution.
-        // Prefer config.acp.system_prompt (ACP-specific override) over
-        // config.agent.system_prompt (global override).
-        let effective_sp = self.config.acp.system_prompt.as_deref().or(self
-            .config
-            .agent
-            .system_prompt
-            .as_deref());
+        // Priority: per-agent system_prompt > acp.system_prompt > agent.system_prompt.
+        let effective_sp = agent_override
+            .as_ref()
+            .and_then(|a| a.system_prompt.as_deref())
+            .or(self.config.acp.system_prompt.as_deref())
+            .or(self.config.agent.system_prompt.as_deref());
         if let Some(sp) = effective_sp
             && !sp.trim().is_empty()
         {
@@ -841,5 +878,68 @@ mod tests {
             .unwrap();
         let outcome2 = executor.execute_sync(run2.id.as_str()).await.unwrap();
         assert!(matches!(outcome2, AcpExecutorOutcome::Completed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_per_agent_system_prompt_override() {
+        use crate::config::AcpAgentConfig;
+
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.acp.system_prompt = Some("ACP global prompt.".to_string());
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "reviewer".to_string(),
+            description: "Code reviewer".to_string(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: Some("You are a strict reviewer.".to_string()),
+        }];
+
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor =
+            AcpExecutor::new_mock_success(config, runtime.clone(), "mock review".to_string());
+
+        // Run targeting the named agent.
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new(
+                    "Review this".to_string(),
+                ))],
+            )
+            .unwrap(),
+        ])
+        .with_agent_name("reviewer".to_string())
+        .with_mode(AcpRuntimeExecuteMode::Sync);
+
+        let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
+        // Mock short-circuits provider call; verifies the override code path compiles and runs.
+        assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_no_matching_agent_falls_back_to_global_config() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor =
+            AcpExecutor::new_mock_success(config, runtime.clone(), "fallback response".to_string());
+
+        // Run with an agent_name that does not match any configured agent.
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
+            )
+            .unwrap(),
+        ])
+        .with_agent_name("nonexistent-agent".to_string())
+        .with_mode(AcpRuntimeExecuteMode::Sync);
+
+        let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
+        assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
     }
 }

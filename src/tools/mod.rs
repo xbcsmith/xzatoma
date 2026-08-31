@@ -3,7 +3,11 @@
 //! This module contains tool definitions, tool registry, and tool implementations
 //! for file operations, terminal execution, and plan parsing.
 
+pub mod acp_agent;
+pub mod acp_discover;
 pub mod activate_skill;
+/// Await-input tool for pausing ACP runs pending external input.
+pub mod await_input;
 pub mod copy_path;
 pub mod create_directory;
 pub mod delete_path;
