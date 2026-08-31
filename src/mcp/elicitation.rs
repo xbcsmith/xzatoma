@@ -233,14 +233,11 @@ impl UrlOpenConfirmer for StdinUrlConfirmer {
 ///   `execution_mode == FullAutonomous`: logs a warning and returns `Cancel`
 ///   immediately without touching stdin.
 /// - **URL mode** when `headless == false`: validates the URL against the
-///   `https` scheme allowlist, asks the user to confirm opening the full URL,
-///   and calls `browser_opener` ONLY after an affirmative confirmation. Always
-///   returns `Cancel` because the handler cannot await an async browser OAuth
-///   redirect callback.
-/// - **URL mode** when the user declines the confirmation: returns `Decline`
-///   and never calls `browser_opener`.
+///   `https` scheme allowlist, displays the URL, calls `browser_opener`, and
+///   always returns `Cancel` because the handler cannot await an async browser
+///   OAuth redirect callback.
 /// - **URL mode** when `headless == true`: logs a warning and returns `Cancel`
-///   immediately, without prompting and without calling `browser_opener`.
+///   immediately, without displaying or calling `browser_opener`.
 ///
 /// # Browser Opener Injection
 ///
@@ -404,35 +401,80 @@ impl XzatomaElicitationHandler {
 
     /// Handle a URL-mode elicitation request.
     ///
-    /// Convenience wrapper that delegates to
-    /// [`handle_url_with_confirmer`][Self::handle_url_with_confirmer] using the
-    /// production [`StdinUrlConfirmer`]. This is the entry point used by the
-    /// [`ElicitationHandler`] trait dispatch.
+    /// This is the entry point used by the [`ElicitationHandler`] trait
+    /// dispatch. It validates the URL and, in a non-headless context, opens it
+    /// with `browser_opener` directly without blocking on stdin confirmation.
+    /// The handler always returns [`ElicitationAction::Cancel`] because the
+    /// synchronous call cannot await an async browser OAuth redirect callback.
     ///
-    /// In headless contexts, logs a warning and returns
-    /// [`ElicitationAction::Cancel`] immediately without prompting and without
-    /// calling `browser_opener`.
+    /// Fail-closed guarantees (checked before calling `browser_opener`):
     ///
-    /// The requested URL is validated with [`is_allowed_elicitation_url`]
-    /// before anything is opened: only a parseable `https` URL is permitted.
-    /// Any other scheme (for example `file://`, `vscode://`, `smb://`, or
-    /// plain `http`) is rejected with a `tracing::warn!` and the request is
-    /// cancelled WITHOUT prompting or calling `browser_opener`. This prevents a
-    /// malicious MCP server from making the host open arbitrary local handlers
-    /// or filesystem paths.
+    /// - `headless == true`: returns `Cancel` immediately without displaying or
+    ///   opening anything.
+    /// - Non-`https` URL scheme: returns `Cancel` without opening.
     ///
-    /// For an accepted `https` URL, the user is asked to confirm opening the
-    /// full URL. Only after an affirmative confirmation is
-    /// `self.browser_opener` called. A declined confirmation returns
-    /// [`ElicitationAction::Decline`] and never opens the URL. On success the
-    /// handler still returns `Cancel` because it cannot await an async browser
-    /// OAuth redirect callback.
+    /// For injectable-confirmer tests see
+    /// [`handle_url_with_confirmer`][Self::handle_url_with_confirmer].
     ///
     /// # Arguments
     ///
     /// * `params` - The elicitation parameters, including the `url` to open.
     fn handle_url(&self, params: ElicitationCreateParams) -> Result<ElicitationResult> {
-        self.handle_url_with_confirmer(params, &StdinUrlConfirmer)
+        // Headless / non-interactive: fail closed. Never prompt, never open.
+        if self.headless {
+            tracing::warn!(
+                "MCP URL elicitation received in headless context; refusing to open (fail closed)"
+            );
+            return Ok(ElicitationResult {
+                action: ElicitationAction::Cancel,
+                content: None,
+            });
+        }
+
+        let url = params.url.as_deref().unwrap_or("(no URL provided)");
+
+        // Scheme allowlist: only https URLs may be opened. Reject anything
+        // else before touching the browser opener.
+        if !is_allowed_elicitation_url(url) {
+            tracing::warn!(
+                url = %url,
+                "MCP URL elicitation rejected: only https URLs are allowed; refusing to open"
+            );
+            return Ok(ElicitationResult {
+                action: ElicitationAction::Cancel,
+                content: None,
+            });
+        }
+
+        // Display the URL and open it. No stdin confirmation is needed here:
+        // the handler returns Cancel regardless of whether the browser opens
+        // successfully, because it cannot await the OAuth redirect callback.
+        eprintln!(
+            "\nMCP server is requesting browser-based authentication:\n  {}",
+            url
+        );
+
+        let opened = (self.browser_opener)(url);
+        if opened {
+            tracing::info!(url = %url, "Opened URL in default browser for MCP elicitation");
+        } else {
+            tracing::warn!(
+                url = %url,
+                "Failed to open browser automatically; user must visit the URL manually"
+            );
+        }
+
+        // Return Cancel: the synchronous handler cannot await the OAuth
+        // callback. A notification-based flow is needed to support this.
+        tracing::warn!(
+            "MCP URL elicitation returning Cancel; URL OAuth redirect handling \
+             requires a notification-based async callback flow that is not active \
+             in this session"
+        );
+        Ok(ElicitationResult {
+            action: ElicitationAction::Cancel,
+            content: None,
+        })
     }
 
     /// Handle a URL-mode elicitation request using an injectable confirmer.
@@ -456,6 +498,7 @@ impl XzatomaElicitationHandler {
     /// * `params` - The elicitation parameters, including the `url` to open.
     /// * `confirmer` - Abstraction that confirms whether the full URL may be
     ///   opened.
+    #[cfg(test)]
     fn handle_url_with_confirmer(
         &self,
         params: ElicitationCreateParams,

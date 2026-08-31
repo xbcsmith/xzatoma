@@ -185,10 +185,35 @@ pub struct OllamaConfig {
     /// Set via the `XZATOMA_OLLAMA_REQUEST_TIMEOUT` environment variable.
     #[serde(default = "default_ollama_request_timeout")]
     pub request_timeout_seconds: u64,
+
+    /// Maximum number of seconds to wait between successive streaming chunks.
+    ///
+    /// If no bytes arrive from the Ollama streaming response within this window,
+    /// the request is abandoned and an error is returned.  This catches the case
+    /// where Ollama accepts the request and sends `200 OK` headers but then stalls
+    /// or crashes before producing any tokens — which happens when a prompt
+    /// exceeds the model's context window or when Ollama runs out of memory
+    /// loading the KV cache.
+    ///
+    /// The timeout is applied per-chunk, not to the total response time, so long
+    /// responses that generate tokens at a steady pace are not affected.
+    ///
+    /// Defaults to 120 seconds.  Increase this when using very large models
+    /// (19 GB+) on machines where initial KV-cache loading takes longer.
+    ///
+    /// Set via the `XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT` environment variable.
+    #[serde(default = "default_ollama_stream_idle_timeout")]
+    pub stream_idle_timeout_seconds: u64,
 }
 
 fn default_ollama_host() -> String {
-    "http://localhost:11434".to_string()
+    // Use 127.0.0.1 instead of localhost to avoid the DNS dual-stack lookup
+    // that resolves localhost to [::1, 127.0.0.1].  On macOS (and most Linux
+    // systems) Ollama only binds to the IPv4 loopback, so the IPv6 attempt
+    // always fails with ECONNREFUSED.  For new (non-idempotent) POST requests
+    // hyper/reqwest does not retry after an ECONNREFUSED on a stale pool entry,
+    // which surfaces as "error sending request for url" in the streaming path.
+    "http://127.0.0.1:11434".to_string()
 }
 
 fn default_ollama_model() -> String {
@@ -199,12 +224,17 @@ fn default_ollama_request_timeout() -> u64 {
     600
 }
 
+fn default_ollama_stream_idle_timeout() -> u64 {
+    120
+}
+
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
             host: default_ollama_host(),
             model: default_ollama_model(),
             request_timeout_seconds: default_ollama_request_timeout(),
+            stream_idle_timeout_seconds: default_ollama_stream_idle_timeout(),
         }
     }
 }
@@ -1593,6 +1623,74 @@ impl Config {
         Ok(config)
     }
 
+    /// Returns the names of top-level config sections that differ between
+    /// `self` and `other`.
+    ///
+    /// Used by `/config reload` to summarize what changed without ever
+    /// printing raw field values (which could include secrets such as
+    /// provider API keys). Compares each top-level field via its YAML
+    /// representation rather than deriving `PartialEq` on `Config`, so this
+    /// stays decoupled from the exact field types used inside each section.
+    ///
+    /// # Returns
+    ///
+    /// Section names (`"provider"`, `"agent"`, `"watcher"`, `"mcp"`, `"acp"`,
+    /// `"skills"`, `"log"`) that differ, in a fixed, stable order. Empty when
+    /// the two configs are equivalent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::Config;
+    ///
+    /// let base = Config::default();
+    /// let mut changed = Config::default();
+    /// changed.provider.copilot.model = "gpt-5".to_string();
+    ///
+    /// assert_eq!(base.changed_sections(&changed), vec!["provider"]);
+    /// assert!(base.changed_sections(&base).is_empty());
+    /// ```
+    pub fn changed_sections(&self, other: &Config) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+
+        let mut push_if_different = |name: &'static str, differs: bool| {
+            if differs {
+                changed.push(name);
+            }
+        };
+
+        push_if_different(
+            "provider",
+            serde_yaml::to_value(&self.provider).ok() != serde_yaml::to_value(&other.provider).ok(),
+        );
+        push_if_different(
+            "agent",
+            serde_yaml::to_value(&self.agent).ok() != serde_yaml::to_value(&other.agent).ok(),
+        );
+        push_if_different(
+            "watcher",
+            serde_yaml::to_value(&self.watcher).ok() != serde_yaml::to_value(&other.watcher).ok(),
+        );
+        push_if_different(
+            "mcp",
+            serde_yaml::to_value(&self.mcp).ok() != serde_yaml::to_value(&other.mcp).ok(),
+        );
+        push_if_different(
+            "acp",
+            serde_yaml::to_value(&self.acp).ok() != serde_yaml::to_value(&other.acp).ok(),
+        );
+        push_if_different(
+            "skills",
+            serde_yaml::to_value(&self.skills).ok() != serde_yaml::to_value(&other.skills).ok(),
+        );
+        push_if_different(
+            "log",
+            serde_yaml::to_value(&self.log).ok() != serde_yaml::to_value(&other.log).ok(),
+        );
+
+        changed
+    }
+
     fn default_config() -> Self {
         Self {
             provider: ProviderConfig {
@@ -1640,6 +1738,14 @@ impl Config {
                 self.provider.ollama.request_timeout_seconds = value;
             } else {
                 tracing::warn!("Invalid XZATOMA_OLLAMA_REQUEST_TIMEOUT: {}", timeout);
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.ollama.stream_idle_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT: {}", timeout);
             }
         }
 
@@ -1898,6 +2004,8 @@ impl Config {
                     security: None,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
                 });
             }
 
@@ -1922,6 +2030,8 @@ impl Config {
                     security: None,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
                 });
             }
 
@@ -2185,6 +2295,8 @@ impl Config {
                     security,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
@@ -3199,6 +3311,47 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self::default_config()
+    }
+}
+
+#[cfg(test)]
+mod changed_sections_tests {
+    use super::*;
+
+    #[test]
+    fn test_changed_sections_identical_configs_returns_empty() {
+        let base = Config::default_config();
+        let other = Config::default_config();
+
+        assert!(base.changed_sections(&other).is_empty());
+    }
+
+    #[test]
+    fn test_changed_sections_detects_provider_change() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.provider.copilot.model = "gpt-5".to_string();
+
+        assert_eq!(base.changed_sections(&other), vec!["provider"]);
+    }
+
+    #[test]
+    fn test_changed_sections_detects_multiple_changes() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.provider.copilot.model = "gpt-5".to_string();
+        other.skills.enabled = !other.skills.enabled;
+
+        assert_eq!(base.changed_sections(&other), vec!["provider", "skills"]);
+    }
+
+    #[test]
+    fn test_changed_sections_detects_agent_change() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.agent.max_turns += 1;
+
+        assert_eq!(base.changed_sections(&other), vec!["agent"]);
     }
 }
 
@@ -4387,6 +4540,34 @@ output_max_size: 4096
         let mut config = Config::default();
         config.apply_env_vars();
         assert_eq!(config.provider.ollama.request_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_ollama_config_stream_idle_timeout_default() {
+        let config = OllamaConfig::default();
+        assert_eq!(config.stream_idle_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_stream_idle_timeout() {
+        let yaml = "host: http://localhost:11434\nmodel: llama3.2:latest\nstream_idle_timeout_seconds: 60\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.stream_idle_timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_omits_stream_idle_timeout_uses_default() {
+        let yaml = "host: http://localhost:11434\nmodel: llama3.2:latest\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.stream_idle_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_ollama_stream_idle_timeout() {
+        let _guard = EnvVarGuard::set("XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT", "60");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.ollama.stream_idle_timeout_seconds, 60);
     }
 
     #[test]
@@ -6079,11 +6260,58 @@ pub struct KafkaWatcherConfig {
     /// responsiveness at the cost of more idle wakeups. Defaults to `1000`.
     #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+
+    /// Maximum time in milliseconds between two calls to `poll()` by the consumer.
+    ///
+    /// When a plan takes longer than this value to execute, the rdkafka consumer
+    /// is evicted from its consumer group. Increase this value for long-running
+    /// plans. Defaults to 3 600 000 ms (1 hour).
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    #[serde(default = "default_max_poll_interval_ms")]
+    pub max_poll_interval_ms: u64,
+
+    /// Number of seconds to suppress broker connectivity errors at startup.
+    ///
+    /// During the first `startup_stabilization_secs` seconds after the consumer
+    /// starts, rdkafka log callbacks for broker connectivity errors are downgraded
+    /// to `DEBUG` level. This prevents noisy `WARN`/`ERROR` log bursts that occur
+    /// while rdkafka is probing brokers during normal startup. Defaults to 10.
+    #[serde(default = "default_startup_stabilization_secs")]
+    pub startup_stabilization_secs: u64,
 }
 
 /// Default broker address family for rdkafka connections.
 fn default_broker_address_family() -> String {
     "v4".to_string()
+}
+
+/// Default maximum poll interval for the Kafka consumer (milliseconds).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::KafkaWatcherConfig;
+///
+/// let cfg = KafkaWatcherConfig::default();
+/// assert_eq!(cfg.max_poll_interval_ms, 3_600_000);
+/// ```
+fn default_max_poll_interval_ms() -> u64 {
+    3_600_000
+}
+
+/// Default startup stabilization window in seconds.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::KafkaWatcherConfig;
+///
+/// let cfg = KafkaWatcherConfig::default();
+/// assert_eq!(cfg.startup_stabilization_secs, 10);
+/// ```
+fn default_startup_stabilization_secs() -> u64 {
+    10
 }
 
 impl Default for KafkaWatcherConfig {
@@ -6122,6 +6350,8 @@ impl Default for KafkaWatcherConfig {
             security: None,
             broker_address_family: default_broker_address_family(),
             poll_interval_ms: default_poll_interval_ms(),
+            max_poll_interval_ms: default_max_poll_interval_ms(),
+            startup_stabilization_secs: default_startup_stabilization_secs(),
         }
     }
 }

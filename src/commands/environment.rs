@@ -87,7 +87,9 @@ pub struct AgentEnvironment {
 /// * `config` - Global application configuration.
 /// * `working_dir` - Current working directory used for skill discovery.
 /// * `headless` - Pass `true` for non-interactive (headless) invocations such
-///   as the `run` command or ACP executor; `false` for interactive chat.
+///   as the `run` command or ACP executor; `false` for interactive chat. When
+///   `true`, the MCP client manager's execution context is set to headless,
+///   enabling auto-approval of MCP sampling requests.
 /// * `override_mode` - When `Some(mode)`, replaces the mode derived from
 ///   `config.agent.chat.default_mode`. Pass `None` to use the config value.
 ///   Watcher callers pass `Some(ChatMode::Watcher)` to obtain a tool registry
@@ -162,6 +164,17 @@ pub async fn build_agent_environment(
 
     // 6. Build MCP client manager.
     let mcp_manager = build_mcp_manager_from_config(config).await?;
+
+    // Set the execution context on the manager so that sampling and
+    // elicitation handlers receive the correct headless flag for this
+    // invocation (headless=true for run/watch, false for interactive chat).
+    if let Some(ref manager) = mcp_manager {
+        let execution_mode = config.agent.terminal.default_mode;
+        manager
+            .write()
+            .await
+            .set_execution_context(execution_mode, headless);
+    }
 
     // 7. Register MCP tools.
     if let Some(ref manager) = mcp_manager {

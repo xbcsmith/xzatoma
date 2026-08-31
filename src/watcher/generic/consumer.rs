@@ -54,6 +54,7 @@
 //! ```
 
 use crate::error::{Result, XzatomaError};
+use crate::watcher::startup_context::QuietStartupContext;
 use async_trait::async_trait;
 use futures::StreamExt;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
@@ -236,7 +237,7 @@ fn is_transient_kafka_recv_error(err: &KafkaError) -> bool {
 /// `enable.auto.commit=false` so every offset advance requires an explicit
 /// call to [`commit`](GenericConsumerTrait::commit).
 pub struct RealGenericConsumer {
-    inner: StreamConsumer,
+    inner: StreamConsumer<QuietStartupContext>,
     /// The most recently received message, stored for semantic tracking.
     pending_commit: Option<RawKafkaMessage>,
     /// The topic, partition, and offset of the most recently received message.
@@ -270,7 +271,7 @@ impl RealGenericConsumer {
     /// inner.subscribe(&["my-topic"]).unwrap();
     /// let _consumer = RealGenericConsumer::new(inner);
     /// ```
-    pub fn new(inner: StreamConsumer) -> Self {
+    pub fn new(inner: StreamConsumer<QuietStartupContext>) -> Self {
         Self {
             inner,
             pending_commit: None,
@@ -318,9 +319,50 @@ impl RealGenericConsumer {
         }
         client_config.set("enable.auto.commit", "false");
 
-        let inner: StreamConsumer = client_config.create().map_err(|e| {
-            XzatomaError::Watcher(format!("Failed to create Kafka consumer: {}", e))
+        let context = QuietStartupContext::new(std::time::Duration::ZERO);
+        let inner: StreamConsumer<QuietStartupContext> =
+            client_config.create_with_context(context).map_err(|e| {
+                XzatomaError::Watcher(format!("Failed to create Kafka consumer: {}", e))
+            })?;
+
+        inner.subscribe(&[topic]).map_err(|e| {
+            XzatomaError::Watcher(format!("Failed to subscribe to topic '{}': {}", topic, e))
         })?;
+
+        Ok(Self::new(inner))
+    }
+
+    /// Build a `RealGenericConsumer` with a specified startup stabilization window.
+    ///
+    /// This method is used by `GenericWatcher` to pass the configured
+    /// `startup_stabilization_secs` value through to the consumer context.
+    ///
+    /// # Arguments
+    ///
+    /// * `kafka_settings` - Kafka config key-value pairs
+    /// * `topic` - Topic to subscribe to
+    /// * `startup_stabilization_secs` - Duration of the startup suppression window
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Watcher` if consumer creation or subscription fails.
+    pub(crate) fn from_config_with_startup(
+        kafka_settings: &[(String, String)],
+        topic: &str,
+        startup_stabilization_secs: u64,
+    ) -> Result<Self> {
+        let mut client_config = ClientConfig::new();
+        for (key, value) in kafka_settings {
+            client_config.set(key, value);
+        }
+        client_config.set("enable.auto.commit", "false");
+
+        let context =
+            QuietStartupContext::new(std::time::Duration::from_secs(startup_stabilization_secs));
+        let inner: StreamConsumer<QuietStartupContext> =
+            client_config.create_with_context(context).map_err(|e| {
+                XzatomaError::Watcher(format!("Failed to create Kafka consumer: {}", e))
+            })?;
 
         inner.subscribe(&[topic]).map_err(|e| {
             XzatomaError::Watcher(format!("Failed to subscribe to topic '{}': {}", topic, e))

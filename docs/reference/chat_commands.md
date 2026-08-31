@@ -4,7 +4,7 @@
 
 XZatoma exposes a set of slash commands in interactive chat sessions. All
 commands follow a unified UX contract described below. This reference covers all
-fifteen commands, their arguments, aliases, and any ACP-specific notes.
+sixteen commands, their arguments, aliases, and any ACP-specific notes.
 
 | Command      | Description                                  | Bare behavior            | Status behavior                    | Example action             |
 | ------------ | -------------------------------------------- | ------------------------ | ---------------------------------- | -------------------------- |
@@ -23,6 +23,7 @@ fifteen commands, their arguments, aliases, and any ACP-specific notes.
 | `/subagents` | Toggle subagent delegation                   | Shows subagents help     | Shows enabled or disabled          | `/subagents on`            |
 | `/system`    | Inspect or replace the active system prompt  | Shows system prompt help | Shows current system prompt        | `/system You are concise.` |
 | `/streaming` | Toggle or show streaming state               | Shows streaming help     | Shows current streaming state      | `/streaming on`            |
+| `/config`    | Reload the config file without restarting    | Shows config help        | Shows the active config file path  | `/config reload`           |
 
 Several commands also accept short aliases: `/planning` and `/write` for
 `/mode planning` and `/mode write`; `/safe` and `/yolo` for `/safety on` and
@@ -365,6 +366,35 @@ following commands are also not supported in ACP mode:
 
 - `/auth` — authentication is managed outside the ACP session
 - `/exit` — use the Zed UI to close the chat session
+
+### /config
+
+**Purpose:** Re-read the config file used at startup and apply it to the
+current session without restarting the process.
+
+**Usage:**
+
+```text
+/config
+/config status
+/config reload
+```
+
+**Arguments:**
+
+- `status` — print the path to the active config file
+- `reload` — reload the config file and apply it to this session
+
+**ACP notes:** None. Works identically in terminal chat mode and ACP (Zed)
+mode -- no ACP session-config dropdown is involved. `/config reload` rebuilds
+the provider, tool registry, skills, and MCP connections from the new config
+while preserving conversation history. Log level/format and persistence
+storage paths (`agent.subagent.persistence_path`, the history database path)
+cannot be applied this way and still require a restart; the response calls
+out any such change by name. In ACP mode, the reload also applies to any new
+session created afterward in the same subprocess, but sibling sessions
+already open at reload time keep their existing agent until they also run
+`/config reload`.
 
 ## Commands Without a Status Subcommand
 

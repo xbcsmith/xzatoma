@@ -16,9 +16,9 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    SpecialCommand, format_mode_help_text, format_model_help_text, format_safety_help_text,
-    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
-    parse_special_command, print_help, print_models_help,
+    SpecialCommand, format_config_help_text, format_mode_help_text, format_model_help_text,
+    format_safety_help_text, format_streaming_help_text, format_subagents_help_text,
+    format_system_help_text, parse_special_command, print_help, print_models_help,
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
@@ -500,6 +500,14 @@ pub mod chat {
         /// When true, response and reasoning tokens are streamed to stdout as
         /// they arrive. Requires the configured provider to support streaming.
         pub streaming: bool,
+        /// Resolved path to the config file used at startup, as returned by
+        /// `Config::find_config_path`. Retained so `/config reload` can
+        /// re-read the same file without re-deriving the lookup path.
+        pub config_path: String,
+        /// CLI arguments used to build the initial config, retained so
+        /// `/config reload` can reapply the same overrides (e.g.
+        /// `--provider`) that were in effect at startup.
+        pub common: crate::cli::CommonArgs,
     }
 
     /// Start interactive chat mode
@@ -533,7 +541,10 @@ pub mod chat {
             thinking_effort,
             system_prompt,
             streaming,
+            config_path,
+            common,
         } = options;
+        let mut config = config;
 
         tracing::info!("Starting interactive chat mode");
         // Keep the CLI flag value separate from config so we can distinguish
@@ -541,14 +552,13 @@ pub mod chat {
         // config/env prompts (which only apply to new sessions).
         let cli_system_prompt = system_prompt;
 
-        let provider_type_owned: String =
+        let mut provider_type_owned: String =
             provider_name.unwrap_or_else(|| config.provider.provider_type.clone());
-        let provider_type: &str = &provider_type_owned;
 
         let working_dir = std::env::current_dir()?;
         let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
         let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
-        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
+        let mut active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         // Initialize mode state from command-line arguments
         // Defaults: Planning mode, AlwaysConfirm (safe) safety mode
@@ -574,7 +584,7 @@ pub mod chat {
         // Chat is interactive (headless=false); the Arc must stay alive for the
         // entire duration of run_chat so that McpToolExecutor instances can call
         // back to it during agent turns.
-        let mcp_manager = build_mcp_manager_from_config(&config).await?;
+        let mut mcp_manager = build_mcp_manager_from_config(&config).await?;
 
         // Register MCP tools into the registry.
         if let Some(ref manager) = mcp_manager {
@@ -600,7 +610,7 @@ pub mod chat {
         };
 
         // Create provider
-        let provider_box = create_provider(provider_type, &config.provider).await?;
+        let provider_box = create_provider(&provider_type_owned, &config.provider).await?;
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
@@ -810,6 +820,11 @@ pub mod chat {
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
         loop {
+            // Recomputed each iteration (rather than borrowed once before the
+            // loop) so `/config reload` can update `provider_type_owned` in
+            // place without fighting a long-lived borrow.
+            let provider_type: &str = &provider_type_owned;
+
             // Build a prompt that includes provider/model when available.
             let current_model: Option<String> = {
                 let m = agent.provider().get_current_model();
@@ -982,10 +997,13 @@ pub mod chat {
 
                             println!("Summarizing conversation using model: {}...", summary_model);
 
-                            // Perform summarization
+                            // Perform summarization. Cloned from the live agent (not the
+                            // outer `provider` binding) so this reflects the current
+                            // provider even after a `/config reload` swaps `agent` in place.
+                            let current_provider = agent.provider_arc();
                             match perform_context_summary(
                                 &mut agent,
-                                Arc::clone(&provider),
+                                current_provider,
                                 &summary_model,
                             )
                             .await
@@ -1095,6 +1113,28 @@ pub mod chat {
                                     "disabled"
                                 }
                             );
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowConfigHelp) => {
+                            println!("{}", format_config_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowConfigStatus) => {
+                            println!("Active config file: {}\n", config_path);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ConfigReload) => {
+                            handle_config_reload(
+                                &mut agent,
+                                &mut config,
+                                &mut provider_type_owned,
+                                &mut mcp_manager,
+                                &mut active_skill_registry,
+                                &config_path,
+                                &common,
+                                &working_dir,
+                            )
+                            .await?;
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,
@@ -1694,6 +1734,128 @@ pub mod chat {
         Ok(())
     }
 
+    /// Handle `/config reload`: re-read the config file and apply it to the
+    /// live session.
+    ///
+    /// Rebuilds the provider, tool registry, skills, and MCP connections from
+    /// the newly loaded config while preserving conversation history. Some
+    /// settings (log level/format, persistence storage paths) cannot be
+    /// applied without a full restart; when those change, the summary calls
+    /// them out by name instead of silently ignoring them.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent; replaced in place on success.
+    /// * `config` - The current session config; replaced in place on success.
+    /// * `provider_type_owned` - The current provider type name; updated in
+    ///   place so the prompt and status commands reflect the new provider.
+    /// * `mcp_manager` - The current MCP client manager; replaced in place.
+    /// * `active_skill_registry` - The current active-skill registry;
+    ///   replaced in place (resets which skills are marked active).
+    /// * `config_path` - Path to reload the config file from.
+    /// * `common` - CLI overrides to reapply after loading from disk.
+    /// * `working_dir` - Working directory used for skill discovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if rebuilding the provider or agent environment
+    /// fails after the new config has already passed validation. A config
+    /// file that fails to load or validate is reported to the user and
+    /// leaves all session state untouched.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_config_reload(
+        agent: &mut Agent,
+        config: &mut Config,
+        provider_type_owned: &mut String,
+        mcp_manager: &mut Option<Arc<tokio::sync::RwLock<crate::mcp::manager::McpClientManager>>>,
+        active_skill_registry: &mut Arc<std::sync::Mutex<ActiveSkillRegistry>>,
+        config_path: &str,
+        common: &crate::cli::CommonArgs,
+        working_dir: &std::path::Path,
+    ) -> Result<()> {
+        use colored::Colorize;
+
+        let new_config = match Config::load(config_path, common) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{}", format!("Config reload failed: {e}").red());
+                return Ok(());
+            }
+        };
+        if let Err(e) = new_config.validate() {
+            eprintln!("{}", format!("Config reload failed validation: {e}").red());
+            return Ok(());
+        }
+
+        let changed = config.changed_sections(&new_config);
+        if changed.is_empty() {
+            println!("Config reloaded: no changes detected.\n");
+            *config = new_config;
+            return Ok(());
+        }
+
+        // Compute restart-required callouts before `config` is overwritten below.
+        let persistence_path_changed =
+            config.agent.subagent.persistence_path != new_config.agent.subagent.persistence_path;
+        let log_changed = changed.contains(&"log");
+
+        let new_provider_type = new_config.provider.provider_type.clone();
+        let new_provider_box = create_provider(&new_provider_type, &new_config.provider).await?;
+        let new_provider: Arc<dyn crate::providers::Provider> = Arc::from(new_provider_box);
+
+        let env = build_agent_environment(&new_config, working_dir, false, None, None).await?;
+        let mut new_tools = env.tool_registry;
+
+        // Register subagent tool for task delegation, mirroring startup.
+        let subagent_tool = SubagentTool::new_with_config(
+            Arc::clone(&new_provider),
+            &new_config.provider,
+            new_config.agent.clone(),
+            new_tools.clone(),
+            0,
+        )
+        .await?;
+        new_tools.register("subagent", Arc::new(subagent_tool));
+
+        // Preserve conversation history across the reload.
+        let mut conversation = agent.conversation().clone();
+        conversation.set_max_tokens(new_config.agent.conversation.max_tokens);
+
+        let new_agent = Agent::with_conversation_and_shared_provider(
+            Arc::clone(&new_provider),
+            new_tools,
+            new_config.agent.clone(),
+            conversation,
+        )?;
+
+        *agent = new_agent;
+        *provider_type_owned = new_provider_type;
+        *mcp_manager = env.mcp_manager;
+        *active_skill_registry = env.active_skill_registry;
+        *config = new_config;
+
+        println!(
+            "{}",
+            format!("Config reloaded. Changed: {}.", changed.join(", ")).green()
+        );
+        if persistence_path_changed {
+            println!(
+                "{}",
+                "Note: agent.subagent.persistence_path changed but requires a restart to take effect."
+                    .yellow()
+            );
+        }
+        if log_changed {
+            println!(
+                "{}",
+                "Note: log settings changed but require a restart to take effect.".yellow()
+            );
+        }
+        println!();
+
+        Ok(())
+    }
+
     /// Perform context summarization and reset conversation
     ///
     /// Summarizes the conversation using the specified model and resets the conversation
@@ -2010,6 +2172,7 @@ pub mod chat {
                 host: "http://127.0.0.1:9".to_string(),
                 model: "llama3.2:3b".to_string(),
                 request_timeout_seconds: 1,
+                stream_idle_timeout_seconds: 120,
             };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;

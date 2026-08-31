@@ -38,13 +38,135 @@
 //! The one exception is [`XzeprWatcher`], re-exported here to provide the dispatch
 //! call site used in `commands::watch::run_watch`.
 
+pub mod circuit_breaker;
 pub mod generic;
 pub mod kafka_security;
 pub mod lifecycle;
 pub mod logging;
 pub mod plan_executor;
+pub mod startup_context;
 pub mod topic_admin;
 pub mod xzepr;
+
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
+pub use startup_context::QuietStartupContext;
+
+/// Exponential back-off policy for Kafka consumer retry loops.
+///
+/// On each consecutive Kafka error, call [`increment`][Self::increment] to
+/// double the sleep delay (capped at `max_delay`). Call [`reset`][Self::reset]
+/// after any successful event to return to the initial delay.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::watcher::BackOffPolicy;
+///
+/// let mut policy = BackOffPolicy::new();
+/// assert_eq!(policy.current_delay_ms(), 500);
+/// policy.increment();
+/// assert_eq!(policy.current_delay_ms(), 1000);
+/// policy.reset();
+/// assert_eq!(policy.current_delay_ms(), 500);
+/// ```
+pub struct BackOffPolicy {
+    initial_delay_ms: u64,
+    max_delay_ms: u64,
+    current_delay_ms: u64,
+}
+
+impl BackOffPolicy {
+    /// Creates a new policy with a 500 ms initial delay and a 30-second cap.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::BackOffPolicy;
+    ///
+    /// let policy = BackOffPolicy::new();
+    /// assert_eq!(policy.current_delay_ms(), 500);
+    /// ```
+    pub fn new() -> Self {
+        Self {
+            initial_delay_ms: 500,
+            max_delay_ms: 30_000,
+            current_delay_ms: 500,
+        }
+    }
+
+    /// Returns the current delay as a [`std::time::Duration`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use xzatoma::watcher::BackOffPolicy;
+    ///
+    /// let policy = BackOffPolicy::new();
+    /// assert_eq!(policy.current_delay(), Duration::from_millis(500));
+    /// ```
+    pub fn current_delay(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.current_delay_ms)
+    }
+
+    /// Returns the current delay in milliseconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::BackOffPolicy;
+    ///
+    /// let policy = BackOffPolicy::new();
+    /// assert_eq!(policy.current_delay_ms(), 500);
+    /// ```
+    pub fn current_delay_ms(&self) -> u64 {
+        self.current_delay_ms
+    }
+
+    /// Doubles the delay, capped at the maximum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::BackOffPolicy;
+    ///
+    /// let mut policy = BackOffPolicy::new();
+    /// policy.increment();
+    /// assert_eq!(policy.current_delay_ms(), 1000);
+    /// // After many increments, the cap is never exceeded.
+    /// for _ in 0..100 {
+    ///     policy.increment();
+    /// }
+    /// assert_eq!(policy.current_delay_ms(), 30_000);
+    /// ```
+    pub fn increment(&mut self) {
+        self.current_delay_ms = (self.current_delay_ms * 2).min(self.max_delay_ms);
+    }
+
+    /// Resets the delay to the initial value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::BackOffPolicy;
+    ///
+    /// let mut policy = BackOffPolicy::new();
+    /// policy.increment();
+    /// assert_ne!(policy.current_delay_ms(), 500);
+    /// policy.reset();
+    /// assert_eq!(policy.current_delay_ms(), 500);
+    /// ```
+    pub fn reset(&mut self) {
+        self.current_delay_ms = self.initial_delay_ms;
+    }
+}
+
+impl Default for BackOffPolicy {
+    /// Returns `BackOffPolicy::new()`.
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Evaluate whether a plan version satisfies a constraint string.
 ///
@@ -129,6 +251,46 @@ pub use xzepr::watcher::Watcher as XzeprWatcher;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_back_off_policy_initial_delay_is_500ms() {
+        let policy = BackOffPolicy::new();
+        assert_eq!(policy.current_delay_ms(), 500);
+    }
+
+    #[test]
+    fn test_back_off_policy_increment_doubles_delay() {
+        let mut policy = BackOffPolicy::new();
+        policy.increment();
+        assert_eq!(policy.current_delay_ms(), 1000);
+    }
+
+    #[test]
+    fn test_back_off_policy_caps_at_30_seconds() {
+        let mut policy = BackOffPolicy::new();
+        for _ in 0..100 {
+            policy.increment();
+        }
+        assert_eq!(policy.current_delay_ms(), 30_000);
+    }
+
+    #[test]
+    fn test_back_off_policy_reset_returns_to_initial() {
+        let mut policy = BackOffPolicy::new();
+        policy.increment();
+        policy.increment();
+        policy.reset();
+        assert_eq!(policy.current_delay_ms(), 500);
+    }
+
+    #[test]
+    fn test_back_off_policy_current_delay_returns_correct_duration() {
+        let policy = BackOffPolicy::new();
+        assert_eq!(
+            policy.current_delay(),
+            std::time::Duration::from_millis(500)
+        );
+    }
 
     #[test]
     fn test_version_matches_exact() {

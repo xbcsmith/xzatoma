@@ -487,6 +487,7 @@ mod tests {
             host: UNREACHABLE_HOST.to_string(),
             model: model.to_string(),
             request_timeout_seconds: 1,
+            stream_idle_timeout_seconds: 120,
         }
     }
 

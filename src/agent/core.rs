@@ -862,14 +862,31 @@ impl Agent {
                 continue;
             }
 
-            if message.content.is_some() {
+            if message.content.as_deref().is_some_and(|c| !c.is_empty()) {
+                // If the model returned text on turn 1 and tools were available but
+                // none were called, the model likely does not support function calling
+                // for the current task. Common with heavily quantized or uncensored
+                // Ollama models (e.g. Gemma 4 variants) that write a text plan
+                // instead of emitting tool_calls JSON. In planning mode this is
+                // expected. Use /mode write or switch to a tool-calling model
+                // (qwen2.5:7b, llama3.1:8b) to execute tasks.
+                if iteration == 1 && !self.tools.is_empty() {
+                    warn!(
+                        "Model returned text on turn 1 without calling any of the {} \
+                         registered tools. The model may not support function calling. \
+                         Run `ollama show <model>` and look for a 'tools' capability. \
+                         If the session is in planning mode this warning is expected; \
+                         use /mode write to enable execution.",
+                        self.tools.len()
+                    );
+                }
                 debug!("Provider returned final response, stopping");
                 break;
             }
 
-            warn!("Provider returned neither content nor tool calls");
+            warn!("Provider returned empty response with no tool calls");
             let error = XzatomaError::Provider(
-                "Provider returned invalid response (no content or tool calls)".to_string(),
+                "Provider returned empty response (no content or tool calls)".to_string(),
             );
             observer.on_event(AgentExecutionEvent::ExecutionFailed {
                 error: error.to_string(),
@@ -884,6 +901,7 @@ impl Agent {
             .rev()
             .find(|m| m.role == "assistant")
             .and_then(|m| m.content.as_ref())
+            .filter(|c| !c.is_empty())
             .cloned()
             .unwrap_or_else(|| "No response from assistant".to_string());
 
@@ -1333,14 +1351,26 @@ impl Agent {
                 continue;
             }
 
-            if message.content.is_some() {
+            if message.content.as_deref().is_some_and(|c| !c.is_empty()) {
+                // Same diagnostic as execute_with_observer: warn when the model
+                // ignores all registered tools on its first turn.
+                if iteration == 1 && !self.tools.is_empty() {
+                    warn!(
+                        "Model returned text on turn 1 without calling any of the {} \
+                         registered tools. The model may not support function calling. \
+                         Run `ollama show <model>` and look for a 'tools' capability. \
+                         If the session is in planning mode this warning is expected; \
+                         use /mode write to enable execution.",
+                        self.tools.len()
+                    );
+                }
                 debug!("Provider returned final response, stopping");
                 break;
             }
 
-            warn!("Provider returned neither content nor tool calls");
+            warn!("Provider returned empty response with no tool calls");
             let error = XzatomaError::Provider(
-                "Provider returned invalid response (no content or tool calls)".to_string(),
+                "Provider returned empty response (no content or tool calls)".to_string(),
             );
             observer.on_event(AgentExecutionEvent::ExecutionFailed {
                 error: error.to_string(),
@@ -1355,6 +1385,7 @@ impl Agent {
             .rev()
             .find(|message| message.role == "assistant")
             .and_then(|message| message.content.as_ref())
+            .filter(|c| !c.is_empty())
             .cloned()
             .unwrap_or_else(|| "No response from assistant".to_string());
 
@@ -1900,6 +1931,27 @@ mod tests {
         let provider = MockProvider::new(vec![Message {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+        let result = agent.execute("Test").await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agent_handles_empty_string_content_response() {
+        // Ollama and other local models sometimes return Some("") instead of None.
+        // This must be treated as an error, not a valid final response, so the empty
+        // turn is never silently accepted and stored as a "successful" assistant turn.
+        let provider = MockProvider::new(vec![Message {
+            role: "assistant".to_string(),
+            content: Some(String::new()),
             content_parts: None,
             tool_calls: None,
             tool_call_id: None,

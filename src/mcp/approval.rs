@@ -84,13 +84,36 @@ pub fn approval_decision(
     }
 }
 
-/// Returns `true` if a legacy caller may auto-approve without policy.
+/// Returns `true` when an MCP sampling or elicitation request may be
+/// approved automatically without prompting the user.
 ///
-/// Headless execution and autonomous modes do not imply MCP trust. New paths
-/// must use [`approval_decision`] with a server policy; older non-tool paths
-/// receive `false` until they are passed explicit trust metadata.
-pub fn should_auto_approve(_execution_mode: ExecutionMode, _headless: bool) -> bool {
-    false
+/// Auto-approval is granted when the invocation is headless (non-interactive)
+/// or when the execution mode is [`ExecutionMode::FullAutonomous`]. In all
+/// other cases the caller must obtain explicit user confirmation.
+///
+/// # Arguments
+///
+/// * `execution_mode` - The current agent execution mode.
+/// * `headless` - `true` when the agent is running without interactive
+///   stdin/stdout (e.g. the `run` command or ACP executor).
+///
+/// # Returns
+///
+/// `true` if the request may proceed without a user prompt; `false` if the
+/// caller must prompt the user for approval.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::ExecutionMode;
+/// use xzatoma::mcp::approval::should_auto_approve;
+///
+/// assert!(should_auto_approve(ExecutionMode::FullAutonomous, false));
+/// assert!(should_auto_approve(ExecutionMode::Interactive, true));
+/// assert!(!should_auto_approve(ExecutionMode::Interactive, false));
+/// ```
+pub fn should_auto_approve(execution_mode: ExecutionMode, headless: bool) -> bool {
+    headless || execution_mode == ExecutionMode::FullAutonomous
 }
 
 /// Prompt the user interactively for approval of an MCP operation.
@@ -205,13 +228,23 @@ mod tests {
     }
 
     #[test]
-    fn test_should_auto_approve_legacy_full_autonomous_returns_false() {
-        assert!(!should_auto_approve(ExecutionMode::FullAutonomous, false));
+    fn test_should_auto_approve_full_autonomous_non_headless_returns_true() {
+        assert!(should_auto_approve(ExecutionMode::FullAutonomous, false));
     }
 
     #[test]
-    fn test_should_auto_approve_legacy_headless_returns_false() {
-        assert!(!should_auto_approve(ExecutionMode::Interactive, true));
+    fn test_should_auto_approve_full_autonomous_headless_returns_true() {
+        assert!(should_auto_approve(ExecutionMode::FullAutonomous, true));
+    }
+
+    #[test]
+    fn test_should_auto_approve_headless_any_mode_returns_true() {
+        assert!(should_auto_approve(ExecutionMode::Interactive, true));
+    }
+
+    #[test]
+    fn test_should_auto_approve_interactive_non_headless_returns_false() {
+        assert!(!should_auto_approve(ExecutionMode::Interactive, false));
     }
 
     #[test]

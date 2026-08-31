@@ -46,6 +46,8 @@ use rdkafka::Message;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 
+use crate::watcher::startup_context::QuietStartupContext;
+
 use super::config::KafkaConsumerConfig;
 use super::message::CloudEventMessage;
 
@@ -198,6 +200,10 @@ impl XzeprConsumer {
                 "broker.address.family".to_string(),
                 self.config.broker_address_family.clone(),
             ),
+            (
+                "max.poll.interval.ms".to_string(),
+                self.config.max_poll_interval_ms.to_string(),
+            ),
         ];
 
         // Add SASL configuration
@@ -245,13 +251,18 @@ impl XzeprConsumer {
     ///
     /// Returns `ConsumerError::Kafka` if the consumer cannot be created or
     /// subscription fails.
-    fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
+    fn create_subscribed_consumer(
+        &self,
+    ) -> Result<StreamConsumer<QuietStartupContext>, ConsumerError> {
+        let context = QuietStartupContext::new(std::time::Duration::from_secs(
+            self.config.startup_stabilization_secs,
+        ));
         let mut client_config = self.build_client_config();
         // Always disable auto-commit; both loops commit manually after processing.
         client_config.set("enable.auto.commit", "false");
 
-        let consumer: StreamConsumer = client_config
-            .create()
+        let consumer: StreamConsumer<QuietStartupContext> = client_config
+            .create_with_context(context)
             .map_err(|e| ConsumerError::Kafka(format!("Failed to create consumer: {e}")))?;
 
         consumer
@@ -330,10 +341,9 @@ impl XzeprConsumer {
 
         let consumer = self.create_subscribed_consumer()?;
         let mut stream = consumer.stream();
+        let mut back_off = crate::watcher::BackOffPolicy::new();
 
         while self.running.load(Ordering::SeqCst) {
-            // Use select with a short timeout so we can periodically check the
-            // running flag even when no messages are arriving.
             let message = tokio::select! {
                 biased;
                 msg = stream.next() => msg,
@@ -382,14 +392,18 @@ impl XzeprConsumer {
                             "Failed to commit Kafka offset"
                         );
                     }
+                    back_off.reset();
                 }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(
                             service = %self.config.service_name,
                             error = %e,
-                            "Transient Kafka consumer error; continuing"
+                            delay_ms = back_off.current_delay_ms(),
+                            "Transient Kafka consumer error; backing off"
                         );
+                        back_off.increment();
+                        tokio::time::sleep(back_off.current_delay()).await;
                         continue;
                     }
 
@@ -448,6 +462,7 @@ impl XzeprConsumer {
 
         let consumer = self.create_subscribed_consumer()?;
         let mut stream = consumer.stream();
+        let mut back_off = crate::watcher::BackOffPolicy::new();
 
         while self.running.load(Ordering::SeqCst) {
             let message = tokio::select! {
@@ -521,14 +536,18 @@ impl XzeprConsumer {
                             "Failed to commit Kafka offset"
                         );
                     }
+                    back_off.reset();
                 }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(
                             service = %self.config.service_name,
                             error = %e,
-                            "Transient Kafka consumer error; continuing"
+                            delay_ms = back_off.current_delay_ms(),
+                            "Transient Kafka consumer error; backing off"
                         );
+                        back_off.increment();
+                        tokio::time::sleep(back_off.current_delay()).await;
                         continue;
                     }
 

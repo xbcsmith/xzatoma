@@ -106,6 +106,8 @@ async fn main() -> Result<()> {
                     thinking_effort,
                     system_prompt,
                     streaming,
+                    config_path: config_path.clone(),
+                    common: common.clone(),
                 },
             )
             .await?;
@@ -283,6 +285,8 @@ async fn main() -> Result<()> {
                 system_prompt,
                 streaming,
                 config,
+                config_path.clone(),
+                common.clone(),
             )
             .await?;
             Ok(())

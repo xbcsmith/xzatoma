@@ -186,18 +186,22 @@ pub fn prompt_input_requires_vision(input: &MultimodalPromptInput) -> bool {
 /// use xzatoma::providers::MultimodalPromptInput;
 ///
 /// let input = MultimodalPromptInput::text("hello");
-/// assert!(validate_provider_supports_prompt_input("ollama", "llama3.2", &input).is_ok());
+/// assert!(validate_provider_supports_prompt_input("ollama", "llama3.2", &input, None).is_ok());
 /// ```
 pub fn validate_provider_supports_prompt_input(
     provider_name: &str,
     model_name: &str,
     input: &MultimodalPromptInput,
+    vision_override: Option<bool>,
 ) -> Result<()> {
     if !input.has_images() {
         return Ok(());
     }
 
-    if provider_model_supports_vision(provider_name, model_name) {
+    let supports = vision_override
+        .unwrap_or_else(|| provider_model_supports_vision(provider_name, model_name));
+
+    if supports {
         Ok(())
     } else {
         Err(provider_error(format!(
@@ -619,8 +623,8 @@ mod tests {
             ImagePromptPart::inline_base64("image/png", png_data()),
         )]);
 
-        let error =
-            validate_provider_supports_prompt_input("ollama", "llama3.2", &input).unwrap_err();
+        let error = validate_provider_supports_prompt_input("ollama", "llama3.2", &input, None)
+            .unwrap_err();
 
         assert!(error.to_string().contains("does not support image input"));
     }
@@ -631,7 +635,34 @@ mod tests {
             ImagePromptPart::inline_base64("image/png", png_data()),
         )]);
 
-        assert!(validate_provider_supports_prompt_input("openai", "gpt-4o", &input).is_ok());
+        assert!(validate_provider_supports_prompt_input("openai", "gpt-4o", &input, None).is_ok());
+    }
+
+    #[test]
+    fn test_validate_provider_supports_prompt_input_override_true_allows_any_model() {
+        let input = MultimodalPromptInput::new(vec![PromptInputPart::image(
+            ImagePromptPart::inline_base64("image/png", png_data()),
+        )]);
+
+        // vision_override = Some(true) should allow even a model not on the static allowlist.
+        assert!(
+            validate_provider_supports_prompt_input("ollama", "llama3.2", &input, Some(true))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_provider_supports_prompt_input_override_false_rejects_known_model() {
+        let input = MultimodalPromptInput::new(vec![PromptInputPart::image(
+            ImagePromptPart::inline_base64("image/png", png_data()),
+        )]);
+
+        // vision_override = Some(false) should reject even a model on the static allowlist.
+        let error =
+            validate_provider_supports_prompt_input("ollama", "llava:latest", &input, Some(false))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("does not support image input"));
     }
 
     #[test]

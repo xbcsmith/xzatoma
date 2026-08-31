@@ -353,6 +353,54 @@ pub enum SpecialCommand {
     /// ```
     ShowSubagentsStatus,
 
+    /// Show help text for the `/config` command.
+    ///
+    /// Emitted when the user types `/config` with no argument, displaying
+    /// the config-reload syntax and usage instructions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/config").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowConfigHelp);
+    /// ```
+    ShowConfigHelp,
+
+    /// Show the path to the active configuration file.
+    ///
+    /// Emitted when the user types `/config status`, reporting the config
+    /// file path currently in effect without reloading it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/config status").unwrap();
+    /// assert_eq!(result, SpecialCommand::ShowConfigStatus);
+    /// ```
+    ShowConfigStatus,
+
+    /// Reload configuration from disk and apply it to the live session.
+    ///
+    /// Re-reads the config file used at startup, validates it, and rebuilds
+    /// the provider, tool registry, skills, and MCP connections from the new
+    /// values while preserving conversation history. Some settings (log
+    /// level/format, persistence storage paths) still require a restart;
+    /// the reload summary calls those out by name when they change.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::special_commands::{parse_special_command, SpecialCommand};
+    ///
+    /// let result = parse_special_command("/config reload").unwrap();
+    /// assert_eq!(result, SpecialCommand::ConfigReload);
+    /// ```
+    ConfigReload,
+
     /// Exit the interactive session
     ///
     /// Gracefully closes the chat session.
@@ -524,6 +572,10 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
 
         "/context" | "/context info" => Ok(SpecialCommand::ContextInfo),
 
+        // Shorthand for `/context summary` advertised to Zed's ACP completion
+        // menu (see `src/acp/available_commands.rs`).
+        "/summarize" => Ok(SpecialCommand::ContextSummary { model: None }),
+
         // Handle /context summary with optional model parameter
         input if input.starts_with("/context summary") => {
             let rest = input[16..].trim();
@@ -629,6 +681,20 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
             let arg = input[11..].trim();
             Err(CommandError::UnsupportedArgument {
                 command: "/streaming".to_string(),
+                arg: arg.to_string(),
+            })
+        }
+
+        // Config reload commands
+        "/config" => Ok(SpecialCommand::ShowConfigHelp),
+        "/config status" => Ok(SpecialCommand::ShowConfigStatus),
+        "/config reload" => Ok(SpecialCommand::ConfigReload),
+
+        // Handle /config with invalid argument
+        input if input.starts_with("/config ") => {
+            let arg = input[8..].trim();
+            Err(CommandError::UnsupportedArgument {
+                command: "/config".to_string(),
                 arg: arg.to_string(),
             })
         }
@@ -747,6 +813,11 @@ STREAMING:
   /streaming off     - Disable live token streaming
   /streaming enable  - Same as /streaming on
   /streaming disable - Same as /streaming off
+
+CONFIG RELOAD:
+  /config         - Show config reload help
+  /config status  - Show the path to the active config file
+  /config reload  - Re-read the config file and apply it to this session
 
 SESSION INFORMATION:
   /status         - Show current mode and safety status
@@ -1328,6 +1399,50 @@ NOTE: Type /subagents alone for this help. Type /subagents status for the
     .to_string()
 }
 
+/// Return help text for the `/config` command.
+///
+/// Describes all valid `/config` subcommands: the bare command for
+/// per-command help, the `status` query, and the `reload` action.
+///
+/// # Returns
+///
+/// A `String` containing formatted usage instructions for `/config`.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::commands::special_commands::format_config_help_text;
+///
+/// let text = format_config_help_text();
+/// assert!(text.contains("/config reload"));
+/// assert!(text.contains("USAGE:"));
+/// ```
+pub fn format_config_help_text() -> String {
+    r#"
+/config - Config Reload
+=========================
+
+Re-reads the config file used at startup and applies it to this session
+without restarting the process.
+
+USAGE:
+  /config            - Show this help (you are here)
+  /config status      - Show the path to the active config file
+  /config reload      - Reload the config file and apply it to this session
+
+EXAMPLES:
+  /config status
+  /config reload
+
+NOTE: Reload rebuilds the provider, tool registry, skills, and MCP
+      connections from the new config while preserving conversation
+      history. Log level/format and persistence storage paths still
+      require a restart; the reload summary calls those out by name
+      when they change.
+"#
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1576,6 +1691,12 @@ mod tests {
     fn test_parse_context_info_explicit() {
         let cmd = parse_special_command("/context info").unwrap();
         assert_eq!(cmd, SpecialCommand::ContextInfo);
+    }
+
+    #[test]
+    fn test_parse_summarize_shorthand() {
+        let cmd = parse_special_command("/summarize").unwrap();
+        assert_eq!(cmd, SpecialCommand::ContextSummary { model: None });
     }
 
     #[test]
@@ -2073,6 +2194,60 @@ mod tests {
         assert!(
             text.contains("USAGE:"),
             "format_subagents_help_text() missing 'USAGE:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_config_bare_returns_help() {
+        assert_eq!(
+            parse_special_command("/config").unwrap(),
+            SpecialCommand::ShowConfigHelp
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_config_status() {
+        assert_eq!(
+            parse_special_command("/config status").unwrap(),
+            SpecialCommand::ShowConfigStatus
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_config_reload() {
+        assert_eq!(
+            parse_special_command("/config reload").unwrap(),
+            SpecialCommand::ConfigReload
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_config_case_insensitive() {
+        assert_eq!(
+            parse_special_command("/CONFIG RELOAD").unwrap(),
+            SpecialCommand::ConfigReload
+        );
+    }
+
+    #[test]
+    fn test_parse_special_command_config_invalid_argument() {
+        let result = parse_special_command("/config bogus");
+        assert!(matches!(
+            result,
+            Err(CommandError::UnsupportedArgument { .. })
+        ));
+    }
+
+    #[test]
+    fn test_format_config_help_text_contains_reload_usage() {
+        let text = format_config_help_text();
+        assert!(
+            text.contains("/config reload"),
+            "format_config_help_text() missing '/config reload': {text}"
+        );
+        assert!(
+            text.contains("USAGE:"),
+            "format_config_help_text() missing 'USAGE:': {text}"
         );
     }
 }

@@ -47,6 +47,7 @@ fn create_test_provider_config() -> ProviderConfig {
             host: UNREACHABLE_HOST.to_string(),
             model: "llama3.2:3b".to_string(),
             request_timeout_seconds: 1,
+            stream_idle_timeout_seconds: 120,
         },
         openai: OpenAIConfig {
             api_key: String::new(),

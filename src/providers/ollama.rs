@@ -19,6 +19,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use url::Url;
 
 /// Ollama API provider
 ///
@@ -126,6 +127,63 @@ struct OllamaResponse {
     _total_duration: u64,
 }
 
+/// A streaming chunk that carries only an error message.
+///
+/// Ollama emits this structure instead of the normal
+/// `{"message":{...},"done":...}` shape when it encounters a fatal error during
+/// generation -- for example when the prompt exceeds the model's context
+/// window, or when the model runs out of memory allocating the KV cache.
+#[derive(Debug, Deserialize)]
+struct OllamaStreamError {
+    error: String,
+}
+
+/// Message within a single streaming chunk from the Ollama `/api/chat` endpoint.
+///
+/// This is a dedicated type rather than a re-use of `ProviderMessage`/`OllamaMessage`
+/// because some models (e.g. Gemma 4 native-thinking variants) populate a
+/// separate `thinking` field for chain-of-thought tokens instead of embedding
+/// `<think>` markers inside `content`. Adding `thinking` to the shared
+/// `ProviderMessage` would pollute the OpenAI and Copilot provider paths.
+#[derive(Debug, Deserialize, Default)]
+struct OllamaStreamMessage {
+    #[serde(default, rename = "role")]
+    _role: String,
+    #[serde(default)]
+    content: String,
+    /// Chain-of-thought tokens from models that use a dedicated `thinking`
+    /// wire field (e.g. Gemma 4). Empty for DeepSeek-R1 / Qwen3, which
+    /// embed reasoning inside `content` using `<think>` tags instead.
+    #[serde(default)]
+    thinking: String,
+    /// Tool calls requested by the model in this streaming chunk.
+    ///
+    /// Ollama emits tool calls on a non-`done` chunk with `content: ""` when
+    /// the model decides to invoke a tool. They must be read here (not from
+    /// the `done: true` chunk) so that the streaming path returns a proper
+    /// tool-call response rather than an empty-content assistant message.
+    #[serde(default)]
+    tool_calls: Vec<OllamaToolCall>,
+}
+
+/// A single chunk from the Ollama `/api/chat` streaming response.
+///
+/// Replaces the non-streaming `OllamaResponse` in the streaming parse loop so
+/// that the `thinking` field carried by native-thinking models is visible.
+/// `OllamaResponse` is kept unchanged for the synchronous `complete` path.
+#[derive(Debug, Deserialize)]
+struct OllamaStreamChunk {
+    #[serde(default)]
+    message: OllamaStreamMessage,
+    done: bool,
+    #[serde(default)]
+    prompt_eval_count: usize,
+    #[serde(default)]
+    eval_count: usize,
+    #[serde(default, rename = "total_duration")]
+    _total_duration: u64,
+}
+
 impl OllamaProvider {
     /// Create a new Ollama provider instance
     ///
@@ -161,8 +219,36 @@ impl OllamaProvider {
             crate::security::validate_provider_base_url(&config.host, "provider.ollama.host")
                 .map_err(|error| XzatomaError::Provider(error.to_string()))?;
 
+        // Normalize "localhost" to the IPv4 literal "127.0.0.1".
+        //
+        // On macOS and Linux, `localhost` resolves via DNS to both `::1`
+        // (IPv6) and `127.0.0.1` (IPv4).  Ollama binds to `127.0.0.1` only
+        // by default, so any IPv6 connection attempt is immediately refused.
+        // For a fresh connection Happy Eyeballs recovers (IPv6 ECONNREFUSED
+        // triggers an immediate IPv4 fallback), but a stale connection-pool
+        // entry for a POST request is never retried by hyper because POST is
+        // non-idempotent.  Rewriting the hostname to the IPv4 literal bypasses
+        // the DNS dual-stack path entirely so the HTTP client always targets
+        // 127.0.0.1 directly.
+        config.host = normalize_localhost_to_ipv4(&config.host);
+
+        // Use a short connect timeout so that any remaining IPv6 attempt does
+        // not block the fallback to IPv4 for longer than necessary.
+        //
+        // pool_idle_timeout ensures that connections idle for more than 90 s
+        // are dropped before they can go stale; this prevents the scenario
+        // where the Zed session is created (model-listing requests pool a
+        // connection) and the user types the first prompt minutes later,
+        // by which time Ollama may have closed the server-side socket.
+        //
+        // tcp_keepalive causes the OS to send periodic keep-alive probes so
+        // that a half-open connection is detected and evicted from the pool
+        // before it is mistakenly reused.
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
+            .connect_timeout(Duration::from_secs(10))
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(30))
             .user_agent("xzatoma/0.1.0")
             .build()
             .map_err(|e| XzatomaError::Provider(format!("Failed to create HTTP client: {}", e)))?;
@@ -194,7 +280,9 @@ impl OllamaProvider {
     ///     request_timeout_seconds: 600,
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
-    /// assert_eq!(provider.host(), "http://localhost:11434");
+    /// // "localhost" is normalised to the IPv4 literal to avoid Happy-Eyeballs
+    /// // issues when Ollama only binds to 127.0.0.1.
+    /// assert_eq!(provider.host(), "http://127.0.0.1:11434");
     /// ```
     pub fn host(&self) -> String {
         self.config
@@ -410,14 +498,16 @@ impl OllamaProvider {
     ) -> Result<CompletionResponse> {
         use futures::StreamExt;
 
-        let (url, model) = {
+        let (url, model, stream_idle_timeout_secs) = {
             let config = read_config_lock(&self.config)?;
-            (format!("{}/api/chat", config.host), config.model.clone())
+            (
+                format!("{}/api/chat", config.host),
+                config.model.clone(),
+                config.stream_idle_timeout_seconds,
+            )
         };
 
-        if messages_contain_image_content(messages)
-            && !crate::providers::ollama_model_supports_vision(&model)
-        {
+        if messages_contain_image_content(messages) && !self.model_has_vision_capability(&model) {
             return Err(XzatomaError::Provider(format!(
                 "Ollama model '{}' does not support image input",
                 model
@@ -431,11 +521,7 @@ impl OllamaProvider {
             stream: true,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&ollama_request)
-            .send()
+        let response = send_post_with_retry(&self.client, &url, &ollama_request)
             .await
             .map_err(|source| XzatomaError::ProviderHttpRequest {
                 provider: "ollama".to_string(),
@@ -450,14 +536,72 @@ impl OllamaProvider {
         let mut buffer = crate::providers::streaming::LineBuffer::new();
         let mut content_acc = String::new();
         let mut reasoning_acc = String::new();
+        let mut tool_calls_acc: Vec<OllamaToolCall> = Vec::new();
         let mut in_think_block = false;
         let mut prompt_eval_count = 0usize;
         let mut eval_count = 0usize;
 
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.map_err(|e| {
-                XzatomaError::Provider(format!("Error reading Ollama stream: {}", e))
-            })?;
+        let idle_duration = Duration::from_secs(stream_idle_timeout_secs);
+
+        // The 'stream label lets inner arms break out of the outer loop so
+        // that partial content accumulated before any failure is preserved.
+        'stream: loop {
+            // Wrap each chunk read in an idle timeout so that a stalled or
+            // OOM-killed Ollama is detected quickly with an actionable message
+            // instead of hanging until the overall request_timeout fires.
+            let chunk_result = match tokio::time::timeout(idle_duration, stream.next()).await {
+                Ok(Some(r)) => r,
+                Ok(None) => break 'stream, // stream ended normally
+                Err(_elapsed) => {
+                    // No bytes arrived within idle_duration.
+                    let accumulated = content_acc.len() + reasoning_acc.len();
+                    if accumulated > 0 {
+                        tracing::warn!(
+                            "Ollama stream idle after {} char(s) of content; \
+                             returning partial response",
+                            accumulated
+                        );
+                        break 'stream;
+                    }
+                    return Err(XzatomaError::Provider(format!(
+                        "Ollama stream produced no output within {}s. \
+                         The prompt may exceed the model's context window, \
+                         or Ollama may be under memory pressure. \
+                         Try a shorter prompt or a model with a larger context window \
+                         (check: ollama show <model>).",
+                        idle_duration.as_secs()
+                    )));
+                }
+            };
+
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    // The response body was interrupted (Ollama OOM-crashed, was
+                    // restarted, or the OS reset the TCP connection). Return
+                    // partial content when available; otherwise surface a clear
+                    // error with context-window / OOM guidance.
+                    let accumulated = content_acc.len() + reasoning_acc.len();
+                    if accumulated > 0 {
+                        tracing::warn!(
+                            "Ollama stream body error after {} char(s) of content; \
+                             returning partial response: {}",
+                            accumulated,
+                            e
+                        );
+                        break 'stream;
+                    }
+                    tracing::debug!("Ollama stream body error before any content: {:?}", e);
+                    return Err(XzatomaError::Provider(format!(
+                        "Ollama stream failed before generating any content: {}. \
+                         The prompt may exceed the model's context window, \
+                         or Ollama may have run out of memory. \
+                         Try a shorter prompt or a model with a larger context window \
+                         (check: ollama show <model>).",
+                        e
+                    )));
+                }
+            };
 
             buffer.push_bytes(&chunk);
 
@@ -468,52 +612,145 @@ impl OllamaProvider {
                     continue;
                 }
 
-                match serde_json::from_str::<OllamaResponse>(&line) {
+                match serde_json::from_str::<OllamaStreamChunk>(&line) {
                     Ok(chunk_resp) => {
                         if chunk_resp.done {
                             prompt_eval_count = chunk_resp.prompt_eval_count;
                             eval_count = chunk_resp.eval_count;
+                            // Some Ollama versions place tool calls on the done chunk
+                            // rather than on a preceding non-done chunk. Capture them
+                            // here so the response assembly path sees all tool calls
+                            // regardless of which chunk carried them.
+                            if !chunk_resp.message.tool_calls.is_empty() {
+                                tool_calls_acc.extend(chunk_resp.message.tool_calls);
+                            }
                             break;
                         }
 
-                        // Each streaming chunk contains one incremental delta.
-                        // ProviderMessage.content is a String with serde default,
-                        // so empty content signals a no-content chunk.
-                        let delta = chunk_resp.message.content.clone();
-
-                        if delta.is_empty() {
+                        // Collect tool calls emitted on non-done chunks. Ollama
+                        // sends tool calls as a single chunk with content: "",
+                        // tool_calls: [...], done: false. If this chunk carries
+                        // tool calls there will be no content to process, so
+                        // skip content routing.
+                        if !chunk_resp.message.tool_calls.is_empty() {
+                            tool_calls_acc.extend(chunk_resp.message.tool_calls);
                             continue;
                         }
 
-                        // Simple think-tag state machine. The tags are typically
-                        // emitted as whole tokens by the model, so split-tag edge
-                        // cases are uncommon but handled with prefix detection.
-                        process_ollama_think_chunk(
-                            &delta,
-                            &mut in_think_block,
-                            &mut content_acc,
-                            &mut reasoning_acc,
-                            on_reasoning_chunk,
-                            on_content_chunk,
-                        );
+                        // Route native thinking-field tokens (Gemma 4 and similar
+                        // models that separate chain-of-thought from response
+                        // content at the wire level) to reasoning_acc.
+                        let thinking_delta = chunk_resp.message.thinking;
+                        if !thinking_delta.is_empty() {
+                            if let Some(cb) = on_reasoning_chunk {
+                                cb(thinking_delta.clone());
+                            }
+                            reasoning_acc.push_str(&thinking_delta);
+                        }
+
+                        // Route content-field tokens through the think-tag state
+                        // machine for DeepSeek-R1 / Qwen3 models that embed
+                        // reasoning via <think> markers inside content.
+                        let delta = chunk_resp.message.content;
+                        if !delta.is_empty() {
+                            process_ollama_think_chunk(
+                                &delta,
+                                &mut in_think_block,
+                                &mut content_acc,
+                                &mut reasoning_acc,
+                                on_reasoning_chunk,
+                                on_content_chunk,
+                            );
+                        }
                     }
-                    Err(e) => {
-                        tracing::debug!(
-                            "Failed to parse Ollama stream chunk: {} (line: {:?})",
-                            e,
-                            line
-                        );
+                    Err(_) => {
+                        // Ollama sends {"error":"..."} as a streaming chunk when
+                        // it encounters a fatal error (context window exceeded,
+                        // out of memory, model not loaded, etc.). Surface this as
+                        // a Provider error so the user sees the actual reason
+                        // rather than a silent empty response.
+                        if let Ok(err) = serde_json::from_str::<OllamaStreamError>(&line) {
+                            return Err(XzatomaError::Provider(format!(
+                                "Ollama error: {}",
+                                err.error
+                            )));
+                        }
+                        tracing::debug!("Failed to parse Ollama stream chunk (line: {:?})", line);
                     }
                 }
             }
         }
 
-        // Build the final response from accumulated content and reasoning.
-        let message = if content_acc.is_empty() && reasoning_acc.is_empty() {
-            Message::assistant("")
+        // Build the final response from accumulated content, reasoning, or tool calls.
+        //
+        // Tool calls take priority: if the model emitted any tool calls during the
+        // stream they are returned as a tool-call message. Content and reasoning
+        // accumulated alongside tool calls (Ollama sends content: "" for tool-call
+        // chunks) are discarded. This restores the tool-calling path that was
+        // silently dropped when supports_streaming() was set to true: the old code
+        // only reached complete() (which calls convert_response_message) when no
+        // streaming callbacks were present; now the streaming path handles it too.
+        if !tool_calls_acc.is_empty() {
+            tracing::debug!(
+                "Ollama streaming response contains {} tool call(s); returning tool-call message",
+                tool_calls_acc.len()
+            );
+            let converted_calls: Vec<ToolCall> = tool_calls_acc
+                .into_iter()
+                .enumerate()
+                .map(|(idx, tc)| ToolCall {
+                    id: if tc.id.is_empty() {
+                        format!(
+                            "call_{}_{}",
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis(),
+                            idx
+                        )
+                    } else {
+                        tc.id
+                    },
+                    function: FunctionCall {
+                        name: tc.function.name,
+                        arguments: serde_json::to_string(&tc.function.arguments)
+                            .unwrap_or_else(|_| "{}".to_string()),
+                    },
+                })
+                .collect();
+            let message = Message::assistant_with_tools(converted_calls);
+            let response = if prompt_eval_count > 0 || eval_count > 0 {
+                CompletionResponse::with_usage(
+                    message,
+                    TokenUsage::new(prompt_eval_count, eval_count),
+                )
+            } else {
+                CompletionResponse::new(message)
+            };
+            return Ok(response);
+        }
+
+        // Native-thinking models (e.g. Gemma 4) may spend their entire token
+        // budget on chain-of-thought tokens emitted in the `thinking` field
+        // while leaving `content` empty for the whole response. When that
+        // happens, promote the reasoning to response content so the agent
+        // receives usable output instead of the "empty response" error.
+        // Clear final_reasoning in that case to avoid the Zed UI rendering
+        // the same text twice (once as reasoning, once as content).
+        let (final_content, final_reasoning) = if !content_acc.is_empty() {
+            (content_acc, reasoning_acc)
+        } else if !reasoning_acc.is_empty() {
+            tracing::debug!(
+                "Ollama response has {} reasoning char(s) but no explicit content; \
+                 promoting thinking to response content",
+                reasoning_acc.len()
+            );
+            (reasoning_acc, String::new())
         } else {
-            Message::assistant(&content_acc)
+            (String::new(), String::new())
         };
+
+        let message = Message::assistant(&final_content);
 
         let response = if prompt_eval_count > 0 || eval_count > 0 {
             CompletionResponse::with_usage(message, TokenUsage::new(prompt_eval_count, eval_count))
@@ -521,8 +758,8 @@ impl OllamaProvider {
             CompletionResponse::new(message)
         };
 
-        let response = if !reasoning_acc.is_empty() {
-            response.set_reasoning(reasoning_acc)
+        let response = if !final_reasoning.is_empty() {
+            response.set_reasoning(final_reasoning)
         } else {
             response
         };
@@ -624,6 +861,36 @@ impl OllamaProvider {
         }
 
         Ok(model_info)
+    }
+
+    /// Returns whether the given Ollama model is known to support vision input.
+    ///
+    /// Consults the live model cache populated by [`fetch_models_from_api`] first.
+    /// When the current model is present in the cache and its [`ModelInfo`] carries
+    /// [`ModelCapability::Vision`] (set by `build_model_info_from_show_response` from
+    /// the `/api/show` `capabilities` array), this returns `true` unconditionally.
+    /// When the model is absent from the cache the function falls back to the static
+    /// name-based allowlist in [`crate::providers::ollama_model_supports_vision`].
+    ///
+    /// This method is intentionally cheap and non-blocking: it only reads the shared
+    /// `Arc<RwLock<...>>` cache and never makes a network call.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The model name to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the model is confirmed to support vision input.
+    fn model_has_vision_capability(&self, model: &str) -> bool {
+        if let Ok(cache) = self.model_cache.read()
+            && let Some((models, _)) = cache.as_ref()
+            && let Some(info) = models.iter().find(|m| m.name == model)
+        {
+            return info.supports_capability(ModelCapability::Vision);
+        }
+        // Cache miss or lock failure: fall back to the static name-based allowlist.
+        crate::providers::ollama_model_supports_vision(model)
     }
 }
 
@@ -859,6 +1126,41 @@ fn build_model_info_from_show_response(
     model_info
 }
 
+/// Replace the `localhost` hostname in a URL with the IPv4 loopback
+/// address `127.0.0.1`.
+///
+/// On macOS and Linux `localhost` typically resolves via DNS to both `::1`
+/// (IPv6) and `127.0.0.1` (IPv4). reqwest's Happy Eyeballs algorithm tries
+/// the IPv6 address first. Ollama binds to `127.0.0.1` only by default, so
+/// the IPv6 attempt is always refused. For new connections Happy Eyeballs
+/// falls back to IPv4, but for stale pool entries on non-idempotent POST
+/// requests hyper surfaces the failure as "error sending request" without
+/// retrying.
+///
+/// By rewriting `localhost` to the IPv4 literal here the HTTP client never
+/// performs a dual-stack DNS lookup and always connects directly to
+/// `127.0.0.1`.
+///
+/// Only the bare hostname `localhost` (case-insensitive) is rewritten.
+/// Explicit IP literals such as `127.0.0.1` or `[::1]`, and remote
+/// hostnames, are passed through unchanged.
+fn normalize_localhost_to_ipv4(url: &str) -> String {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return url.to_string();
+    };
+    if parsed
+        .host_str()
+        .is_some_and(|h| h.eq_ignore_ascii_case("localhost"))
+    {
+        // set_host is infallible for well-formed IPv4 literals; fall back
+        // to the original string on the unexpected error path.
+        if parsed.set_host(Some("127.0.0.1")).is_ok() {
+            return parsed.to_string().trim_end_matches('/').to_string();
+        }
+    }
+    url.to_string()
+}
+
 /// Format byte size for display
 fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
@@ -873,6 +1175,48 @@ fn format_size(bytes: u64) -> String {
     format!("{:.1}{}", size, UNITS[unit_idx])
 }
 
+/// Send a JSON POST request with a single retry on connection-level failures.
+///
+/// Non-idempotent POST requests are never automatically retried by hyper, so
+/// stale connection-pool entries surface as "error sending request" failures.
+/// This helper retries exactly once when [`reqwest::Error::is_connect`] or
+/// [`reqwest::Error::is_request`] is true, allowing the pool to discard the
+/// broken socket and open a fresh connection on the second attempt.  Timeout
+/// errors are not retried because a second attempt would also time out.
+///
+/// # Arguments
+///
+/// * `client` - The HTTP client to use for both attempts.
+/// * `url`    - The URL to POST to.
+/// * `body`   - A serializable value that is encoded as JSON for both attempts.
+///
+/// # Returns
+///
+/// The [`reqwest::Response`] from the first successful send.
+///
+/// # Errors
+///
+/// Returns the [`reqwest::Error`] from the second attempt if both fail.
+async fn send_post_with_retry<T: Serialize>(
+    client: &Client,
+    url: &str,
+    body: &T,
+) -> reqwest::Result<reqwest::Response> {
+    match client.post(url).json(body).send().await {
+        Ok(r) => Ok(r),
+        Err(e) if (e.is_connect() || e.is_request()) && !e.is_timeout() => {
+            tracing::warn!(
+                "Ollama POST to {} failed with a connection error, retrying once \
+                 to discard a stale connection-pool entry: {}",
+                url,
+                e
+            );
+            client.post(url).json(body).send().await
+        }
+        Err(e) => Err(e),
+    }
+}
+
 #[async_trait]
 impl Provider for OllamaProvider {
     async fn complete(
@@ -885,9 +1229,7 @@ impl Provider for OllamaProvider {
             (format!("{}/api/chat", config.host), config.model.clone())
         };
 
-        if messages_contain_image_content(messages)
-            && !crate::providers::ollama_model_supports_vision(&model)
-        {
+        if messages_contain_image_content(messages) && !self.model_has_vision_capability(&model) {
             return Err(XzatomaError::Provider(format!(
                 "Ollama model '{}' does not support image input",
                 model
@@ -909,11 +1251,7 @@ impl Provider for OllamaProvider {
             ollama_request.tools.len()
         );
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&ollama_request)
-            .send()
+        let response = send_post_with_retry(&self.client, &url, &ollama_request)
             .await
             .map_err(|source| XzatomaError::ProviderHttpRequest {
                 provider: "ollama".to_string(),
@@ -1046,6 +1384,16 @@ impl Provider for OllamaProvider {
         }
     }
 
+    /// Returns whether the given model name supports vision (image) input.
+    ///
+    /// Consults the live model cache (populated by `list_models` at session startup)
+    /// before falling back to the static name-based allowlist. This ensures that any
+    /// Ollama model reporting `"vision"` in its `/api/show` `capabilities` array is
+    /// accepted even when its name does not appear on the static allowlist.
+    fn model_supports_vision(&self, _provider_name: &str, model_name: &str) -> bool {
+        self.model_has_vision_capability(model_name)
+    }
+
     /// Returns `true` because Ollama supports streaming completions.
     ///
     /// When `complete_with_callbacks` is called with at least one active
@@ -1112,6 +1460,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -1123,9 +1472,11 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
-        assert_eq!(provider.host(), "http://localhost:11434");
+        // "localhost" is normalised to 127.0.0.1 to avoid dual-stack DNS.
+        assert_eq!(provider.host(), "http://127.0.0.1:11434");
     }
 
     #[test]
@@ -1134,9 +1485,48 @@ mod tests {
             host: "http://localhost:11434/".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
-        assert_eq!(provider.host(), "http://localhost:11434");
+        // Both the trailing slash and "localhost" are normalised.
+        assert_eq!(provider.host(), "http://127.0.0.1:11434");
+    }
+
+    #[test]
+    fn test_ollama_provider_normalizes_localhost_to_ipv4() {
+        // Any casing of "localhost" is rewritten to 127.0.0.1.
+        for host in &[
+            "http://localhost:11434",
+            "http://LOCALHOST:11434",
+            "http://Localhost:11434",
+        ] {
+            let config = OllamaConfig {
+                host: host.to_string(),
+                model: "llama3.2:latest".to_string(),
+                request_timeout_seconds: 600,
+                stream_idle_timeout_seconds: 120,
+            };
+            let provider = OllamaProvider::new(config).unwrap();
+            assert_eq!(
+                provider.host(),
+                "http://127.0.0.1:11434",
+                "expected localhost normalisation for input {}",
+                host
+            );
+        }
+    }
+
+    #[test]
+    fn test_ollama_provider_does_not_normalise_explicit_ipv4() {
+        // An explicit 127.0.0.1 address must not be altered.
+        let config = OllamaConfig {
+            host: "http://127.0.0.1:11434".to_string(),
+            model: "llama3.2:latest".to_string(),
+            request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        assert_eq!(provider.host(), "http://127.0.0.1:11434");
     }
 
     #[test]
@@ -1145,6 +1535,7 @@ mod tests {
             host: "http://localhost:11434?token=secret".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let result = OllamaProvider::new(config);
         assert!(result.is_err());
@@ -1156,6 +1547,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.model(), "llama3.2:latest");
@@ -1167,6 +1559,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1189,6 +1582,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1213,6 +1607,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1239,6 +1634,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llava:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1268,6 +1664,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1299,11 +1696,46 @@ mod tests {
     }
 
     #[test]
+    fn test_model_has_vision_capability_uses_cache_when_populated() {
+        use std::time::Instant;
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "mymodel:latest".to_string(),
+            request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+
+        // Seed the model cache with a ModelInfo that has Vision capability.
+        let mut info = ModelInfo::new("mymodel:latest", "MyModel", 4096);
+        info.add_capability(ModelCapability::Vision);
+        *provider.model_cache.write().unwrap() = Some((vec![info], Instant::now()));
+
+        // Should return true from cache even though the name is not on the static allowlist.
+        assert!(provider.model_has_vision_capability("mymodel:latest"));
+    }
+
+    #[test]
+    fn test_model_has_vision_capability_falls_back_to_static_on_cache_miss() {
+        let config = OllamaConfig {
+            host: "http://localhost:11434".to_string(),
+            model: "llava:latest".to_string(),
+            request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
+        };
+        let provider = OllamaProvider::new(config).unwrap();
+        // Cache is empty; should fall back to static allowlist.
+        assert!(provider.model_has_vision_capability("llava:latest"));
+        assert!(!provider.model_has_vision_capability("llama3.2:latest"));
+    }
+
+    #[test]
     fn test_convert_response_message_text() {
         let config = OllamaConfig {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1328,6 +1760,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1360,6 +1793,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1471,6 +1905,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let capabilities = provider.get_provider_capabilities();
@@ -1489,6 +1924,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "test-model".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "test-model");
@@ -1571,6 +2007,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1591,6 +2028,7 @@ mod tests {
             host: "http://localhost:11434".to_string(),
             model: "test".to_string(),
             request_timeout_seconds: 600,
+            stream_idle_timeout_seconds: 120,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1710,5 +2148,136 @@ mod tests {
             None,
         );
         assert!(!in_think_block, "should exit think block after closing tag");
+    }
+
+    // --- OllamaStreamChunk / native thinking field tests ---
+
+    #[test]
+    fn test_ollama_stream_chunk_parses_content_only() {
+        let json = r#"{"message":{"role":"assistant","content":"Hello"},"done":false}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse content-only chunk");
+        assert_eq!(chunk.message.content, "Hello");
+        assert!(chunk.message.thinking.is_empty());
+        assert!(!chunk.done);
+    }
+
+    #[test]
+    fn test_ollama_stream_chunk_parses_thinking_field() {
+        let json = r#"{"message":{"role":"assistant","content":"","thinking":"let me think"},"done":false}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse thinking-field chunk");
+        assert!(chunk.message.content.is_empty());
+        assert_eq!(chunk.message.thinking, "let me think");
+    }
+
+    #[test]
+    fn test_ollama_stream_chunk_parses_done_with_counts() {
+        let json = r#"{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":42,"eval_count":100}"#;
+        let chunk: OllamaStreamChunk = serde_json::from_str(json).expect("should parse done chunk");
+        assert!(chunk.done);
+        assert_eq!(chunk.prompt_eval_count, 42);
+        assert_eq!(chunk.eval_count, 100);
+    }
+
+    #[test]
+    fn test_ollama_stream_chunk_missing_thinking_defaults_to_empty() {
+        // Models that do not emit the thinking field should deserialize cleanly.
+        let json = r#"{"message":{"role":"assistant","content":"Hi"},"done":false}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse without thinking field");
+        assert_eq!(chunk.message.thinking, "");
+    }
+
+    #[test]
+    fn test_reasoning_promoted_to_content_when_content_empty() {
+        // Simulate the response-assembly path: when content_acc is empty but
+        // reasoning_acc is not (Gemma 4 native-thinking behaviour), the
+        // reasoning is promoted to final_content and final_reasoning is cleared.
+        let content_acc = String::new();
+        let reasoning_acc = String::from("I thought about it carefully.");
+
+        let (final_content, final_reasoning) = if !content_acc.is_empty() {
+            (content_acc, reasoning_acc)
+        } else if !reasoning_acc.is_empty() {
+            (reasoning_acc, String::new())
+        } else {
+            (String::new(), String::new())
+        };
+
+        assert_eq!(final_content, "I thought about it carefully.");
+        assert!(
+            final_reasoning.is_empty(),
+            "reasoning should be cleared after promotion"
+        );
+    }
+
+    #[test]
+    fn test_content_takes_priority_over_reasoning_when_both_present() {
+        // When both content and reasoning are non-empty, content is returned
+        // as the response and reasoning is kept separate for the Zed panel.
+        let content_acc = String::from("Final answer.");
+        let reasoning_acc = String::from("I thought about it.");
+
+        let (final_content, final_reasoning) = if !content_acc.is_empty() {
+            (content_acc, reasoning_acc)
+        } else if !reasoning_acc.is_empty() {
+            (reasoning_acc, String::new())
+        } else {
+            (String::new(), String::new())
+        };
+
+        assert_eq!(final_content, "Final answer.");
+        assert_eq!(final_reasoning, "I thought about it.");
+    }
+
+    #[test]
+    fn test_empty_response_gives_empty_content_and_reasoning() {
+        let content_acc = String::new();
+        let reasoning_acc = String::new();
+
+        let (final_content, final_reasoning) = if !content_acc.is_empty() {
+            (content_acc, reasoning_acc)
+        } else if !reasoning_acc.is_empty() {
+            (reasoning_acc, String::new())
+        } else {
+            (String::new(), String::new())
+        };
+
+        assert!(final_content.is_empty());
+        assert!(final_reasoning.is_empty());
+    }
+
+    // --- Tool call streaming tests ---
+
+    #[test]
+    fn test_ollama_stream_chunk_parses_tool_calls_on_non_done_chunk() {
+        let json = r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"foo.txt"}}}]},"done":false}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse tool-call chunk");
+        assert_eq!(chunk.message.tool_calls.len(), 1);
+        assert_eq!(chunk.message.tool_calls[0].function.name, "read_file");
+        assert!(chunk.message.content.is_empty());
+        assert!(!chunk.done);
+    }
+
+    #[test]
+    fn test_ollama_stream_chunk_parses_tool_calls_on_done_chunk() {
+        // Some Ollama versions attach tool calls to the done chunk instead.
+        let json = r#"{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"write_file","arguments":{"path":"out.txt","content":"hello"}}}]},"done":true,"prompt_eval_count":5,"eval_count":10}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse done tool-call chunk");
+        assert!(chunk.done);
+        assert_eq!(chunk.message.tool_calls.len(), 1);
+        assert_eq!(chunk.message.tool_calls[0].function.name, "write_file");
+    }
+
+    #[test]
+    fn test_ollama_stream_chunk_no_tool_calls_defaults_to_empty_vec() {
+        // Content-only chunks must not have tool_calls populated.
+        let json = r#"{"message":{"role":"assistant","content":"hello"},"done":false}"#;
+        let chunk: OllamaStreamChunk =
+            serde_json::from_str(json).expect("should parse content chunk");
+        assert!(chunk.message.tool_calls.is_empty());
     }
 }

@@ -59,10 +59,10 @@ use crate::agent::{Agent as XzatomaAgent, Conversation};
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::commands::build_agent_environment;
 use crate::commands::special_commands::{
-    SpecialCommand, format_help_text, format_mention_help_text, format_mode_help_text,
-    format_model_help_text, format_models_help_text, format_safety_help_text,
-    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
-    parse_special_command,
+    SpecialCommand, format_config_help_text, format_help_text, format_mention_help_text,
+    format_mode_help_text, format_model_help_text, format_models_help_text,
+    format_safety_help_text, format_streaming_help_text, format_subagents_help_text,
+    format_system_help_text, parse_special_command,
 };
 use crate::config::{AgentConfig, Config, ExecutionMode, TerminalConfig};
 use crate::error::{Result, XzatomaError};
@@ -116,6 +116,16 @@ pub struct AcpStdioAgentOptions {
     pub allow_dangerous: bool,
     /// Optional fallback workspace root when the ACP client omits one.
     pub working_dir: Option<PathBuf>,
+    /// Resolved path to the config file used at startup, as returned by
+    /// `Config::find_config_path`. Retained so `/config reload` can re-read
+    /// the same file. Empty when constructed via `new()` without
+    /// `with_config_source`, which is only safe for callers that never
+    /// dispatch `/config reload` (e.g. unit tests).
+    pub config_path: String,
+    /// CLI arguments used to build the initial config, retained so
+    /// `/config reload` can reapply the same overrides that were in effect
+    /// at startup.
+    pub common: crate::cli::CommonArgs,
 }
 
 impl AcpStdioAgentOptions {
@@ -152,7 +162,43 @@ impl AcpStdioAgentOptions {
             model,
             allow_dangerous,
             working_dir,
+            config_path: String::new(),
+            common: crate::cli::CommonArgs::default(),
         }
+    }
+
+    /// Attaches the resolved config path and CLI arguments used at startup,
+    /// enabling `/config reload` to re-read the same config file with the
+    /// same overrides.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Resolved path to the config file, as returned by
+    ///   `Config::find_config_path`.
+    /// * `common` - CLI arguments used to build the initial config.
+    ///
+    /// # Returns
+    ///
+    /// Returns `self` with `config_path` and `common` set, for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::stdio::AcpStdioAgentOptions;
+    /// use xzatoma::cli::CommonArgs;
+    ///
+    /// let options = AcpStdioAgentOptions::new(None, None, false, None)
+    ///     .with_config_source("config/config.yaml".to_string(), CommonArgs::default());
+    /// assert_eq!(options.config_path, "config/config.yaml");
+    /// ```
+    pub fn with_config_source(
+        mut self,
+        config_path: String,
+        common: crate::cli::CommonArgs,
+    ) -> Self {
+        self.config_path = config_path;
+        self.common = common;
+        self
     }
 }
 
@@ -365,7 +411,10 @@ impl ActiveSessionState {
 }
 
 struct AcpStdioServerState {
-    config: Config,
+    /// Swappable so `/config reload` can replace it without restarting the
+    /// subprocess. Readers take a short-lived read lock and clone out what
+    /// they need rather than holding the guard across `.await` points.
+    config: tokio::sync::RwLock<Config>,
     options: AcpStdioAgentOptions,
     sessions: ActiveSessionRegistry,
     storage: Option<SqliteStorage>,
@@ -377,7 +426,7 @@ impl AcpStdioServerState {
     fn new(config: Config, options: AcpStdioAgentOptions) -> Self {
         let storage = open_stdio_storage(&config);
         Self {
-            config,
+            config: tokio::sync::RwLock::new(config),
             options,
             sessions: ActiveSessionRegistry::new(),
             storage,
@@ -392,7 +441,7 @@ impl AcpStdioServerState {
         storage: Option<SqliteStorage>,
     ) -> Self {
         Self {
-            config,
+            config: tokio::sync::RwLock::new(config),
             options,
             sessions: ActiveSessionRegistry::new(),
             storage,
@@ -405,22 +454,27 @@ impl AcpStdioServerState {
         request: acp::NewSessionRequest,
         connection: Option<ConnectionTo<AcpClientRole>>,
     ) -> Result<acp::NewSessionResponse> {
-        if self.sessions.len().await >= self.config.acp.stdio.max_active_sessions {
+        // Snapshot the config once per session creation. `/config reload` may
+        // swap `self.config` between sessions; this ensures every field read
+        // below sees a single, consistent view.
+        let config = self.config.read().await.clone();
+
+        if self.sessions.len().await >= config.acp.stdio.max_active_sessions {
             return Err(XzatomaError::Config(format!(
                 "ACP stdio active session limit reached: {}",
-                self.config.acp.stdio.max_active_sessions
+                config.acp.stdio.max_active_sessions
             )));
         }
 
         let workspace_root =
             resolve_workspace_root(&request.cwd, self.options.working_dir.as_deref())?;
         let workspace_root = normalize_workspace_root(&workspace_root);
-        let provider_name = self.config.provider.provider_type.clone();
+        let provider_name = config.provider.provider_type.clone();
 
         let resumed_conversation =
-            load_resumable_conversation(self.storage.as_ref(), &workspace_root, &self.config);
+            load_resumable_conversation(self.storage.as_ref(), &workspace_root, &config);
 
-        let env = build_agent_environment(&self.config, &workspace_root, true, None, None).await?;
+        let env = build_agent_environment(&config, &workspace_root, true, None, None).await?;
         let mut tools = env.tool_registry;
 
         // Connect MCP servers forwarded by Zed in NewSessionRequest.mcp_servers.
@@ -481,7 +535,7 @@ impl AcpStdioServerState {
             }
 
             // Register tools from any newly connected Zed-forwarded servers.
-            let execution_mode = self.config.agent.terminal.default_mode;
+            let execution_mode = config.agent.terminal.default_mode;
             if let Err(error) =
                 register_mcp_tools(&mut tools, Arc::clone(manager_arc), execution_mode, true).await
             {
@@ -498,7 +552,7 @@ impl AcpStdioServerState {
         // the provider's model list and selects the latest available model
         // (or keeps the configured one, if still present in that list).
         let provider_box = create_provider_with_override(
-            &self.config.provider,
+            &config.provider,
             self.options.provider.as_deref(),
             self.options.model.as_deref(),
         )
@@ -507,7 +561,7 @@ impl AcpStdioServerState {
         let model_name = provider
             .current_model()
             .map(ToString::to_string)
-            .unwrap_or_else(|| current_model_name(&self.config).to_string());
+            .unwrap_or_else(|| current_model_name(&config).to_string());
 
         // Create the session ID early so it can be used by the IDE bridge and
         // passed through to the agent, storage, and prompt worker consistently.
@@ -540,7 +594,7 @@ impl AcpStdioServerState {
         // A timeout guards against slow or unreachable providers; an empty list
         // causes the selector to show only the current model.
         let available_models: Vec<String> = match tokio::time::timeout(
-            Duration::from_secs(self.config.acp.stdio.model_list_timeout_seconds),
+            Duration::from_secs(config.acp.stdio.model_list_timeout_seconds),
             provider.list_models(),
         )
         .await
@@ -561,22 +615,22 @@ impl AcpStdioServerState {
             }
             Err(_) => {
                 tracing::debug!(
-                    timeout_seconds = self.config.acp.stdio.model_list_timeout_seconds,
+                    timeout_seconds = config.acp.stdio.model_list_timeout_seconds,
                     "ACP stdio: model listing timed out; model selector will show current model only"
                 );
                 Vec::new()
             }
         };
 
-        let mut runtime_state = SessionRuntimeState::from_config(&self.config);
+        let mut runtime_state = SessionRuntimeState::from_config(&config);
         runtime_state.current_model = model_name.clone();
         runtime_state.available_models = available_models;
 
         if tools.get("subagent").is_none() {
             let subagent_tool = SubagentTool::new_with_config(
                 Arc::clone(&provider),
-                &self.config.provider,
-                self.config.agent.clone(),
+                &config.provider,
+                config.agent.clone(),
                 tools.clone(),
                 0,
             )
@@ -588,11 +642,11 @@ impl AcpStdioServerState {
             XzatomaAgent::with_conversation_and_shared_provider(
                 Arc::clone(&provider),
                 tools,
-                self.config.agent.clone(),
+                config.agent.clone(),
                 conversation,
             )?
         } else {
-            XzatomaAgent::new_from_shared_provider(provider, tools, self.config.agent.clone())?
+            XzatomaAgent::new_from_shared_provider(provider, tools, config.agent.clone())?
         };
 
         // Inject user-defined system prompt into the conversation.
@@ -600,11 +654,11 @@ impl AcpStdioServerState {
         // replace_first_system_message updates the existing entry in-place,
         // which ensures the configured prompt overrides any previously stored one.
         // Prefer config.acp.system_prompt over config.agent.system_prompt.
-        let effective_sp = self.config.acp.system_prompt.as_deref().or(self
-            .config
-            .agent
+        let effective_sp = config
+            .acp
             .system_prompt
-            .as_deref());
+            .as_deref()
+            .or(config.agent.system_prompt.as_deref());
         if let Some(sp) = effective_sp
             && !sp.trim().is_empty()
         {
@@ -667,8 +721,7 @@ impl AcpStdioServerState {
         let agent_arc_for_init = Arc::clone(&xzatoma_agent);
         let initial_token = CancellationToken::new();
         let (token_tx, current_cancellation_token) = watch::channel(initial_token);
-        let (prompt_queue, prompt_receiver) =
-            mpsc::channel(self.config.acp.stdio.prompt_queue_capacity);
+        let (prompt_queue, prompt_receiver) = mpsc::channel(config.acp.stdio.prompt_queue_capacity);
 
         let prompt_worker_handle = tokio::spawn(run_prompt_worker(
             session_id.clone(),
@@ -697,8 +750,8 @@ impl AcpStdioServerState {
             last_activity: chrono::Utc::now().to_rfc3339(),
             current_mode_id: runtime_state.current_mode_id.clone(),
             runtime_state,
-            terminal_config: self.config.agent.terminal.clone(),
-            agent_config: self.config.agent.clone(),
+            terminal_config: config.agent.terminal.clone(),
+            agent_config: config.agent.clone(),
             ide_bridge,
         };
 
@@ -717,7 +770,7 @@ impl AcpStdioServerState {
                 .used_tokens as u64;
             let max_tokens = resolve_current_model_context_window(
                 agent.provider(),
-                &self.config,
+                &config,
                 &model_name,
                 config_max_tokens,
             )
@@ -815,10 +868,10 @@ impl AcpStdioServerState {
                 let workspace_root = session_read.workspace_root.clone();
                 drop(session_read);
 
+                let terminal_config = self.config.read().await.agent.terminal.clone();
                 let new_validator = CommandValidator::new(effect.terminal_mode, workspace_root);
                 let new_terminal_tool =
-                    TerminalTool::new(new_validator, self.config.agent.terminal.clone())
-                        .with_safety_mode(safety_mode);
+                    TerminalTool::new(new_validator, terminal_config).with_safety_mode(safety_mode);
                 agent_lock
                     .tools_mut()
                     .register("terminal", Arc::new(new_terminal_tool));
@@ -995,10 +1048,10 @@ impl AcpStdioServerState {
             let system_prompt = crate::prompts::build_system_prompt(chat_mode, safety_mode);
             let mut agent_lock = agent_handle.lock().await;
             agent_lock.set_transient_system_messages(vec![system_prompt]);
+            let terminal_config = self.config.read().await.agent.terminal.clone();
             let new_validator = CommandValidator::new(mode_eff.terminal_mode, workspace_root);
             let new_terminal_tool =
-                TerminalTool::new(new_validator, self.config.agent.terminal.clone())
-                    .with_safety_mode(safety_mode);
+                TerminalTool::new(new_validator, terminal_config).with_safety_mode(safety_mode);
             agent_lock
                 .tools_mut()
                 .register("terminal", Arc::new(new_terminal_tool));
@@ -1012,6 +1065,7 @@ impl AcpStdioServerState {
         request: acp::PromptRequest,
         connection: Option<ConnectionTo<AcpClientRole>>,
     ) -> acp_sdk::Result<acp::PromptResponse> {
+        let config = self.config.read().await.clone();
         let session = self
             .sessions
             .get(&request.session_id)
@@ -1042,12 +1096,9 @@ impl AcpStdioServerState {
             );
         }
 
-        let prompt_input = acp_content_blocks_to_prompt_input(
-            &request.prompt,
-            &self.config.acp.stdio,
-            &workspace_root,
-        )
-        .map_err(|error| acp_validation_error("prompt", error))?;
+        let prompt_input =
+            acp_content_blocks_to_prompt_input(&request.prompt, &config.acp.stdio, &workspace_root)
+                .map_err(|error| acp_validation_error("prompt", error))?;
 
         let prompt_text = {
             let text = prompt_input.as_legacy_text();
@@ -1059,14 +1110,41 @@ impl AcpStdioServerState {
         };
 
         if let Some(prompt_text) = prompt_text.as_deref()
-            && let Some(result) =
-                dispatch_stdio_command(prompt_text, &session, connection.as_ref()).await
+            && let Some(result) = dispatch_stdio_command_with_config(
+                prompt_text,
+                &session,
+                connection.as_ref(),
+                &self.config,
+                &self.options,
+            )
+            .await
         {
             return result;
         }
 
-        validate_provider_supports_prompt_input(&provider_name, &model_name, &prompt_input)
-            .map_err(|error| acp_validation_error("prompt", error))?;
+        // Try to get the runtime vision capability from the provider's model cache so that
+        // Ollama models reporting "vision" in /api/show are accepted even when their name
+        // is not on the static allowlist.  We use try_lock (non-blocking) to avoid stalling
+        // the enqueue path if the agent is currently executing a prompt.
+        let vision_override = session.try_lock().ok().and_then(|session_guard| {
+            session_guard
+                .xzatoma_agent
+                .try_lock()
+                .ok()
+                .map(|agent_guard| {
+                    agent_guard
+                        .provider()
+                        .model_supports_vision(&provider_name, &model_name)
+                })
+        });
+
+        validate_provider_supports_prompt_input(
+            &provider_name,
+            &model_name,
+            &prompt_input,
+            vision_override,
+        )
+        .map_err(|error| acp_validation_error("prompt", error))?;
 
         let message = prompt_input_to_user_message(prompt_input)
             .map_err(|error| acp_validation_error("prompt", error))?;
@@ -1078,7 +1156,7 @@ impl AcpStdioServerState {
                 connection,
             })
             .map_err(|error| {
-                prompt_queue_send_error(error, self.config.acp.stdio.prompt_queue_capacity)
+                prompt_queue_send_error(error, config.acp.stdio.prompt_queue_capacity)
             })?;
 
         response_rx.await.map_err(|error| {
@@ -1130,6 +1208,7 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         Ok(SpecialCommand::ShowStreamingHelp) => format_streaming_help_text(),
         Ok(SpecialCommand::ShowSystemHelp) => format_system_help_text(),
         Ok(SpecialCommand::ShowSubagentsHelp) => format_subagents_help_text(),
+        Ok(SpecialCommand::ShowConfigHelp) => format_config_help_text(),
 
         // Status variants require live session state and are intercepted by
         // dispatch_stdio_command before this resolver is reached. The messages
@@ -1148,6 +1227,9 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         }
         Ok(SpecialCommand::ShowSubagentsStatus) => {
             "Subagent status requires a live session.".to_string()
+        }
+        Ok(SpecialCommand::ShowConfigStatus) => {
+            "Config status requires access to the process config; use dispatch_stdio_command_with_config.".to_string()
         }
 
         // Informational Commands.
@@ -1197,6 +1279,9 @@ pub fn resolve_special_command_response(prompt_text: &str) -> Option<String> {
         }
         Ok(SpecialCommand::SetSystemPrompt(_)) => {
             "System prompt update requires a live session.".to_string()
+        }
+        Ok(SpecialCommand::ConfigReload) => {
+            "Config reload requires access to the process config; use dispatch_stdio_command_with_config.".to_string()
         }
 
         // Final, permanent behavior: these commands have no ACP-mode
@@ -1590,6 +1675,148 @@ async fn handle_switch_model(model: String, session: &Arc<Mutex<ActiveSessionSta
     }
 }
 
+/// Handle `/config reload`: re-read the config file used at startup and
+/// apply it to this session and the process-wide config.
+///
+/// Rebuilds the provider, tool registry, skills, and MCP connections from the
+/// newly loaded config while preserving conversation history. The reloaded
+/// config also replaces `config_lock`, so any *new* session created
+/// afterward sees it too; sibling sessions already open in this subprocess
+/// keep their existing agent until they also run `/config reload`. Some
+/// settings (log level/format, persistence storage paths) cannot be applied
+/// without a full restart; when those change, the response text calls them
+/// out by name instead of silently ignoring them.
+///
+/// # Arguments
+///
+/// * `session` - The active ACP session whose agent is rebuilt in place.
+/// * `config_lock` - The process-wide config, replaced on success.
+/// * `options` - CLI-derived stdio agent options, used to re-read the same
+///   config path and reapply the same overrides that were in effect at
+///   startup.
+///
+/// # Returns
+///
+/// A human-readable summary sent back to the user as the command response.
+/// A config file that fails to load or validate is reported here and leaves
+/// all session and process state untouched.
+async fn handle_config_reload(
+    session: &Arc<Mutex<ActiveSessionState>>,
+    config_lock: &tokio::sync::RwLock<Config>,
+    options: &AcpStdioAgentOptions,
+) -> String {
+    let mut new_config = match Config::load(&options.config_path, &options.common) {
+        Ok(c) => c,
+        Err(e) => return format!("Config reload failed: {e}"),
+    };
+    apply_stdio_agent_options(&mut new_config, options);
+    if let Err(e) = new_config.validate() {
+        return format!("Config reload failed validation: {e}");
+    }
+
+    let old_config = config_lock.read().await.clone();
+    let changed = old_config.changed_sections(&new_config);
+    if changed.is_empty() {
+        *config_lock.write().await = new_config;
+        return "Config reloaded: no changes detected.".to_string();
+    }
+
+    // Compute restart-required callouts before `new_config` is moved into
+    // `config_lock` below.
+    let persistence_path_changed =
+        old_config.agent.subagent.persistence_path != new_config.agent.subagent.persistence_path;
+    let log_changed = changed.contains(&"log");
+
+    let workspace_root = {
+        let session_lock = session.lock().await;
+        session_lock.workspace_root.clone()
+    };
+
+    let new_provider_box = match create_provider_with_override(
+        &new_config.provider,
+        options.provider.as_deref(),
+        options.model.as_deref(),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => return format!("Config reload failed: could not build provider: {e}"),
+    };
+    let new_provider: Arc<dyn Provider> = Arc::from(new_provider_box);
+    let model_name = new_provider
+        .current_model()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| current_model_name(&new_config).to_string());
+
+    let env = match build_agent_environment(&new_config, &workspace_root, true, None, None).await {
+        Ok(env) => env,
+        Err(e) => return format!("Config reload failed: could not rebuild tool registry: {e}"),
+    };
+    let mut new_tools = env.tool_registry;
+
+    let subagent_tool = match SubagentTool::new_with_config(
+        Arc::clone(&new_provider),
+        &new_config.provider,
+        new_config.agent.clone(),
+        new_tools.clone(),
+        0,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => return format!("Config reload failed: could not build subagent tool: {e}"),
+    };
+    new_tools.register("subagent", Arc::new(subagent_tool));
+
+    let agent_handle = {
+        let session_lock = session.lock().await;
+        session_lock.xzatoma_agent.clone()
+    };
+    let mut agent = agent_handle.lock().await;
+    let mut conversation = agent.conversation().clone();
+    conversation.set_max_tokens(new_config.agent.conversation.max_tokens);
+
+    let new_agent = match XzatomaAgent::with_conversation_and_shared_provider(
+        Arc::clone(&new_provider),
+        new_tools,
+        new_config.agent.clone(),
+        conversation,
+    ) {
+        Ok(a) => a,
+        Err(e) => return format!("Config reload failed: could not build agent: {e}"),
+    };
+    *agent = new_agent;
+    drop(agent);
+
+    {
+        let mut session_lock = session.lock().await;
+        let mut new_runtime_state = SessionRuntimeState::from_config(&new_config);
+        new_runtime_state.current_model = model_name.clone();
+        new_runtime_state.available_models = session_lock.runtime_state.available_models.clone();
+        new_runtime_state.current_mode_id = session_lock.current_mode_id.clone();
+        session_lock.runtime_state = new_runtime_state;
+        session_lock.terminal_config = new_config.agent.terminal.clone();
+        session_lock.agent_config = new_config.agent.clone();
+        session_lock.provider_name = new_config.provider.provider_type.clone();
+        session_lock.current_model_name = model_name;
+        session_lock.mcp_manager = env.mcp_manager;
+        session_lock.last_activity = chrono::Utc::now().to_rfc3339();
+    }
+
+    *config_lock.write().await = new_config;
+
+    let mut summary = format!("Config reloaded. Changed: {}.", changed.join(", "));
+    if persistence_path_changed {
+        summary.push_str(
+            "\nNote: agent.subagent.persistence_path changed but requires a restart to take effect.",
+        );
+    }
+    if log_changed {
+        summary.push_str("\nNote: log settings changed but require a restart to take effect.");
+    }
+    summary
+}
+
 /// Formats the list of tools available to the agent in the active session.
 ///
 /// # Arguments
@@ -1930,6 +2157,21 @@ pub async fn dispatch_stdio_command(
         _ => resolve_special_command_response(prompt_text)?,
     };
 
+    Some(finish_special_command_response(response_text, session, connection).await)
+}
+
+/// Sends a special command's response text as a session notification (when a
+/// live connection is available) and builds the `PromptResponse` returned to
+/// the caller.
+///
+/// Shared tail logic for [`dispatch_stdio_command`] and
+/// [`dispatch_stdio_command_with_config`] so both dispatch entry points
+/// notify and respond identically.
+async fn finish_special_command_response(
+    response_text: String,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+) -> acp_sdk::Result<acp::PromptResponse> {
     if let Some(connection) = connection {
         let session_id = session.lock().await.session_id().clone();
         let chunk = acp::ContentChunk::new(acp::ContentBlock::from(response_text));
@@ -1941,7 +2183,53 @@ pub async fn dispatch_stdio_command(
         );
     }
 
-    Some(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+}
+
+/// Parses `prompt_text` as a special slash command, dispatching `/config
+/// status` and `/config reload` (which need access to the process-wide
+/// config and CLI options) before falling back to [`dispatch_stdio_command`]
+/// for every other command.
+///
+/// This wrapper exists instead of adding config/options parameters directly
+/// to [`dispatch_stdio_command`] so the many existing unit tests that call
+/// `dispatch_stdio_command` with a bare session handle keep working
+/// unchanged; only [`AcpStdioServerState::enqueue_prompt`], which has access
+/// to `self.config` and `self.options`, needs this wrapper.
+///
+/// # Arguments
+///
+/// * `prompt_text` - The plain-text portion of the incoming prompt.
+/// * `session` - The active ACP session the prompt belongs to.
+/// * `connection` - The live ACP connection to the Zed client, or `None` in
+///   test contexts.
+/// * `config_lock` - The process-wide config, read for `/config status` and
+///   read-then-written for `/config reload`.
+/// * `options` - CLI-derived stdio agent options, used to re-read and
+///   re-apply the same config path and overrides on reload.
+///
+/// # Returns
+///
+/// Returns `None` when `prompt_text` is not a special command; the caller
+/// should proceed to queue the prompt for the LLM as normal.
+pub async fn dispatch_stdio_command_with_config(
+    prompt_text: &str,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+    config_lock: &tokio::sync::RwLock<Config>,
+    options: &AcpStdioAgentOptions,
+) -> Option<acp_sdk::Result<acp::PromptResponse>> {
+    let response_text = match parse_special_command(prompt_text) {
+        Ok(SpecialCommand::ShowConfigStatus) => {
+            format!("Active config file: {}", options.config_path)
+        }
+        Ok(SpecialCommand::ConfigReload) => {
+            handle_config_reload(session, config_lock, options).await
+        }
+        _ => return dispatch_stdio_command(prompt_text, session, connection).await,
+    };
+
+    Some(finish_special_command_response(response_text, session, connection).await)
 }
 
 struct QueuedPrompt {
@@ -3411,8 +3699,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_available_commands_returns_thirteen_entries_from_stdio_context() {
-        assert_eq!(build_available_commands().len(), 13);
+    async fn test_build_available_commands_returns_fourteen_entries_from_stdio_context() {
+        assert_eq!(build_available_commands().len(), 14);
     }
 
     #[tokio::test]

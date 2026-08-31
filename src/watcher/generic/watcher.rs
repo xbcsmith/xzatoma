@@ -28,6 +28,7 @@
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig, WatcherPlanExecutionMode};
 use crate::error::Result;
+use crate::watcher::BackOffPolicy;
 use crate::watcher::generic::consumer::{
     GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
 };
@@ -113,6 +114,7 @@ pub enum MessageDisposition {
 ///     replication_factor: 1,
 ///     broker_address_family: "v4".to_string(),
 ///     poll_interval_ms: 1000,
+///     ..KafkaWatcherConfig::default()
 /// });
 /// let _watcher = GenericWatcher::new(config, true)?;
 /// # Ok(())
@@ -167,6 +169,7 @@ impl GenericWatcher {
     ///     replication_factor: 1,
     ///     broker_address_family: "v4".to_string(),
     ///     poll_interval_ms: 1000,
+    ///     ..KafkaWatcherConfig::default()
     /// });
     ///
     /// let watcher = GenericWatcher::new(config, true);
@@ -249,6 +252,7 @@ impl GenericWatcher {
     ///     replication_factor: 1,
     ///     broker_address_family: "v4".to_string(),
     ///     poll_interval_ms: 1000,
+    ///     ..KafkaWatcherConfig::default()
     /// });
     /// let watcher = GenericWatcher::new(config, true)?
     ///     .with_producer(Arc::new(FakeResultProducer::new()));
@@ -312,6 +316,8 @@ impl GenericWatcher {
             "Generic watcher consuming from Kafka"
         );
 
+        let mut back_off = BackOffPolicy::new();
+
         while self.running.load(Ordering::SeqCst) {
             let message = tokio::select! {
                 biased;
@@ -326,13 +332,22 @@ impl GenericWatcher {
                 Some(Ok(msg)) => {
                     if let Err(e) = self.process_event(msg).await {
                         error!(error = %e, "Failed to process generic watcher message");
+                        back_off.increment();
+                    } else {
+                        back_off.reset();
                     }
                     if let Err(e) = consumer.commit().await {
                         warn!(error = %e, "Failed to commit Kafka offset");
                     }
                 }
                 Some(Err(e)) => {
-                    warn!(error = %e, "Fatal consumer error encountered; stopping watcher");
+                    back_off.increment();
+                    warn!(
+                        error = %e,
+                        delay_ms = back_off.current_delay_ms(),
+                        "Consumer error; backing off before stopping"
+                    );
+                    tokio::time::sleep(back_off.current_delay()).await;
                     self.running.store(false, Ordering::SeqCst);
                     return Err(e);
                 }
@@ -533,6 +548,10 @@ impl GenericWatcher {
                 "broker.address.family".to_string(),
                 self.kafka_config.broker_address_family.clone(),
             ),
+            (
+                "max.poll.interval.ms".to_string(),
+                self.kafka_config.max_poll_interval_ms.to_string(),
+            ),
         ];
 
         if let Some(security) = &self.kafka_config.security {
@@ -723,7 +742,11 @@ impl GenericWatcher {
     /// Returns an error if the consumer cannot be created or if subscription
     /// to the configured input topic fails.
     fn build_consumer(&self) -> Result<RealGenericConsumer> {
-        RealGenericConsumer::from_config(&self.get_kafka_config(), &self.kafka_config.topic)
+        RealGenericConsumer::from_config_with_startup(
+            &self.get_kafka_config(),
+            &self.kafka_config.topic,
+            self.kafka_config.startup_stabilization_secs,
+        )
     }
 
     /// Return the configured Kafka security protocol string.

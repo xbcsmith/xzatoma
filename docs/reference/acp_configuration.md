@@ -652,7 +652,7 @@ changed during a session using the ACP `session/setConfigOption` request.
 
 ## ACP slash commands (`xzatoma agent` / Zed)
 
-When running as a Zed ACP subprocess (`xzatoma agent`), XZatoma advertises 13
+When running as a Zed ACP subprocess (`xzatoma agent`), XZatoma advertises 14
 slash commands in the Zed chat input completion menu. All commands follow a
 unified UX contract:
 
@@ -660,10 +660,18 @@ unified UX contract:
 - **`/<command> status`** inspects the current live value for that command.
 - **`/<command> <action>`** applies a change.
 
-This contract applies to `/mode`, `/model`, `/safety`, `/subagents`, and
-`/system`. The `/streaming` command is advertised but is a no-op in ACP mode
-because Zed controls response streaming. Use `/streaming status` to see a note
-explaining this.
+This contract applies to `/mode`, `/model`, `/safety`, `/subagents`, `/system`,
+and `/config`. The `/streaming` command is advertised but is a no-op in ACP
+mode because Zed controls response streaming. Use `/streaming status` to see a
+note explaining this.
+
+`/config reload` re-reads the config file used at startup and applies it to
+the current session -- provider, tool registry, skills, and MCP connections
+are rebuilt from the new config while conversation history is preserved. It
+works without any ACP-specific setup: type it directly in the chat input like
+any other command. Log level/format and persistence storage paths still
+require a full restart; the response text calls those out by name if they
+changed. See [Reload Configuration Without Restarting](../how-to/use_chat_commands.md#8-reload-configuration-without-restarting).
 
 The full list of advertised commands with their descriptions is in
 `docs/reference/chat_commands.md`.

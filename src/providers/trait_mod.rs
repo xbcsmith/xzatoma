@@ -315,6 +315,27 @@ pub trait Provider: Send + Sync {
         ProviderCapabilities::default()
     }
 
+    /// Returns whether the given model name supports vision (image) input.
+    ///
+    /// The default implementation delegates to the static name-based allowlist in
+    /// [`crate::providers::provider_model_supports_vision`]. Providers that maintain
+    /// a live model cache (such as `OllamaProvider`) should override this method to
+    /// consult the cached [`ModelInfo`] first so that any model advertising vision
+    /// capability via the provider API is accepted, even when its name is not on the
+    /// static allowlist.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_name` - This provider's canonical name (e.g. `"ollama"`, `"openai"`).
+    /// * `model_name` - The model identifier to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the model is known to accept image input.
+    fn model_supports_vision(&self, provider_name: &str, model_name: &str) -> bool {
+        crate::providers::provider_model_supports_vision(provider_name, model_name)
+    }
+
     /// Set the active thinking effort level for subsequent completions.
     ///
     /// Providers that support configurable reasoning (Copilot adaptive thinking,

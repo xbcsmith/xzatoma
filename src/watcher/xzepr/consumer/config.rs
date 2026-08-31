@@ -111,6 +111,18 @@ pub struct KafkaConsumerConfig {
     ///
     /// [`CloudEventMessage`]: crate::watcher::xzepr::consumer::CloudEventMessage
     pub max_payload_bytes: usize,
+
+    /// Maximum time in milliseconds between consecutive `poll()` calls.
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    /// Defaults to 3 600 000 (1 hour).
+    pub max_poll_interval_ms: u64,
+
+    /// Startup stabilization window in seconds.
+    ///
+    /// Passed to [`crate::watcher::startup_context::QuietStartupContext`]
+    /// when constructing the rdkafka consumer.
+    pub startup_stabilization_secs: u64,
 }
 
 impl KafkaConsumerConfig {
@@ -148,6 +160,8 @@ impl KafkaConsumerConfig {
             broker_address_family: "v4".to_string(),
             poll_interval: Duration::from_secs(1),
             max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
+            max_poll_interval_ms: 3_600_000,
+            startup_stabilization_secs: 10,
         }
     }
 
@@ -176,6 +190,40 @@ impl KafkaConsumerConfig {
     /// ```
     pub fn with_max_payload_bytes(mut self, max_payload_bytes: usize) -> Self {
         self.max_payload_bytes = max_payload_bytes;
+        self
+    }
+
+    /// Sets the maximum poll interval in milliseconds.
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "svc")
+    ///     .with_max_poll_interval_ms(1_800_000);
+    /// assert_eq!(config.max_poll_interval_ms, 1_800_000);
+    /// ```
+    pub fn with_max_poll_interval_ms(mut self, ms: u64) -> Self {
+        self.max_poll_interval_ms = ms;
+        self
+    }
+
+    /// Sets the startup stabilization window in seconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "svc")
+    ///     .with_startup_stabilization_secs(30);
+    /// assert_eq!(config.startup_stabilization_secs, 30);
+    /// ```
+    pub fn with_startup_stabilization_secs(mut self, secs: u64) -> Self {
+        self.startup_stabilization_secs = secs;
         self
     }
 

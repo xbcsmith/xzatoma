@@ -26,7 +26,7 @@ use std::path::PathBuf;
 /// let cli = Cli::parse_from(["xzatoma", "auth", "--verbose"]);
 /// assert!(cli.command.common_args().verbose);
 /// ```
-#[derive(Args, Debug, Clone, Default)]
+#[derive(Args, Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommonArgs {
     /// Path to the configuration file.
     ///

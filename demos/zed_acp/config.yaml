@@ -8,8 +8,8 @@
 provider:
   type: ollama
   ollama:
-    host: "http://localhost:11434"
-    model: "north-mini-code-1.0:mlx-nvfp4"
+    host: "http://127.0.0.1:11434"
+    stream_idle_timeout_seconds: 180
 
 agent:
   max_turns: 2500

@@ -16,6 +16,7 @@ use super::plan_extractor::{PlanExtractionError, PlanExtractor};
 use crate::config::{Config, KafkaWatcherConfig, WatcherConfig};
 use crate::watcher::generic::result_event::GenericPlanResult;
 use crate::watcher::generic::result_producer::ResultProducerTrait;
+use crate::watcher::{CircuitBreaker, CircuitBreakerConfig};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -207,7 +208,9 @@ impl Watcher {
                 .with_poll_interval(std::time::Duration::from_millis(
                     kafka_config.poll_interval_ms,
                 ))
-                .with_max_payload_bytes(watcher_config.execution.max_payload_bytes);
+                .with_max_payload_bytes(watcher_config.execution.max_payload_bytes)
+                .with_max_poll_interval_ms(kafka_config.max_poll_interval_ms)
+                .with_startup_stabilization_secs(kafka_config.startup_stabilization_secs);
 
         // Apply security settings if configured
         let consumer_config = if let Some(security) = &kafka_config.security {
@@ -324,6 +327,9 @@ impl Watcher {
             "Starting XZepr watcher service"
         );
 
+        let circuit_breaker = Arc::new(std::sync::Mutex::new(CircuitBreaker::new(
+            CircuitBreakerConfig::default(),
+        )));
         // Create message handler with shared state
         let handler = WatcherMessageHandler {
             config: self.config.clone(),
@@ -333,6 +339,7 @@ impl Watcher {
             producer: self.producer.clone(),
             execution_semaphore: self.execution_semaphore.clone(),
             dry_run: self.dry_run,
+            circuit_breaker: Arc::clone(&circuit_breaker),
         };
 
         // Start consuming messages
@@ -434,6 +441,7 @@ struct WatcherMessageHandler {
     producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
+    circuit_breaker: Arc<std::sync::Mutex<CircuitBreaker>>,
 }
 
 #[async_trait]
@@ -471,6 +479,18 @@ impl MessageHandler for WatcherMessageHandler {
         let _enter = span.enter();
 
         debug!("Received CloudEvent message");
+
+        {
+            let mut cb = self
+                .circuit_breaker
+                .lock()
+                // SAFETY: poisoning only occurs on panic, which we do not use in the watcher path
+                .unwrap_or_else(|pe| pe.into_inner());
+            if cb.is_open() {
+                tracing::warn!("Circuit breaker is open; skipping event");
+                return Ok(());
+            }
+        }
 
         // Apply event filters
         if !self.filter.should_process(&message) {
@@ -529,6 +549,11 @@ impl MessageHandler for WatcherMessageHandler {
                     error = %e,
                     "Failed to acquire execution permit"
                 );
+                self.circuit_breaker
+                    .lock()
+                    // SAFETY: poisoning only occurs on panic, which we do not use in the watcher path
+                    .unwrap_or_else(|pe| pe.into_inner())
+                    .on_failure();
                 return Err(Box::new(WatcherError::Execution(format!(
                     "failed to acquire execution permit: {}",
                     e
@@ -714,6 +739,12 @@ impl MessageHandler for WatcherMessageHandler {
                 "Failed to publish XZepr watcher result"
             );
         }
+
+        self.circuit_breaker
+            .lock()
+            // SAFETY: poisoning only occurs on panic, which we do not use in the watcher path
+            .unwrap_or_else(|pe| pe.into_inner())
+            .on_success();
 
         Ok(())
     }
