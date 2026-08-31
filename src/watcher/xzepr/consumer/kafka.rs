@@ -322,6 +322,8 @@ impl XzeprConsumer {
     /// # Arguments
     ///
     /// * `handler` - Handler for processing messages
+    /// * `once` - If `true`, the consumer stops after the first message is
+    ///   received and processed (useful for one-shot CI runs).
     ///
     /// # Errors
     ///
@@ -330,6 +332,7 @@ impl XzeprConsumer {
     pub async fn run<H: MessageHandler + 'static>(
         &self,
         handler: Arc<H>,
+        once: bool,
     ) -> Result<(), ConsumerError> {
         self.running.store(true, Ordering::SeqCst);
 
@@ -393,6 +396,14 @@ impl XzeprConsumer {
                         );
                     }
                     back_off.reset();
+                    if once {
+                        info!(
+                            service = %self.config.service_name,
+                            "one-shot mode: stopping after first consumed event"
+                        );
+                        self.running.store(false, Ordering::SeqCst);
+                        break;
+                    }
                 }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
@@ -830,7 +841,7 @@ mod tests {
         let handler = Arc::new(TestHandler::new());
 
         let consumer_clone = consumer.clone();
-        let handle = tokio::spawn(async move { consumer_clone.run(handler).await });
+        let handle = tokio::spawn(async move { consumer_clone.run(handler, false).await });
 
         // Give it time to start
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -973,7 +984,7 @@ mod tests {
 
         let consumer_clone = consumer.clone();
         let handler_clone = handler.clone();
-        let handle = tokio::spawn(async move { consumer_clone.run(handler_clone).await });
+        let handle = tokio::spawn(async move { consumer_clone.run(handler_clone, false).await });
 
         // Wait a bit for messages to be consumed.
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

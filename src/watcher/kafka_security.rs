@@ -324,6 +324,7 @@ pub fn warn_if_insecure(protocol: &SecurityProtocol) {
 ///     sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
 ///     sasl_username: Some("user".to_string()),
 ///     sasl_password: Some("pass".to_string()),
+///     ssl_ca_location: None,
 /// };
 ///
 /// let resolved = apply_security_config(&security).unwrap();
@@ -342,7 +343,7 @@ pub fn apply_security_config(security: &KafkaSecurityConfig) -> Result<ResolvedS
         SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
     ) {
         Some(SslConfig {
-            ca_location: None,
+            ca_location: security.ssl_ca_location.clone(),
             certificate_location: None,
             key_location: None,
         })
@@ -484,6 +485,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         let resolved = apply_security_config(&security).unwrap();
@@ -499,6 +501,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         let resolved = apply_security_config(&security).unwrap();
@@ -513,6 +516,7 @@ mod tests {
             sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
             sasl_username: Some("user1".to_string()),
             sasl_password: Some("pass1".to_string()),
+            ssl_ca_location: None,
         };
 
         let resolved = apply_security_config(&security).unwrap();
@@ -531,6 +535,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         assert!(apply_security_config(&security).is_err());
@@ -543,9 +548,83 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: None,
             sasl_password: Some("secret".to_string()),
+            ssl_ca_location: None,
         };
 
         assert!(apply_security_config(&security).is_err());
+    }
+
+    #[test]
+    fn test_apply_security_config_ssl_propagates_ca_location() {
+        let security = KafkaSecurityConfig {
+            protocol: "SSL".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/certs/ca.pem".to_string()),
+        };
+
+        let resolved = apply_security_config(&security).unwrap();
+        let ssl = resolved.ssl_config.unwrap();
+        assert_eq!(ssl.ca_location.as_deref(), Some("/etc/ssl/certs/ca.pem"));
+    }
+
+    #[test]
+    fn test_apply_security_config_sasl_ssl_propagates_ca_location() {
+        let security = KafkaSecurityConfig {
+            protocol: "SASL_SSL".to_string(),
+            sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
+            sasl_username: Some("user".to_string()),
+            sasl_password: Some("pass".to_string()),
+            ssl_ca_location: Some("/certs/ca.pem".to_string()),
+        };
+
+        let resolved = apply_security_config(&security).unwrap();
+        let ssl = resolved.ssl_config.unwrap();
+        assert_eq!(ssl.ca_location.as_deref(), Some("/certs/ca.pem"));
+    }
+
+    #[test]
+    fn test_apply_security_config_ssl_none_ca_location_gives_none() {
+        let security = KafkaSecurityConfig {
+            protocol: "SSL".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: None,
+        };
+
+        let resolved = apply_security_config(&security).unwrap();
+        let ssl = resolved.ssl_config.unwrap();
+        assert!(ssl.ca_location.is_none());
+    }
+
+    #[test]
+    fn test_apply_security_config_plaintext_ignores_ca_location() {
+        let security = KafkaSecurityConfig {
+            protocol: "PLAINTEXT".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/certs/ca.pem".to_string()),
+        };
+
+        let resolved = apply_security_config(&security).unwrap();
+        assert!(resolved.ssl_config.is_none());
+    }
+
+    #[test]
+    fn test_apply_security_config_sasl_plaintext_ignores_ca_location() {
+        let security = KafkaSecurityConfig {
+            protocol: "SASL_PLAINTEXT".to_string(),
+            sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
+            sasl_username: Some("user".to_string()),
+            sasl_password: Some("pass".to_string()),
+            ssl_ca_location: Some("/etc/ssl/certs/ca.pem".to_string()),
+        };
+
+        let resolved = apply_security_config(&security).unwrap();
+        assert!(resolved.ssl_config.is_none());
     }
 
     #[test]

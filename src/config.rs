@@ -2006,6 +2006,7 @@ impl Config {
                     poll_interval_ms: default_poll_interval_ms(),
                     max_poll_interval_ms: default_max_poll_interval_ms(),
                     startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
             }
 
@@ -2032,6 +2033,7 @@ impl Config {
                     poll_interval_ms: default_poll_interval_ms(),
                     max_poll_interval_ms: default_max_poll_interval_ms(),
                     startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
             }
 
@@ -2275,6 +2277,7 @@ impl Config {
                 sasl_mechanism: std::env::var("XZEPR_KAFKA_SASL_MECHANISM").ok(),
                 sasl_username: std::env::var("XZEPR_KAFKA_SASL_USERNAME").ok(),
                 sasl_password: std::env::var("XZEPR_KAFKA_SASL_PASSWORD").ok(),
+                ssl_ca_location: None,
             });
 
             if let Some(ref mut kafka_cfg) = self.watcher.kafka {
@@ -2297,6 +2300,7 @@ impl Config {
                     poll_interval_ms: default_poll_interval_ms(),
                     max_poll_interval_ms: default_max_poll_interval_ms(),
                     startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
@@ -6073,6 +6077,55 @@ acp: {}
     }
 
     #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_defaults_none() {
+        let cfg = KafkaWatcherConfig::default();
+        assert!(cfg.auto_offset_reset.is_none());
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_roundtrip() {
+        let yaml = r#"
+brokers: "localhost:9092"
+topic: "test"
+auto_offset_reset: "earliest"
+"#;
+        let cfg: KafkaWatcherConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.auto_offset_reset.as_deref(), Some("earliest"));
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_absent_gives_none() {
+        let yaml = r#"
+brokers: "localhost:9092"
+topic: "test"
+"#;
+        let cfg: KafkaWatcherConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.auto_offset_reset.is_none());
+    }
+
+    #[test]
+    fn test_kafka_security_config_ssl_ca_location_defaults_none() {
+        let yaml = r#"
+protocol: "SSL"
+"#;
+        let cfg: KafkaSecurityConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.ssl_ca_location.is_none());
+    }
+
+    #[test]
+    fn test_kafka_security_config_ssl_ca_location_roundtrip() {
+        let yaml = r#"
+protocol: "SSL"
+ssl_ca_location: "/etc/ssl/certs/ca.pem"
+"#;
+        let cfg: KafkaSecurityConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.ssl_ca_location.as_deref(),
+            Some("/etc/ssl/certs/ca.pem")
+        );
+    }
+
+    #[test]
     #[serial]
     fn test_apply_env_vars_sets_both_agent_and_acp_system_prompt() {
         let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "you are a senior engineer");
@@ -6279,6 +6332,17 @@ pub struct KafkaWatcherConfig {
     /// while rdkafka is probing brokers during normal startup. Defaults to 10.
     #[serde(default = "default_startup_stabilization_secs")]
     pub startup_stabilization_secs: u64,
+
+    /// Initial offset reset policy for new consumer groups.
+    ///
+    /// When `Some(value)`, `value` is applied as the rdkafka consumer config key
+    /// `auto.offset.reset` during consumer construction. Accepted rdkafka values
+    /// are `"earliest"`, `"latest"`, and `"error"`. When `None`, the field is not
+    /// passed to rdkafka at all: the generic watcher uses the rdkafka default
+    /// (`"latest"`), while the XZepr watcher preserves its own internal default
+    /// (`"earliest"`).
+    #[serde(default)]
+    pub auto_offset_reset: Option<String>,
 }
 
 /// Default broker address family for rdkafka connections.
@@ -6352,6 +6416,7 @@ impl Default for KafkaWatcherConfig {
             poll_interval_ms: default_poll_interval_ms(),
             max_poll_interval_ms: default_max_poll_interval_ms(),
             startup_stabilization_secs: default_startup_stabilization_secs(),
+            auto_offset_reset: None,
         }
     }
 }
@@ -6385,6 +6450,14 @@ pub struct KafkaSecurityConfig {
 
     /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
     pub sasl_password: Option<String>,
+
+    /// Path to the CA certificate file for TLS verification.
+    ///
+    /// When `Some(path)`, applied as the rdkafka config key `ssl.ca.location`
+    /// only when `protocol` is `"SSL"` or `"SASL_SSL"`. Silently ignored for
+    /// `"PLAINTEXT"` and `"SASL_PLAINTEXT"` protocols.
+    #[serde(default)]
+    pub ssl_ca_location: Option<String>,
 }
 
 /// Generic watcher match configuration.

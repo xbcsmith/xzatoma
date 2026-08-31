@@ -2742,6 +2742,10 @@ pub mod watch {
         pub match_version: Option<String>,
         /// Optional system prompt override for agent sessions triggered by this watcher.
         pub system_prompt: Option<String>,
+        /// If `true`, the watcher exits after consuming exactly one event.
+        pub once: bool,
+        /// If `true`, overrides `watcher.execution.allow_dangerous` to `true`.
+        pub allow_dangerous: bool,
     }
     use std::path::PathBuf;
 
@@ -2808,7 +2812,8 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?
+                    .with_once(overrides.once);
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2842,7 +2847,8 @@ pub mod watch {
             }
             crate::config::WatcherType::Generic => {
                 let mut watcher =
-                    crate::watcher::generic::GenericWatcher::new(config, overrides.dry_run)?;
+                    crate::watcher::generic::GenericWatcher::new(config, overrides.dry_run)?
+                        .with_once(overrides.once);
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -3025,6 +3031,12 @@ pub mod watch {
         // Note: dry_run is passed separately to Watcher::new() and not stored in config
         if overrides.dry_run {
             tracing::debug!("Dry-run mode will be enabled for execution");
+        }
+
+        // Override allow_dangerous if requested via CLI flag
+        if overrides.allow_dangerous {
+            config.watcher.execution.allow_dangerous = true;
+            tracing::debug!("CLI override: allow_dangerous enabled");
         }
 
         // Override agent system prompt if provided
@@ -3514,6 +3526,44 @@ pub mod watch {
                     .to_string()
                     .contains("Kafka configuration")
             );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_allow_dangerous() {
+            let mut config = crate::config::Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test".to_string(),
+                ..crate::config::KafkaWatcherConfig::default()
+            });
+            config.watcher.execution.allow_dangerous = false;
+
+            let overrides = WatchCliOverrides {
+                allow_dangerous: true,
+                ..WatchCliOverrides::default()
+            };
+
+            apply_cli_overrides(&mut config, &overrides).unwrap();
+            assert!(config.watcher.execution.allow_dangerous);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_allow_dangerous_false_does_not_override() {
+            let mut config = crate::config::Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test".to_string(),
+                ..crate::config::KafkaWatcherConfig::default()
+            });
+            config.watcher.execution.allow_dangerous = false;
+
+            let overrides = WatchCliOverrides {
+                allow_dangerous: false,
+                ..WatchCliOverrides::default()
+            };
+
+            apply_cli_overrides(&mut config, &overrides).unwrap();
+            assert!(!config.watcher.execution.allow_dangerous);
         }
     }
 }

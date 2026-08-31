@@ -154,6 +154,8 @@ pub struct Watcher {
     producer: Arc<dyn ResultProducerTrait>,
     execution_semaphore: Arc<Semaphore>,
     dry_run: bool,
+    /// Whether to stop after the first consumed event.
+    once: bool,
 }
 
 impl Watcher {
@@ -212,6 +214,13 @@ impl Watcher {
                 .with_max_poll_interval_ms(kafka_config.max_poll_interval_ms)
                 .with_startup_stabilization_secs(kafka_config.startup_stabilization_secs);
 
+        // Apply auto_offset_reset override from config when set.
+        let consumer_config = if let Some(ref reset) = kafka_config.auto_offset_reset {
+            consumer_config.with_auto_offset_reset(reset)
+        } else {
+            consumer_config
+        };
+
         // Apply security settings if configured
         let consumer_config = if let Some(security) = &kafka_config.security {
             Self::apply_security_config(consumer_config, security)?
@@ -259,6 +268,7 @@ impl Watcher {
             producer,
             execution_semaphore,
             dry_run,
+            once: false,
         })
     }
 
@@ -277,6 +287,25 @@ impl Watcher {
     /// `self` with the producer replaced.
     pub fn with_producer(mut self, producer: Arc<dyn ResultProducerTrait>) -> Self {
         self.producer = producer;
+        self
+    }
+
+    /// Configure the watcher to exit after the first consumed event.
+    ///
+    /// When `true`, the `run()` loop inside the underlying Kafka consumer
+    /// exits immediately after the first message is received and processed.
+    /// Useful for CI smoke tests that place exactly one event on the topic
+    /// and expect the watcher to exit cleanly afterward.
+    ///
+    /// # Arguments
+    ///
+    /// * `once` - If `true`, stop after the first consumed event.
+    ///
+    /// # Returns
+    ///
+    /// `self` with `once` configured.
+    pub fn with_once(mut self, once: bool) -> Self {
+        self.once = once;
         self
     }
 
@@ -345,7 +374,7 @@ impl Watcher {
         // Start consuming messages
         debug!("Starting message consumer loop");
         self.consumer
-            .run(Arc::new(handler))
+            .run(Arc::new(handler), self.once)
             .await
             .map_err(|source| WatcherError::Consumer { source })?;
 
@@ -374,9 +403,9 @@ impl Watcher {
         mut config: KafkaConsumerConfig,
         security: &crate::config::KafkaSecurityConfig,
     ) -> WatcherResult<KafkaConsumerConfig> {
-        use super::consumer::config::SaslConfig;
+        use super::consumer::config::{SaslConfig, SslConfig};
         use crate::watcher::kafka_security::{
-            parse_sasl_mechanism, parse_security_protocol, warn_if_insecure,
+            SecurityProtocol, parse_sasl_mechanism, parse_security_protocol, warn_if_insecure,
         };
 
         debug!(
@@ -420,6 +449,18 @@ impl Watcher {
                 mechanism: sasl_mechanism,
                 username: username.to_string(),
                 password,
+            });
+        }
+
+        // Apply ssl.ca.location when the protocol uses TLS.
+        if matches!(
+            config.security_protocol,
+            SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
+        ) {
+            config.ssl_config = Some(SslConfig {
+                ca_location: security.ssl_ca_location.clone(),
+                certificate_location: None,
+                key_location: None,
             });
         }
 
@@ -862,6 +903,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         let error = Watcher::apply_security_config(config, &security).unwrap_err();
@@ -880,6 +922,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         // The unencrypted-traffic warning is only a side effect; the function
@@ -896,6 +939,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: None,
             sasl_password: Some("secret".to_string()),
+            ssl_ca_location: None,
         };
 
         let error = Watcher::apply_security_config(config, &security).unwrap_err();
@@ -910,6 +954,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: Some("user".to_string()),
             sasl_password: None,
+            ssl_ca_location: None,
         };
 
         let error = Watcher::apply_security_config(config, &security).unwrap_err();
@@ -924,6 +969,7 @@ mod tests {
             sasl_mechanism: Some("INVALID".to_string()),
             sasl_username: Some("user".to_string()),
             sasl_password: Some("secret".to_string()),
+            ssl_ca_location: None,
         };
 
         let error = Watcher::apply_security_config(config, &security).unwrap_err();
@@ -988,5 +1034,71 @@ mod tests {
     fn test_xzepr_watcher_system_prompt_none_when_no_sources() {
         use crate::agent::resolve;
         assert!(resolve(None, None, None).is_none());
+    }
+
+    #[test]
+    fn test_xzepr_watcher_apply_security_config_ssl_ca_location_applied() {
+        use crate::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SSL".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/ca.pem".to_string()),
+        };
+
+        let result = Watcher::apply_security_config(config, &security).unwrap();
+        let ssl = result.ssl_config.unwrap();
+        assert_eq!(ssl.ca_location.as_deref(), Some("/etc/ssl/ca.pem"));
+    }
+
+    #[test]
+    fn test_xzepr_watcher_apply_security_config_ssl_ca_location_none() {
+        use crate::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SSL".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: None,
+        };
+
+        let result = Watcher::apply_security_config(config, &security).unwrap();
+        // ssl_config should still be Some (protocol is SSL) but ca_location is None
+        let ssl = result.ssl_config.unwrap();
+        assert!(ssl.ca_location.is_none());
+    }
+
+    #[test]
+    fn test_xzepr_watcher_apply_security_config_plaintext_no_ssl_config() {
+        use crate::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "xzatoma");
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "PLAINTEXT".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/ca.pem".to_string()),
+        };
+
+        let result = Watcher::apply_security_config(config, &security).unwrap();
+        assert!(result.ssl_config.is_none());
+    }
+
+    #[test]
+    fn test_xzepr_watcher_with_once_flag() {
+        use crate::config::{Config, KafkaWatcherConfig};
+        let mut config = Config::default();
+        config.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "test.topic".to_string(),
+            ..KafkaWatcherConfig::default()
+        });
+        let watcher = crate::watcher::XzeprWatcher::new(config, false)
+            .unwrap()
+            .with_once(true);
+        assert!(watcher.once);
     }
 }

@@ -169,6 +169,8 @@ async fn main() -> Result<()> {
             brokers,
             match_version,
             system_prompt,
+            once,
+            allow_dangerous,
             ..
         } => {
             tracing::info!("Starting watcher mode");
@@ -190,6 +192,8 @@ async fn main() -> Result<()> {
                     brokers,
                     match_version,
                     system_prompt,
+                    once,
+                    allow_dangerous,
                 },
             )
             .await?;

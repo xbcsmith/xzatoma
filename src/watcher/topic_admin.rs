@@ -625,6 +625,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         });
 
         let result = WatcherTopicAdmin::new(&config);

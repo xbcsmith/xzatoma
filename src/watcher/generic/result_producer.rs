@@ -1011,6 +1011,7 @@ mod tests {
             sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
             sasl_username: Some("user1".to_string()),
             sasl_password: Some("pass1".to_string()),
+            ssl_ca_location: None,
         });
 
         let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
@@ -1033,6 +1034,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);
@@ -1047,6 +1049,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: None,
             sasl_password: Some("secret".to_string()),
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);
@@ -1061,6 +1064,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: Some("alice".to_string()),
             sasl_password: None,
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);

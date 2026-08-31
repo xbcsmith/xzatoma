@@ -287,6 +287,22 @@ pub enum Commands {
         /// Override the system prompt for agent sessions triggered by this watcher.
         #[arg(long)]
         system_prompt: Option<String>,
+
+        /// Process exactly one event from the Kafka topic then exit.
+        ///
+        /// Useful for CI pipelines and smoke tests that place exactly one event
+        /// on the topic and expect the watcher to process it and exit with
+        /// code `0`. The watcher stops after consuming the first message
+        /// regardless of whether it matched the configured filter criteria.
+        #[arg(long)]
+        once: bool,
+
+        /// Override `watcher.execution.allow_dangerous` to `true` for this run.
+        ///
+        /// Allows operators to permit dangerous terminal commands for a single
+        /// invocation without editing the configuration file.
+        #[arg(long)]
+        allow_dangerous: bool,
     },
 
     /// Authenticate with a provider
@@ -2177,6 +2193,73 @@ mod tests {
             assert!(streaming);
         } else {
             panic!("Expected Agent command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_once_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--once"]);
+        assert!(cli.is_ok());
+        if let Commands::Watch { once, .. } = cli.unwrap().command {
+            assert!(once);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_once_defaults_false() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch"]);
+        assert!(cli.is_ok());
+        if let Commands::Watch { once, .. } = cli.unwrap().command {
+            assert!(!once);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_allow_dangerous_flag() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--allow-dangerous"]);
+        assert!(cli.is_ok());
+        if let Commands::Watch {
+            allow_dangerous, ..
+        } = cli.unwrap().command
+        {
+            assert!(allow_dangerous);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_allow_dangerous_defaults_false() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch"]);
+        assert!(cli.is_ok());
+        if let Commands::Watch {
+            allow_dangerous, ..
+        } = cli.unwrap().command
+        {
+            assert!(!allow_dangerous);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_watch_once_and_allow_dangerous_together() {
+        let cli = Cli::try_parse_from(["xzatoma", "watch", "--once", "--allow-dangerous"]);
+        assert!(cli.is_ok());
+        if let Commands::Watch {
+            once,
+            allow_dangerous,
+            ..
+        } = cli.unwrap().command
+        {
+            assert!(once);
+            assert!(allow_dangerous);
+        } else {
+            panic!("Expected Watch command");
         }
     }
 }
