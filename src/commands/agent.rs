@@ -106,6 +106,7 @@ pub async fn handle_agent(
     config_path: String,
     common: crate::cli::CommonArgs,
 ) -> Result<()> {
+    config.validate_for_zed_agent()?;
     // Resolve the CLI flag against any config/env value already in config.
     // CLI flag takes precedence over config.agent.system_prompt.
     let resolved = crate::agent::resolve(

@@ -74,7 +74,91 @@ fn handle_history_with_storage(storage: &SqliteStorage, command: HistoryCommand)
             storage.delete_conversation(&id)?;
             println!("{}", format!("Deleted conversation {}", id).green());
         }
+        HistoryCommand::Tools { conversation, tool } => {
+            handle_history_tools_with_storage(storage, conversation.as_deref(), tool.as_deref())?;
+        }
     }
+
+    Ok(())
+}
+
+/// Handle the `history tools` subcommand.
+///
+/// Queries the `tool_invocations` table with optional filters on
+/// `conversation_id` and `tool_name`, then formats and prints each row.
+///
+/// # Arguments
+///
+/// * `storage` - Initialized storage instance
+/// * `conversation` - Optional conversation ID filter
+/// * `tool` - Optional tool name filter
+///
+/// # Errors
+///
+/// Returns an error if the storage query fails.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::storage::SqliteStorage;
+/// use xzatoma::commands::history::handle_history_tools_with_storage;
+///
+/// let tmp = tempfile::tempdir().unwrap();
+/// let db = tmp.path().join("h.db");
+/// let storage = SqliteStorage::new_with_path(&db).unwrap();
+/// handle_history_tools_with_storage(&storage, None, None).unwrap();
+/// ```
+pub fn handle_history_tools_with_storage(
+    storage: &SqliteStorage,
+    conversation: Option<&str>,
+    tool: Option<&str>,
+) -> Result<()> {
+    let rows = storage.list_tool_invocations(conversation, tool)?;
+
+    if rows.is_empty() {
+        println!("{}", "No tool invocations found.".yellow());
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table.set_format(*format::consts::FORMAT_BORDERS_ONLY);
+
+    table.add_row(prettytable::row![
+        "ID".bold(),
+        "Conversation".bold(),
+        "Tool".bold(),
+        "Success".bold(),
+        "Timestamp".bold()
+    ]);
+
+    for row in &rows {
+        let id_short = if row.id.len() >= 8 {
+            &row.id[..8]
+        } else {
+            &row.id
+        };
+        let conv_short = if row.conversation_id.len() >= 8 {
+            &row.conversation_id[..8]
+        } else {
+            &row.conversation_id
+        };
+        let success_str = if row.success { "yes" } else { "no" };
+        table.add_row(prettytable::row![
+            id_short.cyan(),
+            conv_short.cyan(),
+            row.tool_name,
+            if row.success {
+                success_str.green()
+            } else {
+                success_str.red()
+            },
+            row.timestamp
+        ]);
+    }
+
+    println!("\nTool Invocations:");
+    table.printstd();
+    println!();
 
     Ok(())
 }
@@ -337,5 +421,77 @@ mod tests {
 
         let result = show_conversation(&storage, "nonexistent", false, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_history_tools_empty_returns_ok() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        let result = handle_history_tools_with_storage(&storage, None, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_history_tools_filter_by_tool_name() {
+        use crate::storage::StoredToolInvocation;
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test2.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        storage
+            .save_tool_invocation(&StoredToolInvocation {
+                id: "01J000000000000000000001".to_string(),
+                run_id: "r".to_string(),
+                conversation_id: "c1".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+                result: "{}".to_string(),
+                success: true,
+                timestamp: "2025-01-01T00:00:00Z".to_string(),
+            })
+            .expect("save");
+        storage
+            .save_tool_invocation(&StoredToolInvocation {
+                id: "01J000000000000000000002".to_string(),
+                run_id: "r".to_string(),
+                conversation_id: "c1".to_string(),
+                tool_name: "write_file".to_string(),
+                arguments: "{}".to_string(),
+                result: "{}".to_string(),
+                success: true,
+                timestamp: "2025-01-01T00:01:00Z".to_string(),
+            })
+            .expect("save");
+
+        let result = handle_history_tools_with_storage(&storage, None, Some("read_file"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_handle_history_tools_filter_by_conversation() {
+        use crate::storage::StoredToolInvocation;
+
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test3.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        storage
+            .save_tool_invocation(&StoredToolInvocation {
+                id: "01J000000000000000000003".to_string(),
+                run_id: "r".to_string(),
+                conversation_id: "conv-xyz".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+                result: "{}".to_string(),
+                success: true,
+                timestamp: "2025-01-01T00:00:00Z".to_string(),
+            })
+            .expect("save");
+
+        let result = handle_history_tools_with_storage(&storage, Some("conv-xyz"), None);
+        assert!(result.is_ok());
     }
 }

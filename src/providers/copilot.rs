@@ -1727,6 +1727,19 @@ impl CopilotProvider {
         assistant_message_from_wire(copilot_msg.tool_calls, || copilot_msg.content)
     }
 
+    /// Read the editor version and initiator strings from the locked config.
+    ///
+    /// Returns `(editor_version, initiator)` as owned strings for use as HTTP
+    /// header values on outbound Copilot API requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if the config lock is poisoned.
+    fn editor_headers(&self) -> Result<(String, String)> {
+        let config = read_config_lock(&self.config)?;
+        Ok((config.editor_version.clone(), config.initiator.clone()))
+    }
+
     /// Fetch the list of available Copilot models from the API.
     ///
     /// This function uses an in-memory TTL cache to avoid frequent API calls.
@@ -1746,12 +1759,14 @@ impl CopilotProvider {
 
         let token = self.authenticate().await?;
         let models_url = self.api_endpoint("models");
+        let (editor_version, initiator) = self.editor_headers()?;
 
         let response = self
             .client
             .get(&models_url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "vscode/1.85.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .send()
             .await
             .map_err(|e| {
@@ -1800,7 +1815,8 @@ impl CopilotProvider {
                                 .client
                                 .get(&models_url)
                                 .header("Authorization", format!("Bearer {}", new_token))
-                                .header("Editor-Version", "vscode/1.85.0")
+                                .header("Editor-Version", &editor_version)
+                                .header("X-Initiator", &initiator)
                                 .send()
                                 .await
                                 .map_err(|e| {
@@ -1989,12 +2005,14 @@ impl CopilotProvider {
 
         let token = self.authenticate().await?;
         let models_url = self.api_endpoint("models");
+        let (editor_version, initiator) = self.editor_headers()?;
 
         let response = self
             .client
             .get(&models_url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "vscode/1.85.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .send()
             .await
             .map_err(|e| {
@@ -2120,6 +2138,7 @@ impl CopilotProvider {
     ) -> crate::error::Result<ResponseStream> {
         let url = self.endpoint_url(ModelEndpoint::Responses);
         let token = self.authenticate().await?;
+        let (editor_version, initiator) = self.editor_headers()?;
 
         // Build request
         let request = ResponsesRequest {
@@ -2138,7 +2157,8 @@ impl CopilotProvider {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "xzatoma/0.1.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .header("Accept", "text/event-stream")
             .json(&request)
             .send()
@@ -2230,6 +2250,7 @@ impl CopilotProvider {
     ) -> crate::error::Result<ResponseStream> {
         let url = self.endpoint_url(ModelEndpoint::ChatCompletions);
         let token = self.authenticate().await?;
+        let (editor_version, initiator) = self.editor_headers()?;
 
         // Build completions request (existing format)
         let copilot_messages = self.convert_messages(messages);
@@ -2247,7 +2268,8 @@ impl CopilotProvider {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "xzatoma/0.1.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .header("Accept", "text/event-stream")
             .json(&request)
             .send()
@@ -2475,12 +2497,14 @@ impl CopilotProvider {
         };
 
         let url = self.endpoint_url(ModelEndpoint::Responses);
+        let (editor_version, initiator) = self.editor_headers()?;
 
         let response = self
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "vscode/1.85.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .json(&request)
             .send()
             .await
@@ -2596,6 +2620,7 @@ impl CopilotProvider {
         tools: &[crate::tools::Tool],
     ) -> Result<CompletionResponse> {
         let token = self.authenticate().await?;
+        let (editor_version, initiator) = self.editor_headers()?;
 
         let copilot_request = CopilotRequest {
             model: model.to_string(),
@@ -2616,7 +2641,8 @@ impl CopilotProvider {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .header("Editor-Version", "vscode/1.85.0")
+            .header("Editor-Version", &editor_version)
+            .header("X-Initiator", &initiator)
             .json(&copilot_request)
             .send()
             .await
@@ -2658,7 +2684,8 @@ impl CopilotProvider {
                         .client
                         .post(&url)
                         .header("Authorization", format!("Bearer {}", new_token))
-                        .header("Editor-Version", "vscode/1.85.0")
+                        .header("Editor-Version", &editor_version)
+                        .header("X-Initiator", &initiator)
                         .json(&copilot_request)
                         .send()
                         .await
@@ -3944,6 +3971,7 @@ mod tests {
             enable_endpoint_fallback: true,
             reasoning_effort: None,
             include_reasoning: false,
+            ..Default::default()
         };
 
         let provider = CopilotProvider::new(config).expect("Failed to create provider");
@@ -3967,6 +3995,7 @@ mod tests {
             enable_endpoint_fallback: true,
             reasoning_effort: None,
             include_reasoning: false,
+            ..Default::default()
         };
 
         let provider = CopilotProvider::new(config).expect("Failed to create provider");
@@ -4653,6 +4682,7 @@ mod tests {
             enable_endpoint_fallback: false,
             reasoning_effort: Some("high".to_string()),
             include_reasoning: true,
+            ..Default::default()
         };
 
         let yaml = serde_yaml::to_string(&config).expect("Serialize failed");
@@ -5293,5 +5323,30 @@ api_base: https://attacker.example.com
             "error message must reference the unsupported messages endpoint: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_copilot_config_editor_version_default_is_vscode() {
+        let config = crate::config::CopilotConfig::default();
+        assert_eq!(config.editor_version, "vscode/1.95.0");
+    }
+
+    #[test]
+    fn test_copilot_config_initiator_default_is_agent() {
+        let config = crate::config::CopilotConfig::default();
+        assert_eq!(config.initiator, "agent");
+    }
+
+    #[test]
+    fn test_copilot_provider_editor_headers_returns_config_values() {
+        let config = crate::config::CopilotConfig {
+            editor_version: "my-editor/2.0".to_string(),
+            initiator: "custom-initiator".to_string(),
+            ..Default::default()
+        };
+        let provider = crate::providers::CopilotProvider::new(config).unwrap();
+        let (editor_ver, initiator) = provider.editor_headers().unwrap();
+        assert_eq!(editor_ver, "my-editor/2.0");
+        assert_eq!(initiator, "custom-initiator");
     }
 }

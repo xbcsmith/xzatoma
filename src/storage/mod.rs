@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub mod types;
+pub use types::StoredToolInvocation;
 pub use types::{
     StoredAcpAwaitState as PublicStoredAcpAwaitState,
     StoredAcpCancellation as PublicStoredAcpCancellation, StoredAcpRun as PublicStoredAcpRun,
@@ -299,6 +300,23 @@ impl SqliteStorage {
                 acknowledged INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(run_id) REFERENCES acp_runs(run_id)
             );
+
+            CREATE TABLE IF NOT EXISTS tool_invocations (
+                id              TEXT NOT NULL PRIMARY KEY,
+                run_id          TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                tool_name       TEXT NOT NULL,
+                arguments       TEXT NOT NULL,
+                result          TEXT NOT NULL,
+                success         INTEGER NOT NULL,
+                timestamp       TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tool_invocations_conversation_id
+                ON tool_invocations(conversation_id);
+
+            CREATE INDEX IF NOT EXISTS idx_tool_invocations_tool_name
+                ON tool_invocations(tool_name);
 
             CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
                 ON conversations(updated_at DESC);
@@ -1718,10 +1736,189 @@ impl SqliteStorage {
             .map_err(|e| XzatomaError::Storage(format!("Invalid ACP run count: {}", e)))
     }
 
+    /// Save a tool invocation record to the `tool_invocations` table.
+    ///
+    /// # Arguments
+    ///
+    /// * `invocation` - The tool invocation to persist
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be opened or the INSERT fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::storage::{SqliteStorage, StoredToolInvocation};
+    ///
+    /// let storage = SqliteStorage::new_with_path("/tmp/test_save_tool.db")?;
+    /// let inv = StoredToolInvocation {
+    ///     id: "01JTEST00000000000000000001".to_string(),
+    ///     run_id: "run-1".to_string(),
+    ///     conversation_id: "conv-1".to_string(),
+    ///     tool_name: "read_file".to_string(),
+    ///     arguments: r#"{"path":"src/main.rs"}"#.to_string(),
+    ///     result: r#"{"content":"fn main(){}"}"#.to_string(),
+    ///     success: true,
+    ///     timestamp: "2025-11-07T18:12:07.982682Z".to_string(),
+    /// };
+    /// storage.save_tool_invocation(&inv)?;
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn save_tool_invocation(&self, invocation: &StoredToolInvocation) -> Result<()> {
+        let conn = Connection::open(&self.db_path)
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO tool_invocations
+                (id, run_id, conversation_id, tool_name, arguments, result, success, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                invocation.id,
+                invocation.run_id,
+                invocation.conversation_id,
+                invocation.tool_name,
+                invocation.arguments,
+                invocation.result,
+                bool_to_sqlite(invocation.success),
+                invocation.timestamp,
+            ],
+        )
+        .map_err(|source| XzatomaError::StorageQuery {
+            operation: "save tool invocation".to_string(),
+            source: source.into(),
+        })?;
+        Ok(())
+    }
+
+    /// List tool invocations with optional filters.
+    ///
+    /// Both `conversation_id` and `tool_name` are optional; when absent, no
+    /// filtering is applied for that column. Results are ordered by
+    /// `timestamp ASC`.
+    ///
+    /// # Arguments
+    ///
+    /// * `conversation_id` - Optional conversation ID filter
+    /// * `tool_name` - Optional tool name filter
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database cannot be opened or the query fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::storage::SqliteStorage;
+    ///
+    /// let storage = SqliteStorage::new_with_path("/tmp/test_list_tools.db")?;
+    /// let rows = storage.list_tool_invocations(None, None)?;
+    /// assert!(rows.is_empty());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn list_tool_invocations(
+        &self,
+        conversation_id: Option<&str>,
+        tool_name: Option<&str>,
+    ) -> Result<Vec<StoredToolInvocation>> {
+        let conn = Connection::open(&self.db_path)
+            .map_err(|source| storage_database_open_error(&self.db_path, source))?;
+
+        // Use separate queries based on which filters are active to avoid
+        // dynamic param binding complexity with rusqlite.
+        let rows: Vec<StoredToolInvocation> = match (conversation_id, tool_name) {
+            (None, None) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, run_id, conversation_id, tool_name, arguments, result, success, timestamp
+                         FROM tool_invocations ORDER BY timestamp ASC",
+                    )
+                    .map_err(|source| XzatomaError::StorageQuery {
+                        operation: "prepare list all tool invocations".to_string(),
+                        source: source.into(),
+                    })?;
+                collect_tool_invocation_rows(&mut stmt, [])?
+            }
+            (Some(cid), None) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, run_id, conversation_id, tool_name, arguments, result, success, timestamp
+                         FROM tool_invocations WHERE conversation_id = ?1 ORDER BY timestamp ASC",
+                    )
+                    .map_err(|source| XzatomaError::StorageQuery {
+                        operation: "prepare tool invocations by conversation".to_string(),
+                        source: source.into(),
+                    })?;
+                collect_tool_invocation_rows(&mut stmt, rusqlite::params![cid])?
+            }
+            (None, Some(tn)) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, run_id, conversation_id, tool_name, arguments, result, success, timestamp
+                         FROM tool_invocations WHERE tool_name = ?1 ORDER BY timestamp ASC",
+                    )
+                    .map_err(|source| XzatomaError::StorageQuery {
+                        operation: "prepare tool invocations by tool name".to_string(),
+                        source: source.into(),
+                    })?;
+                collect_tool_invocation_rows(&mut stmt, rusqlite::params![tn])?
+            }
+            (Some(cid), Some(tn)) => {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, run_id, conversation_id, tool_name, arguments, result, success, timestamp
+                         FROM tool_invocations WHERE conversation_id = ?1 AND tool_name = ?2 ORDER BY timestamp ASC",
+                    )
+                    .map_err(|source| XzatomaError::StorageQuery {
+                        operation: "prepare tool invocations by conversation and tool name".to_string(),
+                        source: source.into(),
+                    })?;
+                collect_tool_invocation_rows(&mut stmt, rusqlite::params![cid, tn])?
+            }
+        };
+        Ok(rows)
+    }
+
     fn open_connection(&self) -> Result<Connection> {
         Connection::open(&self.db_path)
             .map_err(|source| storage_database_open_error(&self.db_path, source))
     }
+}
+
+/// Collect rows from a prepared `tool_invocations` statement into a `Vec`.
+///
+/// This is a free function rather than a method so it can accept any
+/// `rusqlite::Params` concrete type, which avoids dynamic-dispatch overhead
+/// and simplifies the four match arms in `list_tool_invocations`.
+fn collect_tool_invocation_rows<P: rusqlite::Params>(
+    stmt: &mut rusqlite::Statement,
+    params: P,
+) -> Result<Vec<StoredToolInvocation>> {
+    let rows = stmt
+        .query_map(params, |row| {
+            Ok(StoredToolInvocation {
+                id: row.get(0)?,
+                run_id: row.get(1)?,
+                conversation_id: row.get(2)?,
+                tool_name: row.get(3)?,
+                arguments: row.get(4)?,
+                result: row.get(5)?,
+                success: sqlite_to_bool(row.get::<_, i64>(6)?),
+                timestamp: row.get(7)?,
+            })
+        })
+        .map_err(|source| XzatomaError::StorageQuery {
+            operation: "query tool invocations".to_string(),
+            source: source.into(),
+        })?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|source| XzatomaError::StorageRowDecode {
+            operation: "decode tool invocation row".to_string(),
+            source: source.into(),
+        })?);
+    }
+    Ok(result)
 }
 
 fn serialize_metadata(metadata: &BTreeMap<String, String>) -> Result<String> {
@@ -2652,5 +2849,130 @@ mod tests {
             std::error::Error::source(&error).is_some(),
             "persistence path error must preserve its source chain"
         );
+    }
+
+    #[test]
+    fn test_save_and_list_tool_invocations_no_filter() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        let inv1 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "run-1".to_string(),
+            conversation_id: "conv-1".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: true,
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let inv2 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "run-1".to_string(),
+            conversation_id: "conv-2".to_string(),
+            tool_name: "write_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: false,
+            timestamp: "2025-01-01T00:01:00Z".to_string(),
+        };
+
+        storage.save_tool_invocation(&inv1).expect("save inv1");
+        storage.save_tool_invocation(&inv2).expect("save inv2");
+
+        let all = storage.list_tool_invocations(None, None).expect("list all");
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_list_tool_invocations_filter_by_tool_name() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test2.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        let inv1 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "r".to_string(),
+            conversation_id: "c".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: true,
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let inv2 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "r".to_string(),
+            conversation_id: "c".to_string(),
+            tool_name: "write_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: true,
+            timestamp: "2025-01-01T00:01:00Z".to_string(),
+        };
+
+        storage.save_tool_invocation(&inv1).expect("save");
+        storage.save_tool_invocation(&inv2).expect("save");
+
+        let filtered = storage
+            .list_tool_invocations(None, Some("read_file"))
+            .expect("list");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].tool_name, "read_file");
+    }
+
+    #[test]
+    fn test_list_tool_invocations_filter_by_conversation_id() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test3.db");
+        let storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        let inv1 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "r".to_string(),
+            conversation_id: "conv-a".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: true,
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
+        };
+        let inv2 = StoredToolInvocation {
+            id: ulid::Ulid::generate().to_string(),
+            run_id: "r".to_string(),
+            conversation_id: "conv-b".to_string(),
+            tool_name: "read_file".to_string(),
+            arguments: "{}".to_string(),
+            result: "{}".to_string(),
+            success: true,
+            timestamp: "2025-01-01T00:01:00Z".to_string(),
+        };
+
+        storage.save_tool_invocation(&inv1).expect("save");
+        storage.save_tool_invocation(&inv2).expect("save");
+
+        let filtered = storage
+            .list_tool_invocations(Some("conv-a"), None)
+            .expect("list");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].conversation_id, "conv-a");
+    }
+
+    #[test]
+    fn test_sqlite_storage_init_creates_tool_invocations_table() {
+        let tmp = tempdir().expect("tempdir");
+        let db_path = tmp.path().join("test_schema.db");
+        let _storage = SqliteStorage::new_with_path(&db_path).expect("storage");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_invocations'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query");
+        assert_eq!(count, 1, "tool_invocations table should exist");
     }
 }

@@ -488,6 +488,7 @@ mod tests {
             model: model.to_string(),
             request_timeout_seconds: 1,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         }
     }
 

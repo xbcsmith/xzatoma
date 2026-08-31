@@ -9,7 +9,7 @@ use crate::error::{Result, XzatomaError};
 use crate::providers::cache::{ModelCache, is_cache_valid, new_model_cache};
 use crate::providers::{
     CompletionResponse, FunctionCall, Message, ModelCapability, ModelInfo, Provider,
-    ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderRequest, ProviderToolCall,
+    ProviderCapabilities, ProviderFunctionCall, ProviderMessage, ProviderTool, ProviderToolCall,
     TokenUsage, ToolCall, convert_tools_from_json, messages_contain_image_content,
     read_config_lock,
 };
@@ -38,6 +38,7 @@ use url::Url;
 ///     host: "http://localhost:11434".to_string(),
 ///     model: "llama3.2:latest".to_string(),
 ///     request_timeout_seconds: 600,
+///     ..Default::default()
 /// };
 /// let provider = OllamaProvider::new(config)?;
 /// let messages = vec![Message::user("Hello!")];
@@ -107,10 +108,40 @@ struct OllamaModelDetails {
 /// Ollama's JSON schema for requests and responses is structurally identical
 /// to the canonical shared types defined in `providers`.  These aliases
 /// keep internal code readable without duplicating struct definitions.
-type OllamaRequest = ProviderRequest;
 type OllamaMessage = ProviderMessage;
 type OllamaToolCall = ProviderToolCall;
 type OllamaFunctionCall = ProviderFunctionCall;
+
+/// Optional Ollama model parameters sent in the `options` field.
+///
+/// When all fields are `None`, the entire `options` object is omitted from the
+/// request body; Ollama then uses its model defaults.
+#[derive(Debug, Serialize)]
+struct OllamaOptions {
+    /// Context window size in tokens.
+    ///
+    /// When `Some(n)`, sets `num_ctx` in the Ollama request options.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    num_ctx: Option<u32>,
+}
+
+/// Ollama chat completion request body including optional model parameters.
+///
+/// Used instead of [`OllamaRequest`] (which is [`ProviderRequest`]) whenever
+/// the config contains model options such as `num_ctx`. The `options` key is
+/// omitted from the serialized body when no options are set, so Ollama falls
+/// back to its built-in model defaults.
+#[derive(Debug, Serialize)]
+struct OllamaRequestFull {
+    model: String,
+    messages: Vec<OllamaMessage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ProviderTool>,
+    stream: bool,
+    /// Optional Ollama model options (e.g., `num_ctx`). Omitted when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<OllamaOptions>,
+}
 
 /// Response structure from Ollama API
 #[derive(Debug, Deserialize)]
@@ -210,6 +241,7 @@ impl OllamaProvider {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
     ///     request_timeout_seconds: 600,
+    ///     ..Default::default()
     /// };
     /// let provider = OllamaProvider::new(config);
     /// assert!(provider.is_ok());
@@ -278,6 +310,7 @@ impl OllamaProvider {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
     ///     request_timeout_seconds: 600,
+    ///     ..Default::default()
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// // "localhost" is normalised to the IPv4 literal to avoid Happy-Eyeballs
@@ -303,6 +336,7 @@ impl OllamaProvider {
     ///     host: "http://localhost:11434".to_string(),
     ///     model: "llama3.2:latest".to_string(),
     ///     request_timeout_seconds: 600,
+    ///     ..Default::default()
     /// };
     /// let provider = OllamaProvider::new(config).unwrap();
     /// assert_eq!(provider.model(), "llama3.2:latest");
@@ -498,12 +532,13 @@ impl OllamaProvider {
     ) -> Result<CompletionResponse> {
         use futures::StreamExt;
 
-        let (url, model, stream_idle_timeout_secs) = {
+        let (url, model, stream_idle_timeout_secs, num_ctx) = {
             let config = read_config_lock(&self.config)?;
             (
                 format!("{}/api/chat", config.host),
                 config.model.clone(),
                 config.stream_idle_timeout_seconds,
+                config.num_ctx,
             )
         };
 
@@ -514,11 +549,13 @@ impl OllamaProvider {
             )));
         }
 
-        let ollama_request = OllamaRequest {
+        let options = num_ctx.map(|n| OllamaOptions { num_ctx: Some(n) });
+        let ollama_request = OllamaRequestFull {
             model,
             messages: self.convert_messages(messages),
             tools: self.convert_tools(tools),
             stream: true,
+            options,
         };
 
         let response = send_post_with_retry(&self.client, &url, &ollama_request)
@@ -1224,9 +1261,13 @@ impl Provider for OllamaProvider {
         messages: &[Message],
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
-        let (url, model) = {
+        let (url, model, num_ctx) = {
             let config = read_config_lock(&self.config)?;
-            (format!("{}/api/chat", config.host), config.model.clone())
+            (
+                format!("{}/api/chat", config.host),
+                config.model.clone(),
+                config.num_ctx,
+            )
         };
 
         if messages_contain_image_content(messages) && !self.model_has_vision_capability(&model) {
@@ -1236,14 +1277,14 @@ impl Provider for OllamaProvider {
             )));
         }
 
-        let ollama_request = OllamaRequest {
+        let options = num_ctx.map(|n| OllamaOptions { num_ctx: Some(n) });
+        let ollama_request = OllamaRequestFull {
             model,
             messages: self.convert_messages(messages),
             tools: self.convert_tools(tools),
             stream: false,
+            options,
         };
-        // OllamaRequest is an alias for ProviderRequest which serializes
-        // tools as a JSON object -- the format Ollama expects.
 
         tracing::debug!(
             "Sending Ollama request: {} messages, {} tools",
@@ -1461,6 +1502,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -1473,6 +1515,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // "localhost" is normalised to 127.0.0.1 to avoid dual-stack DNS.
@@ -1486,6 +1529,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // Both the trailing slash and "localhost" are normalised.
@@ -1505,6 +1549,7 @@ mod tests {
                 model: "llama3.2:latest".to_string(),
                 request_timeout_seconds: 600,
                 stream_idle_timeout_seconds: 120,
+                num_ctx: None,
             };
             let provider = OllamaProvider::new(config).unwrap();
             assert_eq!(
@@ -1524,6 +1569,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://127.0.0.1:11434");
@@ -1536,6 +1582,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let result = OllamaProvider::new(config);
         assert!(result.is_err());
@@ -1548,6 +1595,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.model(), "llama3.2:latest");
@@ -1560,6 +1608,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1583,6 +1632,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1608,6 +1658,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1635,6 +1686,7 @@ mod tests {
             model: "llava:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1665,6 +1717,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1703,6 +1756,7 @@ mod tests {
             model: "mymodel:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1722,6 +1776,7 @@ mod tests {
             model: "llava:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // Cache is empty; should fall back to static allowlist.
@@ -1736,6 +1791,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1761,6 +1817,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1794,6 +1851,7 @@ mod tests {
             model: "llama3.2:latest".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1906,6 +1964,7 @@ mod tests {
             model: "test".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let capabilities = provider.get_provider_capabilities();
@@ -1925,6 +1984,7 @@ mod tests {
             model: "test-model".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "test-model");
@@ -2008,6 +2068,7 @@ mod tests {
             model: "test".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -2029,6 +2090,7 @@ mod tests {
             model: "test".to_string(),
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
+            num_ctx: None,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -2279,5 +2341,37 @@ mod tests {
         let chunk: OllamaStreamChunk =
             serde_json::from_str(json).expect("should parse content chunk");
         assert!(chunk.message.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_ollama_request_body_omits_options_when_num_ctx_is_none() {
+        let request = OllamaRequestFull {
+            model: "llama3.2".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            options: None,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert!(
+            !json.as_object().unwrap().contains_key("options"),
+            "options key should be absent when num_ctx is None"
+        );
+    }
+
+    #[test]
+    fn test_ollama_request_body_includes_num_ctx_when_set() {
+        let request = OllamaRequestFull {
+            model: "llama3.2".to_string(),
+            messages: vec![],
+            tools: vec![],
+            stream: false,
+            options: Some(OllamaOptions {
+                num_ctx: Some(16384),
+            }),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        let options = json.get("options").expect("options key should be present");
+        assert_eq!(options["num_ctx"], 16384, "num_ctx should be 16384");
     }
 }

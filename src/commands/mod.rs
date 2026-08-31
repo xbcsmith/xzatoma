@@ -545,6 +545,7 @@ pub mod chat {
             common,
         } = options;
         let mut config = config;
+        config.validate_for_execution()?;
 
         tracing::info!("Starting interactive chat mode");
         // Keep the CLI flag value separate from config so we can distinguish
@@ -615,11 +616,13 @@ pub mod chat {
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
-        // Apply thinking effort from CLI flag if provided.
-        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
-        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
-        // Unrecognised values cause a warning but do not abort execution.
-        if let Some(ref effort_str) = thinking_effort {
+        // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
+        // agent.thinking_mode from config. When both are absent the provider default
+        // is used.
+        let effective_thinking: Option<String> = thinking_effort
+            .clone()
+            .or_else(|| config.agent.thinking_mode.clone());
+        if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
             } else {
@@ -785,8 +788,35 @@ pub mod chat {
         }
         agent.set_transient_system_messages(transient_system_messages);
 
-        // Create readline instance
-        let mut rl = DefaultEditor::new()?;
+        // Create readline instance with configured history size.
+        use rustyline::config::Config as RlConfig;
+        let rl_config = RlConfig::builder()
+            .max_history_size(config.agent.chat_history_max_size)
+            .map_err(|e| {
+                XzatomaError::Config(format!("Failed to configure readline history size: {}", e))
+            })?
+            .build();
+        let mut rl = DefaultEditor::with_config(rl_config)?;
+
+        // Determine history file path: use configured path or fall back to the
+        // platform data directory.
+        let history_file_path: Option<std::path::PathBuf> = match &config.agent.chat_history_file {
+            Some(path) => Some(path.clone()),
+            None => {
+                use directories::ProjectDirs;
+                ProjectDirs::from("com", "xbcsmith", "xzatoma")
+                    .map(|proj_dirs| proj_dirs.data_dir().join("chat_history"))
+            }
+        };
+
+        // Best-effort: load history from file. Ignore errors if the file does not
+        // exist yet; history will be saved on exit.
+        if let Some(ref path) = history_file_path
+            && path.exists()
+            && let Err(e) = rl.load_history(path)
+        {
+            tracing::debug!("Could not load readline history from {:?}: {}", path, e);
+        }
 
         // Populate readline history with previous user inputs when resuming
         if resume.is_some() {
@@ -1419,21 +1449,16 @@ pub mod chat {
             }
         }
 
+        // Save readline history to file on exit (best-effort).
+        if let Some(ref path) = history_file_path
+            && let Err(e) = rl.save_history(path)
+        {
+            tracing::debug!("Could not save readline history to {:?}: {}", path, e);
+        }
         println!("Goodbye!");
         Ok(())
     }
 
-    /// Build a tool registry for the current chat mode
-    ///
-    /// # Arguments
-    ///
-    /// * `mode_state` - The current mode state
-    /// * `config` - Global configuration
-    /// * `working_dir` - Working directory for tool operations
-    ///
-    /// # Returns
-    ///
-    /// Returns a configured ToolRegistry or an error
     /// Display welcome banner at the start of interactive chat mode
     ///
     /// Shows a formatted banner with the application name, current mode,
@@ -1525,6 +1550,17 @@ pub mod chat {
         println!();
     }
 
+    /// Build a tool registry for the current chat mode
+    ///
+    /// # Arguments
+    ///
+    /// * `mode_state` - The current mode state
+    /// * `config` - Global configuration
+    /// * `working_dir` - Working directory for tool operations
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured ToolRegistry or an error
     fn build_tools_for_mode(
         mode_state: &ChatModeState,
         config: &Config,
@@ -2173,6 +2209,7 @@ pub mod chat {
                 model: "llama3.2:3b".to_string(),
                 request_timeout_seconds: 1,
                 stream_idle_timeout_seconds: 120,
+                num_ctx: None,
             };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;
@@ -2441,6 +2478,7 @@ pub mod r#run {
         streaming: bool,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
+        config.validate_for_execution()?;
         // Save CLI flag separately before merging into config.
         // This lets us pass the original CLI value to resolve() alongside
         // any plan-file system_prompt, so that plan > CLI > config/env ordering works.
@@ -2478,11 +2516,13 @@ pub mod r#run {
             create_provider(&config.provider.provider_type, &config.provider).await?;
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
-        // Apply thinking effort from CLI flag if provided.
-        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
-        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
-        // Unrecognised values cause a warning but do not abort execution.
-        if let Some(ref effort_str) = thinking_effort {
+        // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
+        // agent.thinking_mode from config. When both are absent the provider default
+        // is used.
+        let effective_thinking: Option<String> = thinking_effort
+            .clone()
+            .or_else(|| config.agent.thinking_mode.clone());
+        if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
             } else {
@@ -2774,6 +2814,7 @@ pub mod watch {
     pub async fn run_watch(mut config: Config, overrides: WatchCliOverrides) -> Result<()> {
         // Apply CLI argument overrides to configuration
         apply_cli_overrides(&mut config, &overrides)?;
+        config.validate_for_watcher()?;
 
         // Logging is already initialised by main() using the Watch command's
         // --json-logs and --log-file flags.  Do not call init_watcher_logging()

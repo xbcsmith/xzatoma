@@ -647,6 +647,19 @@ pub enum HistoryCommand {
         #[arg(short, long)]
         id: String,
     },
+
+    /// Show tool invocations from history.
+    ///
+    /// Prints rows from the `tool_invocations` table. Both `--conversation` and
+    /// `--tool` are optional filters; when absent all rows are returned.
+    Tools {
+        /// Filter by conversation ID.
+        #[arg(long, help = "Filter by conversation ID")]
+        conversation: Option<String>,
+        /// Filter by tool name.
+        #[arg(long, help = "Filter by tool name")]
+        tool: Option<String>,
+    },
 }
 
 impl Cli {
@@ -2260,6 +2273,80 @@ mod tests {
             assert!(allow_dangerous);
         } else {
             panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_tools() {
+        let cli = Cli::try_parse_from(["xzatoma", "history", "tools"]).unwrap();
+        match cli.command {
+            Commands::History { command, .. } => {
+                assert!(matches!(
+                    command,
+                    HistoryCommand::Tools {
+                        conversation: None,
+                        tool: None
+                    }
+                ));
+            }
+            _ => panic!("expected History command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_tools_with_tool_filter() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "history", "tools", "--tool", "read_file"]).unwrap();
+        match cli.command {
+            Commands::History { command, .. } => match command {
+                HistoryCommand::Tools { tool, conversation } => {
+                    assert_eq!(tool.as_deref(), Some("read_file"));
+                    assert!(conversation.is_none());
+                }
+                _ => panic!("expected Tools variant"),
+            },
+            _ => panic!("expected History command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_tools_with_conversation_filter() {
+        let cli =
+            Cli::try_parse_from(["xzatoma", "history", "tools", "--conversation", "conv-123"])
+                .unwrap();
+        match cli.command {
+            Commands::History { command, .. } => match command {
+                HistoryCommand::Tools { conversation, tool } => {
+                    assert_eq!(conversation.as_deref(), Some("conv-123"));
+                    assert!(tool.is_none());
+                }
+                _ => panic!("expected Tools variant"),
+            },
+            _ => panic!("expected History command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_history_tools_with_both_filters() {
+        let cli = Cli::try_parse_from([
+            "xzatoma",
+            "history",
+            "tools",
+            "--tool",
+            "write_file",
+            "--conversation",
+            "c1",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::History { command, .. } => match command {
+                HistoryCommand::Tools { tool, conversation } => {
+                    assert_eq!(tool.as_deref(), Some("write_file"));
+                    assert_eq!(conversation.as_deref(), Some("c1"));
+                }
+                _ => panic!("expected Tools variant"),
+            },
+            _ => panic!("expected History command"),
         }
     }
 }

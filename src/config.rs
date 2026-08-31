@@ -123,6 +123,22 @@ pub struct CopilotConfig {
     /// their reasoning process in the response. Defaults to false.
     #[serde(default = "default_include_reasoning")]
     pub include_reasoning: bool,
+
+    /// Editor version string sent as the `Editor-Version` HTTP header on all
+    /// outbound Copilot API requests.
+    ///
+    /// This value is forwarded by the Copilot backend for telemetry and routing.
+    /// Defaults to `"vscode/1.95.0"`.
+    #[serde(default = "default_copilot_editor_version")]
+    pub editor_version: String,
+
+    /// Initiator label sent as the `X-Initiator` HTTP header on all outbound
+    /// Copilot API requests.
+    ///
+    /// Identifies the component that initiated the request. Defaults to
+    /// `"agent"`.
+    #[serde(default = "default_copilot_initiator")]
+    pub initiator: String,
 }
 
 fn default_copilot_model() -> String {
@@ -141,6 +157,14 @@ fn default_include_reasoning() -> bool {
     false
 }
 
+fn default_copilot_editor_version() -> String {
+    "vscode/1.95.0".to_string()
+}
+
+fn default_copilot_initiator() -> String {
+    "agent".to_string()
+}
+
 impl Default for CopilotConfig {
     fn default() -> Self {
         Self {
@@ -150,6 +174,8 @@ impl Default for CopilotConfig {
             enable_endpoint_fallback: default_enable_endpoint_fallback(),
             reasoning_effort: None,
             include_reasoning: default_include_reasoning(),
+            editor_version: default_copilot_editor_version(),
+            initiator: default_copilot_initiator(),
         }
     }
 }
@@ -204,6 +230,16 @@ pub struct OllamaConfig {
     /// Set via the `XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT` environment variable.
     #[serde(default = "default_ollama_stream_idle_timeout")]
     pub stream_idle_timeout_seconds: u64,
+
+    /// Number of tokens in the context window used to process the prompt.
+    ///
+    /// When set, this value is passed as `options.num_ctx` in every Ollama chat
+    /// completion request body. When `None`, the `options` key is omitted from
+    /// the request and Ollama uses its model-default context size.
+    ///
+    /// Set via config file field `provider.ollama.num_ctx`.
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
 }
 
 fn default_ollama_host() -> String {
@@ -235,6 +271,7 @@ impl Default for OllamaConfig {
             model: default_ollama_model(),
             request_timeout_seconds: default_ollama_request_timeout(),
             stream_idle_timeout_seconds: default_ollama_stream_idle_timeout(),
+            num_ctx: None,
         }
     }
 }
@@ -430,6 +467,36 @@ pub struct AgentConfig {
     /// the `agent.system_prompt` key in the YAML config file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+
+    /// Maximum number of command history entries for the interactive chat readline
+    /// editor.
+    ///
+    /// Controls how many past user inputs are retained in the in-session readline
+    /// history. Does not affect the conversation messages stored in the persistent
+    /// database; use `conversation.max_tokens` for that.
+    ///
+    /// Defaults to 1000.
+    #[serde(default = "default_chat_history_max_size")]
+    pub chat_history_max_size: usize,
+
+    /// Path to the readline history file for the interactive chat session.
+    ///
+    /// When set, the chat command loads history from this file at startup and
+    /// saves history to it on exit. When `None`, the file
+    /// `<platform-data-dir>/chat_history` is used as the default location.
+    #[serde(default)]
+    pub chat_history_file: Option<std::path::PathBuf>,
+
+    /// Global default thinking mode for agent sessions.
+    ///
+    /// When set, this value is used as the fallback thinking effort for all agent
+    /// commands (`chat`, `run`, `watch`) when the `--thinking-effort` CLI flag is
+    /// not provided. Accepted values: `"low"`, `"medium"`, `"high"`,
+    /// `"extra_high"`, or `"none"` (to disable extended reasoning).
+    ///
+    /// The CLI flag always takes precedence over this config value.
+    #[serde(default)]
+    pub thinking_mode: Option<String>,
 }
 
 fn default_max_turns() -> usize {
@@ -438,6 +505,10 @@ fn default_max_turns() -> usize {
 
 fn default_timeout() -> u64 {
     300
+}
+
+fn default_chat_history_max_size() -> usize {
+    1000
 }
 
 impl Default for AgentConfig {
@@ -451,6 +522,9 @@ impl Default for AgentConfig {
             chat: ChatConfig::default(),
             subagent: SubagentConfig::default(),
             system_prompt: None,
+            chat_history_max_size: default_chat_history_max_size(),
+            chat_history_file: None,
+            thinking_mode: None,
         }
     }
 }
@@ -3278,6 +3352,178 @@ impl Config {
         self.validate_acp_config()?;
         self.validate_skills_config()?;
 
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `chat` and `run` commands.
+    ///
+    /// Checks that a provider type is configured and that the model field is
+    /// non-empty (only when a model is explicitly required by the active
+    /// provider). This is a stricter check than `Config::validate` for the
+    /// execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - The provider type string is empty.
+    /// - The active provider's model field is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let mut config = Config::default();
+    /// config.provider.provider_type = "ollama".to_string();
+    /// config.provider.ollama.model = "llama3.2".to_string();
+    /// assert!(config.validate_for_execution().is_ok());
+    ///
+    /// config.provider.ollama.model = String::new();
+    /// assert!(config.validate_for_execution().is_err());
+    /// ```
+    pub fn validate_for_execution(&self) -> Result<()> {
+        if self.provider.provider_type.is_empty() {
+            return Err(XzatomaError::Config(
+                "provider.provider_type is required for execution".to_string(),
+            ));
+        }
+        let model_is_empty = match self.provider.provider_type.as_str() {
+            "copilot" => self.provider.copilot.model.trim().is_empty(),
+            "ollama" => self.provider.ollama.model.trim().is_empty(),
+            "openai" => self.provider.openai.model.trim().is_empty(),
+            _ => false,
+        };
+        if model_is_empty {
+            return Err(XzatomaError::Config(format!(
+                "provider.{}.model must be set for execution",
+                self.provider.provider_type
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `watch` command.
+    ///
+    /// Checks that the Kafka broker list and topic are non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - `watcher.kafka` is not configured.
+    /// - `watcher.kafka.brokers` is empty or whitespace-only.
+    /// - `watcher.kafka.topic` is empty or whitespace-only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    /// use xzatoma::config::KafkaWatcherConfig;
+    ///
+    /// let mut config = Config::default();
+    /// config.watcher.kafka = Some(KafkaWatcherConfig {
+    ///     brokers: "localhost:9092".to_string(),
+    ///     topic: "events".to_string(),
+    ///     ..Default::default()
+    /// });
+    /// assert!(config.validate_for_watcher().is_ok());
+    /// ```
+    pub fn validate_for_watcher(&self) -> Result<()> {
+        let kafka = self.watcher.kafka.as_ref().ok_or_else(|| {
+            XzatomaError::Config(
+                "Kafka configuration is required for the watch command. \
+                 Please configure it in the config file or set XZEPR_KAFKA_* env vars"
+                    .to_string(),
+            )
+        })?;
+        if kafka.brokers.trim().is_empty() {
+            return Err(XzatomaError::Config(
+                "watcher.kafka.brokers cannot be empty".to_string(),
+            ));
+        }
+        if kafka.topic.trim().is_empty() {
+            return Err(XzatomaError::Config(
+                "watcher.kafka.topic cannot be empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `serve` / `acp` commands.
+    ///
+    /// Checks that the ACP bind port is non-zero and that each agent name in
+    /// `acp.agents` is a valid RFC 1123 DNS label.
+    ///
+    /// RFC 1123 label rule: `^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$`
+    /// (lowercase alphanumeric and hyphen, 1 to 63 characters, no leading or
+    /// trailing hyphen).
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - `acp.port` is zero.
+    /// - Any agent name in `acp.agents` fails RFC 1123 label validation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.validate_for_acp().is_ok());
+    ///
+    /// let mut bad = Config::default();
+    /// bad.acp.port = 0;
+    /// assert!(bad.validate_for_acp().is_err());
+    /// ```
+    pub fn validate_for_acp(&self) -> Result<()> {
+        if self.acp.port == 0 {
+            return Err(XzatomaError::Config(
+                "acp.port must be greater than 0".to_string(),
+            ));
+        }
+        let rfc1123_label =
+            regex::Regex::new(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$").map_err(|e| {
+                XzatomaError::Config(format!("Failed to compile RFC 1123 regex: {}", e))
+            })?;
+        for agent in &self.acp.agents {
+            if !rfc1123_label.is_match(&agent.name) {
+                return Err(XzatomaError::Config(format!(
+                    "acp.agents[].name '{}' is not a valid RFC 1123 label (must match ^[a-z0-9]([a-z0-9\\-]{{0,61}}[a-z0-9])?$)",
+                    agent.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `agent` (Zed stdio) command.
+    ///
+    /// Checks that a provider type is configured. This is a lighter check than
+    /// `validate_for_execution` because the agent command may start without an
+    /// explicit model; the model can be determined later by querying the provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when the provider type string is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.validate_for_zed_agent().is_ok());
+    ///
+    /// let mut empty_provider = Config::default();
+    /// empty_provider.provider.provider_type = String::new();
+    /// assert!(empty_provider.validate_for_zed_agent().is_err());
+    /// ```
+    pub fn validate_for_zed_agent(&self) -> Result<()> {
+        if self.provider.provider_type.is_empty() {
+            return Err(XzatomaError::Config(
+                "provider.provider_type is required for the agent command".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -6741,6 +6987,199 @@ client:
         assert_eq!(config.agents[0].name, "default");
         assert_eq!(config.client.default_timeout_seconds, 45);
         assert_eq!(config.client.allowed_base_urls[0], "http://localhost:9000");
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_default_is_none() {
+        let config = OllamaConfig::default();
+        assert!(config.num_ctx.is_none());
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_deserializes() {
+        let yaml = "num_ctx: 16384";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.num_ctx, Some(16384));
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_absent_gives_none() {
+        let yaml = "host: \"http://127.0.0.1:11434\"";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.num_ctx.is_none());
+    }
+
+    #[test]
+    fn test_copilot_config_editor_version_default() {
+        let config = CopilotConfig::default();
+        assert_eq!(config.editor_version, "vscode/1.95.0");
+    }
+
+    #[test]
+    fn test_copilot_config_initiator_default() {
+        let config = CopilotConfig::default();
+        assert_eq!(config.initiator, "agent");
+    }
+
+    #[test]
+    fn test_copilot_config_editor_version_deserializes() {
+        let yaml = "editor_version: \"neovim/0.10.0\"";
+        let config: CopilotConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.editor_version, "neovim/0.10.0");
+    }
+
+    #[test]
+    fn test_copilot_config_initiator_deserializes() {
+        let yaml = "initiator: \"copilot-chat\"";
+        let config: CopilotConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.initiator, "copilot-chat");
+    }
+
+    #[test]
+    fn test_validate_for_execution_passes_with_model_set() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.provider.ollama.model = "llama3.2".to_string();
+        assert!(config.validate_for_execution().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_execution_fails_with_empty_model() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.provider.ollama.model = String::new();
+        assert!(config.validate_for_execution().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_execution_fails_with_empty_provider_type() {
+        let mut config = Config::default();
+        config.provider.provider_type = String::new();
+        assert!(config.validate_for_execution().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_passes_with_valid_kafka() {
+        use crate::config::KafkaWatcherConfig;
+        let mut config = Config::default();
+        config.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "events".to_string(),
+            ..Default::default()
+        });
+        assert!(config.validate_for_watcher().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_fails_with_empty_brokers() {
+        use crate::config::KafkaWatcherConfig;
+        let mut config = Config::default();
+        config.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: String::new(),
+            topic: "events".to_string(),
+            ..Default::default()
+        });
+        assert!(config.validate_for_watcher().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_fails_without_kafka() {
+        let mut config = Config::default();
+        config.watcher.kafka = None;
+        assert!(config.validate_for_watcher().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_passes_with_valid_config() {
+        let config = Config::default();
+        assert!(config.validate_for_acp().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_acp_fails_with_zero_port() {
+        let mut config = Config::default();
+        config.acp.port = 0;
+        assert!(config.validate_for_acp().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_fails_with_invalid_agent_name() {
+        use crate::config::AcpAgentConfig;
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "Invalid_Name".to_string(),
+            description: "test".to_string(),
+            provider: Some("copilot".to_string()),
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        assert!(config.validate_for_acp().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_passes_with_valid_agent_name() {
+        use crate::config::AcpAgentConfig;
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "my-agent".to_string(),
+            description: "test".to_string(),
+            provider: Some("copilot".to_string()),
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        assert!(config.validate_for_acp().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_zed_agent_passes_with_configured_provider() {
+        let config = Config::default();
+        assert!(config.validate_for_zed_agent().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_zed_agent_fails_with_empty_provider_type() {
+        let mut config = Config::default();
+        config.provider.provider_type = String::new();
+        assert!(config.validate_for_zed_agent().is_err());
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_max_size_default() {
+        let config = AgentConfig::default();
+        assert_eq!(config.chat_history_max_size, 1000);
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_file_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.chat_history_file.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_file_deserializes() {
+        let yaml = "chat_history_file: \"/tmp/chat_history\"";
+        let config: AgentConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(
+            config.chat_history_file,
+            Some(std::path::PathBuf::from("/tmp/chat_history"))
+        );
+    }
+
+    #[test]
+    fn test_agent_config_thinking_mode_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.thinking_mode.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_thinking_mode_deserializes() {
+        let yaml = "thinking_mode: \"high\"";
+        let config: AgentConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.thinking_mode, Some("high".to_string()));
     }
 }
 
