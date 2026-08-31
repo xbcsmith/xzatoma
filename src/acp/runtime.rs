@@ -1163,6 +1163,59 @@ impl AcpRuntime {
         Ok(record.run.clone())
     }
 
+    /// Evicts completed in-memory run records that have not been updated within
+    /// the session timeout window.
+    ///
+    /// This method is called periodically by the background eviction task in the
+    /// ACP HTTP server. It drops completed run records whose `updated_at`
+    /// timestamp is older than `session_timeout_seconds` ago, freeing in-memory
+    /// resources for long-running server processes.
+    ///
+    /// Active (non-terminal) runs are never evicted regardless of age.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_timeout_seconds` - Age threshold in seconds; completed runs
+    ///   last updated before this window are eligible for removal.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of evicted run records.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime state lock is poisoned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new_in_memory(Config::default());
+    /// let evicted = runtime.evict_idle_sessions(3600).unwrap();
+    /// assert_eq!(evicted, 0);
+    /// ```
+    pub fn evict_idle_sessions(&self, session_timeout_seconds: u64) -> Result<usize> {
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::seconds(i64::try_from(session_timeout_seconds).unwrap_or(i64::MAX));
+
+        let mut state = lock_runtime_state(&self.state)?;
+        let before = state.runs.len();
+
+        state.runs.retain(|_, record| {
+            if !record.completed {
+                return true;
+            }
+            match chrono::DateTime::parse_from_rfc3339(&record.run.status.updated_at) {
+                Ok(updated_at) => updated_at.with_timezone(&chrono::Utc) >= cutoff,
+                Err(_) => true,
+            }
+        });
+
+        Ok(before - state.runs.len())
+    }
+
     /// Returns the number of tracked runs.
     ///
     /// # Returns
@@ -2084,6 +2137,30 @@ mod tests {
         assert_eq!(provider_messages.len(), 1);
         assert_eq!(provider_messages[0].role, "user");
         assert_eq!(provider_messages[0].content.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn test_evict_idle_sessions_empty_runtime_returns_zero() {
+        let runtime = AcpRuntime::new_in_memory(Config::default());
+        let evicted = runtime.evict_idle_sessions(3600).unwrap();
+        assert_eq!(evicted, 0);
+    }
+
+    #[test]
+    fn test_evict_idle_sessions_retains_active_runs() {
+        let runtime = AcpRuntime::new_in_memory(Config::default());
+        runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![test_message("hello")])
+                    .with_mode(AcpRuntimeExecuteMode::Async),
+            )
+            .unwrap();
+
+        // A timeout of 0 would evict all completed runs, but this run is still
+        // active so it must be retained.
+        let evicted = runtime.evict_idle_sessions(0).unwrap();
+        assert_eq!(evicted, 0);
+        assert_eq!(runtime.run_count(), 1);
     }
 
     #[test]

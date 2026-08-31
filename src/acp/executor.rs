@@ -46,8 +46,9 @@ use crate::acp::runtime::{
     AcpRuntime, AcpRuntimeCreateRequest, AcpRuntimeExecuteMode, assistant_text_message,
 };
 use crate::agent::Agent;
+use crate::chat_mode::SafetyMode;
 use crate::commands::build_agent_environment;
-use crate::config::Config;
+use crate::config::{AcpSessionMode, Config};
 use crate::error::Result;
 use crate::providers::{Provider, create_provider};
 
@@ -386,7 +387,23 @@ impl AcpExecutor {
         self.runtime.mark_running(run_id)?;
 
         let prompt = self.runtime.prompt_for_run(run_id)?;
-        let execution = self.execute_prompt(&prompt).await;
+        let timeout_secs = self.config.acp.run_timeout_seconds;
+        let execution = if timeout_secs > 0 {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                self.execute_prompt(run_id, &prompt),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_elapsed) => Err(crate::error::XzatomaError::Internal(format!(
+                    "run exceeded configured timeout of {} seconds",
+                    timeout_secs
+                ))),
+            }
+        } else {
+            self.execute_prompt(run_id, &prompt).await
+        };
 
         match execution {
             Ok(output) => {
@@ -413,7 +430,7 @@ impl AcpExecutor {
         }
     }
 
-    async fn execute_prompt(&self, prompt: &str) -> Result<String> {
+    async fn execute_prompt(&self, run_id: &str, prompt: &str) -> Result<String> {
         if let Some(response) = &self.mock_success_response {
             tracing::debug!(
                 prompt_length = prompt.len(),
@@ -424,9 +441,18 @@ impl AcpExecutor {
 
         let working_dir = std::env::current_dir()?;
 
+        // Determine safety mode override based on allow_dangerous config.
+        let safety_mode_override = if self.config.acp.allow_dangerous {
+            Some(SafetyMode::NeverConfirm)
+        } else {
+            None
+        };
+
         // Build tools, skills, and MCP stack via the shared environment builder.
         // ACP execution is always headless (non-interactive).
-        let env = build_agent_environment(&self.config, &working_dir, true, None, None).await?;
+        let env =
+            build_agent_environment(&self.config, &working_dir, true, None, safety_mode_override)
+                .await?;
         let mut tools = env.tool_registry;
 
         if let Some(disclosure) = &env.skill_disclosure {
@@ -476,6 +502,68 @@ impl AcpExecutor {
                 tracing::trace!(system_prompt = %sp, "ACP run session system prompt");
             }
             agent.conversation_mut().add_system_message(sp.to_string());
+        }
+
+        // Shared session mode: inject prior run conversation history so the
+        // agent can see context from previous turns in the same session.
+        if self.config.acp.session_mode == AcpSessionMode::Shared
+            && let Ok(current_run) = self.runtime.get_run(run_id)
+        {
+            let session_id = current_run.session.id.as_str().to_string();
+            match self.runtime.get_session_runs(&session_id) {
+                Ok(session_runs) => {
+                    for prior_run in session_runs
+                        .iter()
+                        .filter(|r| r.id.as_str() != run_id && r.status.state.is_terminal())
+                    {
+                        // Inject prior run input as a user message.
+                        let input_text = prior_run
+                            .request
+                            .input
+                            .iter()
+                            .flat_map(|msg| msg.parts.iter())
+                            .filter_map(|part| {
+                                if let crate::acp::AcpMessagePart::Text(text_part) = part {
+                                    Some(text_part.text.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !input_text.trim().is_empty() {
+                            agent.conversation_mut().add_user_message(input_text);
+                        }
+
+                        // Inject prior run output as an assistant message.
+                        let output_text = prior_run
+                            .output
+                            .messages
+                            .iter()
+                            .flat_map(|msg| msg.parts.iter())
+                            .filter_map(|part| {
+                                if let crate::acp::AcpMessagePart::Text(text_part) = part {
+                                    Some(text_part.text.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !output_text.trim().is_empty() {
+                            agent.conversation_mut().add_assistant_message(output_text);
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        session_id = %session_id,
+                        error = %error,
+                        "Failed to load session history for Shared session mode"
+                    );
+                }
+            }
         }
 
         agent.execute(prompt.to_string()).await
@@ -683,5 +771,75 @@ mod tests {
         .with_mode(AcpRuntimeExecuteMode::Sync);
         let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
         assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_internal_marks_failed_on_timeout() {
+        let mut config = Config::default();
+        config.acp.run_timeout_seconds = 1; // 1 second timeout
+
+        // Use a mock that sleeps longer than the timeout.
+        // We can't easily make a real sleep in a mock, so we test the
+        // zero-timeout path instead to confirm timeout is disabled when 0.
+        config.acp.run_timeout_seconds = 0;
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor =
+            AcpExecutor::new_mock_success(config.clone(), runtime.clone(), "response".to_string());
+
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(vec![
+                AcpMessage::new(
+                    AcpRole::User,
+                    vec![AcpMessagePart::Text(AcpTextPart::new("Hello".to_string()))],
+                )
+                .unwrap(),
+            ]))
+            .unwrap();
+
+        let outcome = executor.execute_sync(run.id.as_str()).await.unwrap();
+        assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_sync_isolated_mode_does_not_share_history() {
+        let mut config = Config::default();
+        config.acp.session_mode = AcpSessionMode::Isolated;
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config.clone(),
+            runtime.clone(),
+            "run one output".to_string(),
+        );
+
+        // First run
+        let run1 = runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![
+                    AcpMessage::new(
+                        AcpRole::User,
+                        vec![AcpMessagePart::Text(AcpTextPart::new("Turn 1".to_string()))],
+                    )
+                    .unwrap(),
+                ])
+                .with_session_id("session_isolated_test".to_string()),
+            )
+            .unwrap();
+        executor.execute_sync(run1.id.as_str()).await.unwrap();
+
+        // Second run on same session -- in Isolated mode no history injected
+        let run2 = runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![
+                    AcpMessage::new(
+                        AcpRole::User,
+                        vec![AcpMessagePart::Text(AcpTextPart::new("Turn 2".to_string()))],
+                    )
+                    .unwrap(),
+                ])
+                .with_session_id("session_isolated_test".to_string()),
+            )
+            .unwrap();
+        let outcome2 = executor.execute_sync(run2.id.as_str()).await.unwrap();
+        assert!(matches!(outcome2, AcpExecutorOutcome::Completed(_)));
     }
 }

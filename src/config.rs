@@ -522,6 +522,61 @@ pub struct AcpConfig {
     /// modes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+
+    /// Session history mode for ACP HTTP runs.
+    ///
+    /// `Isolated` (default): each run starts with a fresh conversation.
+    /// `Shared`: prior conversation history from the same session is loaded
+    /// before each run so the agent sees prior context.
+    #[serde(default)]
+    pub session_mode: AcpSessionMode,
+
+    /// Permit dangerous terminal commands in ACP run sessions.
+    ///
+    /// When `true`, the tool registry is built with `NeverConfirm` safety mode
+    /// so all terminal commands run without confirmation. Use only in trusted,
+    /// isolated environments.
+    #[serde(default)]
+    pub allow_dangerous: bool,
+
+    /// Maximum number of ACP runs that may execute concurrently.
+    ///
+    /// A `POST /runs` request received while this limit is saturated is
+    /// rejected immediately with HTTP `429 Too Many Requests`.
+    #[serde(default = "default_acp_max_concurrent_runs")]
+    pub max_concurrent_runs: usize,
+
+    /// Per-run execution timeout in seconds.
+    ///
+    /// When a run exceeds this duration it is marked `failed`. A value of `0`
+    /// disables the timeout.
+    #[serde(default = "default_acp_run_timeout_seconds")]
+    pub run_timeout_seconds: u64,
+
+    /// Idle timeout for session eviction in seconds.
+    ///
+    /// Sessions with no activity for longer than this value are eligible for
+    /// in-memory eviction by the background eviction task.
+    #[serde(default = "default_acp_session_timeout_seconds")]
+    pub session_timeout_seconds: u64,
+
+    /// Wakeup interval for the background session eviction task in seconds.
+    #[serde(default = "default_acp_session_eviction_poll_seconds")]
+    pub session_eviction_poll_seconds: u64,
+
+    /// Allowed CORS origins for ACP HTTP requests.
+    ///
+    /// An empty list (the default) disables CORS, preserving existing behavior
+    /// where no `Access-Control-Allow-Origin` header is returned.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+
+    /// Graceful shutdown drain timeout in seconds.
+    ///
+    /// `None` means drain indefinitely. `Some(n)` means wait at most `n`
+    /// seconds before forcing the server to exit.
+    #[serde(default)]
+    pub graceful_shutdown_timeout: Option<u64>,
 }
 
 fn default_acp_enabled() -> bool {
@@ -548,6 +603,22 @@ fn default_acp_rate_limit_per_minute() -> usize {
     120
 }
 
+fn default_acp_max_concurrent_runs() -> usize {
+    4
+}
+
+fn default_acp_run_timeout_seconds() -> u64 {
+    300
+}
+
+fn default_acp_session_timeout_seconds() -> u64 {
+    3600
+}
+
+fn default_acp_session_eviction_poll_seconds() -> u64 {
+    60
+}
+
 impl Default for AcpConfig {
     fn default() -> Self {
         Self {
@@ -563,6 +634,14 @@ impl Default for AcpConfig {
             persistence: AcpPersistenceConfig::default(),
             stdio: AcpStdioConfig::default(),
             system_prompt: None,
+            session_mode: AcpSessionMode::default(),
+            allow_dangerous: false,
+            max_concurrent_runs: default_acp_max_concurrent_runs(),
+            run_timeout_seconds: default_acp_run_timeout_seconds(),
+            session_timeout_seconds: default_acp_session_timeout_seconds(),
+            session_eviction_poll_seconds: default_acp_session_eviction_poll_seconds(),
+            cors_origins: Vec::new(),
+            graceful_shutdown_timeout: None,
         }
     }
 }
@@ -580,6 +659,33 @@ pub enum AcpCompatibilityMode {
     Versioned,
     /// Serve ACP routes at ACP root-compatible paths such as `/ping`.
     RootCompatible,
+}
+
+/// ACP session history mode.
+///
+/// Controls whether the conversation history from prior runs in the same
+/// session is injected into each new run before execution starts.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpSessionMode;
+///
+/// let isolated: AcpSessionMode = serde_yaml::from_str("isolated").unwrap();
+/// assert_eq!(isolated, AcpSessionMode::Isolated);
+///
+/// let shared: AcpSessionMode = serde_yaml::from_str("shared").unwrap();
+/// assert_eq!(shared, AcpSessionMode::Shared);
+/// ```
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpSessionMode {
+    /// Each run starts with a fresh conversation. This is the default.
+    #[default]
+    Isolated,
+    /// Prior conversation history from the same session is loaded before each
+    /// run so the agent can see context from previous turns.
+    Shared,
 }
 
 /// ACP default run mode configuration.
@@ -3071,6 +3177,18 @@ impl Config {
             ));
         }
 
+        if self.acp.max_concurrent_runs == 0 {
+            return Err(XzatomaError::Config(
+                "acp.max_concurrent_runs must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.session_eviction_poll_seconds == 0 {
+            return Err(XzatomaError::Config(
+                "acp.session_eviction_poll_seconds must be greater than 0".to_string(),
+            ));
+        }
+
         match self.acp.compatibility_mode {
             AcpCompatibilityMode::Versioned => {
                 if self.acp.base_path.trim().is_empty() {
@@ -3461,6 +3579,14 @@ mod tests {
         assert!(config.skills.activation_tool_enabled);
         assert!(config.skills.project_trust_required);
         assert!(config.skills.strict_frontmatter);
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Isolated);
+        assert!(!config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 4);
+        assert_eq!(config.acp.run_timeout_seconds, 300);
+        assert_eq!(config.acp.session_timeout_seconds, 3600);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 60);
+        assert!(config.acp.cors_origins.is_empty());
+        assert!(config.acp.graceful_shutdown_timeout.is_none());
     }
 
     #[test]
@@ -6074,6 +6200,134 @@ acp: {}
         let mut config = Config::default();
         config.apply_env_vars();
         assert_eq!(config.acp.system_prompt.as_deref(), Some("act as a pirate"));
+    }
+
+    #[test]
+    fn test_acp_session_mode_isolated_is_default() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_mode, AcpSessionMode::Isolated);
+    }
+
+    #[test]
+    fn test_acp_session_mode_deserializes_isolated() {
+        let yaml = "isolated";
+        let mode: AcpSessionMode = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(mode, AcpSessionMode::Isolated);
+    }
+
+    #[test]
+    fn test_acp_session_mode_deserializes_shared() {
+        let yaml = "shared";
+        let mode: AcpSessionMode = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(mode, AcpSessionMode::Shared);
+    }
+
+    #[test]
+    fn test_acp_config_max_concurrent_runs_default_is_4() {
+        let config = AcpConfig::default();
+        assert_eq!(config.max_concurrent_runs, 4);
+    }
+
+    #[test]
+    fn test_acp_config_run_timeout_seconds_default_is_300() {
+        let config = AcpConfig::default();
+        assert_eq!(config.run_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_acp_config_session_timeout_seconds_default_is_3600() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_timeout_seconds, 3600);
+    }
+
+    #[test]
+    fn test_acp_config_session_eviction_poll_seconds_default_is_60() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_eviction_poll_seconds, 60);
+    }
+
+    #[test]
+    fn test_acp_config_cors_origins_default_is_empty() {
+        let config = AcpConfig::default();
+        assert!(config.cors_origins.is_empty());
+    }
+
+    #[test]
+    fn test_acp_config_graceful_shutdown_timeout_default_is_none() {
+        let config = AcpConfig::default();
+        assert!(config.graceful_shutdown_timeout.is_none());
+    }
+
+    #[test]
+    fn test_acp_config_allow_dangerous_default_is_false() {
+        let config = AcpConfig::default();
+        assert!(!config.allow_dangerous);
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_zero_max_concurrent_runs() {
+        let mut config = Config::default();
+        config.acp.max_concurrent_runs = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("max_concurrent_runs"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_zero_session_eviction_poll_seconds() {
+        let mut config = Config::default();
+        config.acp.session_eviction_poll_seconds = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("session_eviction_poll_seconds"));
+    }
+
+    #[test]
+    fn test_acp_config_new_fields_deserialize_from_yaml() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent: {}
+acp:
+  session_mode: shared
+  allow_dangerous: true
+  max_concurrent_runs: 8
+  run_timeout_seconds: 600
+  session_timeout_seconds: 7200
+  session_eviction_poll_seconds: 120
+  cors_origins:
+    - "https://example.com"
+    - "https://app.example.com"
+  graceful_shutdown_timeout: 30
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Shared);
+        assert!(config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 8);
+        assert_eq!(config.acp.run_timeout_seconds, 600);
+        assert_eq!(config.acp.session_timeout_seconds, 7200);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 120);
+        assert_eq!(
+            config.acp.cors_origins,
+            vec!["https://example.com", "https://app.example.com"]
+        );
+        assert_eq!(config.acp.graceful_shutdown_timeout, Some(30));
+    }
+
+    #[test]
+    fn test_acp_config_omitted_new_fields_use_defaults() {
+        let yaml = "provider:\n  type: copilot\nagent: {}\nacp:\n  host: \"127.0.0.1\"\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Isolated);
+        assert!(!config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 4);
+        assert_eq!(config.acp.run_timeout_seconds, 300);
+        assert_eq!(config.acp.session_timeout_seconds, 3600);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 60);
+        assert!(config.acp.cors_origins.is_empty());
+        assert!(config.acp.graceful_shutdown_timeout.is_none());
     }
 
     #[test]
