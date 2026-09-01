@@ -97,6 +97,7 @@ pub struct AcpExecutor {
     config: Config,
     runtime: AcpRuntime,
     mock_success_response: Option<String>,
+    mock_delay: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for AcpExecutor {
@@ -134,6 +135,7 @@ impl AcpExecutor {
             config,
             runtime,
             mock_success_response: None,
+            mock_delay: None,
         }
     }
 
@@ -175,6 +177,48 @@ impl AcpExecutor {
             config,
             runtime,
             mock_success_response: Some(response),
+            mock_delay: None,
+        }
+    }
+
+    /// Creates a new ACP executor that sleeps for `delay` before returning a mock
+    /// response. Used in tests to exercise the `run_timeout_seconds` path without
+    /// requiring a real provider.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Application configuration
+    /// * `runtime` - ACP runtime coordinator
+    /// * `delay` - Duration to sleep before returning the mock response
+    ///
+    /// # Returns
+    ///
+    /// Returns a new ACP executor configured to delay and then return a fixed
+    /// mock response.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::executor::AcpExecutor;
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    /// use std::time::Duration;
+    ///
+    /// let config = Config::default();
+    /// let runtime = AcpRuntime::new(config.clone());
+    /// let executor = AcpExecutor::new_mock_delayed(config, runtime, Duration::from_secs(5));
+    /// let _ = executor;
+    /// ```
+    pub fn new_mock_delayed(
+        config: Config,
+        runtime: AcpRuntime,
+        delay: std::time::Duration,
+    ) -> Self {
+        Self {
+            config,
+            runtime,
+            mock_success_response: Some("mock delayed response".to_string()),
+            mock_delay: Some(delay),
         }
     }
 
@@ -431,7 +475,10 @@ impl AcpExecutor {
     }
 
     async fn execute_prompt(&self, run_id: &str, prompt: &str) -> Result<String> {
-        if let Some(response) = &self.mock_success_response {
+        if let Some(ref response) = self.mock_success_response {
+            if let Some(delay) = self.mock_delay {
+                tokio::time::sleep(delay).await;
+            }
             tracing::debug!(
                 prompt_length = prompt.len(),
                 "Using mock ACP execution response"
@@ -499,6 +546,27 @@ impl AcpExecutor {
 
         let provider_box = create_provider(effective_provider_type, &self.config.provider).await?;
         let provider: Arc<dyn Provider> = Arc::from(provider_box);
+
+        // Apply thinking mode: per-agent override takes precedence over the global
+        // agent.thinking_mode config value.
+        let effective_thinking_mode = agent_override
+            .as_ref()
+            .and_then(|a| a.thinking_mode.as_deref())
+            .or(self.config.agent.thinking_mode.as_deref());
+        if let Some(thinking_mode) = effective_thinking_mode {
+            let param = if thinking_mode == "none" {
+                None
+            } else {
+                Some(thinking_mode)
+            };
+            if let Err(e) = provider.set_thinking_effort(param) {
+                tracing::warn!(
+                    thinking_mode = %thinking_mode,
+                    error = %e,
+                    "Unsupported thinking effort value for ACP run; proceeding with provider default"
+                );
+            }
+        }
 
         let subagent_tool = crate::tools::SubagentTool::new_with_config(
             Arc::clone(&provider),
@@ -810,18 +878,19 @@ mod tests {
         assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_execute_run_internal_marks_failed_on_timeout() {
         let mut config = Config::default();
-        config.acp.run_timeout_seconds = 1; // 1 second timeout
+        // 1-second timeout; mock will sleep for 5 seconds.
+        config.acp.run_timeout_seconds = 1;
 
-        // Use a mock that sleeps longer than the timeout.
-        // We can't easily make a real sleep in a mock, so we test the
-        // zero-timeout path instead to confirm timeout is disabled when 0.
-        config.acp.run_timeout_seconds = 0;
         let runtime = AcpRuntime::new_in_memory(config.clone());
-        let executor =
-            AcpExecutor::new_mock_success(config.clone(), runtime.clone(), "response".to_string());
+        // Mock that sleeps 5 seconds -- longer than the 1-second timeout.
+        let executor = AcpExecutor::new_mock_delayed(
+            config,
+            runtime.clone(),
+            std::time::Duration::from_secs(5),
+        );
 
         let run = runtime
             .create_run(AcpRuntimeCreateRequest::new(vec![
@@ -833,8 +902,29 @@ mod tests {
             ]))
             .unwrap();
 
-        let outcome = executor.execute_sync(run.id.as_str()).await.unwrap();
-        assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
+        let run_id = run.id.as_str().to_string();
+        let runtime_clone = runtime.clone();
+        let exec_handle = tokio::spawn(async move { executor.execute_sync(&run_id).await });
+
+        // Yield to let the spawned task register its timers.
+        tokio::task::yield_now().await;
+
+        // Advance time by 2 seconds: past the 1-second timeout, but not past the
+        // 5-second mock delay. The tokio::time::timeout fires first.
+        tokio::time::advance(std::time::Duration::from_secs(2)).await;
+
+        // Wait for the executor to process the elapsed timeout.
+        let _ = exec_handle.await;
+
+        // The run must be Failed.
+        let updated_run = runtime_clone.get_run(run.id.as_str()).unwrap();
+        assert_eq!(updated_run.status.state, crate::acp::AcpRunState::Failed);
+        let reason = updated_run.status.failure_reason.unwrap_or_default();
+        assert!(
+            reason.contains("run exceeded configured timeout of 1 seconds"),
+            "unexpected reason: {}",
+            reason
+        );
     }
 
     #[tokio::test]
@@ -881,6 +971,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_sync_shared_mode_history_is_accessible_across_runs() {
+        let mut config = Config::default();
+        config.acp.session_mode = AcpSessionMode::Shared;
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config.clone(),
+            runtime.clone(),
+            "first run output".to_string(),
+        );
+
+        // First run on a named session.
+        let run1 = runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![
+                    AcpMessage::new(
+                        AcpRole::User,
+                        vec![AcpMessagePart::Text(AcpTextPart::new("Turn 1".to_string()))],
+                    )
+                    .unwrap(),
+                ])
+                .with_session_id("shared_history_session".to_string()),
+            )
+            .unwrap();
+        executor.execute_sync(run1.id.as_str()).await.unwrap();
+
+        // Verify the first run is now terminal in the session history.
+        let session_runs = runtime.get_session_runs("shared_history_session").unwrap();
+        assert_eq!(
+            session_runs.len(),
+            1,
+            "session should have exactly one completed run at this point"
+        );
+        assert_eq!(
+            session_runs[0].status.state,
+            crate::acp::AcpRunState::Completed
+        );
+
+        // Second run on the same session.
+        let run2 = runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![
+                    AcpMessage::new(
+                        AcpRole::User,
+                        vec![AcpMessagePart::Text(AcpTextPart::new("Turn 2".to_string()))],
+                    )
+                    .unwrap(),
+                ])
+                .with_session_id("shared_history_session".to_string()),
+            )
+            .unwrap();
+        let outcome2 = executor.execute_sync(run2.id.as_str()).await.unwrap();
+        assert!(matches!(outcome2, AcpExecutorOutcome::Completed(_)));
+
+        // Both runs must now be visible in the session history.
+        let session_runs_after = runtime.get_session_runs("shared_history_session").unwrap();
+        assert_eq!(
+            session_runs_after.len(),
+            2,
+            "session should contain both completed runs"
+        );
+        // Both runs must be terminal.
+        assert!(
+            session_runs_after
+                .iter()
+                .all(|r| r.status.state.is_terminal())
+        );
+    }
+
+    #[tokio::test]
     async fn test_execute_with_per_agent_system_prompt_override() {
         use crate::config::AcpAgentConfig;
 
@@ -916,6 +1075,47 @@ mod tests {
 
         let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
         // Mock short-circuits provider call; verifies the override code path compiles and runs.
+        assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_per_agent_thinking_mode_override() {
+        use crate::config::AcpAgentConfig;
+
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "thinker".to_string(),
+            description: "Deliberate agent".to_string(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: Some("high".to_string()),
+            system_prompt: None,
+        }];
+
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor =
+            AcpExecutor::new_mock_success(config, runtime.clone(), "mock think".to_string());
+
+        // Run targeting the named agent -- mock bypasses provider, so the test
+        // verifies the override code path compiles and executes without panic.
+        let request = AcpRuntimeCreateRequest::new(vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new(
+                    "Think hard".to_string(),
+                ))],
+            )
+            .unwrap(),
+        ])
+        .with_agent_name("thinker".to_string())
+        .with_mode(AcpRuntimeExecuteMode::Sync);
+
+        let (_run, outcome) = executor.create_and_execute(request).await.unwrap();
+        // Mock short-circuits before provider.set_thinking_effort() is called
+        // (mock exits early in execute_prompt). Verifying the override wiring
+        // compiles and the mock path still returns Completed.
         assert!(matches!(outcome, AcpExecutorOutcome::Completed(_)));
     }
 

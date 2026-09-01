@@ -510,6 +510,77 @@ pub mod chat {
         pub common: crate::cli::CommonArgs,
     }
 
+    /// Resolves the effective thinking effort from CLI flag and config fallback.
+    ///
+    /// The CLI `--thinking-effort` flag takes precedence over the global
+    /// `agent.thinking_mode` configuration value. When both are absent, `None` is
+    /// returned and the provider's own default is used.
+    ///
+    /// # Arguments
+    ///
+    /// * `cli_flag` - Value of the `--thinking-effort` CLI flag, if provided
+    /// * `config_value` - Value of `agent.thinking_mode` from configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns the CLI flag value if present, otherwise the config value, otherwise
+    /// `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::chat::resolve_thinking_effort;
+    ///
+    /// let result = resolve_thinking_effort(
+    ///     Some("high".to_string()),
+    ///     Some("low".to_string()),
+    /// );
+    /// assert_eq!(result, Some("high".to_string()));
+    /// ```
+    pub(crate) fn resolve_thinking_effort(
+        cli_flag: Option<String>,
+        config_value: Option<String>,
+    ) -> Option<String> {
+        cli_flag.or(config_value)
+    }
+
+    /// Resolves the chat history file path.
+    ///
+    /// When `config_path` is `Some(p)`, returns `Some(p.clone())`. When `None`,
+    /// falls back to `<platform-data-dir>/chat_history` using the platform
+    /// application data directory. Returns `None` only when the platform directory
+    /// cannot be determined.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Optional path from `agent.chat_history_file` config
+    ///
+    /// # Returns
+    ///
+    /// The resolved path, or `None` if the platform data directory is unavailable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use xzatoma::commands::chat::resolve_chat_history_path;
+    ///
+    /// let path = resolve_chat_history_path(Some(&PathBuf::from("/tmp/my_history")));
+    /// assert_eq!(path, Some(PathBuf::from("/tmp/my_history")));
+    /// ```
+    pub(crate) fn resolve_chat_history_path(
+        config_path: Option<&std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        match config_path {
+            Some(path) => Some(path.clone()),
+            None => {
+                use directories::ProjectDirs;
+                ProjectDirs::from("com", "xbcsmith", "xzatoma")
+                    .map(|proj_dirs| proj_dirs.data_dir().join("chat_history"))
+            }
+        }
+    }
+
     /// Start interactive chat mode
     ///
     /// # Arguments
@@ -619,9 +690,8 @@ pub mod chat {
         // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
         // agent.thinking_mode from config. When both are absent the provider default
         // is used.
-        let effective_thinking: Option<String> = thinking_effort
-            .clone()
-            .or_else(|| config.agent.thinking_mode.clone());
+        let effective_thinking: Option<String> =
+            resolve_thinking_effort(thinking_effort.clone(), config.agent.thinking_mode.clone());
         if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
@@ -800,14 +870,8 @@ pub mod chat {
 
         // Determine history file path: use configured path or fall back to the
         // platform data directory.
-        let history_file_path: Option<std::path::PathBuf> = match &config.agent.chat_history_file {
-            Some(path) => Some(path.clone()),
-            None => {
-                use directories::ProjectDirs;
-                ProjectDirs::from("com", "xbcsmith", "xzatoma")
-                    .map(|proj_dirs| proj_dirs.data_dir().join("chat_history"))
-            }
-        };
+        let history_file_path: Option<std::path::PathBuf> =
+            resolve_chat_history_path(config.agent.chat_history_file.as_ref());
 
         // Best-effort: load history from file. Ignore errors if the file does not
         // exist yet; history will be saved on exit.
@@ -2424,6 +2488,64 @@ pub mod chat {
             observer.on_event(AgentExecutionEvent::ThinkingFinished);
             assert!(!observer.thinking_active);
         }
+
+        #[test]
+        fn test_resolve_chat_history_path_with_none_uses_platform_default_containing_chat_history()
+        {
+            // When no path is configured, the resolved path must contain the
+            // "chat_history" filename segment so the file can be identified.
+            let path = resolve_chat_history_path(None);
+            // On platforms where ProjectDirs succeeds, the path contains "chat_history".
+            // On platforms where ProjectDirs fails (rare CI environments), path is None.
+            if let Some(p) = path {
+                let name = p.file_name().unwrap_or_default().to_string_lossy();
+                assert_eq!(
+                    name, "chat_history",
+                    "default history filename must be 'chat_history'; got: {}",
+                    name
+                );
+            }
+        }
+
+        #[test]
+        fn test_resolve_chat_history_path_with_some_uses_configured_path() {
+            let custom = std::path::PathBuf::from("/tmp/custom_history_file");
+            let path = resolve_chat_history_path(Some(&custom));
+            assert_eq!(
+                path,
+                Some(std::path::PathBuf::from("/tmp/custom_history_file")),
+                "configured path must be returned unchanged"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_cli_flag_takes_precedence_over_config() {
+            let result = resolve_thinking_effort(Some("high".to_string()), Some("low".to_string()));
+            assert_eq!(
+                result,
+                Some("high".to_string()),
+                "CLI flag must override config value"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_config_used_when_cli_flag_absent() {
+            let result = resolve_thinking_effort(None, Some("medium".to_string()));
+            assert_eq!(
+                result,
+                Some("medium".to_string()),
+                "config value must be used when CLI flag is absent"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_returns_none_when_both_absent() {
+            let result = resolve_thinking_effort(None, None);
+            assert!(
+                result.is_none(),
+                "must return None when both CLI flag and config are absent"
+            );
+        }
     }
 }
 
@@ -2432,7 +2554,7 @@ pub mod chat {
 /// This module provides `run_plan` which runs a plan or a single prompt.
 /// We provide a `run_plan_with_options` helper to support the `allow_dangerous` flag.
 pub mod r#run {
-    use super::chat::ChatStreamingObserver;
+    use super::chat::{ChatStreamingObserver, resolve_thinking_effort};
     use super::*;
     use tokio_util::sync::CancellationToken;
 
@@ -2519,9 +2641,8 @@ pub mod r#run {
         // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
         // agent.thinking_mode from config. When both are absent the provider default
         // is used.
-        let effective_thinking: Option<String> = thinking_effort
-            .clone()
-            .or_else(|| config.agent.thinking_mode.clone());
+        let effective_thinking: Option<String> =
+            resolve_thinking_effort(thinking_effort.clone(), config.agent.thinking_mode.clone());
         if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
