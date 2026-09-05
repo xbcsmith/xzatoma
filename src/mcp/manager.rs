@@ -1057,7 +1057,7 @@ impl McpClientManager {
                     AuthManager::inject_token(&mut effective_headers, &token);
 
                     let transport =
-                        HttpTransport::new(endpoint.clone(), effective_headers, timeout);
+                        HttpTransport::new(endpoint.clone(), effective_headers, timeout)?;
                     return Ok((
                         Box::new(transport) as Box<dyn Transport>,
                         Some(auth_mgr),
@@ -1066,7 +1066,7 @@ impl McpClientManager {
                 }
 
                 // Plain HTTP (no OAuth).
-                let transport = HttpTransport::new(endpoint.clone(), effective_headers, timeout);
+                let transport = HttpTransport::new(endpoint.clone(), effective_headers, timeout)?;
                 Ok((Box::new(transport) as Box<dyn Transport>, None, None))
             }
         }
@@ -1224,6 +1224,7 @@ pub async fn build_mcp_manager_from_config(
         reqwest::Client::builder()
             .timeout(Duration::from_secs(config.mcp.request_timeout_seconds))
             .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(crate::security::HardenedDnsResolver))
             .build()?,
     );
     let token_store = Arc::new(TokenStore);

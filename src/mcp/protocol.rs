@@ -729,7 +729,7 @@ mod tests {
         //
         // Real solution: build the Arc, pass the Arc to both the read loop and
         // to a thin McpProtocol wrapper that stores Arc instead of value.
-        // Since changing public API is not desired mid-phase, we use the
+        // Since changing the public API here is not desirable, we use the
         // `wired_client` approach in each test directly.
         drop(client); // drop our ref; the loop holds its own clone
         // Rebuild properly:

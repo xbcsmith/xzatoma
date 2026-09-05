@@ -31,57 +31,10 @@
 use crate::config::KafkaWatcherConfig;
 use crate::error::{Result, XzatomaError};
 use crate::watcher::generic::result_event::GenericPlanResult;
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-enum SecurityProtocol {
-    #[default]
-    Plaintext,
-    Ssl,
-    SaslPlaintext,
-    SaslSsl,
-}
-
-impl SecurityProtocol {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plaintext => "PLAINTEXT",
-            Self::Ssl => "SSL",
-            Self::SaslPlaintext => "SASL_PLAINTEXT",
-            Self::SaslSsl => "SASL_SSL",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum SaslMechanism {
-    Plain,
-    ScramSha256,
-    ScramSha512,
-}
-
-impl SaslMechanism {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plain => "PLAIN",
-            Self::ScramSha256 => "SCRAM-SHA-256",
-            Self::ScramSha512 => "SCRAM-SHA-512",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SaslConfig {
-    mechanism: SaslMechanism,
-    username: String,
-    password: String,
-}
-
-#[derive(Debug, Clone)]
-struct SslConfig {
-    ca_location: Option<String>,
-    certificate_location: Option<String>,
-    key_location: Option<String>,
-}
+use crate::watcher::kafka_security::{
+    SaslConfig, SecurityProtocol, SslConfig, apply_security_config,
+};
+use crate::watcher::lifecycle::resolve_output_topic;
 use async_trait::async_trait;
 use rdkafka::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
@@ -173,56 +126,22 @@ struct ResolvedProducerSettings {
 
 impl ResolvedProducerSettings {
     fn from_config(config: &KafkaWatcherConfig) -> Result<Self> {
-        let output_topic = config
-            .output_topic
-            .clone()
-            .unwrap_or_else(|| config.topic.clone());
+        let output_topic = resolve_output_topic(config).to_string();
 
         let client_id = "xzatoma-generic-result-producer".to_string();
         let request_timeout = Duration::from_secs(30);
-        let mut security_protocol = SecurityProtocol::Plaintext;
-        let mut sasl_config = None;
-        let mut ssl_config = None;
 
-        if let Some(security) = &config.security {
-            security_protocol = parse_security_protocol(&security.protocol)?;
-
-            if matches!(
-                security_protocol,
-                SecurityProtocol::Ssl | SecurityProtocol::SaslSsl
-            ) {
-                ssl_config = Some(SslConfig {
-                    ca_location: None,
-                    certificate_location: None,
-                    key_location: None,
-                });
+        let (security_protocol, sasl_config, ssl_config) = match &config.security {
+            Some(security) => {
+                let resolved = apply_security_config(security)?;
+                (
+                    resolved.security_protocol,
+                    resolved.sasl_config,
+                    resolved.ssl_config,
+                )
             }
-
-            if let Some(mechanism) = &security.sasl_mechanism {
-                let username = security.sasl_username.clone().ok_or_else(|| {
-                    XzatomaError::Watcher(
-                        "SASL username is required when mechanism is set".to_string(),
-                    )
-                })?;
-
-                let password = security
-                    .sasl_password
-                    .clone()
-                    .or_else(|| std::env::var("KAFKA_SASL_PASSWORD").ok())
-                    .ok_or_else(|| {
-                        XzatomaError::Watcher(
-                            "SASL password required (set via config or KAFKA_SASL_PASSWORD env var)"
-                                .to_string(),
-                        )
-                    })?;
-
-                sasl_config = Some(SaslConfig {
-                    mechanism: parse_sasl_mechanism(mechanism)?,
-                    username,
-                    password,
-                });
-            }
-        }
+            None => (SecurityProtocol::Plaintext, None, None),
+        };
 
         Ok(Self {
             brokers: config.brokers.clone(),
@@ -949,35 +868,6 @@ impl ResultProducerTrait for BufferedResultProducer {
 }
 
 // -----------------------------------------------------------------------------
-// Private helpers
-// -----------------------------------------------------------------------------
-
-/// Parse a security protocol string into the corresponding enum variant.
-fn parse_security_protocol(protocol: &str) -> Result<SecurityProtocol> {
-    match protocol.to_uppercase().as_str() {
-        "PLAINTEXT" => Ok(SecurityProtocol::Plaintext),
-        "SSL" => Ok(SecurityProtocol::Ssl),
-        "SASL_PLAINTEXT" => Ok(SecurityProtocol::SaslPlaintext),
-        "SASL_SSL" => Ok(SecurityProtocol::SaslSsl),
-        _ => Err(XzatomaError::Watcher(format!(
-            "Invalid security protocol: {protocol}"
-        ))),
-    }
-}
-
-/// Parse a SASL mechanism string into the corresponding enum variant.
-fn parse_sasl_mechanism(mechanism: &str) -> Result<SaslMechanism> {
-    match mechanism.to_uppercase().as_str() {
-        "PLAIN" => Ok(SaslMechanism::Plain),
-        "SCRAM-SHA-256" => Ok(SaslMechanism::ScramSha256),
-        "SCRAM-SHA-512" => Ok(SaslMechanism::ScramSha512),
-        _ => Err(XzatomaError::Watcher(format!(
-            "Invalid SASL mechanism: {mechanism}"
-        ))),
-    }
-}
-
-// -----------------------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------------------
 
@@ -1047,16 +937,8 @@ mod tests {
 
     fn base_kafka_config() -> KafkaWatcherConfig {
         KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
-            group_id: "xzatoma-watcher".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         }
     }
 
@@ -1129,6 +1011,7 @@ mod tests {
             sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
             sasl_username: Some("user1".to_string()),
             sasl_password: Some("pass1".to_string()),
+            ssl_ca_location: None,
         });
 
         let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
@@ -1151,6 +1034,7 @@ mod tests {
             sasl_mechanism: None,
             sasl_username: None,
             sasl_password: None,
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);
@@ -1165,6 +1049,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: None,
             sasl_password: Some("secret".to_string()),
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);
@@ -1179,6 +1064,7 @@ mod tests {
             sasl_mechanism: Some("PLAIN".to_string()),
             sasl_username: Some("alice".to_string()),
             sasl_password: None,
+            ssl_ca_location: None,
         });
 
         let result = ResolvedProducerSettings::from_config(&config);

@@ -731,6 +731,15 @@ Limited support, depends on model (e.g., llava models).
 5. **Error Mapping**: Map provider-specific errors to common error types
 6. **Token Counting**: Handle missing `total_tokens` field (Anthropic, Ollama)
 
+In XZatoma these recommendations are realized by shared modules under
+`src/providers/`: `types.rs`/`conversion.rs` hold the canonical OpenAI-style wire
+structs and tool-call conversion helpers (item 3); `streaming.rs` provides the
+shared SSE reader (`LineBuffer`, `parse_sse_line`, `next_sse_data`) and the
+generic `ChatDeltaAccumulator<K>` that both the OpenAI (`K = u32` index) and
+Copilot (`K = String` call id) chat paths reuse, while Ollama reuses only the
+`LineBuffer` for its JSON-Lines stream (item 4); and `http.rs` centralizes
+provider HTTP error mapping and `UNAUTHORIZED` handling (item 5).
+
 ## References
 
 - OpenAI API Docs: https://platform.openai.com/docs/api-reference/chat

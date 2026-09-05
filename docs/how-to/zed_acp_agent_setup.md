@@ -556,8 +556,9 @@ runs on a different host or port, set this in your config:
 
 ```yaml
 provider:
-  provider_type: ollama
-  ollama_base_url: "http://127.0.0.1:11434"
+  type: ollama
+  ollama:
+    host: "http://127.0.0.1:11434"
 ```
 
 ### Corrupted stdout / broken JSON-RPC

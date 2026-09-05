@@ -19,6 +19,16 @@
 use std::time::Duration;
 use thiserror::Error;
 
+// The canonical Kafka security types live in `crate::watcher::kafka_security`.
+// They are re-exported here so existing
+// `crate::watcher::xzepr::consumer::config::{...}` import paths keep working.
+pub use crate::watcher::kafka_security::{SaslConfig, SaslMechanism, SecurityProtocol, SslConfig};
+
+// Parsing is delegated to the shared helpers rather than duplicated inline.
+use crate::watcher::kafka_security::{
+    DEFAULT_MAX_PAYLOAD_BYTES, parse_sasl_mechanism, parse_security_protocol,
+};
+
 /// Errors that can occur during configuration.
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -33,85 +43,6 @@ pub enum ConfigError {
     /// Invalid SASL mechanism specified.
     #[error("Invalid SASL mechanism: {0}")]
     InvalidSaslMechanism(String),
-}
-
-/// Security protocol for Kafka connection.
-///
-/// Determines how the client connects to Kafka brokers.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SecurityProtocol {
-    /// No encryption or authentication.
-    #[default]
-    Plaintext,
-    /// TLS encryption without SASL.
-    Ssl,
-    /// SASL authentication without TLS.
-    SaslPlaintext,
-    /// SASL authentication with TLS encryption.
-    SaslSsl,
-}
-
-impl SecurityProtocol {
-    /// Returns the Kafka configuration string for this protocol.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plaintext => "PLAINTEXT",
-            Self::Ssl => "SSL",
-            Self::SaslPlaintext => "SASL_PLAINTEXT",
-            Self::SaslSsl => "SASL_SSL",
-        }
-    }
-}
-
-/// SASL authentication mechanism.
-///
-/// Supported mechanisms for SASL authentication with Kafka.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SaslMechanism {
-    /// PLAIN mechanism (username/password in clear text).
-    Plain,
-    /// SCRAM-SHA-256 mechanism (recommended).
-    #[default]
-    ScramSha256,
-    /// SCRAM-SHA-512 mechanism.
-    ScramSha512,
-}
-
-impl SaslMechanism {
-    /// Returns the Kafka configuration string for this mechanism.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Plain => "PLAIN",
-            Self::ScramSha256 => "SCRAM-SHA-256",
-            Self::ScramSha512 => "SCRAM-SHA-512",
-        }
-    }
-}
-
-/// SASL authentication configuration.
-///
-/// Contains credentials and mechanism for SASL authentication.
-#[derive(Debug, Clone)]
-pub struct SaslConfig {
-    /// Authentication mechanism to use.
-    pub mechanism: SaslMechanism,
-    /// SASL username.
-    pub username: String,
-    /// SASL password.
-    pub password: String,
-}
-
-/// SSL/TLS configuration.
-///
-/// Contains paths to certificates for TLS connections.
-#[derive(Debug, Clone)]
-pub struct SslConfig {
-    /// Path to CA certificate file.
-    pub ca_location: Option<String>,
-    /// Path to client certificate file (for mTLS).
-    pub certificate_location: Option<String>,
-    /// Path to client key file (for mTLS).
-    pub key_location: Option<String>,
 }
 
 /// Kafka consumer configuration.
@@ -169,6 +100,29 @@ pub struct KafkaConsumerConfig {
     /// How long the consumer loop waits for a message before re-checking the
     /// shutdown flag. Defaults to 1 second.
     pub poll_interval: Duration,
+
+    /// Maximum accepted size, in bytes, of a raw Kafka message payload.
+    ///
+    /// Enforced before the payload is parsed into a [`CloudEventMessage`]
+    /// (see [`crate::watcher::xzepr::consumer::XzeprConsumer::process_message`]).
+    /// Defaults to [`DEFAULT_MAX_PAYLOAD_BYTES`]; production callers override
+    /// this with [`Self::with_max_payload_bytes`] using
+    /// `watcher.execution.max_payload_bytes`.
+    ///
+    /// [`CloudEventMessage`]: crate::watcher::xzepr::consumer::CloudEventMessage
+    pub max_payload_bytes: usize,
+
+    /// Maximum time in milliseconds between consecutive `poll()` calls.
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    /// Defaults to 3 600 000 (1 hour).
+    pub max_poll_interval_ms: u64,
+
+    /// Startup stabilization window in seconds.
+    ///
+    /// Passed to [`crate::watcher::startup_context::QuietStartupContext`]
+    /// when constructing the rdkafka consumer.
+    pub startup_stabilization_secs: u64,
 }
 
 impl KafkaConsumerConfig {
@@ -205,6 +159,9 @@ impl KafkaConsumerConfig {
             session_timeout: Duration::from_secs(30),
             broker_address_family: "v4".to_string(),
             poll_interval: Duration::from_secs(1),
+            max_payload_bytes: DEFAULT_MAX_PAYLOAD_BYTES,
+            max_poll_interval_ms: 3_600_000,
+            startup_stabilization_secs: 10,
         }
     }
 
@@ -217,6 +174,56 @@ impl KafkaConsumerConfig {
     /// Sets the consumer poll interval.
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
+        self
+    }
+
+    /// Sets the maximum accepted raw Kafka payload size, in bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "my-service")
+    ///     .with_max_payload_bytes(2048);
+    /// assert_eq!(config.max_payload_bytes, 2048);
+    /// ```
+    pub fn with_max_payload_bytes(mut self, max_payload_bytes: usize) -> Self {
+        self.max_payload_bytes = max_payload_bytes;
+        self
+    }
+
+    /// Sets the maximum poll interval in milliseconds.
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "svc")
+    ///     .with_max_poll_interval_ms(1_800_000);
+    /// assert_eq!(config.max_poll_interval_ms, 1_800_000);
+    /// ```
+    pub fn with_max_poll_interval_ms(mut self, ms: u64) -> Self {
+        self.max_poll_interval_ms = ms;
+        self
+    }
+
+    /// Sets the startup stabilization window in seconds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::watcher::xzepr::consumer::config::KafkaConsumerConfig;
+    ///
+    /// let config = KafkaConsumerConfig::new("localhost:9092", "events", "svc")
+    ///     .with_startup_stabilization_secs(30);
+    /// assert_eq!(config.startup_stabilization_secs, 30);
+    /// ```
+    pub fn with_startup_stabilization_secs(mut self, secs: u64) -> Self {
+        self.startup_stabilization_secs = secs;
         self
     }
 
@@ -354,13 +361,8 @@ impl KafkaConsumerConfig {
         let protocol = std::env::var("XZEPR_KAFKA_SECURITY_PROTOCOL")
             .unwrap_or_else(|_| "PLAINTEXT".to_string());
 
-        config.security_protocol = match protocol.to_uppercase().as_str() {
-            "PLAINTEXT" => SecurityProtocol::Plaintext,
-            "SSL" => SecurityProtocol::Ssl,
-            "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
-            "SASL_SSL" => SecurityProtocol::SaslSsl,
-            _ => return Err(ConfigError::InvalidSecurityProtocol(protocol)),
-        };
+        config.security_protocol = parse_security_protocol(&protocol)
+            .map_err(|_| ConfigError::InvalidSecurityProtocol(protocol.clone()))?;
 
         // Load SASL config if needed
         if matches!(
@@ -375,12 +377,8 @@ impl KafkaConsumerConfig {
             let mechanism = std::env::var("XZEPR_KAFKA_SASL_MECHANISM")
                 .unwrap_or_else(|_| "SCRAM-SHA-256".to_string());
 
-            let sasl_mechanism = match mechanism.to_uppercase().as_str() {
-                "PLAIN" => SaslMechanism::Plain,
-                "SCRAM-SHA-256" => SaslMechanism::ScramSha256,
-                "SCRAM-SHA-512" => SaslMechanism::ScramSha512,
-                _ => return Err(ConfigError::InvalidSaslMechanism(mechanism)),
-            };
+            let sasl_mechanism = parse_sasl_mechanism(&mechanism)
+                .map_err(|_| ConfigError::InvalidSaslMechanism(mechanism.clone()))?;
 
             config.sasl_config = Some(SaslConfig {
                 mechanism: sasl_mechanism,
@@ -427,6 +425,15 @@ mod tests {
         assert_eq!(config.auto_offset_reset, "earliest");
         assert!(!config.enable_auto_commit);
         assert_eq!(config.session_timeout, Duration::from_secs(30));
+        assert_eq!(config.max_payload_bytes, DEFAULT_MAX_PAYLOAD_BYTES);
+    }
+
+    #[test]
+    fn test_with_max_payload_bytes() {
+        let config = KafkaConsumerConfig::new("localhost:9092", "topic", "service")
+            .with_max_payload_bytes(2048);
+
+        assert_eq!(config.max_payload_bytes, 2048);
     }
 
     #[test]
@@ -484,21 +491,6 @@ mod tests {
             KafkaConsumerConfig::new("localhost:9092", "topic", "service").with_manual_commit();
 
         assert!(!config.enable_auto_commit);
-    }
-
-    #[test]
-    fn test_security_protocol_as_str() {
-        assert_eq!(SecurityProtocol::Plaintext.as_str(), "PLAINTEXT");
-        assert_eq!(SecurityProtocol::Ssl.as_str(), "SSL");
-        assert_eq!(SecurityProtocol::SaslPlaintext.as_str(), "SASL_PLAINTEXT");
-        assert_eq!(SecurityProtocol::SaslSsl.as_str(), "SASL_SSL");
-    }
-
-    #[test]
-    fn test_sasl_mechanism_as_str() {
-        assert_eq!(SaslMechanism::Plain.as_str(), "PLAIN");
-        assert_eq!(SaslMechanism::ScramSha256.as_str(), "SCRAM-SHA-256");
-        assert_eq!(SaslMechanism::ScramSha512.as_str(), "SCRAM-SHA-512");
     }
 
     #[test]

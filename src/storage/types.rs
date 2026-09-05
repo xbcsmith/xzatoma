@@ -292,6 +292,51 @@ pub struct StoredAcpAwaitState {
     pub resume_payload_json: Option<String>,
 }
 
+/// A single recorded tool invocation stored in `tool_invocations`.
+///
+/// Each row captures the tool name, JSON-encoded arguments and result, and
+/// whether the invocation succeeded. Both `run_id` and `conversation_id` are
+/// stored so rows can be filtered by either dimension.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::storage::types::StoredToolInvocation;
+///
+/// let inv = StoredToolInvocation {
+///     id: "01JTEST00000000000000000001".to_string(),
+///     run_id: "run-1".to_string(),
+///     conversation_id: "conv-1".to_string(),
+///     tool_name: "read_file".to_string(),
+///     arguments: r#"{"path":"src/main.rs"}"#.to_string(),
+///     result: r#"{"content":"fn main(){}"}"#.to_string(),
+///     success: true,
+///     timestamp: "2025-11-07T18:12:07.982682Z".to_string(),
+/// };
+///
+/// assert_eq!(inv.tool_name, "read_file");
+/// assert!(inv.success);
+/// ```
+#[derive(Debug, Clone)]
+pub struct StoredToolInvocation {
+    /// ULID primary key.
+    pub id: String,
+    /// Associated run identifier (may be empty string for non-ACP invocations).
+    pub run_id: String,
+    /// Conversation this invocation belongs to.
+    pub conversation_id: String,
+    /// Name of the tool that was invoked.
+    pub tool_name: String,
+    /// JSON-encoded arguments passed to the tool.
+    pub arguments: String,
+    /// JSON-encoded result returned by the tool.
+    pub result: String,
+    /// Whether the invocation succeeded.
+    pub success: bool,
+    /// RFC-3339 timestamp when the invocation occurred.
+    pub timestamp: String,
+}
+
 /// Persisted ACP cancellation record.
 ///
 /// This structure stores cancellation requests and terminal-state audit data for

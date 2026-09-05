@@ -46,6 +46,26 @@ use crate::mcp::transport::Transport;
 /// The mandatory MCP protocol version sent on every POST.
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
+/// Map a reqwest client-construction failure to [`XzatomaError::McpTransport`].
+///
+/// Factored out of [`HttpTransport::new`] so the error branch of the fallible
+/// client build can be unit-tested directly. A real `reqwest::Client::build`
+/// failure only occurs on fatal TLS backend initialisation, which cannot be
+/// triggered from a hermetic unit test. The helper is generic over any
+/// [`Display`](std::fmt::Display) error so the exact production message
+/// formatting is exercised without fabricating a `reqwest::Error`.
+///
+/// # Arguments
+///
+/// * `error` - The underlying client-build error.
+///
+/// # Returns
+///
+/// An [`XzatomaError::McpTransport`] whose message wraps `error`.
+fn map_client_build_error<E: std::fmt::Display>(error: E) -> XzatomaError {
+    XzatomaError::McpTransport(format!("failed to build MCP HTTP client: {error}"))
+}
+
 /// Streamable HTTP/SSE transport implementing the `2025-11-25` MCP spec.
 ///
 /// # Examples
@@ -60,7 +80,8 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 ///     Url::parse("http://localhost:3000/mcp").unwrap(),
 ///     HashMap::new(),
 ///     Duration::from_secs(30),
-/// );
+/// )
+/// .expect("failed to build HTTP transport");
 /// ```
 #[derive(Debug)]
 pub struct HttpTransport {
@@ -107,21 +128,27 @@ impl HttpTransport {
     ///
     /// A fully constructed [`HttpTransport`]. No network I/O is performed
     /// at construction time.
-    pub fn new(endpoint: url::Url, headers: HashMap<String, String>, timeout: Duration) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`XzatomaError::McpTransport`] if the underlying reqwest client
+    /// cannot be built (e.g. fatal TLS initialisation failure).
+    pub fn new(
+        endpoint: url::Url,
+        headers: HashMap<String, String>,
+        timeout: Duration,
+    ) -> Result<Self> {
         let http_client = Arc::new(
             reqwest::Client::builder()
                 .timeout(timeout)
                 .build()
-                // SAFETY: Default reqwest client construction cannot fail
-                // unless TLS initialisation fails, which is a fatal startup
-                // condition on any supported platform.
-                .expect("failed to build reqwest client"),
+                .map_err(map_client_build_error)?,
         );
 
         let (response_tx, response_rx) = mpsc::unbounded_channel();
         let (error_tx, error_rx) = mpsc::unbounded_channel();
 
-        Self {
+        Ok(Self {
             http_client,
             endpoint,
             session_id: Arc::new(RwLock::new(None)),
@@ -132,7 +159,7 @@ impl HttpTransport {
             _error_tx: error_tx,
             error_rx: Arc::new(tokio::sync::Mutex::new(error_rx)),
             last_event_id: Arc::new(RwLock::new(None)),
-        }
+        })
     }
 
     /// Open a long-lived SSE GET stream to receive unsolicited server
@@ -330,6 +357,9 @@ impl Transport for HttpTransport {
                 XzatomaError::McpTransport(format!("failed to read response body: {}", e))
             })?;
             if !body.is_empty() {
+                // Best-effort delivery: the receiver end may already be dropped
+                // (e.g. the transport is shutting down). A send failure here is
+                // not actionable, so the result is intentionally discarded.
                 let _ = self.response_tx.send(body);
             }
         }
@@ -386,6 +416,9 @@ impl Drop for HttpTransport {
 
             // Synchronous DELETE -- spec-required session termination.
             // We spawn a new thread to avoid blocking the async runtime.
+            // Spawn detached during Drop: we cannot block the async runtime
+            // and cannot return an error from `drop`. The join handle is
+            // intentionally discarded so teardown proceeds without waiting.
             let _ = std::thread::spawn(move || {
                 if let Ok(client) = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(5))
@@ -395,6 +428,9 @@ impl Drop for HttpTransport {
                     for (k, v) in &extra_headers {
                         req = req.header(k.as_str(), v.as_str());
                     }
+                    // Best-effort, spec-required session teardown during Drop.
+                    // The response is intentionally discarded because `drop`
+                    // cannot propagate errors and the session is going away.
                     let _ = req.send();
                 }
             });
@@ -515,6 +551,8 @@ async fn process_sse_event(
         return;
     }
 
+    // Best-effort delivery: the receiver may have been dropped if the caller
+    // stopped consuming messages. The result is intentionally discarded.
     let _ = response_tx.send(data);
 }
 
@@ -530,6 +568,44 @@ mod tests {
             HashMap::new(),
             Duration::from_secs(5),
         )
+        .unwrap()
+    }
+
+    /// `new()` returns `Ok` for a valid endpoint.
+    #[test]
+    fn test_http_transport_new_returns_ok_for_valid_endpoint() {
+        // reqwest client construction only fails on fatal TLS initialisation,
+        // which cannot be triggered in a unit test. We therefore validate the
+        // fallible signature via the Ok path.
+        let result = HttpTransport::new(
+            url::Url::parse("http://localhost:9999/mcp").unwrap(),
+            HashMap::new(),
+            Duration::from_secs(5),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// The client-build error branch maps to `XzatomaError::McpTransport`.
+    ///
+    /// This drives the exact mapping used by `new()`'s `map_err`, exercising the
+    /// production failure path (message formatting and error variant) rather
+    /// than a reconstruction of the error shape.
+    #[test]
+    fn test_map_client_build_error_returns_mcp_transport() {
+        let err = map_client_build_error("simulated TLS initialisation failure");
+        match err {
+            XzatomaError::McpTransport(msg) => {
+                assert!(
+                    msg.contains("failed to build MCP HTTP client"),
+                    "unexpected message: {msg}"
+                );
+                assert!(
+                    msg.contains("simulated TLS initialisation failure"),
+                    "underlying error not propagated: {msg}"
+                );
+            }
+            other => panic!("expected McpTransport, got {other:?}"),
+        }
     }
 
     /// `new()` constructs a transport without panicking.

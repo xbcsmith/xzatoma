@@ -28,15 +28,14 @@
 
 use crate::config::{Config, KafkaSecurityConfig, KafkaWatcherConfig, WatcherPlanExecutionMode};
 use crate::error::Result;
+use crate::watcher::BackOffPolicy;
 use crate::watcher::generic::consumer::{
     GenericConsumerTrait, RawKafkaMessage, RealGenericConsumer,
 };
 use crate::watcher::generic::event_handler::{GenericEventHandler, GenericTask};
 use crate::watcher::generic::matcher::GenericMatcher;
 use crate::watcher::generic::result_event::GenericPlanResult;
-use crate::watcher::generic::result_producer::{
-    FakeResultProducer, GenericResultProducer, ResultProducerTrait,
-};
+use crate::watcher::generic::result_producer::ResultProducerTrait;
 use crate::watcher::plan_executor::execute_tasks_sequentially;
 
 use serde_json::json;
@@ -115,6 +114,7 @@ pub enum MessageDisposition {
 ///     replication_factor: 1,
 ///     broker_address_family: "v4".to_string(),
 ///     poll_interval_ms: 1000,
+///     ..KafkaWatcherConfig::default()
 /// });
 /// let _watcher = GenericWatcher::new(config, true)?;
 /// # Ok(())
@@ -129,6 +129,7 @@ pub struct GenericWatcher {
     dry_run: bool,
     published_results: Arc<Mutex<Vec<GenericPlanResult>>>,
     running: Arc<AtomicBool>,
+    once: bool,
 }
 
 impl GenericWatcher {
@@ -169,6 +170,7 @@ impl GenericWatcher {
     ///     replication_factor: 1,
     ///     broker_address_family: "v4".to_string(),
     ///     poll_interval_ms: 1000,
+    ///     ..KafkaWatcherConfig::default()
     /// });
     ///
     /// let watcher = GenericWatcher::new(config, true);
@@ -192,20 +194,16 @@ impl GenericWatcher {
         let matcher = GenericMatcher::new(watcher_config.generic_match.clone())
             .map_err(|e| GenericWatcherError::Matcher(e.to_string()))?;
 
-        let event_handler = GenericEventHandler::new(Some(matcher), None);
+        let event_handler = GenericEventHandler::new(Some(matcher), None)
+            .with_max_payload_bytes(watcher_config.execution.max_payload_bytes);
 
-        let producer: Arc<dyn ResultProducerTrait> = if dry_run {
-            Arc::new(FakeResultProducer::new())
-        } else {
-            Arc::new(
-                GenericResultProducer::new(&kafka_config)
-                    .map_err(|e| GenericWatcherError::Producer(e.to_string()))?,
-            )
-        };
+        let producer: Arc<dyn ResultProducerTrait> =
+            crate::watcher::lifecycle::build_producer(&kafka_config, dry_run)
+                .map_err(|e| GenericWatcherError::Producer(e.to_string()))?;
 
-        let execution_semaphore = Arc::new(Semaphore::new(
+        let execution_semaphore = crate::watcher::lifecycle::build_execution_semaphore(
             watcher_config.execution.max_concurrent_executions,
-        ));
+        );
 
         Ok(Self {
             config: Arc::new(config),
@@ -216,6 +214,7 @@ impl GenericWatcher {
             dry_run,
             published_results: Arc::new(Mutex::new(Vec::new())),
             running: Arc::new(AtomicBool::new(false)),
+            once: false,
         })
     }
 
@@ -255,6 +254,7 @@ impl GenericWatcher {
     ///     replication_factor: 1,
     ///     broker_address_family: "v4".to_string(),
     ///     poll_interval_ms: 1000,
+    ///     ..KafkaWatcherConfig::default()
     /// });
     /// let watcher = GenericWatcher::new(config, true)?
     ///     .with_producer(Arc::new(FakeResultProducer::new()));
@@ -263,6 +263,43 @@ impl GenericWatcher {
     /// ```
     pub fn with_producer(mut self, producer: Arc<dyn ResultProducerTrait>) -> Self {
         self.producer = producer;
+        self
+    }
+
+    /// Configure the watcher to exit after consuming the first event.
+    ///
+    /// When `true`, the consume loop in [`start`] breaks immediately after the
+    /// first message is received from Kafka, regardless of its disposition
+    /// (processed, skipped, or invalid).  This is useful for CI smoke tests
+    /// that place exactly one event on the topic and expect the watcher to
+    /// exit with code `0` after handling it.
+    ///
+    /// # Arguments
+    ///
+    /// * `once` - If `true`, exit after the first consumed event.
+    ///
+    /// # Returns
+    ///
+    /// `self` with `once` configured.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::{Config, KafkaWatcherConfig, WatcherType};
+    /// use xzatoma::watcher::generic::watcher::GenericWatcher;
+    ///
+    /// let mut config = Config::default();
+    /// config.watcher.watcher_type = WatcherType::Generic;
+    /// config.watcher.kafka = Some(KafkaWatcherConfig {
+    ///     topic: "events".to_string(),
+    ///     ..KafkaWatcherConfig::default()
+    /// });
+    /// let watcher = GenericWatcher::new(config, false)
+    ///     .unwrap()
+    ///     .with_once(true);
+    /// ```
+    pub fn with_once(mut self, once: bool) -> Self {
+        self.once = once;
         self
     }
 
@@ -318,6 +355,8 @@ impl GenericWatcher {
             "Generic watcher consuming from Kafka"
         );
 
+        let mut back_off = BackOffPolicy::new();
+
         while self.running.load(Ordering::SeqCst) {
             let message = tokio::select! {
                 biased;
@@ -332,13 +371,26 @@ impl GenericWatcher {
                 Some(Ok(msg)) => {
                     if let Err(e) = self.process_event(msg).await {
                         error!(error = %e, "Failed to process generic watcher message");
+                        back_off.increment();
+                    } else {
+                        back_off.reset();
                     }
                     if let Err(e) = consumer.commit().await {
                         warn!(error = %e, "Failed to commit Kafka offset");
                     }
+                    if self.once {
+                        info!("one-shot mode: stopping after first consumed event");
+                        break;
+                    }
                 }
                 Some(Err(e)) => {
-                    warn!(error = %e, "Fatal consumer error encountered; stopping watcher");
+                    back_off.increment();
+                    warn!(
+                        error = %e,
+                        delay_ms = back_off.current_delay_ms(),
+                        "Consumer error; backing off before stopping"
+                    );
+                    tokio::time::sleep(back_off.current_delay()).await;
                     self.running.store(false, Ordering::SeqCst);
                     return Err(e);
                 }
@@ -539,7 +591,15 @@ impl GenericWatcher {
                 "broker.address.family".to_string(),
                 self.kafka_config.broker_address_family.clone(),
             ),
+            (
+                "max.poll.interval.ms".to_string(),
+                self.kafka_config.max_poll_interval_ms.to_string(),
+            ),
         ];
+
+        if let Some(ref reset) = self.kafka_config.auto_offset_reset {
+            settings.push(("auto.offset.reset".to_string(), reset.clone()));
+        }
 
         if let Some(security) = &self.kafka_config.security {
             Self::push_security_settings(&mut settings, security);
@@ -601,6 +661,7 @@ impl GenericWatcher {
 
         let provider =
             crate::providers::create_provider(&config.provider.provider_type, &config.provider)
+                .await
                 .map_err(|e| {
                     GenericWatcherError::Execution(format!("failed to create provider: {}", e))
                 })?;
@@ -728,7 +789,11 @@ impl GenericWatcher {
     /// Returns an error if the consumer cannot be created or if subscription
     /// to the configured input topic fails.
     fn build_consumer(&self) -> Result<RealGenericConsumer> {
-        RealGenericConsumer::from_config(&self.get_kafka_config(), &self.kafka_config.topic)
+        RealGenericConsumer::from_config_with_startup(
+            &self.get_kafka_config(),
+            &self.kafka_config.topic,
+            self.kafka_config.startup_stabilization_secs,
+        )
     }
 
     /// Return the configured Kafka security protocol string.
@@ -763,6 +828,13 @@ impl GenericWatcher {
         if let Some(password) = &security.sasl_password {
             settings.push(("sasl.password".to_string(), password.clone()));
         }
+        // Apply ssl.ca.location only for SSL-based protocols.
+        let proto_upper = security.protocol.to_uppercase();
+        if (proto_upper == "SSL" || proto_upper == "SASL_SSL")
+            && let Some(ref ca_location) = security.ssl_ca_location
+        {
+            settings.push(("ssl.ca.location".to_string(), ca_location.clone()));
+        }
     }
 }
 
@@ -789,16 +861,10 @@ mod tests {
             watcher: WatcherConfig {
                 watcher_type: crate::config::WatcherType::Generic,
                 kafka: Some(KafkaWatcherConfig {
-                    brokers: "localhost:9092".to_string(),
                     topic: "generic.input".to_string(),
                     output_topic: Some("generic.output".to_string()),
                     group_id: "xzatoma-generic-test".to_string(),
-                    auto_create_topics: true,
-                    security: None,
-                    num_partitions: 1,
-                    replication_factor: 1,
-                    broker_address_family: "v4".to_string(),
-                    poll_interval_ms: 1000,
+                    ..Default::default()
                 }),
                 generic_match: match_config,
                 filters: Default::default(),
@@ -808,6 +874,7 @@ mod tests {
                     max_concurrent_executions: 1,
                     execution_timeout_secs: 30,
                     execution_mode: WatcherPlanExecutionMode::PerTask,
+                    ..Default::default()
                 },
             },
             mcp: McpConfig::default(),
@@ -1050,21 +1117,17 @@ mod tests {
     fn test_generic_watcher_get_kafka_config_includes_security_settings() {
         let mut config = test_config(GenericMatchConfig::default());
         config.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "generic.input".to_string(),
             output_topic: Some("generic.output".to_string()),
             group_id: "xzatoma-generic-test".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
             security: Some(KafkaSecurityConfig {
                 protocol: "SASL_SSL".to_string(),
                 sasl_mechanism: Some("SCRAM-SHA-256".to_string()),
                 sasl_username: Some("user".to_string()),
                 sasl_password: Some("pass".to_string()),
+                ssl_ca_location: None,
             }),
+            ..Default::default()
         });
 
         let watcher = GenericWatcher::new(config, true).unwrap();
@@ -1245,5 +1308,119 @@ mod tests {
             3,
             "commit must be called once per received message regardless of disposition"
         );
+    }
+
+    #[tokio::test]
+    async fn test_generic_watcher_with_once_stops_after_first_event() {
+        let config = test_config(GenericMatchConfig::default());
+        let mut watcher = GenericWatcher::new(config, false).unwrap().with_once(true);
+
+        let consumer = FakeGenericConsumer::new(vec![
+            Ok(TestRawMsg {
+                payload: "not-a-plan".to_string(),
+                topic: "test-topic".to_string(),
+                key: None,
+            }),
+            Ok(TestRawMsg {
+                payload: "should-not-be-processed".to_string(),
+                topic: "test-topic".to_string(),
+                key: None,
+            }),
+        ]);
+
+        watcher.start(Some(Box::new(consumer))).await.unwrap();
+
+        // Only one event should have been consumed; the second stays in the fake queue.
+        // The watcher exits cleanly with Ok(()).
+    }
+
+    #[test]
+    fn test_generic_watcher_get_kafka_config_with_auto_offset_reset_some() {
+        let mut config = test_config(GenericMatchConfig::default());
+        if let Some(ref mut kafka) = config.watcher.kafka {
+            kafka.auto_offset_reset = Some("earliest".to_string());
+        }
+        let watcher = GenericWatcher::new(config, false).unwrap();
+        let settings: std::collections::HashMap<_, _> =
+            watcher.get_kafka_config().into_iter().collect();
+        assert_eq!(
+            settings.get("auto.offset.reset").map(|s| s.as_str()),
+            Some("earliest")
+        );
+    }
+
+    #[test]
+    fn test_generic_watcher_get_kafka_config_with_auto_offset_reset_none() {
+        let config = test_config(GenericMatchConfig::default());
+        let watcher = GenericWatcher::new(config, false).unwrap();
+        let settings: std::collections::HashMap<_, _> =
+            watcher.get_kafka_config().into_iter().collect();
+        assert!(!settings.contains_key("auto.offset.reset"));
+    }
+
+    #[test]
+    fn test_generic_watcher_push_security_settings_ssl_includes_ca_location() {
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SSL".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/ca.pem".to_string()),
+        };
+        let mut settings: Vec<(String, String)> = Vec::new();
+        GenericWatcher::push_security_settings(&mut settings, &security);
+        let map: std::collections::HashMap<_, _> = settings.into_iter().collect();
+        assert_eq!(
+            map.get("ssl.ca.location").map(|s| s.as_str()),
+            Some("/etc/ssl/ca.pem")
+        );
+    }
+
+    #[test]
+    fn test_generic_watcher_push_security_settings_sasl_ssl_includes_ca_location() {
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SASL_SSL".to_string(),
+            sasl_mechanism: Some("PLAIN".to_string()),
+            sasl_username: Some("u".to_string()),
+            sasl_password: Some("p".to_string()),
+            ssl_ca_location: Some("/certs/ca.pem".to_string()),
+        };
+        let mut settings: Vec<(String, String)> = Vec::new();
+        GenericWatcher::push_security_settings(&mut settings, &security);
+        let map: std::collections::HashMap<_, _> = settings.into_iter().collect();
+        assert_eq!(
+            map.get("ssl.ca.location").map(|s| s.as_str()),
+            Some("/certs/ca.pem")
+        );
+    }
+
+    #[test]
+    fn test_generic_watcher_push_security_settings_plaintext_excludes_ca_location() {
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "PLAINTEXT".to_string(),
+            sasl_mechanism: None,
+            sasl_username: None,
+            sasl_password: None,
+            ssl_ca_location: Some("/etc/ssl/ca.pem".to_string()),
+        };
+        let mut settings: Vec<(String, String)> = Vec::new();
+        GenericWatcher::push_security_settings(&mut settings, &security);
+        let map: std::collections::HashMap<_, _> = settings.into_iter().collect();
+        assert!(!map.contains_key("ssl.ca.location"));
+    }
+
+    #[test]
+    fn test_generic_watcher_push_security_settings_sasl_plaintext_excludes_ca_location() {
+        let security = crate::config::KafkaSecurityConfig {
+            protocol: "SASL_PLAINTEXT".to_string(),
+            sasl_mechanism: Some("PLAIN".to_string()),
+            sasl_username: Some("u".to_string()),
+            sasl_password: Some("p".to_string()),
+            ssl_ca_location: Some("/etc/ssl/ca.pem".to_string()),
+        };
+        let mut settings: Vec<(String, String)> = Vec::new();
+        GenericWatcher::push_security_settings(&mut settings, &security);
+        let map: std::collections::HashMap<_, _> = settings.into_iter().collect();
+        assert!(!map.contains_key("ssl.ca.location"));
     }
 }

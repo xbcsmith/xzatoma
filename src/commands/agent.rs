@@ -14,6 +14,7 @@
 /// ```no_run
 /// use std::path::PathBuf;
 /// use xzatoma::commands::agent::handle_agent;
+/// use xzatoma::cli::CommonArgs;
 /// use xzatoma::Config;
 ///
 /// # async fn example() -> anyhow::Result<()> {
@@ -25,6 +26,8 @@
 ///     None,
 ///     false,
 ///     Config::default(),
+///     "config/config.yaml".to_string(),
+///     CommonArgs::default(),
 /// )
 /// .await?;
 /// # Ok(())
@@ -58,6 +61,10 @@ use crate::error::Result;
 /// * `_streaming` - Streaming flag (accepted for API consistency; has no effect
 ///   on ACP stdio mode which manages its own protocol-level streaming).
 /// * `config` - Loaded XZatoma configuration.
+/// * `config_path` - Resolved path to the config file used to build `config`,
+///   retained so `/config reload` can re-read the same file.
+/// * `common` - CLI arguments used to build `config`, retained so
+///   `/config reload` can reapply the same overrides.
 ///
 /// # Errors
 ///
@@ -68,13 +75,26 @@ use crate::error::Result;
 ///
 /// ```no_run
 /// use xzatoma::commands::agent::handle_agent;
+/// use xzatoma::cli::CommonArgs;
 /// use xzatoma::Config;
 ///
 /// # async fn example() -> anyhow::Result<()> {
-/// handle_agent(None, None, false, None, None, false, Config::default()).await?;
+/// handle_agent(
+///     None,
+///     None,
+///     false,
+///     None,
+///     None,
+///     false,
+///     Config::default(),
+///     "config/config.yaml".to_string(),
+///     CommonArgs::default(),
+/// )
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_agent(
     provider: Option<String>,
     model: Option<String>,
@@ -83,7 +103,10 @@ pub async fn handle_agent(
     system_prompt: Option<String>,
     _streaming: bool,
     mut config: Config,
+    config_path: String,
+    common: crate::cli::CommonArgs,
 ) -> Result<()> {
+    config.validate_for_zed_agent()?;
     // Resolve the CLI flag against any config/env value already in config.
     // CLI flag takes precedence over config.agent.system_prompt.
     let resolved = crate::agent::resolve(
@@ -106,7 +129,8 @@ pub async fn handle_agent(
         }
         config.agent.system_prompt = Some(r.text.clone());
     }
-    let options = AcpStdioAgentOptions::new(provider, model, allow_dangerous, working_dir);
+    let options = AcpStdioAgentOptions::new(provider, model, allow_dangerous, working_dir)
+        .with_config_source(config_path, common);
     run_stdio_agent(config, options).await
 }
 
@@ -116,7 +140,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_default_config() {
-        let result = handle_agent(None, None, false, None, None, false, Config::default()).await;
+        let result = handle_agent(
+            None,
+            None,
+            false,
+            None,
+            None,
+            false,
+            Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -131,6 +166,8 @@ mod tests {
             None,
             false,
             Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
         )
         .await;
 
@@ -147,6 +184,8 @@ mod tests {
             None,
             false,
             Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
         )
         .await;
 
@@ -163,6 +202,8 @@ mod tests {
             None,
             false,
             Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
         )
         .await;
 
@@ -171,7 +212,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_agent_accepts_allow_dangerous() {
-        let result = handle_agent(None, None, true, None, None, false, Config::default()).await;
+        let result = handle_agent(
+            None,
+            None,
+            true,
+            None,
+            None,
+            false,
+            Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -186,6 +238,8 @@ mod tests {
             Some("You are a helpful assistant.".to_string()),
             false,
             Config::default(),
+            String::new(),
+            crate::cli::CommonArgs::default(),
         )
         .await;
         assert!(result.is_ok());

@@ -61,7 +61,6 @@ Available commands:
   /safety      Show help or change the safety policy.
   /tools       List available agent tools.
   /context     Inspect or manage context window usage.
-  /summarize   Summarize the current conversation.
   /skills      List active agent skills.
   /mcp         List connected MCP servers.
   /help        Show this command list.
@@ -310,18 +309,6 @@ Conversation summarized. Context window reset.
 The conversation history is replaced by a compact summary. You can verify by
 running `/context info` again and observing that the used token count has
 dropped.
-
-You can also trigger summarization directly:
-
-```text
-xzatoma> /summarize
-```
-
-```text
-Conversation summarized. Context window reset.
-```
-
-Both `/context summary` and `/summarize` produce the same result.
 
 ## Step 6 — Understand /streaming in Zed ACP mode
 

@@ -31,6 +31,7 @@ fn make_transport(base_url: &str) -> HttpTransport {
         HashMap::new(),
         Duration::from_secs(5),
     )
+    .expect("HTTP transport construction should succeed for a valid endpoint")
 }
 
 /// Collect all currently buffered messages from `receive()` with a short

@@ -15,9 +15,9 @@ provider:
   # Ollama configuration
   ollama:
     # Ollama server host
-    host: http://localhost:11434
+    host: http://127.0.0.1:11434
     # Model to use (e.g., llama3.2:3b, granite3.2:2b, granite4:3b)
-    model: llama3.2:3b
+    # Leave empty to auto-select the most recently modified installed model.
 
   # OpenAI (and OpenAI-compatible) provider configuration
   # Uncomment the openai block and set type: openai to activate

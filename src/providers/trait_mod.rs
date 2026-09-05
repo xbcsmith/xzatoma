@@ -315,6 +315,27 @@ pub trait Provider: Send + Sync {
         ProviderCapabilities::default()
     }
 
+    /// Returns whether the given model name supports vision (image) input.
+    ///
+    /// The default implementation delegates to the static name-based allowlist in
+    /// [`crate::providers::provider_model_supports_vision`]. Providers that maintain
+    /// a live model cache (such as `OllamaProvider`) should override this method to
+    /// consult the cached [`ModelInfo`] first so that any model advertising vision
+    /// capability via the provider API is accepted, even when its name is not on the
+    /// static allowlist.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_name` - This provider's canonical name (e.g. `"ollama"`, `"openai"`).
+    /// * `model_name` - The model identifier to check.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` when the model is known to accept image input.
+    fn model_supports_vision(&self, provider_name: &str, model_name: &str) -> bool {
+        crate::providers::provider_model_supports_vision(provider_name, model_name)
+    }
+
     /// Set the active thinking effort level for subsequent completions.
     ///
     /// Providers that support configurable reasoning (Copilot adaptive thinking,
@@ -418,46 +439,18 @@ pub trait Provider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::Provider;
-    use crate::error::Result;
-    use crate::providers::{CompletionResponse, Message, ModelInfo};
-    use async_trait::async_trait;
+    use crate::providers::Message;
+    use crate::test_utils::TestProviderBuilder;
 
     #[test]
     fn test_default_list_models_error() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
         // SAFETY: Runtime::new only fails on OS resource exhaustion, which
         // cannot occur in a well-behaved test environment.
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let provider = MockProvider;
+            let provider = TestProviderBuilder::new()
+                .with_fetch_models_error("not supported")
+                .build();
             let result = provider.list_models().await;
             assert!(result.is_err());
         });
@@ -465,40 +458,11 @@ mod tests {
 
     #[test]
     fn test_default_get_model_info_error() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
         // SAFETY: Runtime::new only fails on OS resource exhaustion, which
         // cannot occur in a well-behaved test environment.
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let provider = MockProvider;
+            let provider = TestProviderBuilder::new().build();
             let result = provider.get_model_info("gpt-4").await;
             assert!(result.is_err());
         });
@@ -506,221 +470,40 @@ mod tests {
 
     #[test]
     fn test_default_get_current_model_returns_sentinel() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let provider = MockProvider;
+        let provider = TestProviderBuilder::new().without_current_model().build();
         assert_eq!(provider.get_current_model(), "none");
     }
 
     #[test]
     fn test_default_set_model_noop() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let mut provider = MockProvider;
+        let mut provider = TestProviderBuilder::new().build();
         provider.set_model("any-model");
-        // No assertion on a Result because set_model returns (); verifies the
-        // call completes without panicking.
+        // No assertion because set_model returns (); this verifies the call
+        // completes without panicking through a mutable provider handle.
     }
 
     #[test]
     fn test_is_authenticated_through_trait_ref() {
-        struct AuthedMock;
-        struct UnauthMock;
-
-        #[async_trait]
-        impl Provider for AuthedMock {
-            fn is_authenticated(&self) -> bool {
-                true
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        #[async_trait]
-        impl Provider for UnauthMock {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let authed: &dyn Provider = &AuthedMock;
-        let unauthed: &dyn Provider = &UnauthMock;
-        assert!(authed.is_authenticated());
-        assert!(!unauthed.is_authenticated());
+        let authed = TestProviderBuilder::new().with_authenticated(true).build();
+        let unauthed = TestProviderBuilder::new().with_authenticated(false).build();
+        let authed_ref: &dyn Provider = &authed;
+        let unauthed_ref: &dyn Provider = &unauthed;
+        assert!(authed_ref.is_authenticated());
+        assert!(!unauthed_ref.is_authenticated());
     }
 
     #[test]
     fn test_current_model_through_trait_ref() {
-        struct ModelProvider {
-            model: String,
-        }
-
-        #[async_trait]
-        impl Provider for ModelProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                Some(&self.model)
-            }
-
-            fn set_model(&mut self, model: &str) {
-                self.model = model.to_string();
-            }
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let boxed: Box<dyn Provider> = Box::new(ModelProvider {
-            model: "gpt-4o".to_string(),
-        });
+        let boxed: Box<dyn Provider> =
+            Box::new(TestProviderBuilder::new().with_model("gpt-4o").build());
         assert_eq!(boxed.current_model(), Some("gpt-4o"));
         assert_eq!(boxed.get_current_model(), "gpt-4o");
     }
 
     #[test]
     fn test_set_model_through_trait_ref() {
-        struct MutProvider {
-            model: String,
-        }
-
-        #[async_trait]
-        impl Provider for MutProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                Some(&self.model)
-            }
-
-            fn set_model(&mut self, model: &str) {
-                self.model = model.to_string();
-            }
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let mut boxed: Box<dyn Provider> = Box::new(MutProvider {
-            model: "old-model".to_string(),
-        });
+        let mut boxed: Box<dyn Provider> =
+            Box::new(TestProviderBuilder::new().with_model("old-model").build());
         boxed.set_model("new-model");
         assert_eq!(boxed.current_model(), Some("new-model"));
         assert_eq!(boxed.get_current_model(), "new-model");
@@ -728,77 +511,20 @@ mod tests {
 
     #[test]
     fn test_supports_streaming_default_is_false() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let provider: &dyn Provider = &MockProvider;
-        assert!(!provider.supports_streaming());
+        let provider = TestProviderBuilder::new().build();
+        let provider_ref: &dyn Provider = &provider;
+        assert!(!provider_ref.supports_streaming());
     }
 
     #[test]
     fn test_chat_completion_stream_delegates_to_complete() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant(
-                    "stream-delegate-response",
-                )))
-            }
-        }
-
         // SAFETY: Runtime::new only fails on OS resource exhaustion, which
         // cannot occur in a well-behaved test environment.
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            let provider = MockProvider;
+            let provider = TestProviderBuilder::new()
+                .with_completion("stream-delegate-response")
+                .build();
             let messages = vec![Message::user("hello")];
             let tools: Vec<serde_json::Value> = vec![];
             let result = provider.chat_completion_stream(&messages, &tools).await;
@@ -813,36 +539,7 @@ mod tests {
 
     #[test]
     fn test_set_thinking_effort_default_impl_returns_ok() {
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                false
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Err(crate::error::XzatomaError::Provider(
-                    "not supported".to_string(),
-                ))
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("test")))
-            }
-        }
-
-        let provider = MockProvider;
+        let provider = TestProviderBuilder::new().build();
         assert!(
             provider.set_thinking_effort(Some("high")).is_ok(),
             "default no-op must return Ok for a non-None effort"
@@ -857,36 +554,9 @@ mod tests {
     async fn test_complete_with_callbacks_default_delegates_to_complete() {
         // Verify that the default implementation calls complete() and
         // returns the same result regardless of whether callbacks are provided.
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                true
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Ok(vec![])
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant(
-                    "default response",
-                )))
-            }
-        }
-
-        let provider = MockProvider;
+        let provider = TestProviderBuilder::new()
+            .with_completion("default response")
+            .build();
         let messages = vec![Message::user("hi")];
 
         // Without callbacks
@@ -906,34 +576,9 @@ mod tests {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
-        struct MockProvider;
-
-        #[async_trait]
-        impl Provider for MockProvider {
-            fn is_authenticated(&self) -> bool {
-                true
-            }
-
-            fn current_model(&self) -> Option<&str> {
-                None
-            }
-
-            fn set_model(&mut self, _model: &str) {}
-
-            async fn fetch_models(&self) -> Result<Vec<ModelInfo>> {
-                Ok(vec![])
-            }
-
-            async fn complete(
-                &self,
-                _messages: &[Message],
-                _tools: &[serde_json::Value],
-            ) -> Result<CompletionResponse> {
-                Ok(CompletionResponse::new(Message::assistant("response")))
-            }
-        }
-
-        let provider = MockProvider;
+        let provider = TestProviderBuilder::new()
+            .with_completion("response")
+            .build();
         let messages = vec![Message::user("test")];
 
         let reasoning_calls = Arc::new(AtomicUsize::new(0));

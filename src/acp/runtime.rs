@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use uuid::Uuid;
 
 /// Default capacity for live event fan-out.
@@ -478,6 +478,19 @@ pub struct AcpRuntimeRunRecord {
     pub cancellation_reason: Option<String>,
     /// Await resume payload persisted for later continuation.
     pub resume_payload: Option<Value>,
+    /// Optional one-shot sender for live `await_input` resumption.
+    ///
+    /// When the `await_input` tool is invoked, it registers a sender here so
+    /// that a subsequent `resume_run` call can deliver the resume payload
+    /// directly to the waiting tool future rather than relying on polling.
+    /// The sender is consumed on first use.
+    pub await_resume_tx: Option<oneshot::Sender<Value>>,
+    /// Optional named agent that this run targets.
+    ///
+    /// Populated from `AcpRuntimeCreateRequest::agent_name` when a run is
+    /// created. Used by the executor to apply per-agent configuration overrides
+    /// such as a custom provider, system prompt, or thinking mode.
+    pub agent_name: Option<String>,
 }
 
 impl AcpRuntimeRunRecord {
@@ -494,6 +507,8 @@ impl AcpRuntimeRunRecord {
             cancellation_requested: false,
             cancellation_reason: None,
             resume_payload: None,
+            await_resume_tx: None,
+            agent_name: None,
         }
     }
 }
@@ -758,6 +773,7 @@ impl AcpRuntime {
 
         let mut record = AcpRuntimeRunRecord::new(run.clone(), mode, prompt_text);
         record.conversation_id = Some(session_id.as_str().to_string());
+        record.agent_name = request.agent_name.clone();
 
         let created_event = build_runtime_event(
             1,
@@ -877,6 +893,50 @@ impl AcpRuntime {
             crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
         })?;
         Ok(record.prompt_text.clone())
+    }
+
+    /// Returns the optional named agent associated with a run.
+    ///
+    /// When the run was created with an `agent_name` the executor uses this
+    /// value to look up per-agent configuration overrides.
+    ///
+    /// # Arguments
+    ///
+    /// * `run_id` - ACP run identifier
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Some(name))` when the run targets a named agent, or
+    /// `Ok(None)` when no agent name was specified.
+    ///
+    /// # Errors
+    ///
+    /// Returns a not-found error if the run does not exist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::{AcpRuntime, AcpRuntimeCreateRequest};
+    /// use xzatoma::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new_in_memory(Config::default());
+    /// let run = runtime.create_run(
+    ///     AcpRuntimeCreateRequest::new(vec![
+    ///         AcpMessage::new(AcpRole::User, vec![
+    ///             AcpMessagePart::Text(AcpTextPart::new("hi".to_string())),
+    ///         ]).unwrap(),
+    ///     ]).with_agent_name("reviewer".to_string()),
+    /// ).unwrap();
+    /// let name = runtime.agent_name_for_run(run.id.as_str()).unwrap();
+    /// assert_eq!(name, Some("reviewer".to_string()));
+    /// ```
+    pub fn agent_name_for_run(&self, run_id: &str) -> Result<Option<String>> {
+        let state = lock_runtime_state(&self.state)?;
+        let record = state.runs.get(run_id).ok_or_else(|| {
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
+        })?;
+        Ok(record.agent_name.clone())
     }
 
     /// Marks a run as queued.
@@ -1163,6 +1223,59 @@ impl AcpRuntime {
         Ok(record.run.clone())
     }
 
+    /// Evicts completed in-memory run records that have not been updated within
+    /// the session timeout window.
+    ///
+    /// This method is called periodically by the background eviction task in the
+    /// ACP HTTP server. It drops completed run records whose `updated_at`
+    /// timestamp is older than `session_timeout_seconds` ago, freeing in-memory
+    /// resources for long-running server processes.
+    ///
+    /// Active (non-terminal) runs are never evicted regardless of age.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_timeout_seconds` - Age threshold in seconds; completed runs
+    ///   last updated before this window are eligible for removal.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of evicted run records.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime state lock is poisoned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::AcpRuntime;
+    /// use xzatoma::Config;
+    ///
+    /// let runtime = AcpRuntime::new_in_memory(Config::default());
+    /// let evicted = runtime.evict_idle_sessions(3600).unwrap();
+    /// assert_eq!(evicted, 0);
+    /// ```
+    pub fn evict_idle_sessions(&self, session_timeout_seconds: u64) -> Result<usize> {
+        let cutoff = chrono::Utc::now()
+            - chrono::Duration::seconds(i64::try_from(session_timeout_seconds).unwrap_or(i64::MAX));
+
+        let mut state = lock_runtime_state(&self.state)?;
+        let before = state.runs.len();
+
+        state.runs.retain(|_, record| {
+            if !record.completed {
+                return true;
+            }
+            match chrono::DateTime::parse_from_rfc3339(&record.run.status.updated_at) {
+                Ok(updated_at) => updated_at.with_timezone(&chrono::Utc) >= cutoff,
+                Err(_) => true,
+            }
+        });
+
+        Ok(before - state.runs.len())
+    }
+
     /// Returns the number of tracked runs.
     ///
     /// # Returns
@@ -1374,6 +1487,56 @@ impl AcpRuntime {
         Ok(updated_run)
     }
 
+    /// Registers a one-shot channel sender for live `await_input` resumption.
+    ///
+    /// The `await_input` tool calls this method immediately before blocking on
+    /// the corresponding receiver. When `resume_run` is called later, the
+    /// stored sender is consumed to deliver the payload to the waiting tool.
+    ///
+    /// # Arguments
+    ///
+    /// * `run_id` - ACP run identifier
+    /// * `tx` - One-shot sender that will receive the resume payload
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the run is not found or the state lock is poisoned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::acp::runtime::{AcpRuntime, AcpRuntimeCreateRequest};
+    /// use xzatoma::acp::{AcpMessage, AcpMessagePart, AcpRole, AcpTextPart};
+    /// use xzatoma::Config;
+    /// use tokio::sync::oneshot;
+    ///
+    /// # tokio_test::block_on(async {
+    /// let config = Config::default();
+    /// let runtime = AcpRuntime::new_in_memory(config);
+    /// let run = runtime.create_run(AcpRuntimeCreateRequest::new(vec![
+    ///     AcpMessage::new(AcpRole::User, vec![AcpMessagePart::Text(AcpTextPart::new("hi".to_string()))]).unwrap(),
+    /// ])).unwrap();
+    /// runtime.mark_queued(run.id.as_str()).unwrap();
+    /// runtime.mark_running(run.id.as_str()).unwrap();
+    ///
+    /// let (tx, _rx) = oneshot::channel();
+    /// let result = runtime.register_await_channel(run.id.as_str(), tx);
+    /// assert!(result.is_ok());
+    /// # });
+    /// ```
+    pub fn register_await_channel(&self, run_id: &str, tx: oneshot::Sender<Value>) -> Result<()> {
+        let mut state = lock_runtime_state(&self.state)?;
+        let record = state.runs.get_mut(run_id).ok_or_else(|| {
+            crate::acp::error::AcpError::lifecycle(format!("ACP run '{}' was not found", run_id))
+        })?;
+        record.await_resume_tx = Some(tx);
+        Ok(())
+    }
+
     /// Resumes an awaiting run using a minimal persisted resume contract.
     ///
     /// # Arguments
@@ -1420,6 +1583,16 @@ impl AcpRuntime {
 
             record.resume_payload = Some(resume_payload.clone());
             record.run.await_payload = None;
+
+            // Deliver the payload to any waiting await_input tool via the one-shot channel.
+            // The sender is consumed here; if none is registered the payload is still stored
+            // in record.resume_payload for callers that poll the state directly.
+            if let Some(tx) = record.await_resume_tx.take() {
+                // Ignore send errors: the receiver may have been dropped if the run was
+                // cancelled or the executor task exited before resume arrived.
+                let _ = tx.send(resume_payload.clone());
+            }
+
             record.run.transition_to(AcpRunState::Running)?;
 
             let event = build_runtime_event(
@@ -1985,26 +2158,6 @@ pub fn assistant_text_message(content: String) -> Result<AcpMessage> {
     )
 }
 
-/// Builds a synthetic system ACP message from plain text.
-///
-/// # Arguments
-///
-/// * `content` - System output text
-///
-/// # Returns
-///
-/// Returns an ACP system message with one text part.
-///
-/// # Errors
-///
-/// Returns an error if the content is empty or invalid.
-pub fn system_text_message(content: String) -> Result<AcpMessage> {
-    AcpMessage::new(
-        AcpRole::System,
-        vec![AcpMessagePart::Text(crate::acp::AcpTextPart::new(content))],
-    )
-}
-
 /// Builds a lifecycle snapshot payload for polling surfaces.
 ///
 /// # Arguments
@@ -2104,6 +2257,30 @@ mod tests {
         assert_eq!(provider_messages.len(), 1);
         assert_eq!(provider_messages[0].role, "user");
         assert_eq!(provider_messages[0].content.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn test_evict_idle_sessions_empty_runtime_returns_zero() {
+        let runtime = AcpRuntime::new_in_memory(Config::default());
+        let evicted = runtime.evict_idle_sessions(3600).unwrap();
+        assert_eq!(evicted, 0);
+    }
+
+    #[test]
+    fn test_evict_idle_sessions_retains_active_runs() {
+        let runtime = AcpRuntime::new_in_memory(Config::default());
+        runtime
+            .create_run(
+                AcpRuntimeCreateRequest::new(vec![test_message("hello")])
+                    .with_mode(AcpRuntimeExecuteMode::Async),
+            )
+            .unwrap();
+
+        // A timeout of 0 would evict all completed runs, but this run is still
+        // active so it must be retained.
+        let evicted = runtime.evict_idle_sessions(0).unwrap();
+        assert_eq!(evicted, 0);
+        assert_eq!(runtime.run_count(), 1);
     }
 
     #[test]
@@ -2515,5 +2692,72 @@ mod tests {
 
         let session = runtime.get_session("session_missing").unwrap();
         assert!(session.is_none());
+    }
+
+    #[test]
+    fn test_register_await_channel_stores_sender() {
+        let config = Config::default();
+        let runtime = AcpRuntime::new_in_memory(config);
+        let input = vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("test".to_string()))],
+            )
+            .unwrap(),
+        ];
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(input))
+            .unwrap();
+        runtime.mark_queued(run.id.as_str()).unwrap();
+        runtime.mark_running(run.id.as_str()).unwrap();
+
+        let (tx, _rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
+        let result = runtime.register_await_channel(run.id.as_str(), tx);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_resume_run_delivers_to_channel() {
+        use tokio::sync::oneshot;
+
+        let config = Config::default();
+        let runtime = AcpRuntime::new_in_memory(config);
+        let input = vec![
+            AcpMessage::new(
+                AcpRole::User,
+                vec![AcpMessagePart::Text(AcpTextPart::new("test".to_string()))],
+            )
+            .unwrap(),
+        ];
+        let run = runtime
+            .create_run(AcpRuntimeCreateRequest::new(input))
+            .unwrap();
+        let run_id = run.id.as_str().to_string();
+        runtime.mark_queued(&run_id).unwrap();
+        runtime.mark_running(&run_id).unwrap();
+
+        // Set awaiting state.
+        runtime
+            .set_awaiting(
+                &run_id,
+                "approval_required".to_string(),
+                "Need approval".to_string(),
+            )
+            .unwrap();
+
+        // Register a channel.
+        let (tx, rx) = oneshot::channel::<serde_json::Value>();
+        runtime.register_await_channel(&run_id, tx).unwrap();
+
+        // Resume the run, which should deliver to the channel.
+        let resume_payload = serde_json::json!({"approved": true});
+        let request = crate::acp::AcpRunResumeRequest::new(
+            crate::acp::AcpRunId::new(run_id.clone()).unwrap(),
+        );
+        runtime.resume_run(request, resume_payload.clone()).unwrap();
+
+        // The receiver should have the payload.
+        let received = rx.await.expect("channel should have received value");
+        assert_eq!(received, resume_payload);
     }
 }

@@ -1,0 +1,21 @@
+# Configuration for `cargo audit`.
+#
+# The `ignore` list below suppresses "unmaintained" advisories for transitive
+# dependencies that XZatoma cannot upgrade directly. None of these are exploitable
+# vulnerabilities; they are maintenance-status warnings pulled in by `sled` (the
+# embedded history database) and `image` (screenshot/vision support). Each entry
+# is documented with its upstream source so it can be removed once the parent
+# crate drops the dependency.
+
+[advisories]
+ignore = [
+    # fxhash (unmaintained) <- sled 0.34.7. Removed when sled updates its hasher
+    # or XZatoma migrates off sled.
+    "RUSTSEC-2025-0057",
+    # instant (unmaintained) <- parking_lot 0.11 <- sled 0.34.7. Removed when sled
+    # updates parking_lot.
+    "RUSTSEC-2024-0384",
+    # paste (unmaintained) <- pulp/rav1e <- exr/ravif <- image 0.25. Removed when
+    # the image codec stack drops paste.
+    "RUSTSEC-2024-0436",
+]

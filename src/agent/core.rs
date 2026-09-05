@@ -123,53 +123,6 @@ impl Agent {
         })
     }
 
-    /// Creates a new agent instance with a boxed provider
-    ///
-    /// Useful when the provider type is not known at compile time,
-    /// or when working with dynamically created providers.
-    ///
-    /// # Arguments
-    ///
-    /// * `provider` - A boxed provider instance
-    /// * `tools` - The tool registry with available tools
-    /// * `config` - Agent configuration (limits, timeouts, etc.)
-    ///
-    /// # Returns
-    ///
-    /// Returns a new Agent instance or an error if configuration is invalid
-    ///
-    /// # Errors
-    ///
-    /// Returns `XzatomaError::Config` if configuration validation fails
-    pub fn new_boxed(
-        provider: Box<dyn Provider>,
-        tools: ToolRegistry,
-        config: AgentConfig,
-    ) -> Result<Self> {
-        // Validate configuration
-        if config.max_turns == 0 {
-            return Err(XzatomaError::Config(
-                "max_turns must be greater than 0".to_string(),
-            ));
-        }
-
-        let conversation = Conversation::new(
-            config.conversation.max_tokens,
-            config.conversation.min_retain_turns,
-            config.conversation.prune_threshold.into(),
-        );
-
-        Ok(Self {
-            provider: Arc::from(provider),
-            conversation,
-            tools,
-            config,
-            accumulated_usage: Arc::new(Mutex::new(None)),
-            transient_system_messages: Vec::new(),
-            last_iteration_count: 0,
-        })
-    }
-
     /// Creates a new agent instance sharing an existing provider
     ///
     /// This constructor allows multiple agents to share the same
@@ -589,6 +542,12 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    // NOTE: The only `unwrap` calls in this function are on `Mutex::lock()` in the
+    // streaming-callback closures and the streaming-events drain. Those cannot
+    // panic because the guarded critical sections are infallible (vector pushes
+    // and a `mem::take`), so the mutex can never be poisoned. The lint is allowed
+    // at function scope because those closures cannot carry statement attributes.
+    #[allow(clippy::unwrap_used)]
     pub async fn execute_with_observer(
         &mut self,
         user_prompt: impl Into<String>,
@@ -775,6 +734,10 @@ impl Agent {
 
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
+                // SAFETY: Lock poisoning is impossible here because the critical
+                // section only performs infallible integer accumulation, so no
+                // thread can panic while holding this mutex.
+                #[allow(clippy::unwrap_used)]
                 let mut accumulated = self.accumulated_usage.lock().unwrap();
                 if let Some(existing) = *accumulated {
                     *accumulated = Some(TokenUsage::new(
@@ -899,14 +862,31 @@ impl Agent {
                 continue;
             }
 
-            if message.content.is_some() {
+            if message.content.as_deref().is_some_and(|c| !c.is_empty()) {
+                // If the model returned text on turn 1 and tools were available but
+                // none were called, the model likely does not support function calling
+                // for the current task. Common with heavily quantized or uncensored
+                // Ollama models (e.g. Gemma 4 variants) that write a text plan
+                // instead of emitting tool_calls JSON. In planning mode this is
+                // expected. Use /mode write or switch to a tool-calling model
+                // (qwen2.5:7b, llama3.1:8b) to execute tasks.
+                if iteration == 1 && !self.tools.is_empty() {
+                    warn!(
+                        "Model returned text on turn 1 without calling any of the {} \
+                         registered tools. The model may not support function calling. \
+                         Run `ollama show <model>` and look for a 'tools' capability. \
+                         If the session is in planning mode this warning is expected; \
+                         use /mode write to enable execution.",
+                        self.tools.len()
+                    );
+                }
                 debug!("Provider returned final response, stopping");
                 break;
             }
 
-            warn!("Provider returned neither content nor tool calls");
+            warn!("Provider returned empty response with no tool calls");
             let error = XzatomaError::Provider(
-                "Provider returned invalid response (no content or tool calls)".to_string(),
+                "Provider returned empty response (no content or tool calls)".to_string(),
             );
             observer.on_event(AgentExecutionEvent::ExecutionFailed {
                 error: error.to_string(),
@@ -921,6 +901,7 @@ impl Agent {
             .rev()
             .find(|m| m.role == "assistant")
             .and_then(|m| m.content.as_ref())
+            .filter(|c| !c.is_empty())
             .cloned()
             .unwrap_or_else(|| "No response from assistant".to_string());
 
@@ -1034,6 +1015,12 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    // NOTE: The only `unwrap` calls in this function are on `Mutex::lock()` in the
+    // streaming-callback closures and the streaming-events drain. Those cannot
+    // panic because the guarded critical sections are infallible (vector pushes
+    // and a `mem::take`), so the mutex can never be poisoned. The lint is allowed
+    // at function scope because those closures cannot carry statement attributes.
+    #[allow(clippy::unwrap_used)]
     pub async fn execute_provider_messages_with_observer(
         &mut self,
         messages: Vec<Message>,
@@ -1236,6 +1223,10 @@ impl Agent {
             if let Some(usage) = completion_response.usage {
                 self.conversation.update_from_provider_usage(&usage);
 
+                // SAFETY: Lock poisoning is impossible here because the critical
+                // section only performs infallible integer accumulation, so no
+                // thread can panic while holding this mutex.
+                #[allow(clippy::unwrap_used)]
                 let mut accumulated_usage = self.accumulated_usage.lock().unwrap();
                 if let Some(existing) = *accumulated_usage {
                     *accumulated_usage = Some(TokenUsage::new(
@@ -1360,14 +1351,26 @@ impl Agent {
                 continue;
             }
 
-            if message.content.is_some() {
+            if message.content.as_deref().is_some_and(|c| !c.is_empty()) {
+                // Same diagnostic as execute_with_observer: warn when the model
+                // ignores all registered tools on its first turn.
+                if iteration == 1 && !self.tools.is_empty() {
+                    warn!(
+                        "Model returned text on turn 1 without calling any of the {} \
+                         registered tools. The model may not support function calling. \
+                         Run `ollama show <model>` and look for a 'tools' capability. \
+                         If the session is in planning mode this warning is expected; \
+                         use /mode write to enable execution.",
+                        self.tools.len()
+                    );
+                }
                 debug!("Provider returned final response, stopping");
                 break;
             }
 
-            warn!("Provider returned neither content nor tool calls");
+            warn!("Provider returned empty response with no tool calls");
             let error = XzatomaError::Provider(
-                "Provider returned invalid response (no content or tool calls)".to_string(),
+                "Provider returned empty response (no content or tool calls)".to_string(),
             );
             observer.on_event(AgentExecutionEvent::ExecutionFailed {
                 error: error.to_string(),
@@ -1382,6 +1385,7 @@ impl Agent {
             .rev()
             .find(|message| message.role == "assistant")
             .and_then(|message| message.content.as_ref())
+            .filter(|c| !c.is_empty())
             .cloned()
             .unwrap_or_else(|| "No response from assistant".to_string());
 
@@ -1566,14 +1570,6 @@ impl Agent {
         self.transient_system_messages = messages;
     }
 
-    /// Clears all transient system messages.
-    ///
-    /// This removes any runtime-only prompt injections without modifying
-    /// `Conversation.messages`.
-    pub fn clear_transient_system_messages(&mut self) {
-        self.transient_system_messages.clear();
-    }
-
     /// Returns the current transient system messages.
     pub fn transient_system_messages(&self) -> &[String] {
         &self.transient_system_messages
@@ -1703,7 +1699,11 @@ impl Agent {
     /// # Ok(())
     /// # }
     /// ```
+    #[allow(clippy::unwrap_used)]
     pub fn get_token_usage(&self) -> Option<TokenUsage> {
+        // SAFETY: Lock poisoning is impossible here because the critical section
+        // only copies out the accumulated usage; no thread can panic while
+        // holding this mutex.
         *self.accumulated_usage.lock().unwrap()
     }
 
@@ -1931,6 +1931,27 @@ mod tests {
         let provider = MockProvider::new(vec![Message {
             role: "assistant".to_string(),
             content: None,
+            content_parts: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }]);
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::default();
+
+        let mut agent = Agent::new(provider, tools, config).unwrap();
+        let result = agent.execute("Test").await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_agent_handles_empty_string_content_response() {
+        // Ollama and other local models sometimes return Some("") instead of None.
+        // This must be treated as an error, not a valid final response, so the empty
+        // turn is never silently accepted and stored as a "successful" assistant turn.
+        let provider = MockProvider::new(vec![Message {
+            role: "assistant".to_string(),
+            content: Some(String::new()),
             content_parts: None,
             tool_calls: None,
             tool_call_id: None,
@@ -2392,7 +2413,7 @@ mod tests {
         }
     }
 
-    /// Mock streaming provider for Phase 4 testing.
+    /// Mock streaming provider for streaming tests.
     #[derive(Clone)]
     struct MockStreamingProvider {
         reasoning_chunks: Vec<String>,
@@ -2908,7 +2929,7 @@ mod tests {
         }
     }
 
-    // --- Phase 5 new tests ---
+    // --- Additional agent tests ---
 
     // --- ToolCallCompleted output fix tests ---
 

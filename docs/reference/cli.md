@@ -11,6 +11,8 @@ Primary commands:
 
 - `chat` — start interactive agent chat
 - `run` — execute a plan file or a single prompt
+- `agent` — run as an ACP stdio agent subprocess (for Zed or another
+  ACP-compatible client)
 - `auth` — perform provider authentication flows
 - `models` — inspect and manage provider models
 - `history` — inspect and manage conversation history
@@ -58,7 +60,7 @@ xzatoma chat [--provider <name>] [--mode <planning|write>] [-s|--safe]
 Options:
 
 - `-p, --provider <name>` — temporarily override the configured provider (e.g.,
-  `copilot`, `ollama`)
+  `copilot`, `ollama`, `openai`)
 - `-m, --mode <planning|write>` — chat mode; defaults to `planning`. Modes
   control whether the agent operates in read-only planning mode or in write mode
   (which may propose changes).
@@ -120,6 +122,41 @@ xzatoma run --prompt "Analyze the repository and propose a documentation plan."
 
 # Allow escalated execution (dangerous): use only when you understand the implications
 xzatoma run --plan plans/dangerous_plan.yaml --allow-dangerous
+```
+
+### agent
+
+Run XZatoma as an ACP stdio agent subprocess. This command is intended to be
+launched by Zed or another ACP-compatible client, which communicates with the
+agent over stdin/stdout using newline-delimited JSON-RPC. Because stdout is
+reserved for the ACP protocol stream, this command does not print human-readable
+output to stdout.
+
+Synopsis:
+
+```text
+xzatoma agent [--provider <name>] [--model <name>] [--allow-dangerous]
+              [--working-dir <PATH>] [--system-prompt <TEXT>] [--streaming]
+```
+
+Options:
+
+- `--provider <name>` — override the configured provider (`copilot`, `ollama`,
+  or `openai`)
+- `--model <name>` — override the model within the selected provider
+- `--allow-dangerous` — allow dangerous terminal commands without confirmation
+- `--working-dir <PATH>` — fallback workspace root used when the ACP client does
+  not provide one
+- `--system-prompt <TEXT>` — override the system prompt for this agent session
+  (takes precedence over the configured value)
+- `--streaming` — accepted for API consistency; has no effect in ACP stdio mode,
+  which manages its own protocol-level streaming
+
+Example:
+
+```bash
+# Run the ACP stdio agent (typically invoked by an ACP client such as Zed)
+xzatoma agent --provider ollama --model granite4:3b
 ```
 
 ### auth
@@ -602,10 +639,17 @@ overrides (where implemented) are applied.
 
 Common environment variables:
 
-- `XZATOMA_PROVIDER` — override provider (e.g., `copilot` or `ollama`)
+- `XZATOMA_PROVIDER` — override provider (`copilot`, `ollama`, or `openai`)
 - `XZATOMA_COPILOT_MODEL` — default model name for Copilot
 - `XZATOMA_OLLAMA_HOST` — host (and port) for Ollama (e.g., `localhost:11434`)
 - `XZATOMA_OLLAMA_MODEL` — default model for Ollama
+- `XZATOMA_OPENAI_API_KEY` — API key (bearer token) for OpenAI or an
+  OpenAI-compatible server (may be empty for local servers requiring no auth)
+- `XZATOMA_OPENAI_BASE_URL` — base URL for OpenAI API requests (default:
+  `https://api.openai.com/v1`)
+- `XZATOMA_OPENAI_MODEL` — default model for OpenAI (default: `gpt-4o-mini`)
+- `XZATOMA_OPENAI_ORG_ID` — optional OpenAI organization ID header
+- `XZATOMA_OPENAI_STREAMING` — enable or disable OpenAI streaming (boolean)
 - `XZATOMA_MAX_TURNS` — agent max turns
 - `XZATOMA_TIMEOUT_SECONDS` — agent timeout in seconds
 - `XZATOMA_EXECUTION_MODE` — execution mode (`interactive`,

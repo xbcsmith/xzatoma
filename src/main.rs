@@ -2,6 +2,9 @@
 //!
 #![doc = "XZatoma - Autonomous AI agent CLI"]
 #![doc = "Main entry point for the XZatoma agent application."]
+// Enforce justified fallibility in production code. See `src/lib.rs` for the
+// rationale; test code is exempt via `clippy.toml`.
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 
 use std::{fs::OpenOptions, path::Path, sync::Arc};
 
@@ -96,13 +99,16 @@ async fn main() -> Result<()> {
             // Moves `config` into the handler (match arms are exclusive)
             commands::chat::run_chat(
                 config,
-                provider,
-                mode,
-                safe,
-                resume,
-                thinking_effort,
-                system_prompt,
-                streaming,
+                commands::chat::RunChatOptions {
+                    provider_name: provider,
+                    mode,
+                    resume,
+                    thinking_effort,
+                    system_prompt,
+                    streaming,
+                    config_path: config_path.clone(),
+                    common: common.clone(),
+                },
             )
             .await?;
             Ok(())
@@ -163,6 +169,8 @@ async fn main() -> Result<()> {
             brokers,
             match_version,
             system_prompt,
+            once,
+            allow_dangerous,
             ..
         } => {
             tracing::info!("Starting watcher mode");
@@ -184,6 +192,8 @@ async fn main() -> Result<()> {
                     brokers,
                     match_version,
                     system_prompt,
+                    once,
+                    allow_dangerous,
                 },
             )
             .await?;
@@ -279,6 +289,8 @@ async fn main() -> Result<()> {
                 system_prompt,
                 streaming,
                 config,
+                config_path.clone(),
+                common.clone(),
             )
             .await?;
             Ok(())

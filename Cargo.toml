@@ -39,6 +39,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 reqwest = { version = "0.13", features = ["json", "stream", "blocking", "query", "form"], default-features = false }
 axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
 
 # Byte buffer utilities (used by HTTP transport SSE parsing)
 bytes = "1.12"
@@ -94,6 +95,7 @@ tokio-util = { version = "0.7.18", features = ["codec", "compat", "rt"] }
 tokio-stream = { version = "0.1", features = [] }
 sha2 = "0.11.0"
 rand = "0.10.2"
+subtle = "2.6"          # Constant-time comparison for secret/token equality checks
 agent-client-protocol = { version = "1.2.0", default-features = false, features = ["unstable_end_turn_token_usage"] }
 
 # Unix-only: signal delivery to child processes from StdioTransport::drop

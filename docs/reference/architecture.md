@@ -29,6 +29,8 @@ src/
 ├── cli.rs
 ├── config.rs
 ├── error.rs
+├── security.rs          # Path and input hardening helpers
+├── test_utils.rs        # Shared test helpers (test builds)
 ├── chat_mode.rs
 ├── mention_parser.rs
 ├── prompts/
@@ -39,13 +41,16 @@ src/
 ├── mcp/
 ├── storage/
 ├── skills/              # Extensible agent capabilities via discoverable skill definitions
-├── acp/                 # Agent Communication Protocol HTTP server
-├── watcher/
-│   ├── mod.rs
-│   ├── logging.rs
-│   ├── generic/
-│   └── xzepr/
-└── xzepr/
+├── acp/                 # Agent Client Protocol (HTTP server + stdio transport)
+└── watcher/
+    ├── mod.rs
+    ├── kafka_security.rs
+    ├── lifecycle.rs
+    ├── logging.rs
+    ├── plan_executor.rs
+    ├── topic_admin.rs
+    ├── generic/
+    └── xzepr/
 ```
 
 ### Key Architectural Areas
@@ -75,11 +80,7 @@ src/
   - top-level command handlers such as `chat`, `run`, and `watch`
 
 - `watcher/`
-
   - Kafka-backed watcher infrastructure, including backend dispatch targets
-
-- `xzepr/`
-  - backward-compatible shim re-exporting the canonical XZepr watcher modules
 
 ## High-Level Runtime Architecture
 
@@ -146,13 +147,30 @@ Implemented providers:
 - Ollama
 - OpenAI-compatible providers
 
-Important files:
+Provider trait and implementations:
 
-- `src/providers/trait_mod.rs`
-- `src/providers/types.rs`
-- `src/providers/copilot.rs`
-- `src/providers/ollama.rs`
-- `src/providers/openai.rs`
+- `src/providers/trait_mod.rs` - the `Provider` trait all backends implement
+- `src/providers/copilot.rs` - GitHub Copilot provider
+- `src/providers/ollama.rs` - Ollama provider
+- `src/providers/openai.rs` - OpenAI-compatible provider
+
+Provider creation and metadata:
+
+- `src/providers/factory.rs` - provider factory/creation from a provider-type
+  string and `ProviderConfig`
+- `src/providers/cache.rs` - shared model caching (`ModelCache`, TTL helper)
+- `src/providers/capabilities.rs` - provider capability descriptors and
+  heuristics
+
+Shared provider infrastructure:
+
+- `src/providers/types.rs` - shared/canonical OpenAI-style wire types
+  (`ChatToolCall`, `ChatFunctionCall`, `Message`, and related types)
+- `src/providers/conversion.rs` - shared message/tool-call conversion helpers
+- `src/providers/streaming.rs` - generic SSE reader and `ChatDeltaAccumulator`
+- `src/providers/http.rs` - shared HTTP error helpers (`api_error` /
+  `check_response`)
+- `src/providers/util.rs` - shared config read-lock helper (`read_config_lock`)
 
 ### Agent Layer
 
@@ -171,7 +189,9 @@ Important files:
 
 - `src/agent/core.rs`
 - `src/agent/conversation.rs`
-- `src/agent/executor.rs`
+- `src/agent/persistence.rs`
+
+Tool and plan execution for ACP sessions lives in `src/acp/executor.rs`.
 
 ### Tools Layer
 
@@ -188,8 +208,11 @@ Representative capabilities:
 Important files:
 
 - `src/tools/mod.rs`
-- `src/tools/file_ops.rs`
+- `src/tools/read_file.rs`
+- `src/tools/edit_file.rs`
+- `src/tools/grep.rs`
 - `src/tools/terminal.rs`
+- `src/tools/fetch.rs`
 - `src/tools/plan.rs`
 
 ## Watcher Architecture
@@ -218,12 +241,20 @@ The watcher system is split into:
 ```text
 src/watcher/
 ├── mod.rs
+├── kafka_security.rs
+├── lifecycle.rs
 ├── logging.rs
+├── plan_executor.rs
+├── topic_admin.rs
 ├── generic/
 │   ├── mod.rs
-│   ├── message.rs
+│   ├── consumer.rs
+│   ├── event.rs
+│   ├── event_handler.rs
 │   ├── matcher.rs
-│   ├── producer.rs
+│   ├── message.rs
+│   ├── result_event.rs
+│   ├── result_producer.rs
 │   └── watcher.rs
 └── xzepr/
     ├── mod.rs
@@ -245,7 +276,11 @@ src/watcher/
 It contains:
 
 - `pub mod generic`
+- `pub mod kafka_security`
+- `pub mod lifecycle`
 - `pub mod logging`
+- `pub mod plan_executor`
+- `pub mod topic_admin`
 - `pub mod xzepr`
 
 It also re-exports:
@@ -497,7 +532,7 @@ Supported matching modes:
 
 This matcher is intentionally separate from the XZepr `EventFilter`.
 
-### `watcher/generic/producer.rs`
+### `watcher/generic/result_producer.rs`
 
 Contains `GenericResultProducer`.
 
@@ -701,14 +736,13 @@ The architecture is centered on:
 - one CLI command: `xzatoma watch`
 - one dispatch point: `commands::watch::run_watch`
 - two backend implementations under `src/watcher/`
-- one compatibility shim for legacy XZepr imports
 
 This structure provides:
 
-- backward compatibility for existing XZepr users
+- backward compatibility for existing XZepr configuration files
 - a new generic plan-event watcher for non-XZepr producers
 - clear code ownership boundaries
-- a straightforward place to extend watcher functionality in later phases
+- a straightforward place to extend watcher functionality
 
 ## Skills Architecture
 
@@ -767,56 +801,67 @@ disclosure.rs (expose catalog to agent)
 
 ## ACP Architecture
 
-The ACP (Agent Communication Protocol) module implements an HTTP server that
-exposes agent capabilities as a standardized API.
+The ACP (Agent Client Protocol) module exposes XZatoma's agent capabilities over
+two transports that share a single, transport-independent domain model defined
+in `types.rs`:
+
+- an HTTP server (`server.rs`) exposing discovery, run-lifecycle, and session
+  endpoints
+- a stdio transport (`stdio.rs`) that speaks newline-delimited JSON-RPC for
+  Zed-compatible subprocess integration (`xzatoma agent`)
 
 ### Module Structure
 
 ```text
 src/acp/
-├── mod.rs           # Module root
-├── server.rs        # HTTP server setup
-├── routes.rs        # Route definitions
-├── handlers.rs      # Request handlers
-├── runtime.rs       # Agent runtime management
-├── executor.rs      # Plan execution
-├── run.rs           # Run tracking
-├── session.rs       # Session management
-├── streaming.rs     # SSE streaming support
-├── events.rs        # Event types
-├── manifest.rs      # Agent manifest types
-├── types.rs         # Shared types
-└── error.rs         # ACP-specific errors
+├── mod.rs                 # Module root and unified ACP surface
+├── types.rs               # Canonical protocol and lifecycle model
+├── server.rs              # HTTP server bootstrap and inline router
+├── stdio.rs               # JSON-RPC stdio transport for `xzatoma agent`
+├── runtime.rs             # Agent runtime management
+├── executor.rs            # Plan and tool execution
+├── session.rs             # Session management
+├── session_config.rs      # Per-session configuration
+├── session_mode.rs        # Session mode handling
+├── streaming.rs           # Streaming support
+├── available_commands.rs  # Slash-command advertisement
+├── prompt_input.rs        # Prompt input conversion and validation
+├── tool_notifications.rs  # Tool-call notification mapping
+├── ide_bridge.rs          # IDE bridge integration
+├── manifest.rs            # Agent manifest types
+└── error.rs               # ACP-specific errors
 ```
 
 ### ACP Request Flow
 
 ```text
-HTTP request
-   |
-   v
-server.rs (accept connection)
-   |
-   v
-routes.rs (route matching)
-   |
-   v
-handlers.rs (request handling)
-   |
-   +--> runtime.rs (agent lifecycle)
-   +--> executor.rs (plan execution)
-   +--> session.rs (session state)
-   |
-   v
-streaming.rs (SSE response if streaming)
-   |
-   v
-HTTP response
+HTTP request                         stdio JSON-RPC request
+   |                                     |
+   v                                     v
+server.rs (build_router,             stdio.rs (run_stdio_agent,
+accept + route inline)               initialization + dispatch)
+   |                                     |
+   +-------------------+-----------------+
+                       |
+                       v
+              runtime.rs (agent lifecycle)
+                       |
+                       +--> executor.rs (plan and tool execution)
+                       +--> session.rs (session state)
+                       |
+                       v
+              streaming.rs (incremental output)
+                       |
+                       v
+              response (HTTP body or JSON-RPC reply)
 ```
 
 ### Key Components
 
-- `AcpServer` manages the HTTP listener and route registration
-- `AgentManifest` describes agent capabilities to ACP clients
+- `server.rs` builds the HTTP router and handles routes inline (there are no
+  separate `routes.rs`/`handlers.rs` modules)
+- `stdio.rs` owns the stdio transport, initialization handshake, and in-memory
+  session registry for `xzatoma agent`
+- `AcpAgentManifest` describes agent capabilities to ACP clients
 - Sessions track stateful interactions across multiple requests
-- SSE streaming allows clients to receive incremental agent output
+- Streaming allows clients to receive incremental agent output

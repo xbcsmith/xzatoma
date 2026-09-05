@@ -46,6 +46,8 @@ use rdkafka::Message;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::error::KafkaError;
 
+use crate::watcher::startup_context::QuietStartupContext;
+
 use super::config::KafkaConsumerConfig;
 use super::message::CloudEventMessage;
 
@@ -59,6 +61,10 @@ pub enum ConsumerError {
     /// Error deserializing message.
     #[error("Deserialization error: {0}")]
     Deserialization(#[from] serde_json::Error),
+
+    /// Payload exceeded the configured maximum size.
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(String),
 
     /// Consumer is not running.
     #[error("Consumer not running")]
@@ -194,6 +200,10 @@ impl XzeprConsumer {
                 "broker.address.family".to_string(),
                 self.config.broker_address_family.clone(),
             ),
+            (
+                "max.poll.interval.ms".to_string(),
+                self.config.max_poll_interval_ms.to_string(),
+            ),
         ];
 
         // Add SASL configuration
@@ -241,13 +251,18 @@ impl XzeprConsumer {
     ///
     /// Returns `ConsumerError::Kafka` if the consumer cannot be created or
     /// subscription fails.
-    fn create_subscribed_consumer(&self) -> Result<StreamConsumer, ConsumerError> {
+    fn create_subscribed_consumer(
+        &self,
+    ) -> Result<StreamConsumer<QuietStartupContext>, ConsumerError> {
+        let context = QuietStartupContext::new(std::time::Duration::from_secs(
+            self.config.startup_stabilization_secs,
+        ));
         let mut client_config = self.build_client_config();
         // Always disable auto-commit; both loops commit manually after processing.
         client_config.set("enable.auto.commit", "false");
 
-        let consumer: StreamConsumer = client_config
-            .create()
+        let consumer: StreamConsumer<QuietStartupContext> = client_config
+            .create_with_context(context)
             .map_err(|e| ConsumerError::Kafka(format!("Failed to create consumer: {e}")))?;
 
         consumer
@@ -307,6 +322,8 @@ impl XzeprConsumer {
     /// # Arguments
     ///
     /// * `handler` - Handler for processing messages
+    /// * `once` - If `true`, the consumer stops after the first message is
+    ///   received and processed (useful for one-shot CI runs).
     ///
     /// # Errors
     ///
@@ -315,6 +332,7 @@ impl XzeprConsumer {
     pub async fn run<H: MessageHandler + 'static>(
         &self,
         handler: Arc<H>,
+        once: bool,
     ) -> Result<(), ConsumerError> {
         self.running.store(true, Ordering::SeqCst);
 
@@ -326,10 +344,9 @@ impl XzeprConsumer {
 
         let consumer = self.create_subscribed_consumer()?;
         let mut stream = consumer.stream();
+        let mut back_off = crate::watcher::BackOffPolicy::new();
 
         while self.running.load(Ordering::SeqCst) {
-            // Use select with a short timeout so we can periodically check the
-            // running flag even when no messages are arriving.
             let message = tokio::select! {
                 biased;
                 msg = stream.next() => msg,
@@ -343,7 +360,13 @@ impl XzeprConsumer {
                 Some(Ok(borrowed_message)) => {
                     match borrowed_message.payload_view::<str>() {
                         Some(Ok(payload)) => {
-                            if let Err(e) = Self::process_message(payload, &*handler).await {
+                            if let Err(e) = Self::process_message(
+                                payload,
+                                &*handler,
+                                self.config.max_payload_bytes,
+                            )
+                            .await
+                            {
                                 error!(
                                     service = %self.config.service_name,
                                     "Failed to process message: {}", e
@@ -372,14 +395,26 @@ impl XzeprConsumer {
                             "Failed to commit Kafka offset"
                         );
                     }
+                    back_off.reset();
+                    if once {
+                        info!(
+                            service = %self.config.service_name,
+                            "one-shot mode: stopping after first consumed event"
+                        );
+                        self.running.store(false, Ordering::SeqCst);
+                        break;
+                    }
                 }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(
                             service = %self.config.service_name,
                             error = %e,
-                            "Transient Kafka consumer error; continuing"
+                            delay_ms = back_off.current_delay_ms(),
+                            "Transient Kafka consumer error; backing off"
                         );
+                        back_off.increment();
+                        tokio::time::sleep(back_off.current_delay()).await;
                         continue;
                     }
 
@@ -438,6 +473,7 @@ impl XzeprConsumer {
 
         let consumer = self.create_subscribed_consumer()?;
         let mut stream = consumer.stream();
+        let mut back_off = crate::watcher::BackOffPolicy::new();
 
         while self.running.load(Ordering::SeqCst) {
             let message = tokio::select! {
@@ -453,6 +489,14 @@ impl XzeprConsumer {
                 Some(Ok(borrowed_message)) => {
                     let mut receiver_dropped = false;
                     match borrowed_message.payload_view::<str>() {
+                        Some(Ok(payload)) if payload.len() > self.config.max_payload_bytes => {
+                            error!(
+                                service = %self.config.service_name,
+                                payload_bytes = payload.len(),
+                                max_payload_bytes = self.config.max_payload_bytes,
+                                "Rejecting oversized Kafka payload"
+                            );
+                        }
                         Some(Ok(payload)) => {
                             match serde_json::from_str::<CloudEventMessage>(payload) {
                                 Ok(event) => {
@@ -503,14 +547,18 @@ impl XzeprConsumer {
                             "Failed to commit Kafka offset"
                         );
                     }
+                    back_off.reset();
                 }
                 Some(Err(e)) => {
                     if is_transient_kafka_recv_error(&e) {
                         warn!(
                             service = %self.config.service_name,
                             error = %e,
-                            "Transient Kafka consumer error; continuing"
+                            delay_ms = back_off.current_delay_ms(),
+                            "Transient Kafka consumer error; backing off"
                         );
+                        back_off.increment();
+                        tokio::time::sleep(back_off.current_delay()).await;
                         continue;
                     }
 
@@ -538,15 +586,18 @@ impl XzeprConsumer {
 
     /// Processes a single message payload.
     ///
-    /// Deserializes the JSON payload into a `CloudEventMessage` and passes it
-    /// to the handler. If deserialization fails, returns a `ConsumerError`. If
-    /// the handler returns an error, it is logged but the method still returns
-    /// `Ok(())` so the consumer can continue processing subsequent messages.
+    /// Rejects payloads larger than `max_payload_bytes` before parsing.
+    /// Otherwise deserializes the JSON payload into a `CloudEventMessage` and
+    /// passes it to the handler. If deserialization fails, returns a
+    /// `ConsumerError`. If the handler returns an error, it is logged but the
+    /// method still returns `Ok(())` so the consumer can continue processing
+    /// subsequent messages.
     ///
     /// # Arguments
     ///
     /// * `payload` - JSON payload as a string
     /// * `handler` - Handler to process the message
+    /// * `max_payload_bytes` - Maximum accepted payload size, in bytes
     ///
     /// # Returns
     ///
@@ -555,12 +606,22 @@ impl XzeprConsumer {
     ///
     /// # Errors
     ///
-    /// Returns `ConsumerError::Deserialization` if the payload is not valid
-    /// JSON or does not match the `CloudEventMessage` schema.
+    /// Returns `ConsumerError::PayloadTooLarge` if `payload` exceeds
+    /// `max_payload_bytes`. Returns `ConsumerError::Deserialization` if the
+    /// payload is not valid JSON or does not match the `CloudEventMessage`
+    /// schema.
     pub async fn process_message<H: MessageHandler>(
         payload: &str,
         handler: &H,
+        max_payload_bytes: usize,
     ) -> Result<(), ConsumerError> {
+        if let Err(e) =
+            crate::watcher::kafka_security::validate_payload_size(payload, max_payload_bytes)
+        {
+            error!("Rejecting oversized Kafka payload: {}", e);
+            return Err(ConsumerError::PayloadTooLarge(e.to_string()));
+        }
+
         match serde_json::from_str::<CloudEventMessage>(payload) {
             Ok(event) => {
                 debug!(
@@ -587,6 +648,7 @@ impl XzeprConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::watcher::kafka_security::DEFAULT_MAX_PAYLOAD_BYTES;
 
     struct TestHandler {
         received: Arc<tokio::sync::Mutex<Vec<CloudEventMessage>>>,
@@ -708,7 +770,8 @@ mod tests {
             }
         }"#;
 
-        let result = XzeprConsumer::process_message(payload, &handler).await;
+        let result =
+            XzeprConsumer::process_message(payload, &handler, DEFAULT_MAX_PAYLOAD_BYTES).await;
         assert!(result.is_ok());
 
         let received = handler.received.lock().await;
@@ -720,8 +783,53 @@ mod tests {
     #[tokio::test]
     async fn test_process_message_invalid_json() {
         let handler = TestHandler::new();
-        let result = XzeprConsumer::process_message("invalid json", &handler).await;
+        let result =
+            XzeprConsumer::process_message("invalid json", &handler, DEFAULT_MAX_PAYLOAD_BYTES)
+                .await;
         assert!(matches!(result, Err(ConsumerError::Deserialization(_))));
+    }
+
+    #[tokio::test]
+    async fn test_process_message_oversized_payload_returns_err() {
+        let handler = TestHandler::new();
+        let payload = "x".repeat(100);
+        let result = XzeprConsumer::process_message(&payload, &handler, 64).await;
+        assert!(matches!(result, Err(ConsumerError::PayloadTooLarge(_))));
+
+        let received = handler.received.lock().await;
+        assert!(
+            received.is_empty(),
+            "handler must not be invoked for an oversized payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_message_at_limit_payload_parses_normally() {
+        let handler = TestHandler::new();
+        let payload = r#"{
+            "success": true,
+            "id": "at-limit-id",
+            "specversion": "1.0.1",
+            "type": "test.event",
+            "source": "test-source",
+            "api_version": "v1",
+            "name": "test.event",
+            "version": "1.0.0",
+            "release": "1.0.0",
+            "platform_id": "test",
+            "package": "testpkg",
+            "data": {
+                "events": [],
+                "event_receivers": [],
+                "event_receiver_groups": []
+            }
+        }"#;
+
+        let result = XzeprConsumer::process_message(payload, &handler, payload.len()).await;
+        assert!(result.is_ok(), "a payload exactly at the bound must parse");
+
+        let received = handler.received.lock().await;
+        assert_eq!(received.len(), 1);
     }
 
     #[tokio::test]
@@ -733,7 +841,7 @@ mod tests {
         let handler = Arc::new(TestHandler::new());
 
         let consumer_clone = consumer.clone();
-        let handle = tokio::spawn(async move { consumer_clone.run(handler).await });
+        let handle = tokio::spawn(async move { consumer_clone.run(handler, false).await });
 
         // Give it time to start
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -831,7 +939,8 @@ mod tests {
             }
         }"#;
 
-        let result = XzeprConsumer::process_message(payload, &handler).await;
+        let result =
+            XzeprConsumer::process_message(payload, &handler, DEFAULT_MAX_PAYLOAD_BYTES).await;
         assert!(result.is_ok());
     }
 
@@ -875,7 +984,7 @@ mod tests {
 
         let consumer_clone = consumer.clone();
         let handler_clone = handler.clone();
-        let handle = tokio::spawn(async move { consumer_clone.run(handler_clone).await });
+        let handle = tokio::spawn(async move { consumer_clone.run(handler_clone, false).await });
 
         // Wait a bit for messages to be consumed.
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;

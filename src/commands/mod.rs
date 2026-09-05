@@ -16,16 +16,16 @@ providers, tools, and the agent.
 use crate::agent::Agent;
 use crate::chat_mode::{ChatMode, ChatModeState, SafetyMode};
 use crate::commands::special_commands::{
-    SpecialCommand, format_mode_help_text, format_model_help_text, format_safety_help_text,
-    format_streaming_help_text, format_subagents_help_text, format_system_help_text,
-    parse_special_command, print_help, print_models_help,
+    SpecialCommand, format_config_help_text, format_mode_help_text, format_model_help_text,
+    format_safety_help_text, format_streaming_help_text, format_subagents_help_text,
+    format_system_help_text, parse_special_command, print_help, print_models_help,
 };
 use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{CopilotProvider, OllamaProvider, create_provider};
+use crate::providers::{CopilotProvider, create_provider};
 use crate::skills::{
     ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
     discover_skills, render_skill_catalog,
@@ -462,45 +462,161 @@ pub mod chat {
         }
     }
 
+    /// Options controlling an interactive [`run_chat`] session.
+    ///
+    /// Groups the optional overrides for a chat session into a single value so
+    /// the entry point stays readable and avoids a long positional argument
+    /// list. Construct with [`RunChatOptions::default`] and override individual
+    /// fields with struct-update syntax.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::chat::RunChatOptions;
+    ///
+    /// let options = RunChatOptions {
+    ///     provider_name: Some("ollama".to_string()),
+    ///     streaming: true,
+    ///     ..RunChatOptions::default()
+    /// };
+    /// assert_eq!(options.provider_name.as_deref(), Some("ollama"));
+    /// assert!(options.streaming);
+    /// ```
+    #[derive(Debug, Clone, Default)]
+    pub struct RunChatOptions {
+        /// Optional override for the configured provider.
+        pub provider_name: Option<String>,
+        /// Optional override for the chat mode ("planning" or "write").
+        pub mode: Option<String>,
+        /// Optional conversation ID to resume.
+        pub resume: Option<String>,
+        /// Optional thinking effort level for models that support extended
+        /// reasoning. Accepted values: `none`, `low`, `medium`, `high`,
+        /// `extra_high`. When `Some("none")`, reasoning parameters are cleared.
+        /// When `None`, the provider default is used.
+        pub thinking_effort: Option<String>,
+        /// Optional system prompt override for this session.
+        pub system_prompt: Option<String>,
+        /// When true, response and reasoning tokens are streamed to stdout as
+        /// they arrive. Requires the configured provider to support streaming.
+        pub streaming: bool,
+        /// Resolved path to the config file used at startup, as returned by
+        /// `Config::find_config_path`. Retained so `/config reload` can
+        /// re-read the same file without re-deriving the lookup path.
+        pub config_path: String,
+        /// CLI arguments used to build the initial config, retained so
+        /// `/config reload` can reapply the same overrides (e.g.
+        /// `--provider`) that were in effect at startup.
+        pub common: crate::cli::CommonArgs,
+    }
+
+    /// Resolves the effective thinking effort from CLI flag and config fallback.
+    ///
+    /// The CLI `--thinking-effort` flag takes precedence over the global
+    /// `agent.thinking_mode` configuration value. When both are absent, `None` is
+    /// returned and the provider's own default is used.
+    ///
+    /// # Arguments
+    ///
+    /// * `cli_flag` - Value of the `--thinking-effort` CLI flag, if provided
+    /// * `config_value` - Value of `agent.thinking_mode` from configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns the CLI flag value if present, otherwise the config value, otherwise
+    /// `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::commands::chat::resolve_thinking_effort;
+    ///
+    /// let result = resolve_thinking_effort(
+    ///     Some("high".to_string()),
+    ///     Some("low".to_string()),
+    /// );
+    /// assert_eq!(result, Some("high".to_string()));
+    /// ```
+    pub(crate) fn resolve_thinking_effort(
+        cli_flag: Option<String>,
+        config_value: Option<String>,
+    ) -> Option<String> {
+        cli_flag.or(config_value)
+    }
+
+    /// Resolves the chat history file path.
+    ///
+    /// When `config_path` is `Some(p)`, returns `Some(p.clone())`. When `None`,
+    /// falls back to `<platform-data-dir>/chat_history` using the platform
+    /// application data directory. Returns `None` only when the platform directory
+    /// cannot be determined.
+    ///
+    /// # Arguments
+    ///
+    /// * `config_path` - Optional path from `agent.chat_history_file` config
+    ///
+    /// # Returns
+    ///
+    /// The resolved path, or `None` if the platform data directory is unavailable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::PathBuf;
+    /// use xzatoma::commands::chat::resolve_chat_history_path;
+    ///
+    /// let path = resolve_chat_history_path(Some(&PathBuf::from("/tmp/my_history")));
+    /// assert_eq!(path, Some(PathBuf::from("/tmp/my_history")));
+    /// ```
+    pub(crate) fn resolve_chat_history_path(
+        config_path: Option<&std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        match config_path {
+            Some(path) => Some(path.clone()),
+            None => {
+                use directories::ProjectDirs;
+                ProjectDirs::from("com", "xbcsmith", "xzatoma")
+                    .map(|proj_dirs| proj_dirs.data_dir().join("chat_history"))
+            }
+        }
+    }
+
     /// Start interactive chat mode
     ///
     /// # Arguments
     ///
     /// * `config` - Global configuration (consumed)
-    /// * `provider_name` - Optional override for the configured provider
-    /// * `mode` - Optional override for the chat mode ("planning" or "write")
-    /// * `safe` - If true, enable safety mode (always confirm dangerous operations)
-    /// * `resume` - Optional conversation ID to resume
-    /// * `thinking_effort` - Optional thinking effort level for models that support
-    ///   extended reasoning. Accepted values: `none`, `low`, `medium`, `high`,
-    ///   `extra_high`. When `Some("none")`, reasoning parameters are cleared.
-    ///   When `None`, the provider default is used.
-    /// * `system_prompt` - Optional system prompt override for this session.
-    /// * `streaming` - When true, response and reasoning tokens are printed
-    ///   progressively to stdout as they arrive. Requires the configured
-    ///   provider to support streaming.
+    /// * `options` - Session overrides; see [`RunChatOptions`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if provider creation, storage initialization, or the
+    /// interactive loop fails.
     ///
     /// # Examples
     ///
     /// ```
-    /// use xzatoma::commands::chat;
+    /// use xzatoma::commands::chat::{self, RunChatOptions};
     /// use xzatoma::config::Config;
     ///
     /// // In application code:
-    /// // chat::run_chat(Config::default(), None, None, false, None, None, None, false).await?;
+    /// // chat::run_chat(Config::default(), RunChatOptions::default()).await?;
     /// ```
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run_chat(
-        mut config: Config,
-        provider_name: Option<String>,
-        mode: Option<String>,
-        _safe: bool,
-        resume: Option<String>,
-        thinking_effort: Option<String>,
-        system_prompt: Option<String>,
-        streaming: bool,
-    ) -> Result<()> {
+    pub async fn run_chat(config: Config, options: RunChatOptions) -> Result<()> {
         use crate::storage::SqliteStorage;
+
+        let RunChatOptions {
+            provider_name,
+            mode,
+            resume,
+            thinking_effort,
+            system_prompt,
+            streaming,
+            config_path,
+            common,
+        } = options;
+        let mut config = config;
+        config.validate_for_execution()?;
 
         tracing::info!("Starting interactive chat mode");
         // Keep the CLI flag value separate from config so we can distinguish
@@ -508,30 +624,13 @@ pub mod chat {
         // config/env prompts (which only apply to new sessions).
         let cli_system_prompt = system_prompt;
 
-        // Owned so it does not keep `config` borrowed below, since resolving
-        // the Ollama model (when applicable) needs to mutate `config` in place.
-        let provider_type_owned: String =
+        let mut provider_type_owned: String =
             provider_name.unwrap_or_else(|| config.provider.provider_type.clone());
-        let provider_type: &str = &provider_type_owned;
-
-        // If the configured Ollama model is not actually installed on the
-        // target server (e.g. the default "llama3.2:latest" was never
-        // pulled), query Ollama for locally available models and switch to
-        // the most recently modified one instead of failing at first prompt.
-        if provider_type == "ollama"
-            && let Err(error) =
-                crate::providers::ollama::resolve_available_model(&mut config.provider.ollama).await
-        {
-            tracing::warn!(
-                error = %error,
-                "Failed to validate configured Ollama model; continuing with configured value"
-            );
-        }
 
         let working_dir = std::env::current_dir()?;
         let skill_disclosure = build_startup_skill_disclosure(&config, &working_dir)?;
         let visible_skill_catalog = build_visible_skill_catalog(&config, &working_dir)?;
-        let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
+        let mut active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
         // Initialize mode state from command-line arguments
         // Defaults: Planning mode, AlwaysConfirm (safe) safety mode
@@ -557,7 +656,7 @@ pub mod chat {
         // Chat is interactive (headless=false); the Arc must stay alive for the
         // entire duration of run_chat so that McpToolExecutor instances can call
         // back to it during agent turns.
-        let mcp_manager = build_mcp_manager_from_config(&config).await?;
+        let mut mcp_manager = build_mcp_manager_from_config(&config).await?;
 
         // Register MCP tools into the registry.
         if let Some(ref manager) = mcp_manager {
@@ -583,16 +682,17 @@ pub mod chat {
         };
 
         // Create provider
-        let provider_box = create_provider(provider_type, &config.provider)?;
+        let provider_box = create_provider(&provider_type_owned, &config.provider).await?;
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
-        // Apply thinking effort from CLI flag if provided.
-        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
-        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
-        // Unrecognised values cause a warning but do not abort execution.
-        if let Some(ref effort_str) = thinking_effort {
+        // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
+        // agent.thinking_mode from config. When both are absent the provider default
+        // is used.
+        let effective_thinking: Option<String> =
+            resolve_thinking_effort(thinking_effort.clone(), config.agent.thinking_mode.clone());
+        if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
             } else {
@@ -615,7 +715,8 @@ pub mod chat {
             config.agent.clone(),  // Agent config with subagent settings
             tools.clone(),         // Parent registry for filtering
             0,                     // Root depth (main agent is depth 0)
-        )?;
+        )
+        .await?;
         tools.register("subagent", Arc::new(subagent_tool));
 
         // Track whether a previous conversation was successfully loaded from storage.
@@ -757,8 +858,29 @@ pub mod chat {
         }
         agent.set_transient_system_messages(transient_system_messages);
 
-        // Create readline instance
-        let mut rl = DefaultEditor::new()?;
+        // Create readline instance with configured history size.
+        use rustyline::config::Config as RlConfig;
+        let rl_config = RlConfig::builder()
+            .max_history_size(config.agent.chat_history_max_size)
+            .map_err(|e| {
+                XzatomaError::Config(format!("Failed to configure readline history size: {}", e))
+            })?
+            .build();
+        let mut rl = DefaultEditor::with_config(rl_config)?;
+
+        // Determine history file path: use configured path or fall back to the
+        // platform data directory.
+        let history_file_path: Option<std::path::PathBuf> =
+            resolve_chat_history_path(config.agent.chat_history_file.as_ref());
+
+        // Best-effort: load history from file. Ignore errors if the file does not
+        // exist yet; history will be saved on exit.
+        if let Some(ref path) = history_file_path
+            && path.exists()
+            && let Err(e) = rl.load_history(path)
+        {
+            tracing::debug!("Could not load readline history from {:?}: {}", path, e);
+        }
 
         // Populate readline history with previous user inputs when resuming
         if resume.is_some() {
@@ -792,6 +914,11 @@ pub mod chat {
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
         loop {
+            // Recomputed each iteration (rather than borrowed once before the
+            // loop) so `/config reload` can update `provider_type_owned` in
+            // place without fighting a long-lived borrow.
+            let provider_type: &str = &provider_type_owned;
+
             // Build a prompt that includes provider/model when available.
             let current_model: Option<String> = {
                 let m = agent.provider().get_current_model();
@@ -823,7 +950,8 @@ pub mod chat {
                                 &config,
                                 &working_dir,
                                 provider_type,
-                            )?;
+                            )
+                            .await?;
                             continue;
                         }
                         Ok(SpecialCommand::SwitchSafety(new_safety)) => {
@@ -847,6 +975,10 @@ pub mod chat {
                             continue;
                         }
                         Ok(SpecialCommand::ListSkills) => {
+                            // SAFETY: Lock poisoning is impossible here because the
+                            // critical section only reads from the registry; no
+                            // thread can panic while holding this mutex.
+                            #[allow(clippy::unwrap_used)]
                             let registry = active_skill_registry.lock().unwrap();
                             if registry.is_empty() {
                                 println!("No active skills for this workspace.\n");
@@ -959,10 +1091,13 @@ pub mod chat {
 
                             println!("Summarizing conversation using model: {}...", summary_model);
 
-                            // Perform summarization
+                            // Perform summarization. Cloned from the live agent (not the
+                            // outer `provider` binding) so this reflects the current
+                            // provider even after a `/config reload` swaps `agent` in place.
+                            let current_provider = agent.provider_arc();
                             match perform_context_summary(
                                 &mut agent,
-                                Arc::clone(&provider),
+                                current_provider,
                                 &summary_model,
                             )
                             .await
@@ -1072,6 +1207,28 @@ pub mod chat {
                                     "disabled"
                                 }
                             );
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowConfigHelp) => {
+                            println!("{}", format_config_help_text());
+                            continue;
+                        }
+                        Ok(SpecialCommand::ShowConfigStatus) => {
+                            println!("Active config file: {}\n", config_path);
+                            continue;
+                        }
+                        Ok(SpecialCommand::ConfigReload) => {
+                            handle_config_reload(
+                                &mut agent,
+                                &mut config,
+                                &mut provider_type_owned,
+                                &mut mcp_manager,
+                                &mut active_skill_registry,
+                                &config_path,
+                                &common,
+                                &working_dir,
+                            )
+                            .await?;
                             continue;
                         }
                         Ok(SpecialCommand::Exit) => break,
@@ -1356,21 +1513,16 @@ pub mod chat {
             }
         }
 
+        // Save readline history to file on exit (best-effort).
+        if let Some(ref path) = history_file_path
+            && let Err(e) = rl.save_history(path)
+        {
+            tracing::debug!("Could not save readline history to {:?}: {}", path, e);
+        }
         println!("Goodbye!");
         Ok(())
     }
 
-    /// Build a tool registry for the current chat mode
-    ///
-    /// # Arguments
-    ///
-    /// * `mode_state` - The current mode state
-    /// * `config` - Global configuration
-    /// * `working_dir` - Working directory for tool operations
-    ///
-    /// # Returns
-    ///
-    /// Returns a configured ToolRegistry or an error
     /// Display welcome banner at the start of interactive chat mode
     ///
     /// Shows a formatted banner with the application name, current mode,
@@ -1462,6 +1614,17 @@ pub mod chat {
         println!();
     }
 
+    /// Build a tool registry for the current chat mode
+    ///
+    /// # Arguments
+    ///
+    /// * `mode_state` - The current mode state
+    /// * `config` - Global configuration
+    /// * `working_dir` - Working directory for tool operations
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured ToolRegistry or an error
     fn build_tools_for_mode(
         mode_state: &ChatModeState,
         config: &Config,
@@ -1617,7 +1780,7 @@ pub mod chat {
                 }
 
                 // Create new provider
-                let mut new_provider = create_provider(provider_type, &config.provider)?;
+                let mut new_provider = create_provider(provider_type, &config.provider).await?;
 
                 // Switch model
                 new_provider.set_model(&model_info.name);
@@ -1667,6 +1830,128 @@ pub mod chat {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// Handle `/config reload`: re-read the config file and apply it to the
+    /// live session.
+    ///
+    /// Rebuilds the provider, tool registry, skills, and MCP connections from
+    /// the newly loaded config while preserving conversation history. Some
+    /// settings (log level/format, persistence storage paths) cannot be
+    /// applied without a full restart; when those change, the summary calls
+    /// them out by name instead of silently ignoring them.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent` - The current agent; replaced in place on success.
+    /// * `config` - The current session config; replaced in place on success.
+    /// * `provider_type_owned` - The current provider type name; updated in
+    ///   place so the prompt and status commands reflect the new provider.
+    /// * `mcp_manager` - The current MCP client manager; replaced in place.
+    /// * `active_skill_registry` - The current active-skill registry;
+    ///   replaced in place (resets which skills are marked active).
+    /// * `config_path` - Path to reload the config file from.
+    /// * `common` - CLI overrides to reapply after loading from disk.
+    /// * `working_dir` - Working directory used for skill discovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only if rebuilding the provider or agent environment
+    /// fails after the new config has already passed validation. A config
+    /// file that fails to load or validate is reported to the user and
+    /// leaves all session state untouched.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_config_reload(
+        agent: &mut Agent,
+        config: &mut Config,
+        provider_type_owned: &mut String,
+        mcp_manager: &mut Option<Arc<tokio::sync::RwLock<crate::mcp::manager::McpClientManager>>>,
+        active_skill_registry: &mut Arc<std::sync::Mutex<ActiveSkillRegistry>>,
+        config_path: &str,
+        common: &crate::cli::CommonArgs,
+        working_dir: &std::path::Path,
+    ) -> Result<()> {
+        use colored::Colorize;
+
+        let new_config = match Config::load(config_path, common) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{}", format!("Config reload failed: {e}").red());
+                return Ok(());
+            }
+        };
+        if let Err(e) = new_config.validate() {
+            eprintln!("{}", format!("Config reload failed validation: {e}").red());
+            return Ok(());
+        }
+
+        let changed = config.changed_sections(&new_config);
+        if changed.is_empty() {
+            println!("Config reloaded: no changes detected.\n");
+            *config = new_config;
+            return Ok(());
+        }
+
+        // Compute restart-required callouts before `config` is overwritten below.
+        let persistence_path_changed =
+            config.agent.subagent.persistence_path != new_config.agent.subagent.persistence_path;
+        let log_changed = changed.contains(&"log");
+
+        let new_provider_type = new_config.provider.provider_type.clone();
+        let new_provider_box = create_provider(&new_provider_type, &new_config.provider).await?;
+        let new_provider: Arc<dyn crate::providers::Provider> = Arc::from(new_provider_box);
+
+        let env = build_agent_environment(&new_config, working_dir, false, None, None).await?;
+        let mut new_tools = env.tool_registry;
+
+        // Register subagent tool for task delegation, mirroring startup.
+        let subagent_tool = SubagentTool::new_with_config(
+            Arc::clone(&new_provider),
+            &new_config.provider,
+            new_config.agent.clone(),
+            new_tools.clone(),
+            0,
+        )
+        .await?;
+        new_tools.register("subagent", Arc::new(subagent_tool));
+
+        // Preserve conversation history across the reload.
+        let mut conversation = agent.conversation().clone();
+        conversation.set_max_tokens(new_config.agent.conversation.max_tokens);
+
+        let new_agent = Agent::with_conversation_and_shared_provider(
+            Arc::clone(&new_provider),
+            new_tools,
+            new_config.agent.clone(),
+            conversation,
+        )?;
+
+        *agent = new_agent;
+        *provider_type_owned = new_provider_type;
+        *mcp_manager = env.mcp_manager;
+        *active_skill_registry = env.active_skill_registry;
+        *config = new_config;
+
+        println!(
+            "{}",
+            format!("Config reloaded. Changed: {}.", changed.join(", ")).green()
+        );
+        if persistence_path_changed {
+            println!(
+                "{}",
+                "Note: agent.subagent.persistence_path changed but requires a restart to take effect."
+                    .yellow()
+            );
+        }
+        if log_changed {
+            println!(
+                "{}",
+                "Note: log settings changed but require a restart to take effect.".yellow()
+            );
+        }
+        println!();
 
         Ok(())
     }
@@ -1822,7 +2107,7 @@ pub mod chat {
     /// # Returns
     ///
     /// Returns Ok if the switch succeeded, or an error if it failed
-    fn handle_mode_switch(
+    async fn handle_mode_switch(
         agent: &mut Agent,
         mode_state: &mut ChatModeState,
         new_mode: ChatMode,
@@ -1849,7 +2134,7 @@ pub mod chat {
         let conversation = agent.conversation().clone();
 
         // Create new provider
-        let new_provider = create_provider(provider_type, &config.provider)?;
+        let new_provider = create_provider(provider_type, &config.provider).await?;
 
         // Create new agent with same conversation but new tools
         let new_agent =
@@ -1876,7 +2161,7 @@ pub mod chat {
             let mut cfg = Config::default();
             cfg.provider.provider_type = "invalid_provider".to_string();
 
-            let res = run_chat(cfg, None, None, false, None, None, None, false).await;
+            let res = run_chat(cfg, RunChatOptions::default()).await;
             assert!(res.is_err());
         }
 
@@ -1941,8 +2226,8 @@ pub mod chat {
             assert!(registry_yolo.get("terminal").is_some());
         }
 
-        #[test]
-        fn test_handle_mode_switch_planning_to_write() {
+        #[tokio::test]
+        async fn test_handle_mode_switch_planning_to_write() {
             use crate::providers::Message;
             use async_trait::async_trait;
 
@@ -1979,7 +2264,17 @@ pub mod chat {
                 }
             }
 
-            let config = Config::default();
+            let mut config = Config::default();
+            // Point at a local port nothing listens on and keep a configured
+            // model, so provider re-creation on mode switch falls back to
+            // the configured model instead of requiring a real Ollama server.
+            config.provider.ollama = crate::config::OllamaConfig {
+                host: "http://127.0.0.1:9".to_string(),
+                model: "llama3.2:3b".to_string(),
+                request_timeout_seconds: 1,
+                stream_idle_timeout_seconds: 120,
+                num_ctx: None,
+            };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;
             let tools = build_tools_for_mode(
@@ -1999,7 +2294,8 @@ pub mod chat {
                 &config,
                 &working_dir,
                 "ollama",
-            );
+            )
+            .await;
 
             assert!(result.is_ok());
             assert_eq!(mode_state.chat_mode, ChatMode::Write);
@@ -2192,6 +2488,64 @@ pub mod chat {
             observer.on_event(AgentExecutionEvent::ThinkingFinished);
             assert!(!observer.thinking_active);
         }
+
+        #[test]
+        fn test_resolve_chat_history_path_with_none_uses_platform_default_containing_chat_history()
+        {
+            // When no path is configured, the resolved path must contain the
+            // "chat_history" filename segment so the file can be identified.
+            let path = resolve_chat_history_path(None);
+            // On platforms where ProjectDirs succeeds, the path contains "chat_history".
+            // On platforms where ProjectDirs fails (rare CI environments), path is None.
+            if let Some(p) = path {
+                let name = p.file_name().unwrap_or_default().to_string_lossy();
+                assert_eq!(
+                    name, "chat_history",
+                    "default history filename must be 'chat_history'; got: {}",
+                    name
+                );
+            }
+        }
+
+        #[test]
+        fn test_resolve_chat_history_path_with_some_uses_configured_path() {
+            let custom = std::path::PathBuf::from("/tmp/custom_history_file");
+            let path = resolve_chat_history_path(Some(&custom));
+            assert_eq!(
+                path,
+                Some(std::path::PathBuf::from("/tmp/custom_history_file")),
+                "configured path must be returned unchanged"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_cli_flag_takes_precedence_over_config() {
+            let result = resolve_thinking_effort(Some("high".to_string()), Some("low".to_string()));
+            assert_eq!(
+                result,
+                Some("high".to_string()),
+                "CLI flag must override config value"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_config_used_when_cli_flag_absent() {
+            let result = resolve_thinking_effort(None, Some("medium".to_string()));
+            assert_eq!(
+                result,
+                Some("medium".to_string()),
+                "config value must be used when CLI flag is absent"
+            );
+        }
+
+        #[test]
+        fn test_resolve_thinking_effort_returns_none_when_both_absent() {
+            let result = resolve_thinking_effort(None, None);
+            assert!(
+                result.is_none(),
+                "must return None when both CLI flag and config are absent"
+            );
+        }
     }
 }
 
@@ -2200,7 +2554,7 @@ pub mod chat {
 /// This module provides `run_plan` which runs a plan or a single prompt.
 /// We provide a `run_plan_with_options` helper to support the `allow_dangerous` flag.
 pub mod r#run {
-    use super::chat::ChatStreamingObserver;
+    use super::chat::{ChatStreamingObserver, resolve_thinking_effort};
     use super::*;
     use tokio_util::sync::CancellationToken;
 
@@ -2246,6 +2600,7 @@ pub mod r#run {
         streaming: bool,
     ) -> Result<()> {
         tracing::info!("Starting plan execution mode");
+        config.validate_for_execution()?;
         // Save CLI flag separately before merging into config.
         // This lets us pass the original CLI value to resolve() alongside
         // any plan-file system_prompt, so that plan > CLI > config/env ordering works.
@@ -2279,14 +2634,16 @@ pub mod r#run {
         let _mcp_manager = env.mcp_manager;
 
         // Create agent using the shared provider factory.
-        let provider_box = create_provider(&config.provider.provider_type, &config.provider)?;
+        let provider_box =
+            create_provider(&config.provider.provider_type, &config.provider).await?;
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
 
-        // Apply thinking effort from CLI flag if provided.
-        // "none" is the sentinel string meaning "clear any explicit effort" (maps to
-        // Provider::set_thinking_effort(None)); any other string is forwarded as-is.
-        // Unrecognised values cause a warning but do not abort execution.
-        if let Some(ref effort_str) = thinking_effort {
+        // Apply thinking effort. The CLI --thinking-effort flag takes precedence over
+        // agent.thinking_mode from config. When both are absent the provider default
+        // is used.
+        let effective_thinking: Option<String> =
+            resolve_thinking_effort(thinking_effort.clone(), config.agent.thinking_mode.clone());
+        if let Some(ref effort_str) = effective_thinking {
             let param = if effort_str == "none" {
                 None
             } else {
@@ -2312,7 +2669,9 @@ pub mod r#run {
         } else {
             // SAFETY: plan_path.is_none() && prompt.is_none() was checked and
             // returned early above, so prompt is guaranteed Some here.
-            (None, prompt.expect("prompt is Some when plan_path is None"))
+            #[allow(clippy::expect_used)]
+            let instruction = prompt.expect("prompt is Some when plan_path is None");
+            (None, instruction)
         };
 
         // Resolve the effective system prompt (plan > CLI flag > config/env).
@@ -2381,86 +2740,6 @@ pub mod r#run {
                 eprintln!("Execution failed: {}", e);
                 Err(e)
             }
-        }
-    }
-
-    /// Creates a provider instance for a specific model
-    ///
-    /// This helper function creates a new provider configured to use the specified model.
-    /// It's used for automatic summarization when a different summary model is configured.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The global configuration
-    /// * `model_name` - The model name to configure the provider with
-    ///
-    /// # Returns
-    ///
-    /// Returns an Arc-wrapped provider instance
-    ///
-    /// # Errors
-    ///
-    /// Returns error if:
-    /// - Provider type is unsupported
-    /// - Provider initialization fails
-    pub async fn create_provider_for_model(
-        config: &Config,
-        model_name: &str,
-    ) -> Result<Arc<dyn crate::providers::Provider>> {
-        match config.provider.provider_type.as_str() {
-            "copilot" => {
-                let mut copilot_config = config.provider.copilot.clone();
-                copilot_config.model = model_name.to_string();
-                let provider = CopilotProvider::new(copilot_config)?;
-                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
-            }
-            "ollama" => {
-                let mut ollama_config = config.provider.ollama.clone();
-                ollama_config.model = model_name.to_string();
-                let provider = OllamaProvider::new(ollama_config)?;
-                Ok(Arc::new(provider) as Arc<dyn crate::providers::Provider>)
-            }
-            _ => Err(XzatomaError::Provider(format!(
-                "Unsupported provider type: {}",
-                config.provider.provider_type
-            ))),
-        }
-    }
-
-    /// Creates a summary provider if needed for a different model
-    ///
-    /// Checks if the summary model differs from the current provider's model.
-    /// If they're the same, returns the current provider. Otherwise creates
-    /// a new provider for the summary model.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The global configuration
-    /// * `current_provider` - The current provider instance
-    /// * `summary_model` - The model to use for summarization
-    ///
-    /// # Returns
-    ///
-    /// Returns the provider to use for summarization
-    ///
-    /// # Errors
-    ///
-    /// Returns error if creating a new provider fails
-    pub async fn create_summary_provider_if_needed(
-        config: &Config,
-        current_provider: &Arc<dyn crate::providers::Provider>,
-        summary_model: &str,
-    ) -> Result<Arc<dyn crate::providers::Provider>> {
-        if current_provider.get_current_model() == summary_model {
-            // Same model, use existing provider
-            Ok(Arc::clone(current_provider))
-        } else {
-            // Different model or unknown current model, create new provider
-            tracing::debug!(
-                "Creating separate provider for summarization model: {}",
-                summary_model
-            );
-            create_provider_for_model(config, summary_model).await
         }
     }
 
@@ -2624,6 +2903,10 @@ pub mod watch {
         pub match_version: Option<String>,
         /// Optional system prompt override for agent sessions triggered by this watcher.
         pub system_prompt: Option<String>,
+        /// If `true`, the watcher exits after consuming exactly one event.
+        pub once: bool,
+        /// If `true`, overrides `watcher.execution.allow_dangerous` to `true`.
+        pub allow_dangerous: bool,
     }
     use std::path::PathBuf;
 
@@ -2652,6 +2935,7 @@ pub mod watch {
     pub async fn run_watch(mut config: Config, overrides: WatchCliOverrides) -> Result<()> {
         // Apply CLI argument overrides to configuration
         apply_cli_overrides(&mut config, &overrides)?;
+        config.validate_for_watcher()?;
 
         // Logging is already initialised by main() using the Watch command's
         // --json-logs and --log-file flags.  Do not call init_watcher_logging()
@@ -2690,7 +2974,8 @@ pub mod watch {
         // before entering the signal-handling path.
         match config.watcher.watcher_type {
             crate::config::WatcherType::XZepr => {
-                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?;
+                let mut watcher = crate::watcher::XzeprWatcher::new(config, overrides.dry_run)?
+                    .with_once(overrides.once);
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2724,7 +3009,8 @@ pub mod watch {
             }
             crate::config::WatcherType::Generic => {
                 let mut watcher =
-                    crate::watcher::generic::GenericWatcher::new(config, overrides.dry_run)?;
+                    crate::watcher::generic::GenericWatcher::new(config, overrides.dry_run)?
+                        .with_once(overrides.once);
 
                 // Set up signal handling for graceful shutdown
                 let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
@@ -2909,6 +3195,12 @@ pub mod watch {
             tracing::debug!("Dry-run mode will be enabled for execution");
         }
 
+        // Override allow_dangerous if requested via CLI flag
+        if overrides.allow_dangerous {
+            config.watcher.execution.allow_dangerous = true;
+            tracing::debug!("CLI override: allow_dangerous enabled");
+        }
+
         // Override agent system prompt if provided
         if let Some(ref prompt) = overrides.system_prompt {
             config.agent.system_prompt = Some(prompt.clone());
@@ -2941,16 +3233,10 @@ pub mod watch {
         fn test_apply_cli_overrides_topic() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "original.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -2972,16 +3258,10 @@ pub mod watch {
         fn test_apply_cli_overrides_event_types() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3014,16 +3294,10 @@ pub mod watch {
         fn test_apply_cli_overrides_json_logs() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
             config.watcher.logging.json_format = false;
 
@@ -3043,16 +3317,10 @@ pub mod watch {
         fn test_apply_cli_overrides_multiple_settings() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "original".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3075,16 +3343,10 @@ pub mod watch {
         fn test_apply_cli_overrides_event_types_with_whitespace() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3105,16 +3367,10 @@ pub mod watch {
         fn test_apply_cli_overrides_watcher_type() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3136,16 +3392,10 @@ pub mod watch {
         fn test_apply_cli_overrides_output_topic() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3173,16 +3423,10 @@ pub mod watch {
         fn test_apply_cli_overrides_group_id() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3204,16 +3448,10 @@ pub mod watch {
         fn test_apply_cli_overrides_create_topics() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3232,16 +3470,10 @@ pub mod watch {
         fn test_apply_cli_overrides_generic_match_action() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3263,16 +3495,10 @@ pub mod watch {
         fn test_apply_cli_overrides_generic_match_name() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3294,16 +3520,10 @@ pub mod watch {
         fn test_apply_cli_overrides_brokers() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3325,16 +3545,10 @@ pub mod watch {
         fn test_apply_cli_overrides_match_version() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3364,16 +3578,10 @@ pub mod watch {
 
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3400,16 +3608,10 @@ pub mod watch {
         fn test_apply_cli_overrides_filter_config_missing_file() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3433,16 +3635,10 @@ pub mod watch {
         fn test_apply_cli_overrides_system_prompt() {
             let mut config = Config::default();
             config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
-                brokers: "localhost:9092".to_string(),
                 topic: "test.topic".to_string(),
-                output_topic: None,
                 group_id: "test-group".to_string(),
                 auto_create_topics: false,
-                security: None,
-                num_partitions: 1,
-                replication_factor: 1,
-                broker_address_family: "v4".to_string(),
-                poll_interval_ms: 1000,
+                ..Default::default()
             });
 
             let result = apply_cli_overrides(
@@ -3492,6 +3688,44 @@ pub mod watch {
                     .to_string()
                     .contains("Kafka configuration")
             );
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_allow_dangerous() {
+            let mut config = crate::config::Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test".to_string(),
+                ..crate::config::KafkaWatcherConfig::default()
+            });
+            config.watcher.execution.allow_dangerous = false;
+
+            let overrides = WatchCliOverrides {
+                allow_dangerous: true,
+                ..WatchCliOverrides::default()
+            };
+
+            apply_cli_overrides(&mut config, &overrides).unwrap();
+            assert!(config.watcher.execution.allow_dangerous);
+        }
+
+        #[test]
+        fn test_apply_cli_overrides_allow_dangerous_false_does_not_override() {
+            let mut config = crate::config::Config::default();
+            config.watcher.kafka = Some(crate::config::KafkaWatcherConfig {
+                brokers: "localhost:9092".to_string(),
+                topic: "test".to_string(),
+                ..crate::config::KafkaWatcherConfig::default()
+            });
+            config.watcher.execution.allow_dangerous = false;
+
+            let overrides = WatchCliOverrides {
+                allow_dangerous: false,
+                ..WatchCliOverrides::default()
+            };
+
+            apply_cli_overrides(&mut config, &overrides).unwrap();
+            assert!(!config.watcher.execution.allow_dangerous);
         }
     }
 }

@@ -32,7 +32,7 @@
 /// let state = AcpServerState::from_config(&config).unwrap();
 /// let _router = build_router(state, &config.acp);
 /// ```
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -46,6 +46,10 @@ use axum::{Json, Router};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
+use tokio::sync::Semaphore;
+use tower_http::cors::{AllowHeaders, AllowMethods, CorsLayer};
 
 use crate::acp::executor::{AcpExecutor, AcpExecutorOutcome};
 use crate::acp::manifest::{AcpAgentCapability, AcpAgentManifest, AcpManifestLink};
@@ -80,6 +84,10 @@ pub struct AcpServerState {
     path_strategy: AcpPathStrategy,
     runtime: AcpRuntime,
     executor: AcpExecutor,
+    /// Semaphore limiting the number of concurrently executing ACP runs.
+    run_semaphore: Arc<Semaphore>,
+    /// Per-session last-activity tracking used by the background eviction task.
+    session_activity: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 impl AcpServerState {
@@ -111,12 +119,15 @@ impl AcpServerState {
         let manifest = build_primary_manifest(config)?;
         let runtime = AcpRuntime::new(config.clone());
         let executor = AcpExecutor::new(config.clone(), runtime.clone());
+        let max_concurrent = config.acp.max_concurrent_runs.max(1);
 
         Ok(Self {
             manifests: Arc::new(vec![manifest]),
             path_strategy: AcpPathStrategy::from_config(&config.acp),
             runtime,
             executor,
+            run_semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            session_activity: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -222,11 +233,14 @@ impl AcpServerState {
     /// ```
     pub fn from_parts(config: &Config, runtime: AcpRuntime, executor: AcpExecutor) -> Result<Self> {
         let manifest = build_primary_manifest(config)?;
+        let max_concurrent = config.acp.max_concurrent_runs.max(1);
         Ok(Self {
             manifests: Arc::new(vec![manifest]),
             path_strategy: AcpPathStrategy::from_config(&config.acp),
             runtime,
             executor,
+            run_semaphore: Arc::new(Semaphore::new(max_concurrent)),
+            session_activity: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -638,6 +652,36 @@ impl AcpHttpErrorBody {
     }
 }
 
+/// Compares two strings in constant time to prevent timing side channels.
+///
+/// Both inputs are hashed with SHA-256 into fixed 32-byte digests before the
+/// comparison. Hashing to a fixed-width digest avoids a length-based early exit
+/// (an attacker cannot learn the expected token length from timing) and the
+/// digests are then compared with [`subtle::ConstantTimeEq`], which does not
+/// short-circuit on the first differing byte.
+///
+/// # Arguments
+///
+/// * `a` - First string to compare (for example, a client-supplied token).
+/// * `b` - Second string to compare (for example, the configured token).
+///
+/// # Returns
+///
+/// Returns `true` only when both strings are byte-for-byte identical.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Internal helper (private): usage illustration only.
+/// assert!(constant_time_str_eq("secret-token", "secret-token"));
+/// assert!(!constant_time_str_eq("secret-token", "other-token"));
+/// ```
+fn constant_time_str_eq(a: &str, b: &str) -> bool {
+    let a_digest = Sha256::digest(a.as_bytes());
+    let b_digest = Sha256::digest(b.as_bytes());
+    a_digest[..].ct_eq(&b_digest[..]).into()
+}
+
 #[derive(Debug)]
 struct AcpHttpProtection {
     auth_token: Option<String>,
@@ -662,7 +706,7 @@ impl AcpHttpProtection {
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
-            .map(|token| token == expected_token)
+            .map(|token| constant_time_str_eq(token, expected_token))
             .unwrap_or(false);
 
         if authorized {
@@ -825,7 +869,7 @@ impl IntoResponse for AcpHttpError {
 /// ```
 pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
     let protection = Arc::new(AcpHttpProtection::from_config(config));
-    let discovery_router = Router::new()
+    let mut discovery_router = Router::new()
         .route("/ping", get(handle_ping))
         .route("/agents", get(handle_agents))
         .route("/agents/{name}", get(handle_agent_by_name))
@@ -843,6 +887,23 @@ pub fn build_router(state: AcpServerState, config: &AcpConfig) -> Router {
             enforce_acp_http_protection,
         ))
         .with_state(state.clone());
+
+    // Attach CORS layer when origins are configured. An empty list preserves
+    // the default behavior of denying all cross-origin requests.
+    if !config.cors_origins.is_empty() {
+        let allow_origins: Vec<axum::http::HeaderValue> = config
+            .cors_origins
+            .iter()
+            .filter_map(|origin| origin.parse::<axum::http::HeaderValue>().ok())
+            .collect();
+
+        let cors = CorsLayer::new()
+            .allow_origin(allow_origins)
+            .allow_methods(AllowMethods::any())
+            .allow_headers(AllowHeaders::any());
+
+        discovery_router = discovery_router.layer(cors);
+    }
 
     match AcpPathStrategy::from_config(config) {
         AcpPathStrategy::Versioned { base_path } => {
@@ -894,9 +955,67 @@ pub async fn run_server(config: Config) -> Result<()> {
             ))
         })?;
 
-    axum::serve(listener, router).await.map_err(|error| {
-        XzatomaError::Internal(format!("ACP server terminated with error: {}", error))
-    })
+    // Spawn background session eviction task.
+    let eviction_runtime = state.runtime().clone();
+    let eviction_activity = Arc::clone(&state.session_activity);
+    let eviction_poll_secs = config.acp.session_eviction_poll_seconds;
+    let session_timeout_secs = config.acp.session_timeout_seconds;
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(eviction_poll_secs)).await;
+
+            // Evict stale session-activity entries.
+            if let Ok(mut activity) = eviction_activity.lock() {
+                let cutoff = Instant::now()
+                    .checked_sub(Duration::from_secs(session_timeout_secs))
+                    .unwrap_or(Instant::now());
+                activity.retain(|_, last_active| *last_active >= cutoff);
+            }
+
+            // Evict stale in-memory run records.
+            if let Err(error) = eviction_runtime.evict_idle_sessions(session_timeout_secs) {
+                tracing::warn!(
+                    error = %error,
+                    "ACP session eviction task encountered an error"
+                );
+            }
+        }
+    });
+
+    // Build graceful shutdown signal.
+    let shutdown_signal = async {
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("ACP server received shutdown signal; draining in-flight requests");
+    };
+
+    let serve = axum::serve(listener, router).with_graceful_shutdown(shutdown_signal);
+
+    match config.acp.graceful_shutdown_timeout {
+        None => {
+            serve.await.map_err(|error| {
+                XzatomaError::Internal(format!("ACP server terminated with error: {}", error))
+            })?;
+        }
+        Some(timeout_secs) => {
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), serve).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    return Err(XzatomaError::Internal(format!(
+                        "ACP server terminated with error: {}",
+                        error
+                    )));
+                }
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        timeout_seconds = timeout_secs,
+                        "ACP graceful shutdown drain timed out; forcing exit"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Resolves the TCP bind address for the ACP server.
@@ -1037,12 +1156,33 @@ pub async fn handle_create_run(
         )));
     }
 
+    // Enforce concurrency limit. Reject immediately with 429 if saturated.
+    let _semaphore_permit = state
+        .run_semaphore
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            AcpHttpError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too_many_requests",
+                "ACP server has reached the maximum number of concurrent runs; retry later",
+            )
+        })?;
+
     let mode = body.mode.unwrap_or_else(|| state.runtime().default_mode());
 
     let mut request = AcpRuntimeCreateRequest::new(body.input).with_mode(mode);
     if let Some(session_id) = body.session_id {
         request = request.with_session_id(session_id);
     }
+
+    // Record session activity for the eviction background task.
+    if let Some(session_id) = request.session_id.as_deref()
+        && let Ok(mut activity) = state.session_activity.lock()
+    {
+        activity.insert(session_id.to_string(), Instant::now());
+    }
+
     if let Some(agent_name) = body.agent_name {
         request = request.with_agent_name(agent_name);
     }
@@ -1364,6 +1504,8 @@ fn build_primary_manifest(config: &Config) -> Result<AcpAgentManifest> {
         path_strategy: AcpPathStrategy::from_config(&config.acp),
         runtime: preview_runtime.clone(),
         executor: AcpExecutor::new(config.clone(), preview_runtime),
+        run_semaphore: Arc::new(Semaphore::new(1)),
+        session_activity: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let documentation_href = "https://github.com/xbcsmith/xzatoma/tree/main/docs".to_string();
@@ -1446,6 +1588,33 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    #[test]
+    fn test_constant_time_str_eq_equal_tokens_returns_true() {
+        assert!(constant_time_str_eq(
+            "a-sufficiently-long-token",
+            "a-sufficiently-long-token"
+        ));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_wrong_value_same_length_returns_false() {
+        assert!(!constant_time_str_eq(
+            "token-value-aaaa",
+            "token-value-bbbb"
+        ));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_wrong_length_returns_false() {
+        assert!(!constant_time_str_eq("short", "short-plus-more"));
+    }
+
+    #[test]
+    fn test_constant_time_str_eq_empty_vs_non_empty_returns_false() {
+        assert!(!constant_time_str_eq("", "non-empty"));
+        assert!(!constant_time_str_eq("non-empty", ""));
+    }
 
     fn test_config() -> Config {
         Config::default()
@@ -1958,5 +2127,88 @@ mod tests {
         let mut sorted = sequences.clone();
         sorted.sort_unstable();
         assert_eq!(sequences, sorted);
+    }
+
+    #[tokio::test]
+    async fn test_handle_create_run_returns_429_when_semaphore_exhausted() {
+        let config = test_config();
+        let runtime = AcpRuntime::new_in_memory(config.clone());
+        let executor = AcpExecutor::new_mock_success(
+            config.clone(),
+            runtime.clone(),
+            "mock ACP server test response".to_string(),
+        );
+        let mut state = AcpServerState::from_parts(&config, runtime, executor).unwrap();
+        // Replace the semaphore with one that has zero permits so every attempt
+        // returns 429 without executing a run.
+        state.run_semaphore = Arc::new(Semaphore::new(0));
+
+        let result = handle_create_run(
+            State(state),
+            Json(test_create_run_request_body(
+                AcpRuntimeExecuteMode::Sync,
+                "Hello",
+                "xzatoma",
+            )),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_cors_empty_origins_does_not_add_cors_header() {
+        let config = test_config(); // default: cors_origins is empty
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/acp/ping")
+                    .header("Origin", "https://example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        // With no cors_origins configured, no ACAO header should be present.
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cors_configured_origin_returns_allow_origin_header() {
+        let mut config = test_config();
+        config.acp.cors_origins = vec!["https://example.com".to_string()];
+        let state = test_server_state_from_config(&config);
+        let app = build_router(state, &config.acp);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/acp/ping")
+                    .header("Origin", "https://example.com")
+                    .header("Access-Control-Request-Method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // A preflight from a configured origin must receive the ACAO header.
+        let acao = response
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(acao, Some("https://example.com"));
     }
 }

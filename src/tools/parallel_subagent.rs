@@ -298,17 +298,14 @@ impl ToolExecutor for ParallelSubagentTool {
                 let current_depth = self.current_depth;
                 let sem = Arc::clone(&semaphore);
 
-                tokio::spawn(async move {
-                    let _permit = match sem.acquire().await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            error!("Failed to acquire semaphore permit: {}", e);
-                            panic!("Semaphore closed");
-                        }
-                    };
-
-                    execute_task(task, provider, config, parent_registry, current_depth).await
-                })
+                tokio::spawn(run_task_with_permit(
+                    task,
+                    provider,
+                    config,
+                    parent_registry,
+                    current_depth,
+                    sem,
+                ))
             })
             .collect();
 
@@ -404,6 +401,60 @@ impl ToolExecutor for ParallelSubagentTool {
             ))),
         }
     }
+}
+
+/// Acquires a concurrency permit and executes a single parallel task.
+///
+/// This is the body of each task spawned by
+/// [`ParallelSubagentTool::execute`]. It first attempts to acquire a permit
+/// from `semaphore` to respect the configured concurrency limit, then delegates
+/// the actual work to [`execute_task`].
+///
+/// If the semaphore has been closed (so a permit can never be acquired), the
+/// handled failure is surfaced as a failed [`TaskResult`] with the task label
+/// preserved, rather than a panic. This keeps a closed semaphore from taking
+/// down the spawned task.
+///
+/// # Arguments
+///
+/// * `task` - The task to execute.
+/// * `provider` - Shared AI provider used by the subagent.
+/// * `config` - Agent configuration for the subagent.
+/// * `parent_registry` - Tool registry inherited from the parent agent.
+/// * `current_depth` - Current subagent nesting depth.
+/// * `semaphore` - Concurrency-limiting semaphore to acquire a permit from.
+///
+/// # Returns
+///
+/// A [`TaskResult`] describing the outcome. On a closed semaphore the result
+/// has `success == false` and a populated `error`.
+async fn run_task_with_permit(
+    task: ParallelTask,
+    provider: Arc<dyn Provider>,
+    config: AgentConfig,
+    parent_registry: Arc<ToolRegistry>,
+    current_depth: usize,
+    semaphore: Arc<tokio::sync::Semaphore>,
+) -> TaskResult {
+    // Clone the label before `task` is moved into `execute_task` so we can
+    // still report a failed result if we cannot acquire a semaphore permit.
+    let label = task.label.clone();
+    let _permit = match semaphore.acquire().await {
+        Ok(p) => p,
+        Err(e) => {
+            error!("Failed to acquire semaphore permit: {}", e);
+            return TaskResult {
+                label,
+                success: false,
+                output: String::new(),
+                duration_ms: 0,
+                error: Some(format!("Failed to acquire semaphore permit: {e}")),
+                tokens_used: 0,
+            };
+        }
+    };
+
+    execute_task(task, provider, config, parent_registry, current_depth).await
 }
 
 /// Executes a single task as a subagent
@@ -567,6 +618,49 @@ mod tests {
         assert!(!result.success);
         assert!(result.error.is_some());
         assert_eq!(result.tokens_used, 0);
+    }
+
+    // Drives the actual production task body (`run_task_with_permit`, the future
+    // spawned by `ParallelSubagentTool::execute`) against a closed semaphore and
+    // asserts it returns a handled failed `TaskResult` instead of panicking. A
+    // real `TestProvider` is supplied so the closure runs exactly as it does in
+    // production; the permit acquisition fails before the provider is used.
+    #[tokio::test]
+    async fn test_parallel_execute_closed_semaphore_yields_failed_result() {
+        use crate::test_utils::TestProviderBuilder;
+
+        let provider: Arc<dyn Provider> = Arc::new(TestProviderBuilder::new().build());
+        let parent_registry = Arc::new(ToolRegistry::new());
+        let task = ParallelTask {
+            label: "task1".to_string(),
+            task_prompt: "Do something".to_string(),
+            summary_prompt: None,
+            allowed_tools: None,
+            max_turns: None,
+        };
+
+        // Close the concurrency semaphore so no permit can ever be acquired,
+        // driving the real handled-error path in the spawn closure.
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
+        semaphore.close();
+
+        let result = run_task_with_permit(
+            task,
+            provider,
+            AgentConfig::default(),
+            parent_registry,
+            0,
+            semaphore,
+        )
+        .await;
+
+        assert_eq!(result.label, "task1");
+        assert!(!result.success);
+        assert!(result.output.is_empty());
+        assert_eq!(result.duration_ms, 0);
+        assert_eq!(result.tokens_used, 0);
+        let error = result.error.expect("error must be populated");
+        assert!(error.contains("Failed to acquire semaphore permit"));
     }
 
     #[test]

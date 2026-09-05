@@ -35,7 +35,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::acp::ide_bridge::IdeBridge;
+use crate::acp::ide_bridge::{IdeBridge, PermissionDecision};
 use crate::error::parse_tool_args;
 use crate::tools::{ToolExecutor, ToolRegistry, ToolResult};
 
@@ -111,7 +111,7 @@ struct IdeRequestPermissionParams {
 /// Reads a text file through Zed's open project buffers. When the IDE bridge is
 /// active, this tool uses `fs/read_text_file` so that the file content reflects
 /// unsaved editor buffer state rather than only the on-disk snapshot.
-pub struct IdeReadTextFileTool {
+pub(crate) struct IdeReadTextFileTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -121,7 +121,7 @@ impl IdeReadTextFileTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -186,7 +186,7 @@ impl ToolExecutor for IdeReadTextFileTool {
 /// Writes a full text file through Zed's editor buffer system so that edits appear
 /// in the open editor and are saved consistently. This makes agent file writes
 /// visible as first-class editor operations that the user can review or undo.
-pub struct IdeWriteTextFileTool {
+pub(crate) struct IdeWriteTextFileTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -196,7 +196,7 @@ impl IdeWriteTextFileTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -255,7 +255,7 @@ impl ToolExecutor for IdeWriteTextFileTool {
 /// captures the output, and releases the terminal handle. When `wait_for_exit`
 /// is `false`, it returns the terminal ID so subsequent calls to
 /// `ide_terminal_output` and `ide_wait_for_terminal_exit` can track the session.
-pub struct IdeOpenTerminalTool {
+pub(crate) struct IdeOpenTerminalTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -265,7 +265,7 @@ impl IdeOpenTerminalTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -392,7 +392,7 @@ impl ToolExecutor for IdeOpenTerminalTool {
 /// Reads the current buffered output of a running or completed IDE terminal
 /// command. The terminal must have been created with `ide_open_terminal` using
 /// `wait_for_exit: false` to obtain a terminal ID.
-pub struct IdeTerminalOutputTool {
+pub(crate) struct IdeTerminalOutputTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -402,7 +402,7 @@ impl IdeTerminalOutputTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -451,7 +451,7 @@ impl ToolExecutor for IdeTerminalOutputTool {
 /// Blocks until a running IDE terminal command finishes and returns its exit
 /// code. The terminal must have been created with `ide_open_terminal` using
 /// `wait_for_exit: false`.
-pub struct IdeWaitForTerminalExitTool {
+pub(crate) struct IdeWaitForTerminalExitTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -461,7 +461,7 @@ impl IdeWaitForTerminalExitTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -516,7 +516,7 @@ impl ToolExecutor for IdeWaitForTerminalExitTool {
 ///
 /// Terminates a running IDE terminal command by sending a kill signal.
 /// After killing, use `ide_open_terminal` to start a new terminal.
-pub struct IdeKillTerminalTool {
+pub(crate) struct IdeKillTerminalTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -526,7 +526,7 @@ impl IdeKillTerminalTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -580,12 +580,14 @@ impl ToolExecutor for IdeKillTerminalTool {
 /// and allows the user to approve or deny agent operations from within the
 /// Zed IDE without switching context.
 ///
-/// The tool returns a JSON object with `approved: true/false` that the agent
-/// can inspect before proceeding. In the current implementation the prompt
-/// is recorded as a transient log entry and permission is granted by default
-/// so that the agent can proceed while full Zed elicitation API integration
-/// is completed in a later phase.
-pub struct IdeRequestPermissionTool {
+/// The tool issues a real ACP `session/request_permission` round-trip through
+/// the [`IdeBridge`], offering the user Allow / Allow-for-session /
+/// Reject / Reject-for-session choices. It returns a JSON object with
+/// `approved: true/false`, the originating `operation`, and an `outcome` of
+/// `approved`, `denied`, `cancelled`, or `error`. The tool fails closed: if the
+/// permission request errors out, the result is `approved: false` so the agent
+/// never proceeds on an unconfirmed operation.
+pub(crate) struct IdeRequestPermissionTool {
     bridge: Arc<IdeBridge>,
 }
 
@@ -595,7 +597,7 @@ impl IdeRequestPermissionTool {
     /// # Arguments
     ///
     /// * `bridge` - Shared IDE bridge for the active ACP session.
-    pub fn new(bridge: Arc<IdeBridge>) -> Self {
+    pub(crate) fn new(bridge: Arc<IdeBridge>) -> Self {
         Self { bridge }
     }
 }
@@ -608,7 +610,9 @@ impl ToolExecutor for IdeRequestPermissionTool {
             "description": "Ask the Zed user to approve a risky or irreversible operation \
                             before proceeding. Use this in safe mode before destructive writes, \
                             dangerous terminal commands, or operations with significant side effects. \
-                            Returns {\"approved\": true} when the user approves.",
+                            Presents Allow/Reject choices in the Zed UI and returns \
+                            {\"approved\": true} only when the user approves. Fails closed \
+                            (approved: false) on cancellation or error.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -626,28 +630,38 @@ impl ToolExecutor for IdeRequestPermissionTool {
         })
     }
 
+    /// Requests user approval through the ACP IDE bridge and returns the result.
+    ///
+    /// A fresh tool-call id is generated for each request. The bridge issues a
+    /// `session/request_permission` round-trip; the decision is mapped to a JSON
+    /// payload by [`permission_result_json`]. On error the tool logs a warning
+    /// and fails closed with `approved: false`.
     async fn execute(&self, args: serde_json::Value) -> crate::error::Result<ToolResult> {
         let params: IdeRequestPermissionParams = parse_tool_args(args)?;
+        let tool_call_id = format!("ide-permission-{}", ulid::Ulid::generate());
 
         tracing::info!(
+            tool_call_id = %tool_call_id,
             operation = %params.operation,
             details = %params.details,
-            has_terminal = self.bridge.capabilities().terminal,
-            "IDE permission requested for operation"
+            "Requesting IDE user permission via ACP session/request_permission"
         );
 
-        // The full Zed elicitation API (request_permission) is integrated in a
-        // later phase. For now, log the request and grant permission so that
-        // safe-mode sessions can use this tool while the elicitation flow is
-        // developed.
-        Ok(ToolResult::success(
-            serde_json::json!({
-                "approved": true,
-                "operation": params.operation,
-                "note": "Permission auto-granted; full Zed elicitation integration is pending."
-            })
-            .to_string(),
-        ))
+        let decision = self
+            .bridge
+            .request_permission(&tool_call_id, &params.operation, &params.details)
+            .await;
+
+        if let Err(ref error) = decision {
+            tracing::warn!(
+                operation = %params.operation,
+                error = %error,
+                "IDE permission request failed; failing closed (denied by default)"
+            );
+        }
+
+        let payload = permission_result_json(&params.operation, &decision);
+        Ok(ToolResult::success(payload.to_string()))
     }
 }
 
@@ -732,6 +746,50 @@ fn acp_terminal_id_from_str(id: &str) -> agent_client_protocol::schema::v1::Term
     agent_client_protocol::schema::v1::TerminalId::new(id.to_string())
 }
 
+/// Builds the model-visible JSON payload for an IDE permission request result.
+///
+/// This is a pure function so the decision-to-JSON mapping can be unit-tested
+/// without a live ACP connection. The `Ok` variants map to the corresponding
+/// `approved`/`outcome` pair; the `Err` variant fails closed with
+/// `approved: false` and `outcome: "error"`.
+///
+/// # Arguments
+///
+/// * `operation` - The operation description echoed back to the model.
+/// * `decision` - The result of the bridge permission request.
+///
+/// # Returns
+///
+/// Returns a JSON object describing whether the operation was approved.
+fn permission_result_json(
+    operation: &str,
+    decision: &crate::error::Result<PermissionDecision>,
+) -> serde_json::Value {
+    match decision {
+        Ok(PermissionDecision::Approved) => json!({
+            "approved": true,
+            "operation": operation,
+            "outcome": "approved",
+        }),
+        Ok(PermissionDecision::Denied) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "denied",
+        }),
+        Ok(PermissionDecision::Cancelled) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "cancelled",
+        }),
+        Err(_) => json!({
+            "approved": false,
+            "operation": operation,
+            "outcome": "error",
+            "note": "permission request failed; denied by default",
+        }),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -740,9 +798,11 @@ fn acp_terminal_id_from_str(id: &str) -> agent_client_protocol::schema::v1::Term
 mod tests {
     use super::*;
 
-    // We cannot construct a live IdeBridge (requires an active ACP connection),
-    // so these tests focus on tool definition correctness and parameter
-    // deserialization.
+    // Most tests here focus on tool definition correctness and parameter
+    // deserialization, since constructing a live `IdeBridge` requires an
+    // active ACP connection. The one exception is
+    // `test_ide_request_permission_live_connection_unsupported_client_fails_closed`,
+    // which drives a real in-memory connection end-to-end.
 
     fn required_fields(definition: &serde_json::Value) -> Vec<String> {
         definition["parameters"]["required"]
@@ -1034,5 +1094,119 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn test_permission_result_json_approved_sets_approved_true() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Approved));
+
+        assert_eq!(value["approved"], serde_json::json!(true));
+        assert_eq!(value["operation"], serde_json::json!("delete files"));
+        assert_eq!(value["outcome"], serde_json::json!("approved"));
+    }
+
+    #[test]
+    fn test_permission_result_json_denied_sets_approved_false() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Denied));
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("denied"));
+    }
+
+    #[test]
+    fn test_permission_result_json_cancelled_sets_approved_false() {
+        let value = permission_result_json("delete files", &Ok(PermissionDecision::Cancelled));
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("cancelled"));
+    }
+
+    #[test]
+    fn test_permission_result_json_error_fails_closed_approved_false() {
+        let error = Err(crate::error::XzatomaError::Internal("boom".to_string()));
+        let value = permission_result_json("delete files", &error);
+
+        assert_eq!(value["approved"], serde_json::json!(false));
+        assert_eq!(value["outcome"], serde_json::json!("error"));
+        assert!(value["note"].is_string());
+    }
+
+    // -----------------------------------------------------------------------
+    // Live-connection test: missing-capability fail-closed
+    //
+    // Drives `IdeRequestPermissionTool::execute` over a real in-memory ACP
+    // `Channel::duplex()` connection whose fake "Zed" client rejects the
+    // `session/request_permission` call with a protocol error, simulating a
+    // client that does not support permission requests. This exercises the
+    // production error path end-to-end rather than reconstructing the JSON
+    // mapping by hand.
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_ide_request_permission_live_connection_unsupported_client_fails_closed() {
+        use crate::acp::ide_bridge::IdeCapabilities;
+        use agent_client_protocol::schema::v1 as acp;
+        use agent_client_protocol::{
+            Agent as AcpAgentRole, Channel, Client as AcpClientRole, ConnectionTo, Responder,
+        };
+
+        let (server_channel, client_channel) = Channel::duplex();
+
+        // This fake client explicitly rejects the permission request, as a
+        // client that does not support `session/request_permission` would.
+        let fake_client = tokio::spawn(async move {
+            AcpClientRole
+                .builder()
+                .name("fake-unsupported-zed-client")
+                .on_receive_request(
+                    async move |_req: acp::RequestPermissionRequest,
+                                responder: Responder<acp::RequestPermissionResponse>,
+                                _cx: ConnectionTo<AcpAgentRole>| {
+                        responder.respond_with_internal_error(
+                            "client does not support session/request_permission",
+                        )
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(client_channel)
+                .await
+        });
+
+        let session_id = acp::SessionId::new("ide-tools-test-session");
+        let outcome = AcpAgentRole
+            .builder()
+            .name("fake-agent-under-test")
+            .connect_with(
+                server_channel,
+                async move |connection: ConnectionTo<AcpClientRole>| {
+                    let bridge = Arc::new(IdeBridge::new(
+                        connection,
+                        session_id,
+                        IdeCapabilities::none(),
+                    ));
+                    let tool = IdeRequestPermissionTool::new(bridge);
+                    let result = tool
+                        .execute(serde_json::json!({
+                            "operation": "Delete build cache",
+                            "details": "Removes target/",
+                        }))
+                        .await
+                        .expect("tool execution itself must not error");
+
+                    let payload: serde_json::Value = serde_json::from_str(&result.output)
+                        .expect("tool output must be valid JSON");
+                    assert_eq!(payload["approved"], serde_json::json!(false));
+                    assert_eq!(payload["outcome"], serde_json::json!("error"));
+                    Ok(())
+                },
+            )
+            .await;
+
+        assert!(
+            outcome.is_ok(),
+            "agent-side connection should complete cleanly: {:?}",
+            outcome.err()
+        );
+        fake_client.abort();
     }
 }

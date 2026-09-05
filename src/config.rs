@@ -79,7 +79,10 @@ pub struct ProviderConfig {
 /// GitHub Copilot provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CopilotConfig {
-    /// Model to use for Copilot
+    /// Model to use for Copilot.
+    ///
+    /// Empty string means "not specified": the provider factory queries the
+    /// Copilot models API and selects the latest available model.
     #[serde(default = "default_copilot_model")]
     pub model: String,
 
@@ -120,10 +123,26 @@ pub struct CopilotConfig {
     /// their reasoning process in the response. Defaults to false.
     #[serde(default = "default_include_reasoning")]
     pub include_reasoning: bool,
+
+    /// Editor version string sent as the `Editor-Version` HTTP header on all
+    /// outbound Copilot API requests.
+    ///
+    /// This value is forwarded by the Copilot backend for telemetry and routing.
+    /// Defaults to `"vscode/1.95.0"`.
+    #[serde(default = "default_copilot_editor_version")]
+    pub editor_version: String,
+
+    /// Initiator label sent as the `X-Initiator` HTTP header on all outbound
+    /// Copilot API requests.
+    ///
+    /// Identifies the component that initiated the request. Defaults to
+    /// `"agent"`.
+    #[serde(default = "default_copilot_initiator")]
+    pub initiator: String,
 }
 
 fn default_copilot_model() -> String {
-    "gpt-5-mini".to_string()
+    String::new()
 }
 
 fn default_enable_streaming() -> bool {
@@ -138,6 +157,14 @@ fn default_include_reasoning() -> bool {
     false
 }
 
+fn default_copilot_editor_version() -> String {
+    "vscode/1.95.0".to_string()
+}
+
+fn default_copilot_initiator() -> String {
+    "agent".to_string()
+}
+
 impl Default for CopilotConfig {
     fn default() -> Self {
         Self {
@@ -147,6 +174,8 @@ impl Default for CopilotConfig {
             enable_endpoint_fallback: default_enable_endpoint_fallback(),
             reasoning_effort: None,
             include_reasoning: default_include_reasoning(),
+            editor_version: default_copilot_editor_version(),
+            initiator: default_copilot_initiator(),
         }
     }
 }
@@ -162,7 +191,10 @@ pub struct OllamaConfig {
     #[serde(default = "default_ollama_host")]
     pub host: String,
 
-    /// Model to use for Ollama
+    /// Model to use for Ollama.
+    ///
+    /// Empty string means "not specified": the provider factory queries the
+    /// Ollama server and selects the most recently modified installed model.
     #[serde(default = "default_ollama_model")]
     pub model: String,
 
@@ -179,18 +211,57 @@ pub struct OllamaConfig {
     /// Set via the `XZATOMA_OLLAMA_REQUEST_TIMEOUT` environment variable.
     #[serde(default = "default_ollama_request_timeout")]
     pub request_timeout_seconds: u64,
+
+    /// Maximum number of seconds to wait between successive streaming chunks.
+    ///
+    /// If no bytes arrive from the Ollama streaming response within this window,
+    /// the request is abandoned and an error is returned.  This catches the case
+    /// where Ollama accepts the request and sends `200 OK` headers but then stalls
+    /// or crashes before producing any tokens — which happens when a prompt
+    /// exceeds the model's context window or when Ollama runs out of memory
+    /// loading the KV cache.
+    ///
+    /// The timeout is applied per-chunk, not to the total response time, so long
+    /// responses that generate tokens at a steady pace are not affected.
+    ///
+    /// Defaults to 120 seconds.  Increase this when using very large models
+    /// (19 GB+) on machines where initial KV-cache loading takes longer.
+    ///
+    /// Set via the `XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT` environment variable.
+    #[serde(default = "default_ollama_stream_idle_timeout")]
+    pub stream_idle_timeout_seconds: u64,
+
+    /// Number of tokens in the context window used to process the prompt.
+    ///
+    /// When set, this value is passed as `options.num_ctx` in every Ollama chat
+    /// completion request body. When `None`, the `options` key is omitted from
+    /// the request and Ollama uses its model-default context size.
+    ///
+    /// Set via config file field `provider.ollama.num_ctx`.
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
 }
 
 fn default_ollama_host() -> String {
-    "http://localhost:11434".to_string()
+    // Use 127.0.0.1 instead of localhost to avoid the DNS dual-stack lookup
+    // that resolves localhost to [::1, 127.0.0.1].  On macOS (and most Linux
+    // systems) Ollama only binds to the IPv4 loopback, so the IPv6 attempt
+    // always fails with ECONNREFUSED.  For new (non-idempotent) POST requests
+    // hyper/reqwest does not retry after an ECONNREFUSED on a stale pool entry,
+    // which surfaces as "error sending request for url" in the streaming path.
+    "http://127.0.0.1:11434".to_string()
 }
 
 fn default_ollama_model() -> String {
-    "llama3.2:latest".to_string()
+    String::new()
 }
 
 fn default_ollama_request_timeout() -> u64 {
     600
+}
+
+fn default_ollama_stream_idle_timeout() -> u64 {
+    120
 }
 
 impl Default for OllamaConfig {
@@ -199,6 +270,8 @@ impl Default for OllamaConfig {
             host: default_ollama_host(),
             model: default_ollama_model(),
             request_timeout_seconds: default_ollama_request_timeout(),
+            stream_idle_timeout_seconds: default_ollama_stream_idle_timeout(),
+            num_ctx: None,
         }
     }
 }
@@ -217,14 +290,14 @@ impl Default for OllamaConfig {
 /// let config = OpenAIConfig {
 ///     api_key: "sk-example".to_string(),
 ///     base_url: "https://api.openai.com/v1".to_string(),
-///     model: "gpt-4o-mini".to_string(),
+///     model: "gpt-4.1-mini".to_string(),
 ///     organization_id: None,
 ///     enable_streaming: true,
 ///     request_timeout_seconds: 600,
 ///     stream_idle_timeout_seconds: 30,
 ///     reasoning_effort: None,
 /// };
-/// assert_eq!(config.model, "gpt-4o-mini");
+/// assert_eq!(config.model, "gpt-4.1-mini");
 /// assert_eq!(config.base_url, "https://api.openai.com/v1");
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,9 +325,11 @@ pub struct OpenAIConfig {
 
     /// Model identifier sent in the `model` field of every request body.
     ///
-    /// Defaults to `"gpt-4o-mini"`. For local servers, use the name of the
-    /// model that was loaded on the server (e.g., `"llama-3.2-3b"`).
-    /// Set via the `XZATOMA_OPENAI_MODEL` environment variable.
+    /// Empty string means "not specified": the provider factory queries the
+    /// `/models` endpoint and selects the latest available model. For local
+    /// servers, set this to the name of the model loaded on the server (e.g.,
+    /// `"llama-3.2-3b"`). Set via the `XZATOMA_OPENAI_MODEL` environment
+    /// variable.
     #[serde(default = "default_openai_model")]
     pub model: String,
 
@@ -321,7 +396,7 @@ fn default_openai_base_url() -> String {
 }
 
 fn default_openai_model() -> String {
-    "gpt-4o-mini".to_string()
+    String::new()
 }
 
 fn default_openai_streaming() -> bool {
@@ -392,6 +467,36 @@ pub struct AgentConfig {
     /// the `agent.system_prompt` key in the YAML config file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+
+    /// Maximum number of command history entries for the interactive chat readline
+    /// editor.
+    ///
+    /// Controls how many past user inputs are retained in the in-session readline
+    /// history. Does not affect the conversation messages stored in the persistent
+    /// database; use `conversation.max_tokens` for that.
+    ///
+    /// Defaults to 1000.
+    #[serde(default = "default_chat_history_max_size")]
+    pub chat_history_max_size: usize,
+
+    /// Path to the readline history file for the interactive chat session.
+    ///
+    /// When set, the chat command loads history from this file at startup and
+    /// saves history to it on exit. When `None`, the file
+    /// `<platform-data-dir>/chat_history` is used as the default location.
+    #[serde(default)]
+    pub chat_history_file: Option<std::path::PathBuf>,
+
+    /// Global default thinking mode for agent sessions.
+    ///
+    /// When set, this value is used as the fallback thinking effort for all agent
+    /// commands (`chat`, `run`, `watch`) when the `--thinking-effort` CLI flag is
+    /// not provided. Accepted values: `"low"`, `"medium"`, `"high"`,
+    /// `"extra_high"`, or `"none"` (to disable extended reasoning).
+    ///
+    /// The CLI flag always takes precedence over this config value.
+    #[serde(default)]
+    pub thinking_mode: Option<String>,
 }
 
 fn default_max_turns() -> usize {
@@ -400,6 +505,10 @@ fn default_max_turns() -> usize {
 
 fn default_timeout() -> u64 {
     300
+}
+
+fn default_chat_history_max_size() -> usize {
+    1000
 }
 
 impl Default for AgentConfig {
@@ -413,6 +522,9 @@ impl Default for AgentConfig {
             chat: ChatConfig::default(),
             subagent: SubagentConfig::default(),
             system_prompt: None,
+            chat_history_max_size: default_chat_history_max_size(),
+            chat_history_file: None,
+            thinking_mode: None,
         }
     }
 }
@@ -484,6 +596,74 @@ pub struct AcpConfig {
     /// modes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+
+    /// Session history mode for ACP HTTP runs.
+    ///
+    /// `Isolated` (default): each run starts with a fresh conversation.
+    /// `Shared`: prior conversation history from the same session is loaded
+    /// before each run so the agent sees prior context.
+    #[serde(default)]
+    pub session_mode: AcpSessionMode,
+
+    /// Permit dangerous terminal commands in ACP run sessions.
+    ///
+    /// When `true`, the tool registry is built with `NeverConfirm` safety mode
+    /// so all terminal commands run without confirmation. Use only in trusted,
+    /// isolated environments.
+    #[serde(default)]
+    pub allow_dangerous: bool,
+
+    /// Maximum number of ACP runs that may execute concurrently.
+    ///
+    /// A `POST /runs` request received while this limit is saturated is
+    /// rejected immediately with HTTP `429 Too Many Requests`.
+    #[serde(default = "default_acp_max_concurrent_runs")]
+    pub max_concurrent_runs: usize,
+
+    /// Per-run execution timeout in seconds.
+    ///
+    /// When a run exceeds this duration it is marked `failed`. A value of `0`
+    /// disables the timeout.
+    #[serde(default = "default_acp_run_timeout_seconds")]
+    pub run_timeout_seconds: u64,
+
+    /// Idle timeout for session eviction in seconds.
+    ///
+    /// Sessions with no activity for longer than this value are eligible for
+    /// in-memory eviction by the background eviction task.
+    #[serde(default = "default_acp_session_timeout_seconds")]
+    pub session_timeout_seconds: u64,
+
+    /// Wakeup interval for the background session eviction task in seconds.
+    #[serde(default = "default_acp_session_eviction_poll_seconds")]
+    pub session_eviction_poll_seconds: u64,
+
+    /// Allowed CORS origins for ACP HTTP requests.
+    ///
+    /// An empty list (the default) disables CORS, preserving existing behavior
+    /// where no `Access-Control-Allow-Origin` header is returned.
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
+
+    /// Graceful shutdown drain timeout in seconds.
+    ///
+    /// `None` means drain indefinitely. `Some(n)` means wait at most `n`
+    /// seconds before forcing the server to exit.
+    #[serde(default)]
+    pub graceful_shutdown_timeout: Option<u64>,
+
+    /// Named per-agent configuration entries.
+    ///
+    /// When non-empty each entry describes one agent with optional provider,
+    /// system-prompt, and thinking-mode overrides. When empty,
+    /// `effective_agents()` synthesises a single `"xzatoma"` entry that
+    /// describes the default single-agent deployment.
+    #[serde(default)]
+    pub agents: Vec<AcpAgentConfig>,
+
+    /// Outbound ACP client configuration for inter-agent tool calls.
+    #[serde(default)]
+    pub client: AcpClientConfig,
 }
 
 fn default_acp_enabled() -> bool {
@@ -510,6 +690,22 @@ fn default_acp_rate_limit_per_minute() -> usize {
     120
 }
 
+fn default_acp_max_concurrent_runs() -> usize {
+    4
+}
+
+fn default_acp_run_timeout_seconds() -> u64 {
+    300
+}
+
+fn default_acp_session_timeout_seconds() -> u64 {
+    3600
+}
+
+fn default_acp_session_eviction_poll_seconds() -> u64 {
+    60
+}
+
 impl Default for AcpConfig {
     fn default() -> Self {
         Self {
@@ -525,11 +721,169 @@ impl Default for AcpConfig {
             persistence: AcpPersistenceConfig::default(),
             stdio: AcpStdioConfig::default(),
             system_prompt: None,
+            session_mode: AcpSessionMode::default(),
+            allow_dangerous: false,
+            max_concurrent_runs: default_acp_max_concurrent_runs(),
+            run_timeout_seconds: default_acp_run_timeout_seconds(),
+            session_timeout_seconds: default_acp_session_timeout_seconds(),
+            session_eviction_poll_seconds: default_acp_session_eviction_poll_seconds(),
+            cors_origins: Vec::new(),
+            graceful_shutdown_timeout: None,
+            agents: Vec::new(),
+            client: AcpClientConfig::default(),
         }
     }
 }
 
-/// ACP route compatibility mode.
+/// Per-agent configuration entry for ACP multi-agent deployments.
+///
+/// Each entry in `AcpConfig::agents` describes one named agent with optional
+/// provider, system-prompt, and thinking-mode overrides that take precedence
+/// over the global `AcpConfig` values when the named agent handles a run.
+///
+/// When `agents` is empty, `AcpConfig::effective_agents` synthesises a single
+/// entry with `name = "xzatoma"` to describe the default agent.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpAgentConfig;
+///
+/// let agent = AcpAgentConfig {
+///     name: "reviewer".to_string(),
+///     description: "Code review agent".to_string(),
+///     provider: Some("ollama".to_string()),
+///     input_content_types: vec!["text/plain".to_string()],
+///     output_content_types: vec!["text/plain".to_string()],
+///     thinking_mode: None,
+///     system_prompt: Some("You are a strict code reviewer.".to_string()),
+/// };
+/// assert_eq!(agent.name, "reviewer");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpAgentConfig {
+    /// RFC 1123 label identifying this agent (e.g. `"xzatoma"`, `"reviewer"`).
+    pub name: String,
+
+    /// Human-readable description of this agent's purpose.
+    #[serde(default)]
+    pub description: String,
+
+    /// Optional provider override for this agent.
+    ///
+    /// When set, runs targeting this agent use the specified provider instead
+    /// of the global `provider.provider_type`. Supported values are `"copilot"`,
+    /// `"ollama"`, and `"openai"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Declared accepted input content types.
+    #[serde(default)]
+    pub input_content_types: Vec<String>,
+
+    /// Declared produced output content types.
+    #[serde(default)]
+    pub output_content_types: Vec<String>,
+
+    /// Optional thinking mode override (e.g. `"auto"`, `"fast"`, `"thorough"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
+
+    /// Optional system prompt override for runs targeting this agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+}
+
+/// Outbound ACP client configuration for inter-agent tool calls.
+///
+/// Controls the HTTP client used by `call_acp_agent` and
+/// `discover_acp_agents`. Setting `default_timeout_seconds` to `0` disables
+/// registration of those tools entirely.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpClientConfig;
+///
+/// let cfg = AcpClientConfig::default();
+/// assert_eq!(cfg.default_timeout_seconds, 30);
+/// assert!(cfg.allowed_base_urls.is_empty());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcpClientConfig {
+    /// Per-request HTTP timeout in seconds for outbound ACP calls.
+    ///
+    /// A value of `0` disables registration of `call_acp_agent` and
+    /// `discover_acp_agents` tools entirely.
+    #[serde(default = "default_acp_client_timeout")]
+    pub default_timeout_seconds: u64,
+
+    /// SSRF allow-list of base URLs that may be contacted by inter-agent tools.
+    ///
+    /// An empty list blocks all outbound calls (any URL is rejected at
+    /// validation time, before any network request is made).
+    #[serde(default)]
+    pub allowed_base_urls: Vec<String>,
+}
+
+fn default_acp_client_timeout() -> u64 {
+    30
+}
+
+impl Default for AcpClientConfig {
+    fn default() -> Self {
+        Self {
+            default_timeout_seconds: default_acp_client_timeout(),
+            allowed_base_urls: Vec::new(),
+        }
+    }
+}
+
+impl AcpConfig {
+    /// Returns the effective agent list for the given provider type.
+    ///
+    /// When `agents` is empty, returns a single synthesised entry with
+    /// `name = "xzatoma"` and `provider = Some(provider_type)` so callers
+    /// always have at least one agent to work with.
+    ///
+    /// When `agents` is non-empty, returns the configured list as-is.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_type` - The global provider type string (e.g. `"copilot"`,
+    ///   `"ollama"`) used when synthesising the default entry.
+    ///
+    /// # Returns
+    ///
+    /// Returns a non-empty `Vec<AcpAgentConfig>`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::AcpConfig;
+    ///
+    /// let config = AcpConfig::default();
+    /// let agents = config.effective_agents("ollama");
+    /// assert_eq!(agents.len(), 1);
+    /// assert_eq!(agents[0].name, "xzatoma");
+    /// assert_eq!(agents[0].provider, Some("ollama".to_string()));
+    /// ```
+    pub fn effective_agents(&self, provider_type: &str) -> Vec<AcpAgentConfig> {
+        if self.agents.is_empty() {
+            vec![AcpAgentConfig {
+                name: "xzatoma".to_string(),
+                description: String::new(),
+                provider: Some(provider_type.to_string()),
+                input_content_types: Vec::new(),
+                output_content_types: Vec::new(),
+                thinking_mode: None,
+                system_prompt: None,
+            }]
+        } else {
+            self.agents.clone()
+        }
+    }
+}
 ///
 /// `Versioned` serves ACP endpoints beneath a configurable versioned base path.
 /// `RootCompatible` reserves ACP-spec-style root paths such as `/ping` and
@@ -542,6 +896,33 @@ pub enum AcpCompatibilityMode {
     Versioned,
     /// Serve ACP routes at ACP root-compatible paths such as `/ping`.
     RootCompatible,
+}
+
+/// ACP session history mode.
+///
+/// Controls whether the conversation history from prior runs in the same
+/// session is injected into each new run before execution starts.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::AcpSessionMode;
+///
+/// let isolated: AcpSessionMode = serde_yaml::from_str("isolated").unwrap();
+/// assert_eq!(isolated, AcpSessionMode::Isolated);
+///
+/// let shared: AcpSessionMode = serde_yaml::from_str("shared").unwrap();
+/// assert_eq!(shared, AcpSessionMode::Shared);
+/// ```
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AcpSessionMode {
+    /// Each run starts with a fresh conversation. This is the default.
+    #[default]
+    Isolated,
+    /// Prior conversation history from the same session is loaded before each
+    /// run so the agent can see context from previous turns.
+    Shared,
 }
 
 /// ACP default run mode configuration.
@@ -1441,7 +1822,7 @@ pub enum ExecutionMode {
 ///
 /// `PerTask` is the default and produces better results with multi-step plans
 /// because the agent retains conversation context between tasks. `SingleShot`
-/// preserves the pre-Phase-1 behaviour for operators who need it.
+/// preserves the original single-prompt behaviour for operators who need it.
 ///
 /// # Examples
 ///
@@ -1467,7 +1848,7 @@ pub enum WatcherPlanExecutionMode {
     PerTask,
     /// Collapse the full plan into a single prompt sent to the agent once.
     ///
-    /// This is the legacy behaviour from before Phase 1. Use it when the
+    /// This is the legacy single-prompt behaviour. Use it when the
     /// plan has no structured tasks, or when operator policy requires a
     /// single-shot execution.
     SingleShot,
@@ -1585,6 +1966,74 @@ impl Config {
         Ok(config)
     }
 
+    /// Returns the names of top-level config sections that differ between
+    /// `self` and `other`.
+    ///
+    /// Used by `/config reload` to summarize what changed without ever
+    /// printing raw field values (which could include secrets such as
+    /// provider API keys). Compares each top-level field via its YAML
+    /// representation rather than deriving `PartialEq` on `Config`, so this
+    /// stays decoupled from the exact field types used inside each section.
+    ///
+    /// # Returns
+    ///
+    /// Section names (`"provider"`, `"agent"`, `"watcher"`, `"mcp"`, `"acp"`,
+    /// `"skills"`, `"log"`) that differ, in a fixed, stable order. Empty when
+    /// the two configs are equivalent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::Config;
+    ///
+    /// let base = Config::default();
+    /// let mut changed = Config::default();
+    /// changed.provider.copilot.model = "gpt-5".to_string();
+    ///
+    /// assert_eq!(base.changed_sections(&changed), vec!["provider"]);
+    /// assert!(base.changed_sections(&base).is_empty());
+    /// ```
+    pub fn changed_sections(&self, other: &Config) -> Vec<&'static str> {
+        let mut changed = Vec::new();
+
+        let mut push_if_different = |name: &'static str, differs: bool| {
+            if differs {
+                changed.push(name);
+            }
+        };
+
+        push_if_different(
+            "provider",
+            serde_yaml::to_value(&self.provider).ok() != serde_yaml::to_value(&other.provider).ok(),
+        );
+        push_if_different(
+            "agent",
+            serde_yaml::to_value(&self.agent).ok() != serde_yaml::to_value(&other.agent).ok(),
+        );
+        push_if_different(
+            "watcher",
+            serde_yaml::to_value(&self.watcher).ok() != serde_yaml::to_value(&other.watcher).ok(),
+        );
+        push_if_different(
+            "mcp",
+            serde_yaml::to_value(&self.mcp).ok() != serde_yaml::to_value(&other.mcp).ok(),
+        );
+        push_if_different(
+            "acp",
+            serde_yaml::to_value(&self.acp).ok() != serde_yaml::to_value(&other.acp).ok(),
+        );
+        push_if_different(
+            "skills",
+            serde_yaml::to_value(&self.skills).ok() != serde_yaml::to_value(&other.skills).ok(),
+        );
+        push_if_different(
+            "log",
+            serde_yaml::to_value(&self.log).ok() != serde_yaml::to_value(&other.log).ok(),
+        );
+
+        changed
+    }
+
     fn default_config() -> Self {
         Self {
             provider: ProviderConfig {
@@ -1632,6 +2081,14 @@ impl Config {
                 self.provider.ollama.request_timeout_seconds = value;
             } else {
                 tracing::warn!("Invalid XZATOMA_OLLAMA_REQUEST_TIMEOUT: {}", timeout);
+            }
+        }
+
+        if let Ok(timeout) = std::env::var("XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT") {
+            if let Ok(value) = timeout.parse::<u64>() {
+                self.provider.ollama.stream_idle_timeout_seconds = value;
+            } else {
+                tracing::warn!("Invalid XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT: {}", timeout);
             }
         }
 
@@ -1890,6 +2347,9 @@ impl Config {
                     security: None,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
             }
 
@@ -1914,6 +2374,9 @@ impl Config {
                     security: None,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
             }
 
@@ -2116,6 +2579,24 @@ impl Config {
             }
         }
 
+        if let Ok(max_payload) = std::env::var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES") {
+            match max_payload.parse::<usize>() {
+                Ok(v) => {
+                    self.watcher.execution.max_payload_bytes = v;
+                    tracing::debug!(
+                        max_payload_bytes = v,
+                        "Env override: XZATOMA_WATCHER_MAX_PAYLOAD_BYTES"
+                    );
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        "Invalid value for XZATOMA_WATCHER_MAX_PAYLOAD_BYTES: {}",
+                        max_payload
+                    );
+                }
+            }
+        }
+
         // ---------------------------------------------------------------------
         // Kafka overrides from XZEPR_KAFKA_* environment variables
         // These can populate or override the watcher.kafka block.
@@ -2139,6 +2620,7 @@ impl Config {
                 sasl_mechanism: std::env::var("XZEPR_KAFKA_SASL_MECHANISM").ok(),
                 sasl_username: std::env::var("XZEPR_KAFKA_SASL_USERNAME").ok(),
                 sasl_password: std::env::var("XZEPR_KAFKA_SASL_PASSWORD").ok(),
+                ssl_ca_location: None,
             });
 
             if let Some(ref mut kafka_cfg) = self.watcher.kafka {
@@ -2159,6 +2641,9 @@ impl Config {
                     security,
                     broker_address_family: default_broker_address_family(),
                     poll_interval_ms: default_poll_interval_ms(),
+                    max_poll_interval_ms: default_max_poll_interval_ms(),
+                    startup_stabilization_secs: default_startup_stabilization_secs(),
+                    auto_offset_reset: None,
                 });
                 tracing::debug!("Populated watcher.kafka from XZEPR_KAFKA_* env vars");
             }
@@ -2748,6 +3233,12 @@ impl Config {
             }
         }
 
+        if self.watcher.execution.max_payload_bytes == 0 {
+            return Err(XzatomaError::Config(
+                "watcher.execution.max_payload_bytes must be greater than 0".to_string(),
+            ));
+        }
+
         if let Some(kafka) = &self.watcher.kafka {
             if kafka.brokers.trim().is_empty() {
                 return Err(XzatomaError::Config(
@@ -2864,6 +3355,178 @@ impl Config {
         Ok(())
     }
 
+    /// Validate configuration requirements specific to the `chat` and `run` commands.
+    ///
+    /// Checks that a provider type is configured and that the model field is
+    /// non-empty (only when a model is explicitly required by the active
+    /// provider). This is a stricter check than `Config::validate` for the
+    /// execution context.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - The provider type string is empty.
+    /// - The active provider's model field is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let mut config = Config::default();
+    /// config.provider.provider_type = "ollama".to_string();
+    /// config.provider.ollama.model = "llama3.2".to_string();
+    /// assert!(config.validate_for_execution().is_ok());
+    ///
+    /// config.provider.ollama.model = String::new();
+    /// assert!(config.validate_for_execution().is_err());
+    /// ```
+    pub fn validate_for_execution(&self) -> Result<()> {
+        if self.provider.provider_type.is_empty() {
+            return Err(XzatomaError::Config(
+                "provider.provider_type is required for execution".to_string(),
+            ));
+        }
+        let model_is_empty = match self.provider.provider_type.as_str() {
+            "copilot" => self.provider.copilot.model.trim().is_empty(),
+            "ollama" => self.provider.ollama.model.trim().is_empty(),
+            "openai" => self.provider.openai.model.trim().is_empty(),
+            _ => false,
+        };
+        if model_is_empty {
+            return Err(XzatomaError::Config(format!(
+                "provider.{}.model must be set for execution",
+                self.provider.provider_type
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `watch` command.
+    ///
+    /// Checks that the Kafka broker list and topic are non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - `watcher.kafka` is not configured.
+    /// - `watcher.kafka.brokers` is empty or whitespace-only.
+    /// - `watcher.kafka.topic` is empty or whitespace-only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    /// use xzatoma::config::KafkaWatcherConfig;
+    ///
+    /// let mut config = Config::default();
+    /// config.watcher.kafka = Some(KafkaWatcherConfig {
+    ///     brokers: "localhost:9092".to_string(),
+    ///     topic: "events".to_string(),
+    ///     ..Default::default()
+    /// });
+    /// assert!(config.validate_for_watcher().is_ok());
+    /// ```
+    pub fn validate_for_watcher(&self) -> Result<()> {
+        let kafka = self.watcher.kafka.as_ref().ok_or_else(|| {
+            XzatomaError::Config(
+                "Kafka configuration is required for the watch command. \
+                 Please configure it in the config file or set XZEPR_KAFKA_* env vars"
+                    .to_string(),
+            )
+        })?;
+        if kafka.brokers.trim().is_empty() {
+            return Err(XzatomaError::Config(
+                "watcher.kafka.brokers cannot be empty".to_string(),
+            ));
+        }
+        if kafka.topic.trim().is_empty() {
+            return Err(XzatomaError::Config(
+                "watcher.kafka.topic cannot be empty".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `serve` / `acp` commands.
+    ///
+    /// Checks that the ACP bind port is non-zero and that each agent name in
+    /// `acp.agents` is a valid RFC 1123 DNS label.
+    ///
+    /// RFC 1123 label rule: `^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$`
+    /// (lowercase alphanumeric and hyphen, 1 to 63 characters, no leading or
+    /// trailing hyphen).
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when:
+    /// - `acp.port` is zero.
+    /// - Any agent name in `acp.agents` fails RFC 1123 label validation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.validate_for_acp().is_ok());
+    ///
+    /// let mut bad = Config::default();
+    /// bad.acp.port = 0;
+    /// assert!(bad.validate_for_acp().is_err());
+    /// ```
+    pub fn validate_for_acp(&self) -> Result<()> {
+        if self.acp.port == 0 {
+            return Err(XzatomaError::Config(
+                "acp.port must be greater than 0".to_string(),
+            ));
+        }
+        let rfc1123_label =
+            regex::Regex::new(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$").map_err(|e| {
+                XzatomaError::Config(format!("Failed to compile RFC 1123 regex: {}", e))
+            })?;
+        for agent in &self.acp.agents {
+            if !rfc1123_label.is_match(&agent.name) {
+                return Err(XzatomaError::Config(format!(
+                    "acp.agents[].name '{}' is not a valid RFC 1123 label (must match ^[a-z0-9]([a-z0-9\\-]{{0,61}}[a-z0-9])?$)",
+                    agent.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate configuration requirements specific to the `agent` (Zed stdio) command.
+    ///
+    /// Checks that a provider type is configured. This is a lighter check than
+    /// `validate_for_execution` because the agent command may start without an
+    /// explicit model; the model can be determined later by querying the provider.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` when the provider type string is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::Config;
+    ///
+    /// let config = Config::default();
+    /// assert!(config.validate_for_zed_agent().is_ok());
+    ///
+    /// let mut empty_provider = Config::default();
+    /// empty_provider.provider.provider_type = String::new();
+    /// assert!(empty_provider.validate_for_zed_agent().is_err());
+    /// ```
+    pub fn validate_for_zed_agent(&self) -> Result<()> {
+        if self.provider.provider_type.is_empty() {
+            return Err(XzatomaError::Config(
+                "provider.provider_type is required for the agent command".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Check if special commands should be persisted in conversation history
     ///
     /// # Returns
@@ -2892,6 +3555,16 @@ impl Config {
             ));
         }
 
+        if let Some(token) = &self.acp.auth_token {
+            let trimmed_len = token.trim().len();
+            if trimmed_len > 0 && trimmed_len < 16 {
+                return Err(XzatomaError::Config(
+                    "acp.auth_token must be at least 16 characters for adequate entropy"
+                        .to_string(),
+                ));
+            }
+        }
+
         if let Some(ref sp) = self.acp.system_prompt
             && sp.trim().is_empty()
         {
@@ -2910,6 +3583,18 @@ impl Config {
         if self.acp.rate_limit_per_minute == 0 {
             return Err(XzatomaError::Config(
                 "acp.rate_limit_per_minute must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.max_concurrent_runs == 0 {
+            return Err(XzatomaError::Config(
+                "acp.max_concurrent_runs must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.acp.session_eviction_poll_seconds == 0 {
+            return Err(XzatomaError::Config(
+                "acp.session_eviction_poll_seconds must be greater than 0".to_string(),
             ));
         }
 
@@ -3009,6 +3694,32 @@ impl Config {
                     "acp.stdio.allowed_image_mime_types value '{}' must start with 'image/'",
                     mime_type
                 )));
+            }
+        }
+
+        // Validate per-agent entries.
+        for agent in &self.acp.agents {
+            if agent.name.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.agents[].name cannot be empty".to_string(),
+                ));
+            }
+            if let Some(ref sp) = agent.system_prompt
+                && sp.trim().is_empty()
+            {
+                return Err(XzatomaError::Config(format!(
+                    "acp.agents[].system_prompt for agent '{}' cannot be blank",
+                    agent.name
+                )));
+            }
+        }
+
+        // Validate outbound ACP client allow-list entries.
+        for url in &self.acp.client.allowed_base_urls {
+            if url.trim().is_empty() {
+                return Err(XzatomaError::Config(
+                    "acp.client.allowed_base_urls cannot contain empty values".to_string(),
+                ));
             }
         }
 
@@ -3161,6 +3872,47 @@ impl Default for Config {
 }
 
 #[cfg(test)]
+mod changed_sections_tests {
+    use super::*;
+
+    #[test]
+    fn test_changed_sections_identical_configs_returns_empty() {
+        let base = Config::default_config();
+        let other = Config::default_config();
+
+        assert!(base.changed_sections(&other).is_empty());
+    }
+
+    #[test]
+    fn test_changed_sections_detects_provider_change() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.provider.copilot.model = "gpt-5".to_string();
+
+        assert_eq!(base.changed_sections(&other), vec!["provider"]);
+    }
+
+    #[test]
+    fn test_changed_sections_detects_multiple_changes() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.provider.copilot.model = "gpt-5".to_string();
+        other.skills.enabled = !other.skills.enabled;
+
+        assert_eq!(base.changed_sections(&other), vec!["provider", "skills"]);
+    }
+
+    #[test]
+    fn test_changed_sections_detects_agent_change() {
+        let base = Config::default_config();
+        let mut other = Config::default_config();
+        other.agent.max_turns += 1;
+
+        assert_eq!(base.changed_sections(&other), vec!["agent"]);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
@@ -3262,6 +4014,14 @@ mod tests {
         assert!(config.skills.activation_tool_enabled);
         assert!(config.skills.project_trust_required);
         assert!(config.skills.strict_frontmatter);
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Isolated);
+        assert!(!config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 4);
+        assert_eq!(config.acp.run_timeout_seconds, 300);
+        assert_eq!(config.acp.session_timeout_seconds, 3600);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 60);
+        assert!(config.acp.cors_origins.is_empty());
+        assert!(config.acp.graceful_shutdown_timeout.is_none());
     }
 
     #[test]
@@ -3316,6 +4076,27 @@ mod tests {
 
         let error = config.validate().expect_err("config should be invalid");
         assert!(error.to_string().contains("acp.auth_token cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_short_auth_token() {
+        let mut config = Config::default();
+        config.acp.auth_token = Some("short".to_string());
+
+        let error = config.validate().expect_err("config should be invalid");
+        assert!(
+            error
+                .to_string()
+                .contains("acp.auth_token must be at least 16 characters")
+        );
+    }
+
+    #[test]
+    fn test_validate_acp_config_accepts_long_auth_token() {
+        let mut config = Config::default();
+        config.acp.auth_token = Some("0123456789abcdef0123".to_string());
+
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -3958,16 +4739,10 @@ kafka:
     #[test]
     fn test_kafka_watcher_config_roundtrip_output_topic() {
         let original = KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.in".to_string(),
             output_topic: Some("plans.out".to_string()),
             group_id: "watchers".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -3983,16 +4758,11 @@ kafka:
     #[test]
     fn test_kafka_watcher_config_roundtrip_auto_create_topics_false() {
         let original = KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.in".to_string(),
             output_topic: None,
             group_id: "watchers".to_string(),
             auto_create_topics: false,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         };
 
         let yaml = serde_yaml::to_string(&original).unwrap();
@@ -4048,6 +4818,7 @@ kafka:
             max_concurrent_executions: 1,
             execution_timeout_secs: 300,
             execution_mode: WatcherPlanExecutionMode::SingleShot,
+            ..Default::default()
         };
         let yaml = serde_yaml::to_string(&config).unwrap();
         assert!(yaml.contains("single_shot"));
@@ -4337,11 +5108,39 @@ output_max_size: 4096
     }
 
     #[test]
+    fn test_ollama_config_stream_idle_timeout_default() {
+        let config = OllamaConfig::default();
+        assert_eq!(config.stream_idle_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_stream_idle_timeout() {
+        let yaml = "host: http://localhost:11434\nmodel: llama3.2:latest\nstream_idle_timeout_seconds: 60\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.stream_idle_timeout_seconds, 60);
+    }
+
+    #[test]
+    fn test_ollama_config_deserialize_omits_stream_idle_timeout_uses_default() {
+        let yaml = "host: http://localhost:11434\nmodel: llama3.2:latest\n";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.stream_idle_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_ollama_stream_idle_timeout() {
+        let _guard = EnvVarGuard::set("XZATOMA_OLLAMA_STREAM_IDLE_TIMEOUT", "60");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert_eq!(config.provider.ollama.stream_idle_timeout_seconds, 60);
+    }
+
+    #[test]
     fn test_openai_config_defaults() {
         let config = OpenAIConfig::default();
         assert_eq!(config.api_key, "");
         assert_eq!(config.base_url, "https://api.openai.com/v1");
-        assert_eq!(config.model, "gpt-4o-mini");
+        assert_eq!(config.model, "");
         assert!(config.organization_id.is_none());
         assert!(config.enable_streaming);
     }
@@ -4765,6 +5564,64 @@ chat_enabled: true
 
     #[test]
     #[serial]
+    fn test_apply_env_vars_overrides_max_payload_bytes() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES", "2048");
+        }
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(cfg.watcher.execution.max_payload_bytes, 2048);
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_ignores_invalid_max_payload_bytes() {
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+        unsafe {
+            std::env::set_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES", "not-a-number");
+        }
+
+        let mut cfg = Config::default();
+        cfg.apply_env_vars();
+
+        assert_eq!(
+            cfg.watcher.execution.max_payload_bytes,
+            default_max_payload_bytes()
+        );
+
+        unsafe {
+            std::env::remove_var("XZATOMA_WATCHER_MAX_PAYLOAD_BYTES");
+        }
+    }
+
+    #[test]
+    fn test_config_validate_rejects_zero_max_payload_bytes() {
+        let mut config = Config::default();
+        config.watcher.execution.max_payload_bytes = 0;
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("max_payload_bytes")
+        );
+    }
+
+    #[test]
+    #[serial]
     fn test_apply_env_vars_overrides_watcher_type() {
         unsafe {
             std::env::remove_var("XZATOMA_WATCHER_TYPE");
@@ -4793,16 +5650,9 @@ chat_enabled: true
 
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         unsafe {
@@ -4829,16 +5679,9 @@ chat_enabled: true
 
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "original-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         unsafe {
@@ -4897,16 +5740,9 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         assert!(cfg.validate().is_ok());
@@ -4917,16 +5753,10 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
             output_topic: Some("plans.output".to_string()),
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
         cfg.watcher.generic_match = GenericMatchConfig {
             action: Some("deploy.*".to_string()),
@@ -4942,16 +5772,9 @@ chat_enabled: true
         let mut cfg = Config::default();
         cfg.watcher.watcher_type = WatcherType::Generic;
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "test-group".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
         cfg.watcher.generic_match.action = Some("[broken".to_string());
 
@@ -4963,16 +5786,9 @@ chat_enabled: true
     fn test_config_validate_empty_group_id_returns_error() {
         let mut cfg = Config::default();
         cfg.watcher.kafka = Some(KafkaWatcherConfig {
-            brokers: "localhost:9092".to_string(),
             topic: "plans.input".to_string(),
-            output_topic: None,
             group_id: "   ".to_string(),
-            auto_create_topics: true,
-            num_partitions: 1,
-            replication_factor: 1,
-            security: None,
-            broker_address_family: "v4".to_string(),
-            poll_interval_ms: 1000,
+            ..Default::default()
         });
 
         let err = cfg.validate().unwrap_err().to_string();
@@ -5576,7 +6392,7 @@ agent:
         assert_eq!(cfg.agent.subagent.default_max_turns, 5);
     }
 
-    // --- Phase 3 LogConfig tests ---
+    // --- LogConfig tests ---
 
     #[test]
     fn test_log_config_debug_field_default_false() {
@@ -5822,6 +6638,183 @@ acp: {}
     }
 
     #[test]
+    fn test_acp_session_mode_isolated_is_default() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_mode, AcpSessionMode::Isolated);
+    }
+
+    #[test]
+    fn test_acp_session_mode_deserializes_isolated() {
+        let yaml = "isolated";
+        let mode: AcpSessionMode = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(mode, AcpSessionMode::Isolated);
+    }
+
+    #[test]
+    fn test_acp_session_mode_deserializes_shared() {
+        let yaml = "shared";
+        let mode: AcpSessionMode = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(mode, AcpSessionMode::Shared);
+    }
+
+    #[test]
+    fn test_acp_config_max_concurrent_runs_default_is_4() {
+        let config = AcpConfig::default();
+        assert_eq!(config.max_concurrent_runs, 4);
+    }
+
+    #[test]
+    fn test_acp_config_run_timeout_seconds_default_is_300() {
+        let config = AcpConfig::default();
+        assert_eq!(config.run_timeout_seconds, 300);
+    }
+
+    #[test]
+    fn test_acp_config_session_timeout_seconds_default_is_3600() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_timeout_seconds, 3600);
+    }
+
+    #[test]
+    fn test_acp_config_session_eviction_poll_seconds_default_is_60() {
+        let config = AcpConfig::default();
+        assert_eq!(config.session_eviction_poll_seconds, 60);
+    }
+
+    #[test]
+    fn test_acp_config_cors_origins_default_is_empty() {
+        let config = AcpConfig::default();
+        assert!(config.cors_origins.is_empty());
+    }
+
+    #[test]
+    fn test_acp_config_graceful_shutdown_timeout_default_is_none() {
+        let config = AcpConfig::default();
+        assert!(config.graceful_shutdown_timeout.is_none());
+    }
+
+    #[test]
+    fn test_acp_config_allow_dangerous_default_is_false() {
+        let config = AcpConfig::default();
+        assert!(!config.allow_dangerous);
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_zero_max_concurrent_runs() {
+        let mut config = Config::default();
+        config.acp.max_concurrent_runs = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("max_concurrent_runs"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_zero_session_eviction_poll_seconds() {
+        let mut config = Config::default();
+        config.acp.session_eviction_poll_seconds = 0;
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("session_eviction_poll_seconds"));
+    }
+
+    #[test]
+    fn test_acp_config_new_fields_deserialize_from_yaml() {
+        let yaml = r#"
+provider:
+  type: copilot
+agent: {}
+acp:
+  session_mode: shared
+  allow_dangerous: true
+  max_concurrent_runs: 8
+  run_timeout_seconds: 600
+  session_timeout_seconds: 7200
+  session_eviction_poll_seconds: 120
+  cors_origins:
+    - "https://example.com"
+    - "https://app.example.com"
+  graceful_shutdown_timeout: 30
+"#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Shared);
+        assert!(config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 8);
+        assert_eq!(config.acp.run_timeout_seconds, 600);
+        assert_eq!(config.acp.session_timeout_seconds, 7200);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 120);
+        assert_eq!(
+            config.acp.cors_origins,
+            vec!["https://example.com", "https://app.example.com"]
+        );
+        assert_eq!(config.acp.graceful_shutdown_timeout, Some(30));
+    }
+
+    #[test]
+    fn test_acp_config_omitted_new_fields_use_defaults() {
+        let yaml = "provider:\n  type: copilot\nagent: {}\nacp:\n  host: \"127.0.0.1\"\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.acp.session_mode, AcpSessionMode::Isolated);
+        assert!(!config.acp.allow_dangerous);
+        assert_eq!(config.acp.max_concurrent_runs, 4);
+        assert_eq!(config.acp.run_timeout_seconds, 300);
+        assert_eq!(config.acp.session_timeout_seconds, 3600);
+        assert_eq!(config.acp.session_eviction_poll_seconds, 60);
+        assert!(config.acp.cors_origins.is_empty());
+        assert!(config.acp.graceful_shutdown_timeout.is_none());
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_defaults_none() {
+        let cfg = KafkaWatcherConfig::default();
+        assert!(cfg.auto_offset_reset.is_none());
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_roundtrip() {
+        let yaml = r#"
+brokers: "localhost:9092"
+topic: "test"
+auto_offset_reset: "earliest"
+"#;
+        let cfg: KafkaWatcherConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.auto_offset_reset.as_deref(), Some("earliest"));
+    }
+
+    #[test]
+    fn test_kafka_watcher_config_auto_offset_reset_absent_gives_none() {
+        let yaml = r#"
+brokers: "localhost:9092"
+topic: "test"
+"#;
+        let cfg: KafkaWatcherConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.auto_offset_reset.is_none());
+    }
+
+    #[test]
+    fn test_kafka_security_config_ssl_ca_location_defaults_none() {
+        let yaml = r#"
+protocol: "SSL"
+"#;
+        let cfg: KafkaSecurityConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.ssl_ca_location.is_none());
+    }
+
+    #[test]
+    fn test_kafka_security_config_ssl_ca_location_roundtrip() {
+        let yaml = r#"
+protocol: "SSL"
+ssl_ca_location: "/etc/ssl/certs/ca.pem"
+"#;
+        let cfg: KafkaSecurityConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.ssl_ca_location.as_deref(),
+            Some("/etc/ssl/certs/ca.pem")
+        );
+    }
+
+    #[test]
     #[serial]
     fn test_apply_env_vars_sets_both_agent_and_acp_system_prompt() {
         let _guard = EnvVarGuard::set("XZATOMA_SYSTEM_PROMPT", "you are a senior engineer");
@@ -5835,6 +6828,358 @@ acp: {}
             config.acp.system_prompt.as_deref(),
             Some("you are a senior engineer")
         );
+    }
+
+    #[test]
+    fn test_acp_config_agents_defaults_empty() {
+        let config = AcpConfig::default();
+        assert!(config.agents.is_empty());
+    }
+
+    #[test]
+    fn test_effective_agents_empty_list_synthesises_xzatoma_entry() {
+        let config = AcpConfig::default();
+        let agents = config.effective_agents("ollama");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].name, "xzatoma");
+        assert_eq!(agents[0].provider, Some("ollama".to_string()));
+        assert!(agents[0].input_content_types.is_empty());
+    }
+
+    #[test]
+    fn test_effective_agents_non_empty_list_returned_as_is() {
+        let config = AcpConfig {
+            agents: vec![
+                AcpAgentConfig {
+                    name: "agent-a".to_string(),
+                    description: "Agent A".to_string(),
+                    provider: Some("ollama".to_string()),
+                    input_content_types: vec!["text/plain".to_string()],
+                    output_content_types: vec![],
+                    thinking_mode: None,
+                    system_prompt: None,
+                },
+                AcpAgentConfig {
+                    name: "agent-b".to_string(),
+                    description: String::new(),
+                    provider: None,
+                    input_content_types: vec![],
+                    output_content_types: vec![],
+                    thinking_mode: Some("auto".to_string()),
+                    system_prompt: None,
+                },
+            ],
+            ..AcpConfig::default()
+        };
+        let agents = config.effective_agents("copilot");
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0].name, "agent-a");
+        assert_eq!(agents[1].name, "agent-b");
+    }
+
+    #[test]
+    fn test_acp_client_config_defaults() {
+        let cfg = AcpClientConfig::default();
+        assert_eq!(cfg.default_timeout_seconds, 30);
+        assert!(cfg.allowed_base_urls.is_empty());
+    }
+
+    #[test]
+    fn test_acp_config_client_defaults() {
+        let config = AcpConfig::default();
+        assert_eq!(config.client.default_timeout_seconds, 30);
+        assert!(config.client.allowed_base_urls.is_empty());
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_blank_agent_name() {
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "  ".to_string(),
+            description: String::new(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("acp.agents[].name cannot be empty")
+        );
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_blank_agent_system_prompt() {
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "myagent".to_string(),
+            description: String::new(),
+            provider: None,
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: Some("   ".to_string()),
+        }];
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("system_prompt"));
+    }
+
+    #[test]
+    fn test_validate_acp_config_rejects_empty_allowed_base_url() {
+        let mut config = Config::default();
+        config.acp.client.allowed_base_urls = vec!["".to_string()];
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("allowed_base_urls cannot contain empty values")
+        );
+    }
+
+    #[test]
+    fn test_acp_agent_config_deserializes_from_yaml() {
+        let yaml = r#"
+name: reviewer
+description: "Code review agent"
+provider: ollama
+input_content_types:
+  - text/plain
+thinking_mode: auto
+system_prompt: "You are a reviewer."
+"#;
+        let agent: AcpAgentConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(agent.name, "reviewer");
+        assert_eq!(agent.provider, Some("ollama".to_string()));
+        assert_eq!(agent.thinking_mode, Some("auto".to_string()));
+    }
+
+    #[test]
+    fn test_acp_client_config_deserializes_from_yaml() {
+        let yaml = r#"
+default_timeout_seconds: 60
+allowed_base_urls:
+  - "http://agent1:8765"
+  - "http://agent2:8765"
+"#;
+        let cfg: AcpClientConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.default_timeout_seconds, 60);
+        assert_eq!(cfg.allowed_base_urls.len(), 2);
+    }
+
+    #[test]
+    fn test_acp_config_deserializes_with_agents_and_client() {
+        let yaml = r#"
+enabled: true
+host: "127.0.0.1"
+port: 8765
+agents:
+  - name: default
+    description: "Default agent"
+    provider: ollama
+client:
+  default_timeout_seconds: 45
+  allowed_base_urls:
+    - "http://localhost:9000"
+"#;
+        let config: AcpConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.agents.len(), 1);
+        assert_eq!(config.agents[0].name, "default");
+        assert_eq!(config.client.default_timeout_seconds, 45);
+        assert_eq!(config.client.allowed_base_urls[0], "http://localhost:9000");
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_default_is_none() {
+        let config = OllamaConfig::default();
+        assert!(config.num_ctx.is_none());
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_deserializes() {
+        let yaml = "num_ctx: 16384";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.num_ctx, Some(16384));
+    }
+
+    #[test]
+    fn test_ollama_config_num_ctx_absent_gives_none() {
+        let yaml = "host: \"http://127.0.0.1:11434\"";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.num_ctx.is_none());
+    }
+
+    #[test]
+    fn test_copilot_config_editor_version_default() {
+        let config = CopilotConfig::default();
+        assert_eq!(config.editor_version, "vscode/1.95.0");
+    }
+
+    #[test]
+    fn test_copilot_config_initiator_default() {
+        let config = CopilotConfig::default();
+        assert_eq!(config.initiator, "agent");
+    }
+
+    #[test]
+    fn test_copilot_config_editor_version_deserializes() {
+        let yaml = "editor_version: \"neovim/0.10.0\"";
+        let config: CopilotConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.editor_version, "neovim/0.10.0");
+    }
+
+    #[test]
+    fn test_copilot_config_initiator_deserializes() {
+        let yaml = "initiator: \"copilot-chat\"";
+        let config: CopilotConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.initiator, "copilot-chat");
+    }
+
+    #[test]
+    fn test_validate_for_execution_passes_with_model_set() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.provider.ollama.model = "llama3.2".to_string();
+        assert!(config.validate_for_execution().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_execution_fails_with_empty_model() {
+        let mut config = Config::default();
+        config.provider.provider_type = "ollama".to_string();
+        config.provider.ollama.model = String::new();
+        assert!(config.validate_for_execution().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_execution_fails_with_empty_provider_type() {
+        let mut config = Config::default();
+        config.provider.provider_type = String::new();
+        assert!(config.validate_for_execution().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_passes_with_valid_kafka() {
+        use crate::config::KafkaWatcherConfig;
+        let mut config = Config::default();
+        config.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: "localhost:9092".to_string(),
+            topic: "events".to_string(),
+            ..Default::default()
+        });
+        assert!(config.validate_for_watcher().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_fails_with_empty_brokers() {
+        use crate::config::KafkaWatcherConfig;
+        let mut config = Config::default();
+        config.watcher.kafka = Some(KafkaWatcherConfig {
+            brokers: String::new(),
+            topic: "events".to_string(),
+            ..Default::default()
+        });
+        assert!(config.validate_for_watcher().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_watcher_fails_without_kafka() {
+        let mut config = Config::default();
+        config.watcher.kafka = None;
+        assert!(config.validate_for_watcher().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_passes_with_valid_config() {
+        let config = Config::default();
+        assert!(config.validate_for_acp().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_acp_fails_with_zero_port() {
+        let mut config = Config::default();
+        config.acp.port = 0;
+        assert!(config.validate_for_acp().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_fails_with_invalid_agent_name() {
+        use crate::config::AcpAgentConfig;
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "Invalid_Name".to_string(),
+            description: "test".to_string(),
+            provider: Some("copilot".to_string()),
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        assert!(config.validate_for_acp().is_err());
+    }
+
+    #[test]
+    fn test_validate_for_acp_passes_with_valid_agent_name() {
+        use crate::config::AcpAgentConfig;
+        let mut config = Config::default();
+        config.acp.agents = vec![AcpAgentConfig {
+            name: "my-agent".to_string(),
+            description: "test".to_string(),
+            provider: Some("copilot".to_string()),
+            input_content_types: vec![],
+            output_content_types: vec![],
+            thinking_mode: None,
+            system_prompt: None,
+        }];
+        assert!(config.validate_for_acp().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_zed_agent_passes_with_configured_provider() {
+        let config = Config::default();
+        assert!(config.validate_for_zed_agent().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_zed_agent_fails_with_empty_provider_type() {
+        let mut config = Config::default();
+        config.provider.provider_type = String::new();
+        assert!(config.validate_for_zed_agent().is_err());
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_max_size_default() {
+        let config = AgentConfig::default();
+        assert_eq!(config.chat_history_max_size, 1000);
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_file_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.chat_history_file.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_chat_history_file_deserializes() {
+        let yaml = "chat_history_file: \"/tmp/chat_history\"";
+        let config: AgentConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(
+            config.chat_history_file,
+            Some(std::path::PathBuf::from("/tmp/chat_history"))
+        );
+    }
+
+    #[test]
+    fn test_agent_config_thinking_mode_default_is_none() {
+        let config = AgentConfig::default();
+        assert!(config.thinking_mode.is_none());
+    }
+
+    #[test]
+    fn test_agent_config_thinking_mode_deserializes() {
+        let yaml = "thinking_mode: \"high\"";
+        let config: AgentConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert_eq!(config.thinking_mode, Some("high".to_string()));
     }
 }
 
@@ -6009,11 +7354,112 @@ pub struct KafkaWatcherConfig {
     /// responsiveness at the cost of more idle wakeups. Defaults to `1000`.
     #[serde(default = "default_poll_interval_ms")]
     pub poll_interval_ms: u64,
+
+    /// Maximum time in milliseconds between two calls to `poll()` by the consumer.
+    ///
+    /// When a plan takes longer than this value to execute, the rdkafka consumer
+    /// is evicted from its consumer group. Increase this value for long-running
+    /// plans. Defaults to 3 600 000 ms (1 hour).
+    ///
+    /// Applied as the rdkafka config key `max.poll.interval.ms`.
+    #[serde(default = "default_max_poll_interval_ms")]
+    pub max_poll_interval_ms: u64,
+
+    /// Number of seconds to suppress broker connectivity errors at startup.
+    ///
+    /// During the first `startup_stabilization_secs` seconds after the consumer
+    /// starts, rdkafka log callbacks for broker connectivity errors are downgraded
+    /// to `DEBUG` level. This prevents noisy `WARN`/`ERROR` log bursts that occur
+    /// while rdkafka is probing brokers during normal startup. Defaults to 10.
+    #[serde(default = "default_startup_stabilization_secs")]
+    pub startup_stabilization_secs: u64,
+
+    /// Initial offset reset policy for new consumer groups.
+    ///
+    /// When `Some(value)`, `value` is applied as the rdkafka consumer config key
+    /// `auto.offset.reset` during consumer construction. Accepted rdkafka values
+    /// are `"earliest"`, `"latest"`, and `"error"`. When `None`, the field is not
+    /// passed to rdkafka at all: the generic watcher uses the rdkafka default
+    /// (`"latest"`), while the XZepr watcher preserves its own internal default
+    /// (`"earliest"`).
+    #[serde(default)]
+    pub auto_offset_reset: Option<String>,
 }
 
 /// Default broker address family for rdkafka connections.
 fn default_broker_address_family() -> String {
     "v4".to_string()
+}
+
+/// Default maximum poll interval for the Kafka consumer (milliseconds).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::KafkaWatcherConfig;
+///
+/// let cfg = KafkaWatcherConfig::default();
+/// assert_eq!(cfg.max_poll_interval_ms, 3_600_000);
+/// ```
+fn default_max_poll_interval_ms() -> u64 {
+    3_600_000
+}
+
+/// Default startup stabilization window in seconds.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::KafkaWatcherConfig;
+///
+/// let cfg = KafkaWatcherConfig::default();
+/// assert_eq!(cfg.startup_stabilization_secs, 10);
+/// ```
+fn default_startup_stabilization_secs() -> u64 {
+    10
+}
+
+impl Default for KafkaWatcherConfig {
+    /// Returns a `KafkaWatcherConfig` populated with the same defaults used by
+    /// the serde `#[serde(default = ...)]` field attributes.
+    ///
+    /// Production code always constructs this struct explicitly (or via
+    /// deserialization), so this impl exists primarily to reduce boilerplate
+    /// in tests and documentation examples that only need to override a few
+    /// fields via functional-update syntax (`..Default::default()`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::config::KafkaWatcherConfig;
+    ///
+    /// let config = KafkaWatcherConfig {
+    ///     topic: "plans.input".to_string(),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// assert_eq!(config.topic, "plans.input");
+    /// assert_eq!(config.brokers, "localhost:9092");
+    /// assert_eq!(config.group_id, "xzatoma-watcher");
+    /// assert!(config.auto_create_topics);
+    /// ```
+    fn default() -> Self {
+        Self {
+            brokers: "localhost:9092".to_string(),
+            topic: "xzepr.dev.events".to_string(),
+            output_topic: None,
+            group_id: default_watcher_group_id(),
+            auto_create_topics: default_auto_create_topics(),
+            num_partitions: default_num_partitions(),
+            replication_factor: default_replication_factor(),
+            security: None,
+            broker_address_family: default_broker_address_family(),
+            poll_interval_ms: default_poll_interval_ms(),
+            max_poll_interval_ms: default_max_poll_interval_ms(),
+            startup_stabilization_secs: default_startup_stabilization_secs(),
+            auto_offset_reset: None,
+        }
+    }
 }
 
 /// Default consumer poll interval in milliseconds.
@@ -6045,6 +7491,14 @@ pub struct KafkaSecurityConfig {
 
     /// SASL password (prefer env var KAFKA_SASL_PASSWORD)
     pub sasl_password: Option<String>,
+
+    /// Path to the CA certificate file for TLS verification.
+    ///
+    /// When `Some(path)`, applied as the rdkafka config key `ssl.ca.location`
+    /// only when `protocol` is `"SSL"` or `"SASL_SSL"`. Silently ignored for
+    /// `"PLAINTEXT"` and `"SASL_PLAINTEXT"` protocols.
+    #[serde(default)]
+    pub ssl_ca_location: Option<String>,
 }
 
 /// Generic watcher match configuration.
@@ -6149,9 +7603,18 @@ pub struct WatcherExecutionConfig {
     ///
     /// `per_task` (default) executes each task in sequence in a shared agent
     /// session, preserving context between tasks. `single_shot` collapses the
-    /// full plan into a single prompt, which matches the pre-Phase-1 behaviour.
+    /// full plan into a single prompt, which matches the legacy single-prompt behaviour.
     #[serde(default = "default_watcher_plan_execution_mode")]
     pub execution_mode: WatcherPlanExecutionMode,
+
+    /// Maximum accepted size, in bytes, of an inbound Kafka message payload.
+    ///
+    /// Enforced by both watcher backends (generic and XZepr) before the raw
+    /// payload is parsed, so an oversized untrusted message is rejected with a
+    /// handled error instead of being handed to the plan parser. Defaults to
+    /// 1 MiB. Overridable via `XZATOMA_WATCHER_MAX_PAYLOAD_BYTES`.
+    #[serde(default = "default_max_payload_bytes")]
+    pub max_payload_bytes: usize,
 }
 
 /// Default watcher consumer group ID
@@ -6194,6 +7657,11 @@ fn default_watcher_plan_execution_mode() -> WatcherPlanExecutionMode {
     WatcherPlanExecutionMode::PerTask
 }
 
+/// Default maximum inbound Kafka payload size: 1 MiB.
+fn default_max_payload_bytes() -> usize {
+    1024 * 1024
+}
+
 impl Default for WatcherLoggingConfig {
     fn default() -> Self {
         Self {
@@ -6212,6 +7680,7 @@ impl Default for WatcherExecutionConfig {
             max_concurrent_executions: default_max_concurrent(),
             execution_timeout_secs: default_execution_timeout(),
             execution_mode: default_watcher_plan_execution_mode(),
+            max_payload_bytes: default_max_payload_bytes(),
         }
     }
 }

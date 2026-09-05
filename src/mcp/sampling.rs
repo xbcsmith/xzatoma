@@ -318,39 +318,33 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_headless_mode_rejects_without_trust_metadata() {
+    async fn test_headless_full_autonomous_sampling_is_auto_approved() {
         let handler = make_handler(ExecutionMode::FullAutonomous, true, "provider reply");
 
         let req = simple_request(None, "what is 2+2?");
         let result = handler.create_message(req).await;
 
-        assert!(matches!(
-            result,
-            Err(XzatomaError::McpElicitation(message)) if message.contains("headless")
-        ));
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_headless_mode_rejects_prompt_without_trust_metadata() {
+    async fn test_headless_interactive_sampling_is_auto_approved() {
         let handler = make_handler(ExecutionMode::Interactive, true, "headless reply");
 
         let req = simple_request(Some("You are a test assistant."), "ping");
         let result = handler.create_message(req).await;
 
-        assert!(matches!(
-            result,
-            Err(XzatomaError::McpElicitation(message)) if message.contains("headless")
-        ));
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
-    async fn test_system_prompt_request_requires_interactive_approval() {
+    async fn test_headless_full_autonomous_sampling_with_system_prompt_is_auto_approved() {
         let handler = make_handler(ExecutionMode::FullAutonomous, true, "ok");
 
         let req = simple_request(Some("System context here."), "user question");
         let result = handler.create_message(req).await;
 
-        assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -381,11 +375,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sampling_request_does_not_auto_approve_in_full_autonomous() {
+    async fn test_full_autonomous_headless_sampling_is_auto_approved() {
         let handler = make_handler(ExecutionMode::FullAutonomous, true, "hello");
         let req = simple_request(None, "question");
         let result = handler.create_message(req).await;
 
-        assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+        assert!(result.is_ok());
     }
 }

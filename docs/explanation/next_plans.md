@@ -250,3 +250,7 @@ Make sure documentation [how-to, reference, tutorials, demos] are all updated as
 Write a plan with a phased approach to unify the chat command UX. THINK HARD and follow the rules in @PLAN.md
 
 [Chat Command Unification Plan](./chat_unification_implementation_plan.md)
+
+## Bugs
+
+In agent mode ACP in Zed connected to Ollama with a model that supports vision xzatoma keeps giving an error that the model does not support vision. I confirmed with Zed's agent it does.

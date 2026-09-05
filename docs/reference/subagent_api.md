@@ -69,9 +69,9 @@ Whitelist of tool names the subagent can access. If omitted, all parent tools
 are available (except "subagent").
 
 - **Type:** `array[string]`
-- **Items:** Tool names (e.g., "fetch", "grep", "file_ops", "terminal")
+- **Items:** Tool names (e.g., "fetch", "grep", "read_file", "terminal")
 - **Special:** "subagent" is always blocked (prevents infinite recursion)
-- **Example:** `["fetch", "grep", "file_ops"]`
+- **Example:** `["fetch", "grep", "read_file"]`
 - **Purpose:** Security isolation and task focus
 
 #### `max_turns` (integer, optional)
@@ -519,7 +519,7 @@ Restrict tools for untrusted input:
 {
   "label": "validate_user_code",
   "task_prompt": "Analyze this user-provided code for syntax errors and security issues: [code]",
-  "allowed_tools": ["file_ops"],
+  "allowed_tools": ["read_file"],
   "max_turns": 2
 }
 ```

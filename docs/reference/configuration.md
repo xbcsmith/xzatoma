@@ -111,7 +111,9 @@ provider:
 - `model`
 
   - Type: string
-  - Default: `gpt-5-mini`
+  - Default: `""` (unset). When unset, or when the configured value isn't
+    found in the Copilot models list, XZatoma queries the Copilot API and
+    selects the latest available model.
 
 - `api_base`
 
@@ -152,7 +154,9 @@ provider:
 - `model`
 
   - Type: string
-  - Default: `llama3.2:latest`
+  - Default: `""` (unset). When unset, or when the configured value isn't
+    installed locally, XZatoma queries the Ollama server and selects the most
+    recently modified installed model.
 
 ### OpenAI Configuration
 
@@ -162,7 +166,7 @@ provider:
 | ------------------ | -------------- | ----------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `api_key`          | string         | `""`                          | `XZATOMA_OPENAI_API_KEY`   | Bearer token for OpenAI API authentication. Leave empty for local servers that do not require authentication.             |
 | `base_url`         | string         | `"https://api.openai.com/v1"` | `XZATOMA_OPENAI_BASE_URL`  | API base URL. Override to point at a local inference server such as llama.cpp, vLLM, or Mistral.rs.                       |
-| `model`            | string         | `"gpt-4o-mini"`               | `XZATOMA_OPENAI_MODEL`     | Model name to request from the API. For local servers this must match the model loaded on the server.                     |
+| `model`            | string         | `""` (unset)                  | `XZATOMA_OPENAI_MODEL`     | Model name to request from the API. For local servers this must match the model loaded on the server. When unset, or when the configured value isn't found in the `/models` list, XZatoma queries the API and selects the latest available model. |
 | `organization_id`  | string or null | (none)                        | `XZATOMA_OPENAI_ORG_ID`    | Optional organization ID. Required for users on organizational OpenAI accounts. Sent as the `OpenAI-Organization` header. |
 | `enable_streaming` | boolean        | `true`                        | `XZATOMA_OPENAI_STREAMING` | Enable SSE streaming for text responses. Requests that include tools always use the non-streaming path.                   |
 
@@ -701,8 +705,17 @@ watcher-triggered plans.
   - Default: `1`
 
 - `execution_timeout_secs`
+
   - Type: integer
   - Default: `300`
+
+- `max_payload_bytes`
+  - Type: integer
+  - Default: `1048576` (1 MiB)
+  - Maximum accepted size, in bytes, of a raw inbound Kafka message payload.
+    Enforced by both the generic and XZepr watcher backends before the payload
+    is parsed; oversized payloads are rejected with a handled error. Must be
+    greater than `0`.
 
 ### Example
 
@@ -712,6 +725,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 5
     execution_timeout_secs: 1800
+    max_payload_bytes: 1048576
 ```
 
 ## MCP Configuration
@@ -1069,6 +1083,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 1
     execution_timeout_secs: 300
+    max_payload_bytes: 1048576
 ```
 
 ## Example Complete XZepr Watcher Configuration
@@ -1100,6 +1115,7 @@ watcher:
     allow_dangerous: false
     max_concurrent_executions: 1
     execution_timeout_secs: 300
+    max_payload_bytes: 1048576
 ```
 
 ## Security Guidance

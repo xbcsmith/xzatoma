@@ -1,0 +1,9 @@
+# Clippy configuration for XZatoma.
+#
+# The crate enables `clippy::unwrap_used` and `clippy::expect_used` for
+# production code (see the `#![warn(...)]` attributes in `src/lib.rs` and
+# `src/main.rs`). These settings keep those restriction lints from firing on
+# test and doc-test code, where `unwrap`/`expect` are idiomatic for concise
+# assertions.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

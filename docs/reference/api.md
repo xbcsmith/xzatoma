@@ -99,6 +99,7 @@ generated `cargo doc` output.
     - `CopilotProvider` — GitHub Copilot integration (includes device-flow
       auth).
     - `OllamaProvider` — Ollama local/remote server support.
+    - `OpenAIProvider` — OpenAI and OpenAI-compatible server support.
   - Provider helpers include model listing, info, and authentication flows.
 
 - `xzatoma::commands`
@@ -122,7 +123,8 @@ generated `cargo doc` output.
 - `xzatoma::tools` (various)
 
   - `terminal::TerminalTool` — Executes shell commands with validation.
-  - `file_ops::FileOpsTool` — File read/write helpers used by the agent.
+  - `read_file::ReadFileTool`, `write_file::WriteFileTool`,
+    `edit_file::EditFileTool` — File read/write/edit helpers used by the agent.
   - Tool executors implement a `ToolExecutor` trait to allow the agent to
     execute them.
 
@@ -203,7 +205,7 @@ use xzatoma::providers::{CopilotProvider, Provider, Message};
 #[tokio::main]
 async fn example() -> xzatoma::error::Result<()> {
   let config = CopilotConfig {
-    model: "gpt-5.3-codex".to_string(),
+    model: "gpt-5-mini".to_string(),
     ..Default::default()
   };
 

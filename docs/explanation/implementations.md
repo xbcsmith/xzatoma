@@ -1,13 +1,5 @@
 # Implementation Documentation Index
 
-Note: Developer-focused implementation logs (phase reports, detailed
-implementation notes, and internal planning documents) have been moved to
-`docs/archive/implementation_summaries/`. These files are archived to keep the
-top-level explanation docs user-facing and maintainable; consult the archive for
-historical implementation detail. See
-[documentation_cleanup_summary.md](documentation_cleanup_summary.md) for an
-audit of moved files and the rationale.
-
 This directory contains detailed implementation documentation for XZatoma
 features and architecture.
 
@@ -15,153 +7,11 @@ features and architecture.
 
 ### Architecture and Planning
 
-- **[architecture_validation.md](../archive/implementation_summaries/architecture_validation.md)** -
-  Initial validation of the XZatoma architecture against project rules
-- **[required_architecture_updates.md](../archive/implementation_summaries/required_architecture_updates.md)** -
-  Critical issues identified during validation
-- **[architecture_fixes_applied.md](../archive/implementation_summaries/architecture_fixes_applied.md)** -
-  Record of fixes applied to address architecture issues
-- **[architecture_validation_status.md](../archive/implementation_summaries/architecture_validation_status.md)** -
-  Final validation status (9/10, approved)
-- **[notes_for_implementation_planning.md](../archive/implementation_summaries/notes_for_implementation_planning.md)** -
-  Handoff notes for implementation planning phase
-- **[quick_reference_for_next_session.md](../archive/implementation_summaries/quick_reference_for_next_session.md)** -
-  Quick reference guide for next session
 - **[competitive_analysis.md](competitive_analysis.md)** - Comparison of XZatoma
   vs Goose vs Zed Agent
 
 ### Implementation Documentation
 
-- **[conversation_persistence_implementation.md](conversation_persistence_implementation.md)** -
-  Conversation persistence: SQLite-backed history, auto-save/resume, CLI history
-  commands (list/resume/delete), unit & integration tests
-
-- **[phase1_core_validation_implementation.md](phase1_core_validation_implementation.md)** -
-  Phase 1: Core Validation - Message sequence validation to prevent orphan tool
-  messages, integrated into provider conversion, comprehensive tests for Copilot
-  and Ollama providers
-
-- **[phase2_history_ux_command_persistence_implementation.md](phase2_history_ux_command_persistence_implementation.md)** -
-  Phase 2: History UX & Command Persistence - Enhanced `history show` command
-  with formatted/JSON output and message limiting, persistence configuration for
-  special commands, 10 new tests
-
-- **[phase3_pruning_integrity_implementation.md](phase3_pruning_integrity_implementation.md)** -
-  Phase 3: Pruning Integrity - Atomic tool-call pair removal during conversation
-  pruning, helper methods for finding tool results, maintains message sequence
-  integrity
-
-- **[intelligent_editing_and_buffer_management_implementation.md](intelligent_editing_and_buffer_management_implementation.md)** -
-  Phase 4: Intelligent Editing & Buffer Management - Implemented `edit_file`
-  tool (create/edit/overwrite modes), unified diffs via `similar::TextDiff`,
-  integrated into Write-mode registry, with unit tests and documentation.
-
-- **[phase4_cross_provider_consistency_implementation.md](phase4_cross_provider_consistency_implementation.md)** -
-  Phase 4: Cross-Provider Consistency & Integration Tests - Provider parity
-  validation, integration tests for save/load/resume lifecycle with orphan
-  sanitization, pruning integrity verification
-
-- **[phase5_deprecation_and_migration_implementation.md](phase5_deprecation_and_migration_implementation.md)** -
-  Phase 5: Deprecation and Migration - Removed monolithic `file_ops.rs` (914
-  lines), migrated to 9 individual file operation tools, updated registry
-  builder to register tools explicitly, implemented `generate_diff` utility,
-  updated all tests and documentation, achieved clean modular architecture with
-  771 passing tests.
-
-- **[phase5_documentation_qa_and_release_implementation.md](phase5_documentation_qa_and_release_implementation.md)** -
-  Phase 5: Documentation, QA, and Release - Comprehensive implementation
-  documentation, quality assurance validation (81 tests passing), release
-  preparation notes, migration guidance, and usage examples
-
-- **[phase1_security_refactor_implementation.md](phase1_security_refactor_implementation.md)** -
-  Phase 1: Security Refactor - Shell-less terminal execution, SSRF hostname
-  resolution, and updated unit tests
-- **[phase2_security_refactor_implementation.md](phase2_security_refactor_implementation.md)** -
-  Phase 2: Security Refactor - Quota lock safety, storage error consistency, and
-  error boundary alignment
-- **[phase3_refactor_implementation.md](phase3_refactor_implementation.md)** -
-  Phase 3: Refactor - Shared integration-test helpers and reduced duplicate
-  setup
-
-- **[history_and_tool_integrity_implementation.md](history_and_tool_integrity_implementation.md)** -
-  Chat History and Tool Integrity: Complete four-phase implementation covering
-  core validation (orphan tool message prevention), history UX enhancements
-  (message-level inspection with `history show` command), pruning integrity
-  (atomic tool-call pair removal), and cross-provider consistency with
-  integration tests. Includes orphan message sanitization in both Copilot and
-  Ollama providers, special command persistence configuration, and 30+ tests
-  validating all scenarios
-
-- **[file_tools_modularization_implementation_plan.md](file_tools_modularization_implementation_plan.md)** -
-  File Tools Modularization: Complete five-phase implementation transforming
-  monolithic `file_ops` tool (914 lines) into 9 focused, single-responsibility
-  tools. Phases include: shared infrastructure (path validation, file metadata
-  utilities), core file operations (read_file, write_file, delete_path,
-  list_directory), advanced file manipulation (copy_path, move_path,
-  create_directory, find_path), intelligent editing (edit_file with unified diff
-  output), and deprecation/migration (registry builder updates, complete removal
-  of file_ops.rs). Achieved clean modular architecture with 771 passing
-  tests, >80% coverage, and explicit tool registration by chat mode (3 read-only
-  tools in Planning mode, 9 file tools + terminal in Write mode). See
-  phase-specific documentation:
-  [Phase 1](phase1_shared_infrastructure_implementation.md),
-  [Phase 2](phase2_core_file_operations_implementation.md),
-  [Phase 3](phase3_advanced_file_manipulation_tools_implementation.md),
-  [Phase 4](intelligent_editing_and_buffer_management_implementation.md),
-  [Phase 5](phase5_deprecation_and_migration_implementation.md)
-
-- **[phase3_security_validation_implementation.md](../archive/implementation_summaries/phase3_security_validation_implementation.md)** -
-  Complete implementation of security validation for terminal commands
-- **[auth_provider_flag_implementation.md](../archive/implementation_summaries/auth_provider_flag_implementation.md)** -
-  CLI: make `auth` subcommand accept `--provider <name>` (align CLI with README;
-  tests and documentation added)
-- **[phase5_error_handling_and_user_feedback.md](../archive/implementation_summaries/phase5_error_handling_and_user_feedback.md)** -
-  Phase 5: Error handling and user feedback for mention-based content loading
-  (structured `LoadError` types, graceful degradation with placeholders, CLI
-  warnings and suggestions, tests, and documentation)
-
-- **[agent_skills_phase1_implementation.md](agent_skills_phase1_implementation.md)** -
-  Phase 1: Skill Discovery and Parsing Foundation - added `skills` module
-  foundation, `SkillsConfig`, deterministic skill discovery roots and precedence
-  rules, `SKILL.md` parsing and validation, diagnostics for invalid and shadowed
-  skills, catalog foundation, tests, and configuration examples
-
-- **[agent_skills_phase2_implementation.md](agent_skills_phase2_implementation.md)** -
-  Phase 2: Skill Catalog Disclosure and Prompt Integration - added disclosure
-  rendering, visibility filtering, trust-gated catalog disclosure, startup
-  prompt integration for chat and run flows, disclosure tests, and
-  implementation documentation
-
-- **[agent_skills_phase3_implementation.md](agent_skills_phase3_implementation.md)** -
-  Phase 3: Skill Activation and Active-Skill Registry - added
-  `ActiveSkillRegistry`, `ActiveSkill`, and `activate_skill` tool foundation,
-  activation deduplication, active-skill prompt injection support, runtime
-  registration helpers, and activation/tool integration tests
-
-- **[agent_skills_phase4_implementation.md](agent_skills_phase4_implementation.md)** -
-  Phase 4: Skill Resource Access, Trust Enforcement, and Lifecycle Management -
-  added persistent trust store support, trust-backed disclosure filtering,
-  resource resolution and enumeration constrained to the skill root,
-  session-local active skill lifecycle behavior, and trust/resource/lifecycle
-  test coverage
-
-- **[agent_skills_implementation.md](agent_skills_implementation.md)** - Phase
-  5: Configuration, CLI, Documentation, and Hardening - completed the `skills`
-  CLI command surface, hardening for skills configuration and trust operations,
-  configuration examples, Diataxis documentation set, and integration coverage
-  for config and CLI behavior
-
-- **[acp_phase1_implementation.md](acp_phase1_implementation.md)** - Phase 1:
-  ACP Domain Model and Core Abstractions - added the ACP module foundation,
-  protocol-facing manifest/message/run/session/event types, ACP-specific
-  validation and lifecycle abstractions, crate-level ACP error integration,
-  message-to-ACP adapters, and core contract test coverage
-
-- **[model_management_missing_deliverables_implementation.md](../archive/implementation_summaries/model_management_missing_deliverables_implementation.md)** -
-  Documentation completion for model management features (API reference, how-to
-  guides for managing and switching models)
-- **[copilot_models_caching_and_tests.md](../archive/implementation_summaries/copilot_models_caching_and_tests.md)** -
-  Copilot models caching and mocked integration tests
 - Note: Integration tests that write to the OS keyring (service: `xzatoma`,
   user: `github_copilot`) are marked `#[ignore = "requires system keyring"]` to
   avoid failures in CI/CD environments that don't expose an interactive system
@@ -171,23 +21,9 @@ features and architecture.
   keyring tests only)
 - **[use_chat_modes.md](../how-to/use_chat_modes.md)** - Chat mode provider &
   model display (provider: white, model: green)
-- **[ollama_default_model_fix.md](../archive/implementation_summaries/ollama_default_model_fix.md)** -
-  Bug fix: Changed Ollama default model from unavailable `qwen2.5-coder` to
-  standard `llama3.2:latest`, removed all Qwen model references
-- **[ollama_tool_support_validation.md](../archive/implementation_summaries/ollama_tool_support_validation.md)** -
-  Bug fix: Implemented proper tool support detection and validation for Ollama
-  models, changed default to `llama3.2:latest`, prevents switching to models
-  without function calling capabilities
-- **[ollama_response_parsing_fix.md](../archive/implementation_summaries/ollama_response_parsing_fix.md)** -
-  Bug fix: Made Ollama response parsing flexible to handle models with varying
-  response formats (missing fields, empty IDs), added support for granite3 and
-  granite4 models
 
 ### Provider Abstraction Implementation
 
-- **[provider_abstraction_implementation_plan.md](../archive/implementation_summaries/provider_abstraction_implementation_plan.md)** -
-  Complete language-agnostic plan for implementing provider abstraction layer
-  supporting OpenAI, Anthropic, GitHub Copilot, and Ollama
 - **[provider_abstraction.md](../reference/provider_abstraction.md)** - Quick
   reference guide for provider abstraction patterns and examples
 - **[../reference/provider_api_comparison.md](../reference/provider_api_comparison.md)** -
@@ -234,12 +70,6 @@ features and architecture.
 - Troubleshooting and best practices
 - Documentation: `docs/reference/model_management.md`,
   `docs/how-to/manage_models.md`, `docs/how-to/switch_models.md`
-- **[models_command_summary_output_implementation.md](models_command_summary_output_implementation.md)** -
-  Phase 4: Summary Output Implementation (verification tests and rendering
-  helpers)
-- **[models_command_documentation_and_examples_implementation.md](models_command_documentation_and_examples_implementation.md)** -
-  Phase 5: Documentation and Examples (reference docs, how-to updates, CLI help
-  text, tests, and example scripts)
 - ~1,502 lines of comprehensive documentation
 
 **Phase 3: Streaming Infrastructure** - Complete
@@ -376,9 +206,6 @@ Change** - Complete
 - Phase 5A: Tool Bridge, Resources, and Prompts -- Complete
 - Phase 5B: Sampling, Elicitation, and Command Integration -- Complete
 
-- **[mcp_support_implementation_plan.md](mcp_support_implementation_plan.md)** -
-  Full seven-phase plan for MCP client support (protocol revision 2025-11-25)
-
 ### Demo Scaffolding Initiative -- Complete
 
 Seven self-contained demo directories delivered across five phases. Every demo
@@ -393,9 +220,6 @@ state under `tmp/`, and passes the 13-point isolation audit.
   checks)
 - **Phase 5** - Validation matrix, implementation summary, index update
 
-Documentation: **[demo_implementation.md](demo_implementation.md)** - canonical
-implementation summary with validation matrix (7 demos x 13 checks, all true)
-
 ### Zed ACP Agent Command -- Complete
 
 Seven-phase implementation of `xzatoma agent`, the ACP stdio subprocess mode for
@@ -408,11 +232,6 @@ Zed and other ACP-compatible IDE clients.
 - **Phase 5** - Zed IDE tooling and runtime controls
 - **Phase 6** - Prompt execution, streaming updates, queueing, and cancellation
 - **Phase 7** - Documentation, demo, and quality gates
-
-Documentation:
-**[zed_acp_agent_command_implementation.md](zed_acp_agent_command_implementation.md)**
--- canonical implementation summary covering transport architecture, session
-lifecycle, prompt queuing, evented execution, cancellation, and follow-up work.
 
 ---
 
@@ -1617,10 +1436,6 @@ README.
 
 ### References
 
-- **[demo_implementation_plan.md](demo_implementation_plan.md)** - phased
-  implementation plan (five phases)
-- **[demo_implementation.md](demo_implementation.md)** - canonical
-  implementation summary with full validation matrix
 - **[demos/README.md](../../demos/README.md)** - top-level demos index and
   quickstart guide
 
@@ -1757,9 +1572,6 @@ mode on every subsequent tool execution.
 - `src/agent/core.rs` - Added `pub fn tools_mut` accessor returning a mutable
   reference to the agent's `ToolRegistry`.
 
-**Documentation**:
-[zed_session_mode_selector_implementation.md](zed_session_mode_selector_implementation.md)
-
 ## Chat Command Unification (2026-07-18)
 
 **Summary**: Six implementation phases unified the slash command UX across
@@ -1788,9 +1600,9 @@ the full documentation suite: reference, tutorial, how-to, demos, and updates to
 
 **Documentation**:
 [chat_unification_implementation_plan.md](chat_unification_implementation_plan.md),
-[chat_unification_phase4_acp_informational_commands_implementation.md](chat_unification_phase4_acp_informational_commands_implementation.md),
-[chat_unification_phase5_acp_advertisement_updates_implementation.md](chat_unification_phase5_acp_advertisement_updates_implementation.md),
-[chat_unification_phase6_documentation_and_demos_implementation.md](chat_unification_phase6_documentation_and_demos_implementation.md)
+[chat_unification_phase4_acp_informational_commands_implementation.md](../archive/chat_unification_phase4_acp_informational_commands_implementation.md),
+[chat_unification_phase5_acp_advertisement_updates_implementation.md](../archive/chat_unification_phase5_acp_advertisement_updates_implementation.md),
+[chat_unification_phase6_documentation_and_demos_implementation.md](../archive/chat_unification_phase6_documentation_and_demos_implementation.md)
 
 ## ACP Model Selector and Ollama Auto-Model (2026-07-19)
 

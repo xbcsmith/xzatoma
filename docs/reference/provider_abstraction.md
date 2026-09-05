@@ -32,12 +32,17 @@ and
 
 ## Provider Comparison
 
-| Provider  | Status             | Auth Method    | Base URL              | Default Model     | Context Limit   | Streaming  | Tool Calls        |
-| --------- | ------------------ | -------------- | --------------------- | ----------------- | --------------- | ---------- | ----------------- |
-| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | gpt-5.3-codex     | 128K            | SSE        | OpenAI-compatible |
-| Ollama    | Implemented        | None (local)   | localhost:11434       | User-configured   | Model-dependent | JSON Lines | Limited           |
-| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | gpt-4o-mini       | Model-dependent | SSE        | OpenAI-compatible |
-| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0 | 200K            | SSE        | Content blocks    |
+| Provider  | Status             | Auth Method    | Base URL              | Default Model             | Context Limit   | Streaming  | Tool Calls        |
+| --------- | ------------------ | -------------- | --------------------- | -------------------------- | --------------- | ---------- | ----------------- |
+| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | Auto-selected (latest)     | 128K            | SSE        | OpenAI-compatible |
+| Ollama    | Implemented        | None (local)   | localhost:11434       | Auto-selected (latest)     | Model-dependent | JSON Lines | Limited           |
+| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | Auto-selected (latest)     | Model-dependent | SSE        | OpenAI-compatible |
+| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0          | 200K            | SSE        | Content blocks    |
+
+"Auto-selected (latest)" means: when no model is configured (or the configured
+model isn't found on the provider), XZatoma queries the provider's model list
+when constructing the provider and selects the latest one. See
+[Automatic model selection](../how-to/configure_providers.md#automatic-model-selection).
 
 ---
 
@@ -87,7 +92,7 @@ OpenAI (and OpenAI-compatible servers)
 ```bash
 export XZATOMA_OPENAI_API_KEY="sk-..."                       # Required for hosted API
 export XZATOMA_OPENAI_BASE_URL="https://api.openai.com/v1"   # Default
-export XZATOMA_OPENAI_MODEL="gpt-4o-mini"                    # Default model
+export XZATOMA_OPENAI_MODEL="gpt-4.1-mini"                   # Optional; auto-selects the latest model when unset
 export XZATOMA_OPENAI_ORG_ID="org-..."                       # Optional
 export XZATOMA_OPENAI_STREAMING="true"                       # Default
 ```
@@ -247,12 +252,27 @@ print(response.message.content)
 
 ```text
 providers/
-├── base.rs         # Provider trait and base types
+├── mod.rs           # Module root and re-exports
+├── trait_mod.rs     # The Provider trait (definition and default methods)
+├── types.rs         # Shared domain types and OpenAI-style chat wire structs
+├── conversion.rs    # Shared message/tool-call conversion helpers
+├── streaming.rs     # Shared SSE reader, LineBuffer, and ChatDeltaAccumulator
+├── http.rs          # Shared HTTP error helpers (UNAUTHORIZED handling, redaction)
+├── util.rs          # Shared provider utilities (config read-lock helper)
+├── factory.rs       # ProviderFactory and backward-compatible free functions
+├── cache.rs         # Model cache helpers
+├── capabilities.rs  # Vision-capability detection helpers
 ├── copilot.rs       # GitHub Copilot (OAuth) implementation
 ├── ollama.rs        # Ollama local/remote provider
-├── openai.rs        # OpenAI and OpenAI-compatible provider
-└── mod.rs          # Module root and re-exports
+└── openai.rs        # OpenAI and OpenAI-compatible provider
 ```
+
+The canonical OpenAI-style chat wire types (`ChatToolCall`, `ChatFunctionCall`)
+live in `types.rs`; `copilot.rs` and `openai.rs` alias them (byte-compatible)
+rather than redefining them, following the pattern `ollama.rs` uses for its
+shared types. Shared streaming state (`ChatDeltaAccumulator<K>`) and SSE parsing
+(`LineBuffer`, `parse_sse_line`, `next_sse_data`) live in `streaming.rs`; the
+`/responses` endpoint keeps its own `ResponsesAccumulator` in `copilot.rs`.
 
 ---
 

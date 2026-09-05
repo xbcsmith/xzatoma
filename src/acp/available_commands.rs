@@ -4,6 +4,10 @@
 //! the Agent-Client Protocol. Zed displays these commands in the chat input
 //! completion menu when the user types `/`.
 //!
+//! Per the ACP spec, [`acp::AvailableCommand::name`] must **not** include the
+//! leading slash (the client prepends it); the table below shows the
+//! user-facing spelling with the slash for readability.
+//!
 //! # Command Overview
 //!
 //! | Command      | Input                          | Purpose                                        |
@@ -21,6 +25,7 @@
 //! | `/subagents` | Optional: value \| status      | Show help or toggle subagent delegation        |
 //! | `/system`    | Optional: text \| status       | Show help, inspect, or set the system prompt   |
 //! | `/streaming` | None                           | Show streaming help (ACP mode note)            |
+//! | `/config`    | Optional: status \| reload     | Show help, inspect, or reload the config file  |
 //!
 //! # Examples
 //!
@@ -28,7 +33,7 @@
 //! use xzatoma::acp::available_commands::build_available_commands;
 //!
 //! let commands = build_available_commands();
-//! assert_eq!(commands.len(), 13);
+//! assert_eq!(commands.len(), 14);
 //! assert!(!commands[0].description.is_empty());
 //! ```
 
@@ -44,7 +49,7 @@ use agent_client_protocol as acp_sdk;
 ///
 /// # Returns
 ///
-/// A `Vec<acp::AvailableCommand>` containing all thirteen XZatoma slash commands
+/// A `Vec<acp::AvailableCommand>` containing all fourteen XZatoma slash commands
 /// in display order.
 ///
 /// # Examples
@@ -53,14 +58,15 @@ use agent_client_protocol as acp_sdk;
 /// use xzatoma::acp::available_commands::build_available_commands;
 ///
 /// let commands = build_available_commands();
-/// assert_eq!(commands.len(), 13);
+/// assert_eq!(commands.len(), 14);
 ///
 /// let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-/// assert!(names.contains(&"/mode"));
-/// assert!(names.contains(&"/mcp"));
-/// assert!(names.contains(&"/help"));
-/// assert!(names.contains(&"/system"));
-/// assert!(names.contains(&"/streaming"));
+/// assert!(names.contains(&"mode"));
+/// assert!(names.contains(&"mcp"));
+/// assert!(names.contains(&"help"));
+/// assert!(names.contains(&"system"));
+/// assert!(names.contains(&"streaming"));
+/// assert!(names.contains(&"config"));
 /// ```
 pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
     vec![
@@ -77,6 +83,7 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
         build_subagents_command(),
         build_system_command(),
         build_streaming_command(),
+        build_config_command(),
     ]
 }
 
@@ -92,7 +99,7 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
 /// switches to that mode.
 fn build_mode_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/mode",
+        "mode",
         "Show help or switch the operation mode. \
          Use `/mode status` to see the current mode. \
          Pass `planning` or `write` to switch.",
@@ -110,7 +117,7 @@ fn build_mode_command() -> acp::AvailableCommand {
 /// requests a model switch.
 fn build_model_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/model",
+        "model",
         "Show help or switch the active model. \
          Use `/model status` to see the current model. \
          Pass a model name to switch.",
@@ -128,7 +135,7 @@ fn build_model_command() -> acp::AvailableCommand {
 /// agent applies the new policy.
 fn build_safety_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/safety",
+        "safety",
         "Show help or change the safety policy. \
          Use `/safety status` to see the current policy. \
          Pass `on` or `off` to change.",
@@ -145,7 +152,7 @@ fn build_safety_command() -> acp::AvailableCommand {
 /// any tools exposed via the IDE integration.
 fn build_tools_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/tools",
+        "tools",
         "Summarize all available XZatoma and IDE tools for the current session.",
     )
 }
@@ -157,7 +164,7 @@ fn build_tools_command() -> acp::AvailableCommand {
 /// percentage of the context budget consumed.
 fn build_context_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/context",
+        "context",
         "Show current conversation context usage including token counts and context budget.",
     )
 }
@@ -169,7 +176,7 @@ fn build_context_command() -> acp::AvailableCommand {
 /// for future work.
 fn build_summarize_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/summarize",
+        "summarize",
         "Summarize and compact the conversation history to free context budget.",
     )
 }
@@ -181,7 +188,7 @@ fn build_summarize_command() -> acp::AvailableCommand {
 /// conditions.
 fn build_skills_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/skills",
+        "skills",
         "List active skills discovered for the current workspace.",
     )
 }
@@ -192,7 +199,7 @@ fn build_skills_command() -> acp::AvailableCommand {
 /// tools they expose, along with their connection status.
 fn build_mcp_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/mcp",
+        "mcp",
         "List connected MCP servers and the tools they expose.",
     )
 }
@@ -202,7 +209,7 @@ fn build_mcp_command() -> acp::AvailableCommand {
 /// Takes no arguments. The agent responds with a summary of all available
 /// special commands and how to use them.
 fn build_help_command() -> acp::AvailableCommand {
-    acp::AvailableCommand::new("/help", "Show available special commands.")
+    acp::AvailableCommand::new("help", "Show available special commands.")
 }
 
 /// Builds the `/status` command definition.
@@ -210,7 +217,7 @@ fn build_help_command() -> acp::AvailableCommand {
 /// Takes no arguments. The agent responds with the current operation mode,
 /// safety confirmation policy, and active provider model.
 fn build_status_command() -> acp::AvailableCommand {
-    acp::AvailableCommand::new("/status", "Show current mode, safety policy, and model.")
+    acp::AvailableCommand::new("status", "Show current mode, safety policy, and model.")
 }
 
 /// Builds the `/subagents` command definition.
@@ -221,7 +228,7 @@ fn build_status_command() -> acp::AvailableCommand {
 /// value is provided the agent enables or disables subagent delegation.
 fn build_subagents_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/subagents",
+        "subagents",
         "Show help or toggle subagent delegation. \
          Use `/subagents status` to see current state. \
          Pass `on` or `off` to change.",
@@ -239,7 +246,7 @@ fn build_subagents_command() -> acp::AvailableCommand {
 /// provided the agent replaces the active system prompt with that text.
 fn build_system_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/system",
+        "system",
         "Show help, inspect, or replace the system prompt. \
          Use `/system status` to see the current prompt. \
          Pass text to replace it.",
@@ -257,10 +264,29 @@ fn build_system_command() -> acp::AvailableCommand {
 /// an informational note rather than a confusing error.
 fn build_streaming_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
-        "/streaming",
+        "streaming",
         "Show streaming help. Streaming is controlled by the Zed client in ACP mode. \
          Use `/streaming status` for details.",
     )
+}
+
+/// Builds the `/config` command definition.
+///
+/// Accepts an optional keyword `status` or `reload`. When no argument is
+/// provided the agent shows config help; when `status` is passed the agent
+/// reports the active config file path; when `reload` is passed the agent
+/// re-reads the config file and applies it to the current session without
+/// restarting the subprocess.
+fn build_config_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new(
+        "config",
+        "Show help, inspect, or reload the config file. \
+         Use `/config status` to see the active config path. \
+         Pass `reload` to re-read the config file and apply it to this session.",
+    )
+    .input(Some(acp::AvailableCommandInput::Unstructured(
+        acp::UnstructuredCommandInput::new("Optional: status | reload"),
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -272,9 +298,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_available_commands_returns_thirteen_entries() {
+    fn test_build_available_commands_returns_fourteen_entries() {
         let commands = build_available_commands();
-        assert_eq!(commands.len(), 13);
+        assert_eq!(commands.len(), 14);
     }
 
     #[test]
@@ -284,19 +310,20 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "/mode",
-                "/model",
-                "/safety",
-                "/tools",
-                "/context",
-                "/summarize",
-                "/skills",
-                "/mcp",
-                "/help",
-                "/status",
-                "/subagents",
-                "/system",
-                "/streaming",
+                "mode",
+                "model",
+                "safety",
+                "tools",
+                "context",
+                "summarize",
+                "skills",
+                "mcp",
+                "help",
+                "status",
+                "subagents",
+                "system",
+                "streaming",
+                "config",
             ]
         );
     }
@@ -304,7 +331,7 @@ mod tests {
     #[test]
     fn test_build_available_commands_includes_new_commands() {
         let commands = build_available_commands();
-        for name in ["/help", "/status", "/subagents", "/system", "/streaming"] {
+        for name in ["help", "status", "subagents", "system", "streaming"] {
             assert!(
                 commands.iter().any(|c| c.name == name),
                 "expected command '{}' to be present",
@@ -325,11 +352,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_available_commands_names_start_with_slash() {
+    fn test_build_available_commands_names_do_not_start_with_slash() {
+        // Per the ACP spec, `AvailableCommand::name` must be a bare name
+        // (e.g. "plan", not "/plan"); the client prepends the slash itself.
+        // A leading slash here causes clients like Zed to reject the whole
+        // advertised list, leaving users unable to invoke any slash command.
         for command in build_available_commands() {
             assert!(
-                command.name.starts_with('/'),
-                "command name '{}' must start with '/'",
+                !command.name.starts_with('/'),
+                "command name '{}' must not start with '/'",
                 command.name
             );
         }
@@ -338,7 +369,7 @@ mod tests {
     #[test]
     fn test_mode_command_has_unstructured_input() {
         let commands = build_available_commands();
-        let mode = commands.iter().find(|c| c.name == "/mode").unwrap();
+        let mode = commands.iter().find(|c| c.name == "mode").unwrap();
         assert!(
             mode.input.is_some(),
             "/mode must have an input specification"
@@ -354,7 +385,7 @@ mod tests {
     #[test]
     fn test_model_command_has_unstructured_input() {
         let commands = build_available_commands();
-        let model = commands.iter().find(|c| c.name == "/model").unwrap();
+        let model = commands.iter().find(|c| c.name == "model").unwrap();
         assert!(
             model.input.is_some(),
             "/model must have an input specification"
@@ -373,7 +404,7 @@ mod tests {
     #[test]
     fn test_safety_command_has_unstructured_input() {
         let commands = build_available_commands();
-        let safety = commands.iter().find(|c| c.name == "/safety").unwrap();
+        let safety = commands.iter().find(|c| c.name == "safety").unwrap();
         assert!(
             safety.input.is_some(),
             "/safety must have an input specification"
@@ -393,14 +424,14 @@ mod tests {
     fn test_no_arg_commands_have_no_input() {
         let commands = build_available_commands();
         let no_input_names = [
-            "/tools",
-            "/context",
-            "/summarize",
-            "/skills",
-            "/mcp",
-            "/help",
-            "/status",
-            "/streaming",
+            "tools",
+            "context",
+            "summarize",
+            "skills",
+            "mcp",
+            "help",
+            "status",
+            "streaming",
         ];
         for name in no_input_names {
             let command = commands.iter().find(|c| c.name == name).unwrap();
@@ -415,7 +446,7 @@ mod tests {
     #[test]
     fn test_subagents_command_has_unstructured_input() {
         let commands = build_available_commands();
-        let subagents = commands.iter().find(|c| c.name == "/subagents").unwrap();
+        let subagents = commands.iter().find(|c| c.name == "subagents").unwrap();
         assert!(
             subagents.input.is_some(),
             "/subagents must have an input specification"
@@ -434,7 +465,7 @@ mod tests {
     #[test]
     fn test_system_command_has_unstructured_input() {
         let commands = build_available_commands();
-        let system = commands.iter().find(|c| c.name == "/system").unwrap();
+        let system = commands.iter().find(|c| c.name == "system").unwrap();
         assert!(
             system.input.is_some(),
             "/system must have an input specification"
@@ -447,6 +478,30 @@ mod tests {
                 );
             }
             _ => panic!("/system input must be Unstructured"),
+        }
+    }
+
+    #[test]
+    fn test_config_command_has_unstructured_input() {
+        let commands = build_available_commands();
+        let config = commands.iter().find(|c| c.name == "config").unwrap();
+        assert!(
+            config.input.is_some(),
+            "/config must have an input specification"
+        );
+        match config.input.as_ref().unwrap() {
+            acp::AvailableCommandInput::Unstructured(input) => {
+                assert!(
+                    !input.hint.is_empty(),
+                    "/config input hint must not be empty"
+                );
+                assert!(
+                    input.hint.contains("reload"),
+                    "/config input hint must mention 'reload'; got: {}",
+                    input.hint
+                );
+            }
+            _ => panic!("/config input must be Unstructured"),
         }
     }
 
@@ -473,14 +528,14 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5 new tests
+    // Additional available-commands tests
     // -----------------------------------------------------------------------
 
     #[test]
     fn test_streaming_command_is_present() {
         let commands = build_available_commands();
         assert!(
-            commands.iter().any(|c| c.name == "/streaming"),
+            commands.iter().any(|c| c.name == "streaming"),
             "/streaming must be present in the advertised command list"
         );
     }
@@ -488,7 +543,7 @@ mod tests {
     #[test]
     fn test_system_command_input_hint_mentions_status() {
         let commands = build_available_commands();
-        let system = commands.iter().find(|c| c.name == "/system").unwrap();
+        let system = commands.iter().find(|c| c.name == "system").unwrap();
         match system.input.as_ref().unwrap() {
             acp::AvailableCommandInput::Unstructured(input) => {
                 assert!(
@@ -509,7 +564,7 @@ mod tests {
     #[test]
     fn test_mode_command_input_hint_mentions_status() {
         let commands = build_available_commands();
-        let mode = commands.iter().find(|c| c.name == "/mode").unwrap();
+        let mode = commands.iter().find(|c| c.name == "mode").unwrap();
         match mode.input.as_ref().unwrap() {
             acp::AvailableCommandInput::Unstructured(input) => {
                 assert!(
@@ -525,7 +580,7 @@ mod tests {
     #[test]
     fn test_model_command_input_hint_mentions_status() {
         let commands = build_available_commands();
-        let model = commands.iter().find(|c| c.name == "/model").unwrap();
+        let model = commands.iter().find(|c| c.name == "model").unwrap();
         match model.input.as_ref().unwrap() {
             acp::AvailableCommandInput::Unstructured(input) => {
                 assert!(

@@ -82,20 +82,24 @@ pub async fn handle_acp(command: AcpCommand, mut config: Config) -> Result<()> {
             );
             config.acp.enabled = true;
             config.validate()?;
+            config.validate_for_acp()?;
             run_server(config).await
         }
         AcpCommand::Config => {
             config.validate()?;
+            config.validate_for_acp()?;
             print_effective_config(&config)?;
             Ok(())
         }
         AcpCommand::Runs { session_id, limit } => {
             config.validate()?;
+            config.validate_for_acp()?;
             list_recent_runs(&session_id, limit)?;
             Ok(())
         }
         AcpCommand::Validate { manifest } => {
             config.validate()?;
+            config.validate_for_acp()?;
             validate_acp_manifest_and_config(&config, manifest.as_deref())?;
             Ok(())
         }

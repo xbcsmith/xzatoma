@@ -1913,6 +1913,65 @@ fn provider_tool_call_type() -> String {
     "function".to_string()
 }
 
+/// A single tool call in an OpenAI-style chat completions message.
+///
+/// The Copilot `/chat/completions` and OpenAI Chat Completions wire formats use
+/// this identical JSON shape. This single type replaces the formerly duplicated
+/// `CopilotToolCall`/`OpenAIToolCall` structs.
+///
+/// Unlike [`ProviderToolCall`] (used by Ollama, which stores arguments as a
+/// native JSON value), the `arguments` field of [`ChatFunctionCall`] is a
+/// pre-serialized JSON string, matching the OpenAI Chat Completions contract.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::{ChatToolCall, ChatFunctionCall};
+///
+/// let tc = ChatToolCall {
+///     id: "call_abc".to_string(),
+///     r#type: "function".to_string(),
+///     function: ChatFunctionCall {
+///         name: "read_file".to_string(),
+///         arguments: r#"{"path":"a.rs"}"#.to_string(),
+///     },
+/// };
+/// assert_eq!(tc.function.name, "read_file");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatToolCall {
+    /// Unique identifier for this tool call, assigned by the provider.
+    pub id: String,
+    /// Always `"function"` for current providers.
+    pub r#type: String,
+    /// Function name and serialized JSON arguments.
+    pub function: ChatFunctionCall,
+}
+
+/// Function name and serialized JSON arguments within a [`ChatToolCall`].
+///
+/// `arguments` is the raw JSON string exactly as it appears on the wire; it is
+/// not parsed or re-serialized during conversion.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::providers::ChatFunctionCall;
+///
+/// let fc = ChatFunctionCall {
+///     name: "greet".to_string(),
+///     arguments: r#"{"name":"Alice"}"#.to_string(),
+/// };
+/// assert_eq!(fc.name, "greet");
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatFunctionCall {
+    /// Name of the function being called.
+    pub name: String,
+    /// Arguments as a serialized JSON string.
+    pub arguments: String,
+}
+
 /// Unified message type for provider request and response serialization.
 ///
 /// The `tool_call_id` field is present only in Copilot's wire format; Ollama
@@ -1974,39 +2033,6 @@ pub struct ProviderMessage {
 }
 
 impl ProviderMessage {
-    /// Builds native Ollama image payloads from multimodal content parts.
-    ///
-    /// Ollama expects user images as base64 strings in an `images` field rather
-    /// than as inline structured message content. This helper extracts inline
-    /// base64 data and encodes inline byte data. File references and remote URLs
-    /// are ignored because ACP conversion should resolve local files before the
-    /// provider request is built, and Ollama does not accept remote image URLs in
-    /// the native `images` field.
-    ///
-    /// # Returns
-    ///
-    /// Returns base64 image payloads suitable for Ollama's native `images`
-    /// message field.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use xzatoma::providers::{
-    ///     ImagePromptPart, Message, MultimodalPromptInput, PromptInputPart,
-    /// };
-    ///
-    /// let message = Message::try_user_from_multimodal_input(MultimodalPromptInput::new(vec![
-    ///     PromptInputPart::image(ImagePromptPart::inline_base64("image/png", "AAAA")),
-    /// ]))
-    /// .unwrap();
-    ///
-    /// let provider_message = xzatoma::providers::ProviderMessage::from_message_for_ollama(&message);
-    /// assert_eq!(provider_message.images, vec!["AAAA".to_string()]);
-    /// ```
-    pub fn ollama_native_images(&self) -> Vec<String> {
-        content_parts_to_ollama_images(self.content_parts.as_deref())
-    }
-
     /// Converts a high-level provider message into the shared wire message shape
     /// with Ollama's native image field populated.
     ///

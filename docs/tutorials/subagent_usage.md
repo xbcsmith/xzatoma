@@ -17,8 +17,8 @@ sub-tasks and execute them in parallel or sequence.
 
 ## Prerequisites
 
-- XZatoma installed and configured with a working AI provider (Copilot or
-  Ollama)
+- XZatoma installed and configured with a working AI provider (Copilot, Ollama,
+  or OpenAI)
 - Basic familiarity with XZatoma chat mode
 - A text editor to create configuration files
 
@@ -95,12 +95,12 @@ Restrict which tools a subagent can access using `allowed_tools` whitelist.
 {
   "label": "analyze_security",
   "task_prompt": "Analyze this code for security vulnerabilities: [code snippet]",
-  "allowed_tools": ["file_ops"],
+  "allowed_tools": ["read_file"],
   "max_turns": 5
 }
 ```
 
-Only `file_ops` is available (no terminal execution for safety).
+Only `read_file` is available (no terminal execution for safety).
 
 ### Tool filtering rules
 
@@ -178,7 +178,7 @@ concisely". You can customize this.
   "label": "code_review",
   "task_prompt": "Review this pull request for code quality issues: [code]",
   "summary_prompt": "Provide a structured review with: Issues Found, Severity (Critical/High/Medium/Low), Recommendations, Overall Quality Score",
-  "allowed_tools": ["file_ops"]
+  "allowed_tools": ["read_file"]
 }
 ```
 
@@ -328,7 +328,7 @@ Spawn restricted subagents for untrusted tasks:
 {
   "label": "analyze_user_input",
   "task_prompt": "[untrusted user input]",
-  "allowed_tools": ["file_ops"],
+  "allowed_tools": ["read_file"],
   "max_turns": 2
 }
 ```
@@ -383,7 +383,7 @@ subagent:
 {
   "label": "research",
   "task_prompt": "...",
-  "allowed_tools": ["fetch", "grep", "file_ops"] // Add missing tool
+  "allowed_tools": ["fetch", "grep", "read_file"] // Add missing tool
 }
 ```
 

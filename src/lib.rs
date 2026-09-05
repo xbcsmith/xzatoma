@@ -29,6 +29,12 @@
 //! }
 //! ```
 
+// Enforce justified fallibility in production code. Any bare `unwrap`/`expect`
+// on a production path must be removed or annotated with an explicit
+// `#[allow(...)]` plus a `// SAFETY:` justification. Test and doc-test code is
+// exempt via `clippy.toml` (`allow-unwrap-in-tests`/`allow-expect-in-tests`).
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod acp;
 pub mod agent;
 pub mod chat_mode;
@@ -40,7 +46,7 @@ pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
-pub(crate) mod security;
+pub mod security;
 pub mod skills;
 pub mod storage;
 pub mod tools;

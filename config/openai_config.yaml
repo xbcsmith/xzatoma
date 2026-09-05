@@ -52,7 +52,7 @@ provider:
     include_reasoning: false
 
   ollama:
-    host: http://localhost:11434
+    host: http://127.0.0.1:11434
     model: llama3.2:3b
 
 # ---------------------------------------------------------------------------

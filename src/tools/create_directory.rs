@@ -4,7 +4,9 @@
 
 use crate::error::Result;
 use crate::tools::file_utils::PathValidator;
-use crate::tools::{TOOL_CREATE_DIRECTORY, ToolExecutor, ToolResult, parse_tool_args};
+use crate::tools::{
+    TOOL_CREATE_DIRECTORY, ToolExecutor, ToolResult, parse_tool_args, validate_or_err,
+};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -61,6 +63,46 @@ impl CreateDirectoryTool {
     pub fn working_dir(&self) -> &Path {
         self.path_validator.working_dir()
     }
+
+    /// Creates the directory; the `Err(ToolResult)` arm lets path validation use `?`.
+    async fn create(
+        &self,
+        params: CreateDirectoryParams,
+    ) -> std::result::Result<ToolResult, ToolResult> {
+        let dir_path = validate_or_err(&self.path_validator, &params.path, "Invalid path")?;
+
+        if dir_path.exists() {
+            if dir_path.is_dir() {
+                return Ok(ToolResult::success(format!(
+                    "Directory already exists: {}",
+                    params.path
+                )));
+            } else {
+                return Ok(ToolResult::error(format!(
+                    "Path exists but is not a directory: {}",
+                    params.path
+                )));
+            }
+        }
+
+        match tokio::fs::create_dir_all(&dir_path).await {
+            Ok(_) => {
+                validate_or_err(
+                    &self.path_validator,
+                    &params.path,
+                    "Created directory but validation failed after creation",
+                )?;
+                Ok(ToolResult::success(format!(
+                    "Created directory: {}",
+                    params.path
+                )))
+            }
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to create directory: {}",
+                e
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,42 +131,7 @@ impl ToolExecutor for CreateDirectoryTool {
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
         let params: CreateDirectoryParams = parse_tool_args(args)?;
-
-        let dir_path = match self.path_validator.validate(&params.path) {
-            Ok(path) => path,
-            Err(e) => return Ok(ToolResult::error(format!("Invalid path: {}", e))),
-        };
-
-        if dir_path.exists() {
-            if dir_path.is_dir() {
-                return Ok(ToolResult::success(format!(
-                    "Directory already exists: {}",
-                    params.path
-                )));
-            } else {
-                return Ok(ToolResult::error(format!(
-                    "Path exists but is not a directory: {}",
-                    params.path
-                )));
-            }
-        }
-
-        match tokio::fs::create_dir_all(&dir_path).await {
-            Ok(_) => match self.path_validator.validate(&params.path) {
-                Ok(_) => Ok(ToolResult::success(format!(
-                    "Created directory: {}",
-                    params.path
-                ))),
-                Err(e) => Ok(ToolResult::error(format!(
-                    "Created directory but validation failed after creation: {}",
-                    e
-                ))),
-            },
-            Err(e) => Ok(ToolResult::error(format!(
-                "Failed to create directory: {}",
-                e
-            ))),
-        }
+        Ok(self.create(params).await.unwrap_or_else(|err| err))
     }
 }
 
