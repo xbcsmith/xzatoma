@@ -25,7 +25,7 @@ use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{CopilotProvider, create_provider};
+use crate::providers::{CopilotProvider, create_provider, create_provider_with_override};
 use crate::skills::{
     ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
     discover_skills, render_skill_catalog,
@@ -486,6 +486,9 @@ pub mod chat {
     pub struct RunChatOptions {
         /// Optional override for the configured provider.
         pub provider_name: Option<String>,
+        /// Optional override for the model within the selected provider.
+        /// Takes precedence over the model set in the config file.
+        pub model: Option<String>,
         /// Optional override for the chat mode ("planning" or "write").
         pub mode: Option<String>,
         /// Optional conversation ID to resume.
@@ -607,6 +610,7 @@ pub mod chat {
 
         let RunChatOptions {
             provider_name,
+            model,
             mode,
             resume,
             thinking_effort,
@@ -681,8 +685,13 @@ pub mod chat {
             }
         };
 
-        // Create provider
-        let provider_box = create_provider(&provider_type_owned, &config.provider).await?;
+        // Create provider, applying any CLI --model override.
+        let provider_box = create_provider_with_override(
+            &config.provider,
+            Some(&provider_type_owned),
+            model.as_deref(),
+        )
+        .await?;
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
@@ -1227,6 +1236,7 @@ pub mod chat {
                                 &config_path,
                                 &common,
                                 &working_dir,
+                                model.as_deref(),
                             )
                             .await?;
                             continue;
@@ -1872,6 +1882,7 @@ pub mod chat {
         config_path: &str,
         common: &crate::cli::CommonArgs,
         working_dir: &std::path::Path,
+        model_override: Option<&str>,
     ) -> Result<()> {
         use colored::Colorize;
 
@@ -1900,7 +1911,12 @@ pub mod chat {
         let log_changed = changed.contains(&"log");
 
         let new_provider_type = new_config.provider.provider_type.clone();
-        let new_provider_box = create_provider(&new_provider_type, &new_config.provider).await?;
+        let new_provider_box = create_provider_with_override(
+            &new_config.provider,
+            Some(&new_provider_type),
+            model_override,
+        )
+        .await?;
         let new_provider: Arc<dyn crate::providers::Provider> = Arc::from(new_provider_box);
 
         let env = build_agent_environment(&new_config, working_dir, false, None, None).await?;

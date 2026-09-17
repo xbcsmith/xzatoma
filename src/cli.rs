@@ -110,6 +110,15 @@ pub enum Commands {
         #[arg(short, long)]
         provider: Option<String>,
 
+        /// Override the model for this session.
+        ///
+        /// Accepted values depend on the provider. For Ollama this is the
+        /// model tag (e.g. `gemma4-e4b:q4_k_m`); for Copilot it is the
+        /// model identifier (e.g. `gpt-4o`).
+        /// Takes precedence over the model configured in the config file.
+        #[arg(long)]
+        model: Option<String>,
+
         /// Chat mode: planning (read-only) or write (read/write)
         #[arg(short, long, default_value = "planning")]
         mode: Option<String>,

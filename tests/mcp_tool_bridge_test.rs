@@ -205,29 +205,34 @@ fn make_executor(
 // MCP approval policy
 // ---------------------------------------------------------------------------
 
-/// `should_auto_approve` returns `false` for `FullAutonomous`, `headless: false`.
+/// `should_auto_approve` returns `true` for `FullAutonomous`, `headless: false`.
+///
+/// Phase 1 (Gap 9): `FullAutonomous` alone is sufficient to grant auto-approval.
 #[test]
-fn test_should_auto_approve_false_in_full_autonomous_mode() {
+fn test_should_auto_approve_true_in_full_autonomous_mode() {
     assert!(
-        !should_auto_approve(ExecutionMode::FullAutonomous, false),
-        "FullAutonomous, headless=false must not imply MCP trust"
+        should_auto_approve(ExecutionMode::FullAutonomous, false),
+        "FullAutonomous, headless=false must auto-approve"
     );
 }
 
-/// `should_auto_approve` returns `false` when `headless: true` regardless of mode.
+/// `should_auto_approve` returns `true` when `headless: true` regardless of mode.
+///
+/// Phase 1 (Gap 9): headless execution always grants auto-approval so the agent
+/// never blocks on interactive stdin.
 #[test]
-fn test_should_auto_approve_false_when_headless() {
+fn test_should_auto_approve_true_when_headless() {
     assert!(
-        !should_auto_approve(ExecutionMode::Interactive, true),
-        "Interactive, headless=true must not imply MCP trust"
+        should_auto_approve(ExecutionMode::Interactive, true),
+        "Interactive, headless=true must auto-approve"
     );
     assert!(
-        !should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
-        "RestrictedAutonomous, headless=true must not imply MCP trust"
+        should_auto_approve(ExecutionMode::RestrictedAutonomous, true),
+        "RestrictedAutonomous, headless=true must auto-approve"
     );
     assert!(
-        !should_auto_approve(ExecutionMode::FullAutonomous, true),
-        "FullAutonomous, headless=true must not imply MCP trust"
+        should_auto_approve(ExecutionMode::FullAutonomous, true),
+        "FullAutonomous, headless=true must auto-approve"
     );
 }
 
