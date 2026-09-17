@@ -247,9 +247,16 @@ impl OllamaProvider {
     /// assert!(provider.is_ok());
     /// ```
     pub fn new(mut config: OllamaConfig) -> Result<Self> {
-        config.host =
+        // When allow_http is true, only validate that the URL is structurally
+        // sound; skip the HTTPS-for-remote-hosts enforcement so the user can
+        // point xzatoma at a plaintext Ollama instance on a trusted LAN.
+        config.host = if config.allow_http {
+            crate::security::normalize_http_base_url(&config.host, "provider.ollama.host")
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?
+        } else {
             crate::security::validate_provider_base_url(&config.host, "provider.ollama.host")
-                .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?
+        };
 
         // Normalize "localhost" to the IPv4 literal "127.0.0.1".
         //
@@ -1503,6 +1510,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config);
         assert!(provider.is_ok());
@@ -1516,6 +1525,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // "localhost" is normalised to 127.0.0.1 to avoid dual-stack DNS.
@@ -1530,6 +1541,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // Both the trailing slash and "localhost" are normalised.
@@ -1550,6 +1563,8 @@ mod tests {
                 request_timeout_seconds: 600,
                 stream_idle_timeout_seconds: 120,
                 num_ctx: None,
+
+                allow_http: false,
             };
             let provider = OllamaProvider::new(config).unwrap();
             assert_eq!(
@@ -1570,6 +1585,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.host(), "http://127.0.0.1:11434");
@@ -1583,6 +1600,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let result = OllamaProvider::new(config);
         assert!(result.is_err());
@@ -1596,6 +1615,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.model(), "llama3.2:latest");
@@ -1609,6 +1630,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1633,6 +1656,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1659,6 +1684,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1687,6 +1714,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1718,6 +1747,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let message = Message::try_user_from_multimodal_input(
@@ -1757,6 +1788,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1777,6 +1810,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         // Cache is empty; should fall back to static allowlist.
@@ -1792,6 +1827,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1818,6 +1855,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1852,6 +1891,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -1965,6 +2006,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         let capabilities = provider.get_provider_capabilities();
@@ -1985,6 +2028,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
         assert_eq!(provider.get_current_model(), "test-model");
@@ -2069,6 +2114,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -2091,6 +2138,8 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         };
         let provider = OllamaProvider::new(config).unwrap();
 
@@ -2373,5 +2422,55 @@ mod tests {
         let json = serde_json::to_value(&request).unwrap();
         let options = json.get("options").expect("options key should be present");
         assert_eq!(options["num_ctx"], 16384, "num_ctx should be 16384");
+    }
+
+    #[test]
+    fn test_ollama_provider_rejects_remote_http_without_allow_http() {
+        // Plain HTTP to a private (non-loopback) address must be rejected by
+        // default to prevent accidental plaintext prompt transmission.
+        let config = OllamaConfig {
+            host: "http://192.168.1.217:11434".to_string(),
+            allow_http: false,
+            ..OllamaConfig::default()
+        };
+        let result = OllamaProvider::new(config);
+        assert!(
+            result.is_err(),
+            "remote http must be rejected when allow_http = false"
+        );
+        let msg = result.err().expect("expected Err").to_string();
+        assert!(
+            msg.contains("http") || msg.contains("loopback") || msg.contains("https"),
+            "error must mention the HTTP/loopback constraint; got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_ollama_provider_accepts_remote_http_when_allow_http_is_true() {
+        // When the operator explicitly opts in, plain HTTP to a remote address
+        // must be accepted.
+        let config = OllamaConfig {
+            host: "http://192.168.1.217:11434".to_string(),
+            allow_http: true,
+            ..OllamaConfig::default()
+        };
+        let result = OllamaProvider::new(config);
+        assert!(
+            result.is_ok(),
+            "remote http must be accepted when allow_http = true; got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_ollama_provider_accepts_loopback_http_without_allow_http() {
+        // Loopback HTTP must always be accepted regardless of allow_http.
+        let config = OllamaConfig {
+            host: "http://127.0.0.1:11434".to_string(),
+            allow_http: false,
+            ..OllamaConfig::default()
+        };
+        assert!(OllamaProvider::new(config).is_ok());
     }
 }

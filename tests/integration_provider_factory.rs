@@ -50,6 +50,8 @@ fn create_test_provider_config() -> ProviderConfig {
             request_timeout_seconds: 1,
             stream_idle_timeout_seconds: 120,
             num_ctx: None,
+
+            allow_http: false,
         },
         openai: OpenAIConfig {
             api_key: String::new(),

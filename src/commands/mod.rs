@@ -2290,6 +2290,8 @@ pub mod chat {
                 request_timeout_seconds: 1,
                 stream_idle_timeout_seconds: 120,
                 num_ctx: None,
+
+                allow_http: false,
             };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;

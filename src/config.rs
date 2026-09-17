@@ -240,6 +240,28 @@ pub struct OllamaConfig {
     /// Set via config file field `provider.ollama.num_ctx`.
     #[serde(default)]
     pub num_ctx: Option<u32>,
+
+    /// Allow plain HTTP connections to non-loopback Ollama hosts.
+    ///
+    /// By default, xzatoma requires HTTPS when `host` points at a remote
+    /// address (anything other than `localhost` / `127.0.0.1` / `::1`) to
+    /// avoid sending prompts and completions over an unencrypted connection.
+    ///
+    /// Set this to `true` to opt out of that check — for example, when your
+    /// Ollama instance runs on a machine on your trusted home or office LAN
+    /// and you do not have TLS configured:
+    ///
+    /// ```yaml
+    /// provider:
+    ///   ollama:
+    ///     host: http://192.168.1.217:11434
+    ///     allow_http: true
+    /// ```
+    ///
+    /// Only set this when you fully trust the network path between this
+    /// machine and the Ollama host.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 fn default_ollama_host() -> String {
@@ -272,6 +294,7 @@ impl Default for OllamaConfig {
             request_timeout_seconds: default_ollama_request_timeout(),
             stream_idle_timeout_seconds: default_ollama_stream_idle_timeout(),
             num_ctx: None,
+            allow_http: false,
         }
     }
 }
@@ -7007,6 +7030,26 @@ client:
         let yaml = "host: \"http://127.0.0.1:11434\"";
         let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
         assert!(config.num_ctx.is_none());
+    }
+
+    #[test]
+    fn test_ollama_config_allow_http_defaults_false() {
+        let config = OllamaConfig::default();
+        assert!(!config.allow_http, "allow_http must default to false");
+    }
+
+    #[test]
+    fn test_ollama_config_allow_http_deserializes_true() {
+        let yaml = "host: \"http://192.168.1.217:11434\"\nallow_http: true";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.allow_http);
+    }
+
+    #[test]
+    fn test_ollama_config_allow_http_absent_gives_false() {
+        let yaml = "host: \"http://192.168.1.217:11434\"";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.allow_http, "allow_http must be false when absent");
     }
 
     #[test]
