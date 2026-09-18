@@ -453,6 +453,7 @@ impl AcpStdioServerState {
         &self,
         request: acp::NewSessionRequest,
         connection: Option<ConnectionTo<AcpClientRole>>,
+        session_id_override: Option<acp::SessionId>,
     ) -> Result<acp::NewSessionResponse> {
         // Snapshot the config once per session creation. `/config reload` may
         // swap `self.config` between sessions; this ensures every field read
@@ -565,7 +566,10 @@ impl AcpStdioServerState {
 
         // Create the session ID early so it can be used by the IDE bridge and
         // passed through to the agent, storage, and prompt worker consistently.
-        let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
+        // When resuming, the caller supplies the original session ID so that Zed
+        // can continue using it without needing to update its own state.
+        let session_id = session_id_override
+            .unwrap_or_else(|| acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4())));
 
         // Build IDE bridge when client advertised IDE capabilities and a connection is available.
         let ide_bridge = {
@@ -811,6 +815,71 @@ impl AcpStdioServerState {
         }
 
         Ok(response)
+    }
+
+    /// Handles a `ResumeSessionRequest` from the Zed client.
+    ///
+    /// When Zed reconnects to a workspace where a previous session existed it
+    /// sends `session/resume` instead of `session/new`. This method handles
+    /// both cases:
+    ///
+    /// - **Session still alive** (same process run, not yet evicted): returns
+    ///   the current mode state and config options immediately.
+    /// - **Session not found** (process restarted or session evicted): calls
+    ///   `create_session` using the workspace `cwd` from the request so that
+    ///   conversation history is rehydrated from storage. The original
+    ///   `session_id` from the request is preserved so Zed can continue using
+    ///   it without updating its own state.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The `session/resume` request from Zed.
+    /// * `connection` - Live ACP connection used for IDE bridge construction
+    ///   and initial usage update notifications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session re-creation fails (provider init failure,
+    /// config validation failure, etc.).
+    async fn resume_session(
+        &self,
+        request: acp::ResumeSessionRequest,
+        connection: Option<ConnectionTo<AcpClientRole>>,
+    ) -> Result<acp::ResumeSessionResponse> {
+        // Case 1: session still alive in this process run.
+        if let Some(session) = self.sessions.get(&request.session_id).await {
+            let lock = session.lock().await;
+            return Ok(acp::ResumeSessionResponse::new()
+                .modes(build_session_mode_state(
+                    &lock.runtime_state.current_mode_id,
+                ))
+                .config_options(build_session_config_options(&lock.runtime_state)));
+        }
+
+        // Case 2: process restarted or session evicted — re-create the session
+        // from conversation history stored under the workspace root.
+        // Pass the original session_id so the registry stores it under the same
+        // key that Zed will use for all subsequent requests.
+        let new_req = acp::NewSessionRequest::new(request.cwd).mcp_servers(request.mcp_servers);
+        self.create_session(new_req, connection, Some(request.session_id.clone()))
+            .await?;
+
+        // Read the mode/config state from the freshly created session.
+        let session = self
+            .sessions
+            .get(&request.session_id)
+            .await
+            .ok_or_else(|| {
+                XzatomaError::Internal(
+                    "Resumed session not found in registry immediately after creation".to_string(),
+                )
+            })?;
+        let lock = session.lock().await;
+        Ok(acp::ResumeSessionResponse::new()
+            .modes(build_session_mode_state(
+                &lock.runtime_state.current_mode_id,
+            ))
+            .config_options(build_session_config_options(&lock.runtime_state)))
     }
 
     /// Handles a `SetSessionModeRequest` from the Zed client.
@@ -2347,7 +2416,10 @@ where
                             responder: Responder<acp::NewSessionResponse>,
                             cx: ConnectionTo<AcpClientRole>| {
                     let session_id_for_notify;
-                    match state.create_session(new_session, Some(cx.clone())).await {
+                    match state
+                        .create_session(new_session, Some(cx.clone()), None)
+                        .await
+                    {
                         Ok(response) => {
                             session_id_for_notify = response.session_id.clone();
                             responder.respond(response)?;
@@ -2367,6 +2439,37 @@ where
                         ),
                         "available commands update",
                     );
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |resume: acp::ResumeSessionRequest,
+                            responder: Responder<acp::ResumeSessionResponse>,
+                            cx: ConnectionTo<AcpClientRole>| {
+                    let session_id = resume.session_id.clone();
+                    match state.resume_session(resume, Some(cx.clone())).await {
+                        Ok(response) => {
+                            responder.respond(response)?;
+                            // Send available commands so Zed re-populates its
+                            // command palette after reconnecting.
+                            let commands = build_available_commands();
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::AvailableCommandsUpdate(
+                                    acp::AvailableCommandsUpdate::new(commands),
+                                ),
+                                "available commands update after resume",
+                            );
+                        }
+                        Err(error) => {
+                            responder.respond_with_error(acp_internal_error(error))?;
+                        }
+                    }
                     Ok(())
                 }
             },
@@ -2630,8 +2733,11 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
                 .mcp_capabilities(acp::McpCapabilities::new())
                 // Advertise session mode, config, and model capabilities so Zed
                 // knows to show the mode selector, config controls, and model
-                // switcher in the chat UI.
-                .session_capabilities(acp::SessionCapabilities::new()),
+                // switcher in the chat UI. Advertise session/resume so Zed can
+                // reconnect to a previous session after restart.
+                .session_capabilities(
+                    acp::SessionCapabilities::new().resume(acp::SessionResumeCapabilities::new()),
+                ),
         )
         .auth_methods(Vec::new())
 }
@@ -4048,6 +4154,14 @@ mod tests {
         );
         assert!(!response.agent_capabilities.prompt_capabilities.audio);
         assert!(!response.agent_capabilities.load_session);
+        assert!(
+            response
+                .agent_capabilities
+                .session_capabilities
+                .resume
+                .is_some(),
+            "initialize response must advertise session/resume capability"
+        );
     }
 
     #[test]
@@ -4230,6 +4344,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4309,6 +4424,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -4453,6 +4569,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4477,6 +4594,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -4613,6 +4731,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4698,6 +4817,7 @@ mod tests {
         let session_response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -5387,6 +5507,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -5656,6 +5777,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await;
 
@@ -5687,6 +5809,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
                 None,
+                None,
             )
             .await;
         // An invalid provider makes the create_session call succeed because
@@ -5705,6 +5828,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
+                None,
                 None,
             )
             .await;
