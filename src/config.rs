@@ -3380,16 +3380,15 @@ impl Config {
 
     /// Validate configuration requirements specific to the `chat` and `run` commands.
     ///
-    /// Checks that a provider type is configured and that the model field is
-    /// non-empty (only when a model is explicitly required by the active
-    /// provider). This is a stricter check than `Config::validate` for the
-    /// execution context.
+    /// Checks that a provider type is configured. Model selection is intentionally
+    /// not validated here: when the model field is empty the provider factory will
+    /// query the provider's API and auto-select the latest available model. An
+    /// error is returned by the factory only when neither a configured model nor
+    /// any discoverable model is available.
     ///
     /// # Errors
     ///
-    /// Returns `XzatomaError::Config` when:
-    /// - The provider type string is empty.
-    /// - The active provider's model field is empty.
+    /// Returns `XzatomaError::Config` when the provider type string is empty.
     ///
     /// # Examples
     ///
@@ -3398,10 +3397,9 @@ impl Config {
     ///
     /// let mut config = Config::default();
     /// config.provider.provider_type = "ollama".to_string();
-    /// config.provider.ollama.model = "llama3.2".to_string();
     /// assert!(config.validate_for_execution().is_ok());
     ///
-    /// config.provider.ollama.model = String::new();
+    /// config.provider.provider_type = String::new();
     /// assert!(config.validate_for_execution().is_err());
     /// ```
     pub fn validate_for_execution(&self) -> Result<()> {
@@ -3409,18 +3407,6 @@ impl Config {
             return Err(XzatomaError::Config(
                 "provider.provider_type is required for execution".to_string(),
             ));
-        }
-        let model_is_empty = match self.provider.provider_type.as_str() {
-            "copilot" => self.provider.copilot.model.trim().is_empty(),
-            "ollama" => self.provider.ollama.model.trim().is_empty(),
-            "openai" => self.provider.openai.model.trim().is_empty(),
-            _ => false,
-        };
-        if model_is_empty {
-            return Err(XzatomaError::Config(format!(
-                "provider.{}.model must be set for execution",
-                self.provider.provider_type
-            )));
         }
         Ok(())
     }
@@ -7087,11 +7073,13 @@ client:
     }
 
     #[test]
-    fn test_validate_for_execution_fails_with_empty_model() {
+    fn test_validate_for_execution_passes_with_empty_model() {
+        // An empty model is allowed: the provider factory queries the API
+        // and auto-selects the latest available model at runtime.
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
         config.provider.ollama.model = String::new();
-        assert!(config.validate_for_execution().is_err());
+        assert!(config.validate_for_execution().is_ok());
     }
 
     #[test]
