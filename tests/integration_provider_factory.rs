@@ -62,6 +62,7 @@ fn create_test_provider_config() -> ProviderConfig {
             request_timeout_seconds: 1,
             stream_idle_timeout_seconds: 1,
             reasoning_effort: None,
+            allow_http: false,
         },
     }
 }

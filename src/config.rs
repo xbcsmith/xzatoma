@@ -408,6 +408,31 @@ pub struct OpenAIConfig {
     /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+
+    /// Allow plain HTTP connections to non-loopback OpenAI-compatible hosts.
+    ///
+    /// By default, xzatoma requires HTTPS when `base_url` points at a remote
+    /// address to avoid sending prompts and API keys over an unencrypted
+    /// connection.
+    ///
+    /// Set this to `true` to opt out of that check -- for example, when your
+    /// OpenAI-compatible inference server (llama.cpp, vLLM, LM Studio, etc.)
+    /// runs on a machine on your trusted home or office LAN and you do not
+    /// have TLS configured:
+    ///
+    /// ```yaml
+    /// provider:
+    ///   openai:
+    ///     base_url: http://192.168.1.100:8080/v1
+    ///     allow_http: true
+    /// ```
+    ///
+    /// Only set this when you fully trust the network path between this
+    /// machine and the inference server.
+    ///
+    /// Set via the `XZATOMA_OPENAI_ALLOW_HTTP` environment variable.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 fn default_openai_api_key() -> String {
@@ -445,6 +470,7 @@ impl Default for OpenAIConfig {
             request_timeout_seconds: default_openai_request_timeout(),
             stream_idle_timeout_seconds: default_openai_stream_idle_timeout(),
             reasoning_effort: None,
+            allow_http: false,
         }
     }
 }
@@ -2159,6 +2185,13 @@ impl Config {
                 self.provider.openai.reasoning_effort = None;
             } else {
                 self.provider.openai.reasoning_effort = Some(val);
+            }
+        }
+
+        if let Ok(val) = std::env::var("XZATOMA_OPENAI_ALLOW_HTTP") {
+            match parse_env_bool(&val) {
+                Some(value) => self.provider.openai.allow_http = value,
+                None => tracing::warn!("Invalid XZATOMA_OPENAI_ALLOW_HTTP: {}", val),
             }
         }
 
@@ -5152,6 +5185,7 @@ output_max_size: 4096
         assert_eq!(config.model, "");
         assert!(config.organization_id.is_none());
         assert!(config.enable_streaming);
+        assert!(!config.allow_http, "allow_http must default to false");
     }
 
     #[test]
@@ -7036,6 +7070,37 @@ client:
         let yaml = "host: \"http://192.168.1.217:11434\"";
         let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
         assert!(!config.allow_http, "allow_http must be false when absent");
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_defaults_false() {
+        let config = OpenAIConfig::default();
+        assert!(!config.allow_http, "allow_http must default to false");
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_deserializes_true() {
+        let yaml = "base_url: \"http://192.168.1.100:8080/v1\"\nallow_http: true";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.allow_http);
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_absent_gives_false() {
+        let yaml = "base_url: \"http://192.168.1.100:8080/v1\"";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.allow_http, "allow_http must be false when absent");
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_allow_http() {
+        let _flag = EnvVarGuard::set("XZATOMA_OPENAI_ALLOW_HTTP", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(
+            config.provider.openai.allow_http,
+            "XZATOMA_OPENAI_ALLOW_HTTP=true must set allow_http"
+        );
     }
 
     #[test]
