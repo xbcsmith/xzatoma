@@ -3806,7 +3806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_available_commands_returns_fourteen_entries_from_stdio_context() {
-        assert_eq!(build_available_commands().len(), 14);
+        assert_eq!(build_available_commands().len(), 15);
     }
 
     #[tokio::test]
@@ -6698,6 +6698,27 @@ mod tests {
         assert!(
             text.contains("summarized"),
             "context summary must confirm summarization; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_compact_returns_confirmation() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // `/compact` is an alias for `/context summary` and must return the
+        // same confirmation string.
+        let result = dispatch_stdio_command("/compact", &session, None).await;
+        let response = result
+            .expect("/compact should short-circuit (not None)")
+            .expect("/compact should not error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the text directly via the handler.
+        let text = handle_context_summary(None, &session).await;
+        assert!(
+            text.contains("summarized"),
+            "compact must confirm summarization; got: {text}"
         );
     }
 }

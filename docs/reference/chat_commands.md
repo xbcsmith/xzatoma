@@ -4,7 +4,8 @@
 
 XZatoma exposes a set of slash commands in interactive chat sessions. All
 commands follow a unified UX contract described below. This reference covers all
-sixteen commands, their arguments, aliases, and any ACP-specific notes.
+eighteen commands (including aliases), their arguments, and any ACP-specific
+notes.
 
 | Command      | Description                                  | Bare behavior            | Status behavior                    | Example action             |
 | ------------ | -------------------------------------------- | ------------------------ | ---------------------------------- | -------------------------- |
@@ -14,6 +15,8 @@ sixteen commands, their arguments, aliases, and any ACP-specific notes.
 | `/safety`    | Change the safety confirmation policy        | Shows safety help        | Shows current safety policy        | `/safety off`              |
 | `/tools`     | List available agent tools                   | Lists tools              | n/a                                | n/a                        |
 | `/context`   | Inspect or manage context window usage       | Shows token stats        | n/a                                | `/context summary`         |
+| `/compact`   | Compact conversation history                 | Compacts history         | n/a                                | n/a                        |
+| `/summarize` | Compact conversation history                 | Compacts history         | n/a                                | n/a                        |
 | `/skills`    | List active agent skills                     | Lists skills             | n/a                                | n/a                        |
 | `/mcp`       | List connected MCP servers                   | Lists MCP servers        | n/a                                | n/a                        |
 | `/mentions`  | Show available @-mention references          | Lists mentions           | n/a                                | n/a                        |
@@ -27,8 +30,8 @@ sixteen commands, their arguments, aliases, and any ACP-specific notes.
 
 Several commands also accept short aliases: `/planning` and `/write` for
 `/mode planning` and `/mode write`; `/safe` and `/yolo` for `/safety on` and
-`/safety off`; and `/?` for `/help`. Typing `exit`, `quit`, `/exit`, or `/quit`
-ends the session.
+`/safety off`; `/?` for `/help`; and `/compact` and `/summarize` for
+`/context summary`. Typing `exit`, `quit`, `/exit`, or `/quit` ends the session.
 
 ## Unified UX Contract
 
@@ -169,6 +172,8 @@ conversation to reclaim context space.
 /context summary
 /context summary --model <model_name>
 /context summary -m <model_name>
+/compact
+/summarize
 ```
 
 **Arguments:**
@@ -178,6 +183,10 @@ conversation to reclaim context space.
 - `summary` — ask the model to summarize the conversation and reset the context
   window to the summary. Optionally pass `--model <name>` or `-m <name>` to use
   a specific model for the summary.
+
+**Aliases:** `/compact` and `/summarize` are shorthand spellings for
+`/context summary`. All three compact the conversation and return
+`"Conversation summarized. Context window reset."`.
 
 **ACP notes:** None.
 
@@ -369,8 +378,8 @@ following commands are also not supported in ACP mode:
 
 ### /config
 
-**Purpose:** Re-read the config file used at startup and apply it to the
-current session without restarting the process.
+**Purpose:** Re-read the config file used at startup and apply it to the current
+session without restarting the process.
 
 **Usage:**
 
@@ -385,28 +394,29 @@ current session without restarting the process.
 - `status` — print the path to the active config file
 - `reload` — reload the config file and apply it to this session
 
-**ACP notes:** None. Works identically in terminal chat mode and ACP (Zed)
-mode -- no ACP session-config dropdown is involved. `/config reload` rebuilds
-the provider, tool registry, skills, and MCP connections from the new config
-while preserving conversation history. Log level/format and persistence
-storage paths (`agent.subagent.persistence_path`, the history database path)
-cannot be applied this way and still require a restart; the response calls
-out any such change by name. In ACP mode, the reload also applies to any new
-session created afterward in the same subprocess, but sibling sessions
-already open at reload time keep their existing agent until they also run
-`/config reload`.
+**ACP notes:** None. Works identically in terminal chat mode and ACP (Zed) mode
+-- no ACP session-config dropdown is involved. `/config reload` rebuilds the
+provider, tool registry, skills, and MCP connections from the new config while
+preserving conversation history. Log level/format and persistence storage paths
+(`agent.subagent.persistence_path`, the history database path) cannot be applied
+this way and still require a restart; the response calls out any such change by
+name. In ACP mode, the reload also applies to any new session created afterward
+in the same subprocess, but sibling sessions already open at reload time keep
+their existing agent until they also run `/config reload`.
 
 ## Commands Without a Status Subcommand
 
 The following commands perform their entire function when run bare. They do not
 accept a `status` argument:
 
-| Command     | Reason                                                               |
-| ----------- | -------------------------------------------------------------------- |
-| `/tools`    | Always lists all tools; no single current value to inspect           |
-| `/context`  | Bare shows token stats; use `info` or `summary` for specific actions |
-| `/skills`   | Always lists all active skills; no on/off toggle                     |
-| `/mcp`      | Always lists connected servers; no single value to inspect           |
-| `/mentions` | Always lists available mentions; no single value to inspect          |
-| `/help`     | Always shows the global list; there is no help state                 |
-| `/status`   | Is itself a status command; no nested status subcommand              |
+| Command      | Reason                                                                       |
+| ------------ | ---------------------------------------------------------------------------- |
+| `/tools`     | Always lists all tools; no single current value to inspect                   |
+| `/context`   | Bare shows token stats; use `info` or `summary` for specific actions         |
+| `/compact`   | Always compacts history; no status subcommand (alias for `/context summary`) |
+| `/summarize` | Always compacts history; no status subcommand (alias for `/context summary`) |
+| `/skills`    | Always lists all active skills; no on/off toggle                             |
+| `/mcp`       | Always lists connected servers; no single value to inspect                   |
+| `/mentions`  | Always lists available mentions; no single value to inspect                  |
+| `/help`      | Always shows the global list; there is no help state                         |
+| `/status`    | Is itself a status command; no nested status subcommand                      |
