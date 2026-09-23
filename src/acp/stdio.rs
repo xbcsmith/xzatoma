@@ -882,6 +882,89 @@ impl AcpStdioServerState {
             .config_options(build_session_config_options(&lock.runtime_state)))
     }
 
+    /// Loads a stored session by ID and streams its conversation history back
+    /// to the client as `UserMessageChunk` / `AgentMessageChunk` notifications.
+    ///
+    /// This is the `session/load` protocol contract: restore the agent context
+    /// for the given session, then replay all non-system conversation turns so
+    /// the Zed UI can populate the thread with prior messages.
+    ///
+    /// Unlike `session/resume` (which explicitly omits prior messages),
+    /// `session/load` is the mechanism Zed calls when it needs to reconstruct
+    /// the visible thread history after a restart or when opening an existing
+    /// conversation.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The `session/load` request from Zed.
+    /// * `connection` - Live ACP connection used to stream history
+    ///   notifications. `None` in test contexts where no connection is
+    ///   available.
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`acp::LoadSessionResponse`] with mode and config state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session creation or the registry lookup fails.
+    async fn handle_load_session(
+        &self,
+        request: acp::LoadSessionRequest,
+        connection: Option<ConnectionTo<AcpClientRole>>,
+    ) -> Result<acp::LoadSessionResponse> {
+        let session_id = request.session_id.clone();
+
+        // Re-use create_session to rehydrate the workspace conversation and
+        // register the session under the same ID Zed will use for all
+        // subsequent requests.
+        let new_req = acp::NewSessionRequest::new(request.cwd).mcp_servers(request.mcp_servers);
+        self.create_session(new_req, connection.clone(), Some(session_id.clone()))
+            .await?;
+
+        // Stream non-system conversation turns back to Zed so the chat thread
+        // is populated with prior user/assistant messages.
+        if let (Some(conn), Some(session_arc)) =
+            (connection.as_ref(), self.sessions.get(&session_id).await)
+        {
+            let session_guard = session_arc.lock().await;
+            let agent_handle = session_guard.xzatoma_agent.clone();
+            drop(session_guard);
+
+            let agent = agent_handle.lock().await;
+            let messages: Vec<Message> = agent.conversation().messages().to_vec();
+            drop(agent);
+
+            for (idx, msg) in messages.iter().enumerate() {
+                let content = match &msg.content {
+                    Some(c) if !c.trim().is_empty() => c.clone(),
+                    _ => continue,
+                };
+                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(content))
+                    .message_id(format!("hist-{idx}").as_str());
+                let update = match msg.role.as_str() {
+                    "user" => acp::SessionUpdate::UserMessageChunk(chunk),
+                    "assistant" => acp::SessionUpdate::AgentMessageChunk(chunk),
+                    _ => continue, // skip system, tool, tool_result
+                };
+                send_session_update_best_effort(conn, session_id.clone(), update, "history replay");
+            }
+        }
+
+        // Read the freshly created session's mode/config state for the response.
+        let session_arc = self.sessions.get(&session_id).await.ok_or_else(|| {
+            XzatomaError::Internal(
+                "Loaded session not found in registry after creation".to_string(),
+            )
+        })?;
+        let lock = session_arc.lock().await;
+        Ok(acp::LoadSessionResponse::new()
+            .modes(build_session_mode_state(
+                &lock.runtime_state.current_mode_id,
+            ))
+            .config_options(build_session_config_options(&lock.runtime_state)))
+    }
+
     /// Handles a `SetSessionModeRequest` from the Zed client.
     ///
     /// Validates the session and the requested mode, applies the runtime effect
@@ -2478,6 +2561,37 @@ where
         .on_receive_request(
             {
                 let state = Arc::clone(&state);
+                async move |load: acp::LoadSessionRequest,
+                            responder: Responder<acp::LoadSessionResponse>,
+                            cx: ConnectionTo<AcpClientRole>| {
+                    let session_id = load.session_id.clone();
+                    match state.handle_load_session(load, Some(cx.clone())).await {
+                        Ok(response) => {
+                            responder.respond(response)?;
+                            // Send available commands so Zed populates its
+                            // slash-command completion menu.
+                            let commands = build_available_commands();
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::AvailableCommandsUpdate(
+                                    acp::AvailableCommandsUpdate::new(commands),
+                                ),
+                                "available commands update after load",
+                            );
+                        }
+                        Err(error) => {
+                            responder.respond_with_error(acp_internal_error(error))?;
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
                 async move |prompt: acp::PromptRequest,
                             responder: Responder<acp::PromptResponse>,
                             connection: ConnectionTo<AcpClientRole>|
@@ -2724,7 +2838,7 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
         ))
         .agent_capabilities(
             acp::AgentCapabilities::new()
-                .load_session(false)
+                .load_session(true)
                 .prompt_capabilities(
                     acp::PromptCapabilities::new()
                         .image(true)
@@ -4153,7 +4267,7 @@ mod tests {
                 .embedded_context
         );
         assert!(!response.agent_capabilities.prompt_capabilities.audio);
-        assert!(!response.agent_capabilities.load_session);
+        assert!(response.agent_capabilities.load_session);
         assert!(
             response
                 .agent_capabilities
@@ -6719,6 +6833,34 @@ mod tests {
         assert!(
             text.contains("summarized"),
             "compact must confirm summarization; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires system keyring"]
+    async fn test_handle_load_session_creates_session_and_returns_response() {
+        // A load session with no stored history for the workspace should
+        // succeed: it creates a fresh session and returns a valid response
+        // with mode and config state populated.
+        let state = dispatch_test_state();
+        let session_id = acp::SessionId::new("xzatoma-load-test-session-abc");
+        let request = acp::LoadSessionRequest::new(
+            session_id.clone(),
+            std::path::PathBuf::from("/tmp/xzatoma-load-test"),
+        );
+
+        let result = state.handle_load_session(request, None).await;
+        assert!(
+            result.is_ok(),
+            "handle_load_session must not fail for a new workspace: {:?}",
+            result.err()
+        );
+
+        // The session must be registered in the registry after loading.
+        let registered = state.sessions.contains(&session_id).await;
+        assert!(
+            registered,
+            "session must be in registry after handle_load_session"
         );
     }
 }

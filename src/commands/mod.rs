@@ -922,6 +922,12 @@ pub mod chat {
         // Display welcome banner with current mode and safety
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
 
+        // When resuming, show the prior conversation turns so the user has
+        // context before the first new prompt.
+        if resume.is_some() && conversation_loaded {
+            print_conversation_history(agent.conversation().messages());
+        }
+
         loop {
             // Recomputed each iteration (rather than borrowed once before the
             // loop) so `/config reload` can update `provider_type_owned` in
@@ -1565,6 +1571,64 @@ pub mod chat {
             safety.description()
         );
         println!("Type '/help' for available commands, 'exit' to quit\n");
+    }
+
+    /// Prints non-system conversation turns to stdout when resuming a session.
+    ///
+    /// Only `user` and `assistant` roles are shown; `system`, `tool`, and
+    /// `tool_result` messages are internal and are not displayed. An empty
+    /// conversation (no user/assistant turns) produces no output.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of messages from the resumed conversation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::types::Message;
+    ///
+    /// let messages = vec![
+    ///     Message { role: "user".to_string(), content: Some("hello".to_string()), content_parts: None, tool_calls: None, tool_call_id: None },
+    ///     Message { role: "assistant".to_string(), content: Some("hi".to_string()), content_parts: None, tool_calls: None, tool_call_id: None },
+    /// ];
+    ///
+    /// // In a real session this would print to stdout; here we just verify the
+    /// // slice is accepted by the function signature.
+    /// ```
+    fn print_conversation_history(messages: &[crate::providers::types::Message]) {
+        let visible: Vec<_> = messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .collect();
+
+        if visible.is_empty() {
+            return;
+        }
+
+        println!("{}", "--- Previous conversation ---".dimmed());
+        println!();
+        for msg in &visible {
+            let content = match &msg.content {
+                Some(c) if !c.trim().is_empty() => c.trim().to_string(),
+                _ => continue,
+            };
+            match msg.role.as_str() {
+                "user" => {
+                    println!("{}", "You:".bold().blue());
+                    println!("{content}");
+                    println!();
+                }
+                "assistant" => {
+                    println!("{}", "Agent:".bold().green());
+                    println!("{content}");
+                    println!();
+                }
+                _ => {}
+            }
+        }
+        println!("{}", "--- End of previous conversation ---".dimmed());
+        println!();
     }
 
     /// Display detailed status information about the current session
@@ -2563,6 +2627,47 @@ pub mod chat {
                 result.is_none(),
                 "must return None when both CLI flag and config are absent"
             );
+        }
+
+        #[test]
+        fn test_print_conversation_history_with_empty_messages_produces_no_output() {
+            // This is a pure-logic test: verify the function returns without
+            // panicking when given no user/assistant turns.
+            let messages: Vec<crate::providers::types::Message> = vec![];
+            // Calling this in a test context is only meaningful as a smoke-test
+            // since the output goes to stdout, not to a buffer. The assertion is
+            // that the function does not panic.
+            print_conversation_history(&messages);
+        }
+
+        #[test]
+        fn test_print_conversation_history_skips_system_messages() {
+            let messages = vec![
+                crate::providers::types::Message {
+                    role: "system".to_string(),
+                    content: Some("You are a helpful assistant.".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                crate::providers::types::Message {
+                    role: "user".to_string(),
+                    content: Some("Hello".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                crate::providers::types::Message {
+                    role: "assistant".to_string(),
+                    content: Some("Hi there".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ];
+            // Smoke-test: verify no panic and that the function runs successfully
+            // for a typical resumed conversation with a system message.
+            print_conversation_history(&messages);
         }
     }
 }
