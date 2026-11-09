@@ -1,0 +1,18 @@
+//! Kernel-enforced sandboxing for XZatoma tool execution.
+//!
+//! This module provides OS-level process isolation using Landlock (Linux) and
+//! Seatbelt (macOS) via the `nono` crate.
+//!
+//! Phase 1 provides the module skeleton, error types, and configuration schema.
+//! The sandbox engine is implemented in Phase 2.
+
+pub mod engine;
+pub mod guard;
+pub mod policy;
+pub mod proxy;
+
+pub use engine::apply_sandbox;
+pub use guard::SandboxGuard;
+pub use policy::{SandboxContext, SandboxPolicy};
+
+pub use crate::error::SandboxError;

@@ -46,6 +46,9 @@ pub struct Config {
     /// Global log subscriber configuration
     #[serde(default)]
     pub log: LogConfig,
+    /// Kernel-enforced sandbox policy configuration.
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
 }
 
 /// Provider configuration
@@ -1848,6 +1851,94 @@ impl Default for TerminalConfig {
     }
 }
 
+/// Kernel-enforced sandbox policy configuration.
+///
+/// Controls OS-level process isolation for tool execution using Landlock
+/// (Linux) and Seatbelt (macOS).
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::config::SandboxConfig;
+///
+/// let config = SandboxConfig::default();
+/// assert!(config.enabled);
+/// assert!(config.protect_git);
+/// assert!(!config.network_enabled);
+/// assert_eq!(config.proxy_port, 8877);
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", default)]
+pub struct SandboxConfig {
+    /// Master switch. When `false`, no sandbox layer is applied to any tool.
+    pub enabled: bool,
+
+    /// Per-tool sandbox opt-out map.
+    ///
+    /// Valid keys: `"terminal"`, `"fetch"`, `"file_ops"`.
+    /// A key absent from the map means the tool IS sandboxed when
+    /// `enabled = true`. Set a key to `false` to opt that tool out.
+    pub sandboxed_tools: std::collections::HashMap<String, bool>,
+
+    /// Root directory the agent may read and write.
+    ///
+    /// When `None`, the working directory at runtime is used.
+    /// Supports `~/` prefix expansion.
+    pub filesystem_root: Option<String>,
+
+    /// Additional paths outside `filesystem_root` granted read access.
+    pub extra_read_paths: Vec<String>,
+
+    /// Additional paths outside `filesystem_root` granted write access.
+    pub extra_write_paths: Vec<String>,
+
+    /// When `true`, deny writes to any `.git` directory even inside
+    /// `filesystem_root`.
+    pub protect_git: bool,
+
+    /// When `true`, terminal child processes may make network calls through
+    /// the host-filtering HTTP proxy. When `false`, all outbound network is
+    /// denied at the kernel level and at the application validator level.
+    pub network_enabled: bool,
+
+    /// Hostnames permitted to be reached when `network_enabled = true`.
+    ///
+    /// Entries must be bare hostnames without a protocol prefix.
+    /// Valid: `"api.example.com"`. Invalid: `"https://api.example.com"`.
+    pub network_allowed_hosts: Vec<String>,
+
+    /// Local TCP port for the host-filtering HTTP CONNECT proxy.
+    ///
+    /// Must be in the range 1024..=65535. Default: 8877.
+    pub proxy_port: u16,
+}
+
+fn default_sandbox_enabled() -> bool {
+    true
+}
+fn default_protect_git() -> bool {
+    true
+}
+fn default_proxy_port() -> u16 {
+    8877
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_sandbox_enabled(),
+            sandboxed_tools: std::collections::HashMap::new(),
+            filesystem_root: None,
+            extra_read_paths: Vec::new(),
+            extra_write_paths: Vec::new(),
+            protect_git: default_protect_git(),
+            network_enabled: false,
+            network_allowed_hosts: Vec::new(),
+            proxy_port: default_proxy_port(),
+        }
+    }
+}
+
 /// Terminal execution mode
 ///
 /// Controls how terminal commands are validated and executed.
@@ -2097,6 +2188,7 @@ impl Config {
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
             log: LogConfig::default(),
+            sandbox: SandboxConfig::default(),
         }
     }
 
@@ -3131,6 +3223,86 @@ impl Config {
             };
             tracing::debug!(path = %path, "Env override: XZATOMA_LOG_FILE");
         }
+
+        // ---------------------------------------------------------------------
+        // Sandbox environment variable overrides
+        // ---------------------------------------------------------------------
+        if let Ok(enabled) = std::env::var("XZATOMA_SANDBOX_ENABLED") {
+            match parse_env_bool(&enabled) {
+                Some(value) => {
+                    self.sandbox.enabled = value;
+                    tracing::debug!(enabled = value, "Env override: XZATOMA_SANDBOX_ENABLED");
+                }
+                None => tracing::warn!("Invalid XZATOMA_SANDBOX_ENABLED: {}", enabled),
+            }
+        }
+
+        if let Ok(root) = std::env::var("XZATOMA_SANDBOX_FILESYSTEM_ROOT") {
+            let trimmed = root.trim();
+            self.sandbox.filesystem_root = if trimmed.is_empty() {
+                None
+            } else {
+                Some(
+                    resolve_config_like_path(trimmed)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            };
+            tracing::debug!("Env override: XZATOMA_SANDBOX_FILESYSTEM_ROOT");
+        }
+
+        if let Ok(protect_git) = std::env::var("XZATOMA_SANDBOX_PROTECT_GIT") {
+            match parse_env_bool(&protect_git) {
+                Some(value) => {
+                    self.sandbox.protect_git = value;
+                    tracing::debug!(
+                        protect_git = value,
+                        "Env override: XZATOMA_SANDBOX_PROTECT_GIT"
+                    );
+                }
+                None => tracing::warn!("Invalid XZATOMA_SANDBOX_PROTECT_GIT: {}", protect_git),
+            }
+        }
+
+        if let Ok(network_enabled) = std::env::var("XZATOMA_SANDBOX_NETWORK_ENABLED") {
+            match parse_env_bool(&network_enabled) {
+                Some(value) => {
+                    self.sandbox.network_enabled = value;
+                    tracing::debug!(
+                        network_enabled = value,
+                        "Env override: XZATOMA_SANDBOX_NETWORK_ENABLED"
+                    );
+                }
+                None => tracing::warn!(
+                    "Invalid XZATOMA_SANDBOX_NETWORK_ENABLED: {}",
+                    network_enabled
+                ),
+            }
+        }
+
+        if let Ok(allowed_hosts) = std::env::var("XZATOMA_SANDBOX_NETWORK_ALLOWED_HOSTS") {
+            let hosts: Vec<String> = allowed_hosts
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            self.sandbox.network_allowed_hosts = hosts;
+            tracing::debug!("Env override: XZATOMA_SANDBOX_NETWORK_ALLOWED_HOSTS");
+        }
+
+        if let Ok(port) = std::env::var("XZATOMA_SANDBOX_PROXY_PORT") {
+            match port.parse::<u16>() {
+                Ok(value) => {
+                    self.sandbox.proxy_port = value;
+                    tracing::debug!(
+                        proxy_port = value,
+                        "Env override: XZATOMA_SANDBOX_PROXY_PORT"
+                    );
+                }
+                Err(_) => tracing::warn!("Invalid XZATOMA_SANDBOX_PROXY_PORT: {}", port),
+            }
+        }
     }
 
     fn apply_cli_overrides(&mut self, common: &crate::cli::CommonArgs) {
@@ -3145,6 +3317,12 @@ impl Config {
         }
         if let Some(ref path) = common.log_file {
             self.log.file_path = Some(path.clone());
+        }
+        if common.no_sandbox {
+            self.sandbox.enabled = false;
+        }
+        if let Some(root) = &common.sandbox_root {
+            self.sandbox.filesystem_root = Some(root.clone());
         }
     }
 
@@ -3407,6 +3585,7 @@ impl Config {
         self.mcp.validate()?;
         self.validate_acp_config()?;
         self.validate_skills_config()?;
+        self.validate_sandbox_config()?;
 
         Ok(())
     }
@@ -3823,6 +4002,67 @@ impl Config {
             }
         }
 
+        Ok(())
+    }
+
+    /// Validates the sandbox configuration section.
+    ///
+    /// Called by [`Config::validate`] as part of the full validation pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError::Config` if any field is invalid.
+    fn validate_sandbox_config(&self) -> Result<()> {
+        let s = &self.sandbox;
+        if s.proxy_port < 1024 {
+            return Err(XzatomaError::Config(format!(
+                "sandbox.proxy_port must be >= 1024, got {}",
+                s.proxy_port
+            )));
+        }
+        for host in &s.network_allowed_hosts {
+            if host.is_empty() {
+                return Err(XzatomaError::Config(
+                    "sandbox.network_allowed_hosts entries must not be empty".to_string(),
+                ));
+            }
+            if host.contains("://") {
+                return Err(XzatomaError::Config(format!(
+                    "sandbox.network_allowed_hosts entry '{}' must not contain a protocol prefix",
+                    host
+                )));
+            }
+        }
+        if !s.network_enabled && !s.network_allowed_hosts.is_empty() {
+            tracing::warn!(
+                "sandbox.network_allowed_hosts is non-empty but sandbox.network_enabled is false; \
+                 the allowed hosts list will be ignored at runtime"
+            );
+        }
+        for path in s.extra_read_paths.iter().chain(s.extra_write_paths.iter()) {
+            if path.is_empty() {
+                return Err(XzatomaError::Config(
+                    "sandbox extra_read_paths and extra_write_paths entries must not be empty"
+                        .to_string(),
+                ));
+            }
+        }
+        if let Some(root) = &s.filesystem_root
+            && root.is_empty()
+        {
+            return Err(XzatomaError::Config(
+                "sandbox.filesystem_root must not be an empty string".to_string(),
+            ));
+        }
+        let valid_tool_keys = ["terminal", "fetch", "file_ops"];
+        for key in s.sandboxed_tools.keys() {
+            if !valid_tool_keys.contains(&key.as_str()) {
+                return Err(XzatomaError::Config(format!(
+                    "sandbox.sandboxed_tools key '{}' is not valid; valid keys: {:?}",
+                    key, valid_tool_keys
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -4881,6 +5121,8 @@ kafka:
             storage_path: None,
             log_format: None,
             log_file: None,
+            no_sandbox: false,
+            sandbox_root: None,
         };
 
         let config = Config::load("nonexistent.yaml", &common).unwrap();
@@ -7276,6 +7518,166 @@ client:
         let yaml = "thinking_mode: \"high\"";
         let config: AgentConfig = serde_yaml::from_str(yaml).expect("should deserialize");
         assert_eq!(config.thinking_mode, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_sandbox_config_defaults() {
+        let config = SandboxConfig::default();
+        assert!(config.enabled);
+        assert!(config.sandboxed_tools.is_empty());
+        assert!(config.filesystem_root.is_none());
+        assert!(config.extra_read_paths.is_empty());
+        assert!(config.extra_write_paths.is_empty());
+        assert!(config.protect_git);
+        assert!(!config.network_enabled);
+        assert!(config.network_allowed_hosts.is_empty());
+        assert_eq!(config.proxy_port, 8877);
+    }
+
+    #[test]
+    fn test_sandbox_config_deserialize_all_fields() {
+        let yaml = r#"
+enabled: false
+sandboxed_tools:
+  fetch: false
+filesystem_root: "/tmp/agent"
+extra_read_paths:
+  - "/usr/share/doc"
+extra_write_paths:
+  - "/tmp/output"
+protect_git: false
+network_enabled: true
+network_allowed_hosts:
+  - "api.example.com"
+proxy_port: 9000
+"#;
+        let config: SandboxConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.enabled);
+        assert_eq!(config.sandboxed_tools.get("fetch"), Some(&false));
+        assert_eq!(config.filesystem_root.as_deref(), Some("/tmp/agent"));
+        assert_eq!(config.extra_read_paths, vec!["/usr/share/doc"]);
+        assert_eq!(config.extra_write_paths, vec!["/tmp/output"]);
+        assert!(!config.protect_git);
+        assert!(config.network_enabled);
+        assert_eq!(config.network_allowed_hosts, vec!["api.example.com"]);
+        assert_eq!(config.proxy_port, 9000);
+    }
+
+    #[test]
+    fn test_sandbox_config_deserialize_omitted_fields_use_defaults() {
+        let yaml = "enabled: false";
+        let config: SandboxConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.enabled);
+        // All other fields should be their defaults from SandboxConfig::default()
+        assert!(config.protect_git);
+        assert_eq!(config.proxy_port, 8877);
+        assert!(!config.network_enabled);
+        assert!(config.network_allowed_hosts.is_empty());
+    }
+
+    #[test]
+    fn test_sandbox_config_validation_rejects_proxy_port_below_1024() {
+        let mut config = Config::default();
+        config.sandbox.proxy_port = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = Config::default();
+        config.sandbox.proxy_port = 1023;
+        assert!(config.validate().is_err());
+
+        let mut config = Config::default();
+        config.sandbox.proxy_port = 1024;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_sandbox_config_validation_rejects_protocol_prefix_in_allowed_host() {
+        let mut config = Config::default();
+        config.sandbox.network_allowed_hosts = vec!["https://example.com".to_string()];
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("must not contain a protocol prefix"));
+    }
+
+    #[test]
+    fn test_sandbox_config_validation_rejects_empty_allowed_host() {
+        let mut config = Config::default();
+        config.sandbox.network_allowed_hosts = vec!["".to_string()];
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_sandbox_config_validation_rejects_invalid_tool_key() {
+        let mut config = Config::default();
+        config
+            .sandbox
+            .sandboxed_tools
+            .insert("unknown".to_string(), true);
+        let result = config.validate();
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("unknown"));
+    }
+
+    #[test]
+    fn test_sandbox_config_validation_warns_when_allowed_hosts_set_but_network_disabled() {
+        let mut config = Config::default();
+        config.sandbox.network_enabled = false;
+        config
+            .sandbox
+            .network_allowed_hosts
+            .push("api.example.com".to_string());
+        // Should pass validation without error (only a warning is emitted)
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_sandbox_enabled() {
+        let _guard = EnvVarGuard::set("XZATOMA_SANDBOX_ENABLED", "false");
+        let mut config = Config::default_config();
+        config.apply_env_vars();
+        assert!(!config.sandbox.enabled);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_sandbox_filesystem_root() {
+        let _guard = EnvVarGuard::set("XZATOMA_SANDBOX_FILESYSTEM_ROOT", "/tmp/test_root");
+        let mut config = Config::default_config();
+        config.apply_env_vars();
+        assert_eq!(
+            config.sandbox.filesystem_root.as_deref(),
+            Some("/tmp/test_root")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_sandbox_proxy_port() {
+        let _guard = EnvVarGuard::set("XZATOMA_SANDBOX_PROXY_PORT", "9090");
+        let mut config = Config::default_config();
+        config.apply_env_vars();
+        assert_eq!(config.sandbox.proxy_port, 9090);
+    }
+
+    #[test]
+    #[serial]
+    fn test_apply_env_vars_overrides_sandbox_network_allowed_hosts() {
+        let _guard = EnvVarGuard::set(
+            "XZATOMA_SANDBOX_NETWORK_ALLOWED_HOSTS",
+            "api.example.com,cdn.example.com",
+        );
+        let mut config = Config::default_config();
+        config.apply_env_vars();
+        assert_eq!(
+            config.sandbox.network_allowed_hosts,
+            vec!["api.example.com".to_string(), "cdn.example.com".to_string()]
+        );
     }
 }
 

@@ -79,6 +79,21 @@ pub struct CommonArgs {
     /// per-event watcher output. Env: `XZATOMA_LOG_FILE`.
     #[arg(id = "global-logfile", long = "logfile", env = "XZATOMA_LOG_FILE")]
     pub log_file: Option<PathBuf>,
+
+    /// Disable all sandboxing (equivalent to `sandbox.enabled = false` in config).
+    ///
+    /// When set, no sandbox layer is applied to any tool regardless of the
+    /// configuration file. Equivalent to `XZATOMA_SANDBOX_ENABLED=false`.
+    #[arg(long, default_value_t = false)]
+    pub no_sandbox: bool,
+
+    /// Override the sandbox filesystem root directory.
+    ///
+    /// Sets the root path the agent is permitted to read and write.
+    /// Equivalent to `sandbox.filesystem_root` in the config file.
+    /// Supports `~/` prefix for home directory expansion.
+    #[arg(long)]
+    pub sandbox_root: Option<String>,
 }
 
 /// XZatoma - Autonomous AI agent CLI.

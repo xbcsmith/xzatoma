@@ -881,6 +881,7 @@ mod tests {
             acp: AcpConfig::default(),
             skills: SkillsConfig::default(),
             log: crate::config::LogConfig::default(),
+            sandbox: crate::config::SandboxConfig::default(),
         }
     }
 
