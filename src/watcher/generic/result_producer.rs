@@ -350,6 +350,10 @@ impl GenericResultProducer {
             client_config.set("compression.type", "snappy");
             client_config.set("enable.idempotence", "true");
 
+            // Force IPv4 (or v6/any) so rdkafka does not try IPv6 when the
+            // broker is reachable only on IPv4 (e.g. localhost:19092 on macOS).
+            client_config.set("broker.address.family", &settings.broker_address_family);
+
             if let Some(sasl) = &settings.sasl_config {
                 client_config.set("sasl.mechanism", sasl.mechanism.as_str());
                 client_config.set("sasl.username", &sasl.username);
@@ -986,6 +990,32 @@ mod tests {
         );
         assert_eq!(settings.get("security.protocol").unwrap(), "PLAINTEXT");
         assert_eq!(settings.get("message.timeout.ms").unwrap(), "30000");
+        assert_eq!(settings.get("broker.address.family").unwrap(), "v4");
+    }
+
+    #[test]
+    fn test_resolved_producer_settings_includes_broker_address_family() {
+        let config = base_kafka_config();
+        let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
+            .unwrap()
+            .kafka_config()
+            .into_iter()
+            .collect();
+
+        assert_eq!(settings.get("broker.address.family").unwrap(), "v4");
+    }
+
+    #[test]
+    fn test_resolved_producer_settings_broker_address_family_v6() {
+        let mut config = base_kafka_config();
+        config.broker_address_family = "v6".to_string();
+        let settings: HashMap<_, _> = ResolvedProducerSettings::from_config(&config)
+            .unwrap()
+            .kafka_config()
+            .into_iter()
+            .collect();
+
+        assert_eq!(settings.get("broker.address.family").unwrap(), "v6");
     }
 
     #[test]

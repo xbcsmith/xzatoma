@@ -87,7 +87,8 @@ after the session is ready, consistent with the `session/new` path.
 | Scenario                                              | Before      | After                                       |
 | ----------------------------------------------------- | ----------- | ------------------------------------------- |
 | Zed reconnects, session still alive                   | Error shown | Instantly resumed with current state        |
-| Zed reconnects, process restarted, history in storage | Error shown | Conversation rehydrated from storage        |
+| Zed reconnects, session still alive, thread blank     | Error shown | Conversation history replayed to Zed thread |
+| Zed reconnects, process restarted, history in storage | Error shown | Conversation rehydrated and replayed        |
 | Zed reconnects, process restarted, no history         | Error shown | New session created transparently           |
 | `persist_sessions: false`                             | Error shown | New session created (no history to restore) |
 
@@ -96,7 +97,51 @@ after the session is ready, consistent with the `session/new` path.
 - `src/acp/stdio.rs`
   - `handle_initialize`: added `session/resume` capability
   - `AcpStdioServerState::create_session`: added `session_id_override` param
-  - `AcpStdioServerState::resume_session`: new method
+  - `AcpStdioServerState::resume_session`: new method; later extended to replay
+    conversation history for both the "session still alive" and "process
+    restarted" cases (see Session History Replay section below)
   - `run_stdio_agent_with_transport`: new `ResumeSessionRequest` handler
   - `test_handle_initialize_advertises_text_and_vision_prompt_capabilities`:
     added assertion for `session_capabilities.resume`
+
+## Session History Replay
+
+The initial implementation of `session/resume` silently rehydrated the agent's
+context without sending prior messages to Zed. This matched the protocol
+description of `session/resume` as a "silent reconnect", but in practice Zed's
+chat thread remained blank after a resume, which confused users who expected to
+see their conversation history.
+
+### Root cause
+
+`resume_session` called `create_session` (which loads stored conversation into
+the agent) but never sent `UserMessageChunk` / `AgentMessageChunk` notifications
+back to the Zed client. The conversation existed in memory but Zed's UI had no
+way to display it.
+
+### Fix
+
+Added a `replay_session_history` free function that mirrors the replay loop
+already present in `handle_load_session`:
+
+```rust
+async fn replay_session_history(
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    session_id: &acp::SessionId,
+)
+```
+
+The function iterates `agent.conversation().messages()`, skips system, tool, and
+tool-result roles, and sends each user/assistant turn as a best-effort
+`SessionUpdate::UserMessageChunk` or `SessionUpdate::AgentMessageChunk`
+notification. Each chunk carries a `message_id` of the form `hist-{idx}` for
+correct grouping in the Zed thread view.
+
+`resume_session` now calls `replay_session_history` for both cases:
+
+- **Case 1 (session still alive)**: replays before returning the response, so
+  Zed's thread is populated even when the panel was closed and reopened without
+  a process restart.
+- **Case 2 (process restarted)**: replays after `create_session` has loaded the
+  conversation from storage, then returns the response.

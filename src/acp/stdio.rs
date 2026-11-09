@@ -846,8 +846,15 @@ impl AcpStdioServerState {
         request: acp::ResumeSessionRequest,
         connection: Option<ConnectionTo<AcpClientRole>>,
     ) -> Result<acp::ResumeSessionResponse> {
+        let session_id = request.session_id.clone();
+
         // Case 1: session still alive in this process run.
-        if let Some(session) = self.sessions.get(&request.session_id).await {
+        // Replay conversation history so Zed can repopulate the chat thread
+        // even when reconnecting to a running process (e.g. after the Zed
+        // panel was closed and reopened).
+        if let Some(session) = self.sessions.get(&session_id).await {
+            replay_session_history(connection.as_ref(), &session, &session_id).await;
+
             let lock = session.lock().await;
             return Ok(acp::ResumeSessionResponse::new()
                 .modes(build_session_mode_state(
@@ -861,19 +868,21 @@ impl AcpStdioServerState {
         // Pass the original session_id so the registry stores it under the same
         // key that Zed will use for all subsequent requests.
         let new_req = acp::NewSessionRequest::new(request.cwd).mcp_servers(request.mcp_servers);
-        self.create_session(new_req, connection, Some(request.session_id.clone()))
+        self.create_session(new_req, connection.clone(), Some(session_id.clone()))
             .await?;
 
+        // Replay conversation history for the freshly restored session so Zed
+        // sees prior messages in the thread.
+        if let Some(session) = self.sessions.get(&session_id).await {
+            replay_session_history(connection.as_ref(), &session, &session_id).await;
+        }
+
         // Read the mode/config state from the freshly created session.
-        let session = self
-            .sessions
-            .get(&request.session_id)
-            .await
-            .ok_or_else(|| {
-                XzatomaError::Internal(
-                    "Resumed session not found in registry immediately after creation".to_string(),
-                )
-            })?;
+        let session = self.sessions.get(&session_id).await.ok_or_else(|| {
+            XzatomaError::Internal(
+                "Resumed session not found in registry immediately after creation".to_string(),
+            )
+        })?;
         let lock = session.lock().await;
         Ok(acp::ResumeSessionResponse::new()
             .modes(build_session_mode_state(
@@ -3682,6 +3691,43 @@ fn send_session_update_best_effort(
             context = context,
             "Best-effort ACP session notification failed"
         );
+    }
+}
+
+/// Streams non-system conversation turns to the Zed client as
+/// `UserMessageChunk` / `AgentMessageChunk` notifications.
+///
+/// Used by both `resume_session` and `handle_load_session` so that Zed can
+/// repopulate the chat thread with prior messages after reconnecting. When
+/// `connection` is `None` (e.g. in tests) the function is a no-op.
+async fn replay_session_history(
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    session_id: &acp::SessionId,
+) {
+    let Some(conn) = connection else { return };
+
+    let session_guard = session.lock().await;
+    let agent_handle = session_guard.xzatoma_agent.clone();
+    drop(session_guard);
+
+    let agent = agent_handle.lock().await;
+    let messages: Vec<Message> = agent.conversation().messages().to_vec();
+    drop(agent);
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let content = match &msg.content {
+            Some(c) if !c.trim().is_empty() => c.clone(),
+            _ => continue,
+        };
+        let chunk = acp::ContentChunk::new(acp::ContentBlock::from(content))
+            .message_id(format!("hist-{idx}").as_str());
+        let update = match msg.role.as_str() {
+            "user" => acp::SessionUpdate::UserMessageChunk(chunk),
+            "assistant" => acp::SessionUpdate::AgentMessageChunk(chunk),
+            _ => continue,
+        };
+        send_session_update_best_effort(conn, session_id.clone(), update, "history replay");
     }
 }
 

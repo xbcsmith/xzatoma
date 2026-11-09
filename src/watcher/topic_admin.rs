@@ -103,6 +103,7 @@ pub struct WatcherTopicAdmin {
     request_timeout: Duration,
     num_partitions: i32,
     replication_factor: i32,
+    broker_address_family: String,
 }
 
 /// A topic ensure operation recorded by the admin flow.
@@ -168,6 +169,7 @@ impl WatcherTopicAdmin {
             request_timeout: Duration::from_secs(30),
             num_partitions: config.num_partitions,
             replication_factor: config.replication_factor,
+            broker_address_family: config.broker_address_family.clone(),
         };
 
         if let Some(security) = &config.security {
@@ -244,6 +246,10 @@ impl WatcherTopicAdmin {
             (
                 "socket.timeout.ms".to_string(),
                 self.request_timeout.as_millis().to_string(),
+            ),
+            (
+                "broker.address.family".to_string(),
+                self.broker_address_family.clone(),
             ),
         ];
 
@@ -524,6 +530,16 @@ mod tests {
             "xzatoma-watcher-topic-admin"
         );
         assert_eq!(settings.get("security.protocol").unwrap(), "PLAINTEXT");
+        assert_eq!(settings.get("broker.address.family").unwrap(), "v4");
+    }
+
+    #[test]
+    fn test_watcher_topic_admin_get_kafka_config_respects_broker_address_family() {
+        let mut config = base_kafka_config();
+        config.broker_address_family = "any".to_string();
+        let admin = WatcherTopicAdmin::new(&config).unwrap();
+        let settings: HashMap<_, _> = admin.get_kafka_config().into_iter().collect();
+        assert_eq!(settings.get("broker.address.family").unwrap(), "any");
     }
 
     #[test]
