@@ -310,6 +310,17 @@ The conversation history is replaced by a compact summary. You can verify by
 running `/context info` again and observing that the used token count has
 dropped.
 
+`/compact` and `/summarize` are shorthand aliases for `/context summary` and
+produce the same result:
+
+```text
+xzatoma> /compact
+```
+
+```text
+Conversation summarized. Context window reset.
+```
+
 ## Step 6 — Understand /streaming in Zed ACP mode
 
 When XZatoma runs as an ACP server inside Zed, streaming is controlled by the
@@ -384,7 +395,7 @@ not available in ACP mode.
 | See subagent state          | `/subagents status`                    |
 | Enable subagents            | `/subagents on`                        |
 | Check context usage         | `/context info`                        |
-| Summarize and reset context | `/context summary`                     |
+| Summarize and reset context | `/compact` or `/context summary`       |
 | Full settings snapshot      | `/status`                              |
 | Understand streaming in Zed | `/streaming` or `/streaming status`    |
 

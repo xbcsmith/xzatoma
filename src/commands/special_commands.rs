@@ -576,6 +576,10 @@ pub fn parse_special_command(input: &str) -> Result<SpecialCommand, CommandError
         // menu (see `src/acp/available_commands.rs`).
         "/summarize" => Ok(SpecialCommand::ContextSummary { model: None }),
 
+        // `/compact` is an additional alias for `/context summary`.
+        // It matches the familiar workflow of compacting context in long-running sessions.
+        "/compact" => Ok(SpecialCommand::ContextSummary { model: None }),
+
         // Handle /context summary with optional model parameter
         input if input.starts_with("/context summary") => {
             let rest = input[16..].trim();
@@ -799,6 +803,8 @@ CONTEXT WINDOW MANAGEMENT:
   /context info              - Show context window usage and token statistics
   /context summary           - Summarize conversation and reset context window
   /context summary -m MODEL  - Summarize using a specific model (for cost optimization)
+  /compact                   - Compact conversation history (alias for /context summary)
+  /summarize                 - Same as /compact
 
 SYSTEM PROMPT:
   /system         - Show system prompt help
@@ -2249,5 +2255,17 @@ mod tests {
             text.contains("USAGE:"),
             "format_config_help_text() missing 'USAGE:': {text}"
         );
+    }
+
+    #[test]
+    fn test_parse_compact_returns_context_summary() {
+        let cmd = parse_special_command("/compact").unwrap();
+        assert_eq!(cmd, SpecialCommand::ContextSummary { model: None });
+    }
+
+    #[test]
+    fn test_parse_compact_is_case_insensitive() {
+        let cmd = parse_special_command("/COMPACT").unwrap();
+        assert_eq!(cmd, SpecialCommand::ContextSummary { model: None });
     }
 }

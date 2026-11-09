@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Chat {
             provider,
+            model,
             mode,
             safe,
             resume,
@@ -78,6 +79,9 @@ async fn main() -> Result<()> {
             tracing::info!("Starting interactive chat mode");
             if let Some(p) = &provider {
                 tracing::debug!("Using provider override: {}", p);
+            }
+            if let Some(ref m) = model {
+                tracing::debug!("Using model override: {}", m);
             }
             if let Some(m) = &mode {
                 tracing::debug!("Using mode override: {}", m);
@@ -101,6 +105,7 @@ async fn main() -> Result<()> {
                 config,
                 commands::chat::RunChatOptions {
                     provider_name: provider,
+                    model,
                     mode,
                     resume,
                     thinking_effort,

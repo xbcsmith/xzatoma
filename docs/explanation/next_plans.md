@@ -254,3 +254,89 @@ Write a plan with a phased approach to unify the chat command UX. THINK HARD and
 ## Bugs
 
 In agent mode ACP in Zed connected to Ollama with a model that supports vision xzatoma keeps giving an error that the model does not support vision. I confirmed with Zed's agent it does.
+
+We want to improve the sandboxing in Atoma for all tools and calls, especially
+the terminal tool. Sandboxing restricts what the agent is able to do when using
+the terminal, fetch, or any other tools. These restrictions are enforced by the
+operating system and do not rely on an agent following instructions.
+
+On Mac OS:
+
+Sandboxed terminal commands:
+
+- can read the filesystem
+- can write inside open project directories, except protected Git metadata
+- can write to a per-thread temporary directory exposed through $TMPDIR, $TMP,
+  and $TEMP
+- can read protected Git metadata
+- cannot write protected Git metadata, even if you approve broader write access
+- cannot write elsewhere unless you approve additional paths or broader write
+  access
+- cannot reach the network unless you approve network access (through prompt or
+  config)
+- can reach only an allowlist of macOS system (Mach) services that developer
+  tooling needs; services that could be abused to escape the sandbox
+  (LaunchServices and launchd, which can launch processes outside it), read the
+  clipboard (the pasteboard), or capture audio are not reachable
+
+On Linux:
+
+Sandboxed terminal commands:
+
+- can read the filesystem, including protected Git metadata contents
+- can write inside open project directories, except protected Git metadata
+- can write to /tmp, which is backed by a fresh temporary filesystem and is
+  cleared between terminal tool calls (when you approve unrestricted filesystem
+  writes, /tmp is instead your real host /tmp rather than a fresh temporary
+  filesystem)
+- cannot write protected Git metadata
+- cannot write elsewhere unless you approve additional paths or broader write
+  access
+- cannot reach the network unless you approve network access
+
+When host-specific network access is approved, Atoma should use an HTTP/HTTPS
+proxy so access can be limited to approved hosts. Tools that do not honor proxy
+environment variables, such as SSH, FTP, and raw socket clients, may not work
+even after host-specific network access is approved.
+
+Sandboxing is enabled by default. There should be a config option to
+enable/disable and a granular config to specify which tools are sandboxed and
+which are not.
+
+Sandboxing should default to limit agent access only to the folder it is running
+in. There should be a config options to specify a location on the filesystem to
+sandbox to. The default sandbox rules forbid an agent from writing outside the
+project directories, writing to .git, or making network requests.
+
+It should include the following:
+
+Landlock (for Linux) and Seatbelt (for macOS) are kernel-enforced,
+capability-based sandboxing technologies frequently paired in Rust
+cross-platform security libraries (like nono) to restrict filesystem and network
+access.
+
+Overview of Landlock and SeatbeltLandlock
+
+- (Linux): A security module (LSM) built into the Linux kernel (v5.13+). It lets
+  unprivileged or privileged processes securely restrict their own ambient
+  rights (like global file access or TCP connections). It works well alongside
+  seccomp filters to lock down system calls.
+- Seatbelt (macOS): Apple's internal, native sandboxing framework (invoked via
+  sandbox_init or sandbox-exec). It uses Scheme-like SBPL (Seatbelt Policy
+  Language) profiles to intercept and deny operations like file writes, process
+  spawning, or socket connections.
+
+How They Work in Rust
+
+Rust cross-platform tools and agent runners combine these native backends behind
+a unified API to achieve process isolation:Irreversible Locking: Once a sandbox
+layer is applied via Landlock (setting PR_SET_NO_NEW_PRIVS) or Seatbelt on
+macOS, it cannot be undone by the running process, even if the process runs as
+root (UID 0).
+
+We will use [nono](https://docs.rs/nono/latest/nono/)
+
+Write a plan with a phased approach to improve sandboxing in Atoma. THINK HARD
+and follow the rules in @PLAN.md
+
+[Sandboxing Implementation Plan](./sandboxing_implementation_plan.md)

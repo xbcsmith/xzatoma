@@ -240,6 +240,28 @@ pub struct OllamaConfig {
     /// Set via config file field `provider.ollama.num_ctx`.
     #[serde(default)]
     pub num_ctx: Option<u32>,
+
+    /// Allow plain HTTP connections to non-loopback Ollama hosts.
+    ///
+    /// By default, xzatoma requires HTTPS when `host` points at a remote
+    /// address (anything other than `localhost` / `127.0.0.1` / `::1`) to
+    /// avoid sending prompts and completions over an unencrypted connection.
+    ///
+    /// Set this to `true` to opt out of that check — for example, when your
+    /// Ollama instance runs on a machine on your trusted home or office LAN
+    /// and you do not have TLS configured:
+    ///
+    /// ```yaml
+    /// provider:
+    ///   ollama:
+    ///     host: http://192.168.1.217:11434
+    ///     allow_http: true
+    /// ```
+    ///
+    /// Only set this when you fully trust the network path between this
+    /// machine and the Ollama host.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 fn default_ollama_host() -> String {
@@ -272,6 +294,7 @@ impl Default for OllamaConfig {
             request_timeout_seconds: default_ollama_request_timeout(),
             stream_idle_timeout_seconds: default_ollama_stream_idle_timeout(),
             num_ctx: None,
+            allow_http: false,
         }
     }
 }
@@ -385,6 +408,31 @@ pub struct OpenAIConfig {
     /// `XZATOMA_OPENAI_REASONING_EFFORT` environment variable.
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+
+    /// Allow plain HTTP connections to non-loopback OpenAI-compatible hosts.
+    ///
+    /// By default, xzatoma requires HTTPS when `base_url` points at a remote
+    /// address to avoid sending prompts and API keys over an unencrypted
+    /// connection.
+    ///
+    /// Set this to `true` to opt out of that check -- for example, when your
+    /// OpenAI-compatible inference server (llama.cpp, vLLM, LM Studio, etc.)
+    /// runs on a machine on your trusted home or office LAN and you do not
+    /// have TLS configured:
+    ///
+    /// ```yaml
+    /// provider:
+    ///   openai:
+    ///     base_url: http://192.168.1.100:8080/v1
+    ///     allow_http: true
+    /// ```
+    ///
+    /// Only set this when you fully trust the network path between this
+    /// machine and the inference server.
+    ///
+    /// Set via the `XZATOMA_OPENAI_ALLOW_HTTP` environment variable.
+    #[serde(default)]
+    pub allow_http: bool,
 }
 
 fn default_openai_api_key() -> String {
@@ -422,6 +470,7 @@ impl Default for OpenAIConfig {
             request_timeout_seconds: default_openai_request_timeout(),
             stream_idle_timeout_seconds: default_openai_stream_idle_timeout(),
             reasoning_effort: None,
+            allow_http: false,
         }
     }
 }
@@ -2139,6 +2188,13 @@ impl Config {
             }
         }
 
+        if let Ok(val) = std::env::var("XZATOMA_OPENAI_ALLOW_HTTP") {
+            match parse_env_bool(&val) {
+                Some(value) => self.provider.openai.allow_http = value,
+                None => tracing::warn!("Invalid XZATOMA_OPENAI_ALLOW_HTTP: {}", val),
+            }
+        }
+
         // Agent overrides
         if let Ok(max_turns) = std::env::var("XZATOMA_MAX_TURNS") {
             if let Ok(value) = max_turns.parse() {
@@ -3357,16 +3413,15 @@ impl Config {
 
     /// Validate configuration requirements specific to the `chat` and `run` commands.
     ///
-    /// Checks that a provider type is configured and that the model field is
-    /// non-empty (only when a model is explicitly required by the active
-    /// provider). This is a stricter check than `Config::validate` for the
-    /// execution context.
+    /// Checks that a provider type is configured. Model selection is intentionally
+    /// not validated here: when the model field is empty the provider factory will
+    /// query the provider's API and auto-select the latest available model. An
+    /// error is returned by the factory only when neither a configured model nor
+    /// any discoverable model is available.
     ///
     /// # Errors
     ///
-    /// Returns `XzatomaError::Config` when:
-    /// - The provider type string is empty.
-    /// - The active provider's model field is empty.
+    /// Returns `XzatomaError::Config` when the provider type string is empty.
     ///
     /// # Examples
     ///
@@ -3375,10 +3430,9 @@ impl Config {
     ///
     /// let mut config = Config::default();
     /// config.provider.provider_type = "ollama".to_string();
-    /// config.provider.ollama.model = "llama3.2".to_string();
     /// assert!(config.validate_for_execution().is_ok());
     ///
-    /// config.provider.ollama.model = String::new();
+    /// config.provider.provider_type = String::new();
     /// assert!(config.validate_for_execution().is_err());
     /// ```
     pub fn validate_for_execution(&self) -> Result<()> {
@@ -3386,18 +3440,6 @@ impl Config {
             return Err(XzatomaError::Config(
                 "provider.provider_type is required for execution".to_string(),
             ));
-        }
-        let model_is_empty = match self.provider.provider_type.as_str() {
-            "copilot" => self.provider.copilot.model.trim().is_empty(),
-            "ollama" => self.provider.ollama.model.trim().is_empty(),
-            "openai" => self.provider.openai.model.trim().is_empty(),
-            _ => false,
-        };
-        if model_is_empty {
-            return Err(XzatomaError::Config(format!(
-                "provider.{}.model must be set for execution",
-                self.provider.provider_type
-            )));
         }
         Ok(())
     }
@@ -5143,6 +5185,7 @@ output_max_size: 4096
         assert_eq!(config.model, "");
         assert!(config.organization_id.is_none());
         assert!(config.enable_streaming);
+        assert!(!config.allow_http, "allow_http must default to false");
     }
 
     #[test]
@@ -7010,6 +7053,57 @@ client:
     }
 
     #[test]
+    fn test_ollama_config_allow_http_defaults_false() {
+        let config = OllamaConfig::default();
+        assert!(!config.allow_http, "allow_http must default to false");
+    }
+
+    #[test]
+    fn test_ollama_config_allow_http_deserializes_true() {
+        let yaml = "host: \"http://192.168.1.217:11434\"\nallow_http: true";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.allow_http);
+    }
+
+    #[test]
+    fn test_ollama_config_allow_http_absent_gives_false() {
+        let yaml = "host: \"http://192.168.1.217:11434\"";
+        let config: OllamaConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.allow_http, "allow_http must be false when absent");
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_defaults_false() {
+        let config = OpenAIConfig::default();
+        assert!(!config.allow_http, "allow_http must default to false");
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_deserializes_true() {
+        let yaml = "base_url: \"http://192.168.1.100:8080/v1\"\nallow_http: true";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(config.allow_http);
+    }
+
+    #[test]
+    fn test_openai_config_allow_http_absent_gives_false() {
+        let yaml = "base_url: \"http://192.168.1.100:8080/v1\"";
+        let config: OpenAIConfig = serde_yaml::from_str(yaml).expect("should deserialize");
+        assert!(!config.allow_http, "allow_http must be false when absent");
+    }
+
+    #[test]
+    fn test_apply_env_vars_overrides_openai_allow_http() {
+        let _flag = EnvVarGuard::set("XZATOMA_OPENAI_ALLOW_HTTP", "true");
+        let mut config = Config::default();
+        config.apply_env_vars();
+        assert!(
+            config.provider.openai.allow_http,
+            "XZATOMA_OPENAI_ALLOW_HTTP=true must set allow_http"
+        );
+    }
+
+    #[test]
     fn test_copilot_config_editor_version_default() {
         let config = CopilotConfig::default();
         assert_eq!(config.editor_version, "vscode/1.95.0");
@@ -7044,11 +7138,13 @@ client:
     }
 
     #[test]
-    fn test_validate_for_execution_fails_with_empty_model() {
+    fn test_validate_for_execution_passes_with_empty_model() {
+        // An empty model is allowed: the provider factory queries the API
+        // and auto-selects the latest available model at runtime.
         let mut config = Config::default();
         config.provider.provider_type = "ollama".to_string();
         config.provider.ollama.model = String::new();
-        assert!(config.validate_for_execution().is_err());
+        assert!(config.validate_for_execution().is_ok());
     }
 
     #[test]

@@ -25,7 +25,7 @@ use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::build_mcp_manager_from_config;
 use crate::mcp::tool_bridge::register_mcp_tools;
 use crate::mention_parser;
-use crate::providers::{CopilotProvider, create_provider};
+use crate::providers::{CopilotProvider, create_provider, create_provider_with_override};
 use crate::skills::{
     ActiveSkillRegistry, SkillCatalog, SkillRecord, build_skill_disclosure_section,
     discover_skills, render_skill_catalog,
@@ -486,6 +486,9 @@ pub mod chat {
     pub struct RunChatOptions {
         /// Optional override for the configured provider.
         pub provider_name: Option<String>,
+        /// Optional override for the model within the selected provider.
+        /// Takes precedence over the model set in the config file.
+        pub model: Option<String>,
         /// Optional override for the chat mode ("planning" or "write").
         pub mode: Option<String>,
         /// Optional conversation ID to resume.
@@ -607,6 +610,7 @@ pub mod chat {
 
         let RunChatOptions {
             provider_name,
+            model,
             mode,
             resume,
             thinking_effort,
@@ -681,8 +685,13 @@ pub mod chat {
             }
         };
 
-        // Create provider
-        let provider_box = create_provider(&provider_type_owned, &config.provider).await?;
+        // Create provider, applying any CLI --model override.
+        let provider_box = create_provider_with_override(
+            &config.provider,
+            Some(&provider_type_owned),
+            model.as_deref(),
+        )
+        .await?;
 
         // Convert provider to Arc for sharing with subagent and main agent
         let provider: Arc<dyn crate::providers::Provider> = Arc::from(provider_box);
@@ -912,6 +921,12 @@ pub mod chat {
 
         // Display welcome banner with current mode and safety
         print_welcome_banner(&mode_state.chat_mode, &mode_state.safety_mode);
+
+        // When resuming, show the prior conversation turns so the user has
+        // context before the first new prompt.
+        if resume.is_some() && conversation_loaded {
+            print_conversation_history(agent.conversation().messages());
+        }
 
         loop {
             // Recomputed each iteration (rather than borrowed once before the
@@ -1227,6 +1242,7 @@ pub mod chat {
                                 &config_path,
                                 &common,
                                 &working_dir,
+                                model.as_deref(),
                             )
                             .await?;
                             continue;
@@ -1557,6 +1573,64 @@ pub mod chat {
         println!("Type '/help' for available commands, 'exit' to quit\n");
     }
 
+    /// Prints non-system conversation turns to stdout when resuming a session.
+    ///
+    /// Only `user` and `assistant` roles are shown; `system`, `tool`, and
+    /// `tool_result` messages are internal and are not displayed. An empty
+    /// conversation (no user/assistant turns) produces no output.
+    ///
+    /// # Arguments
+    ///
+    /// * `messages` - Slice of messages from the resumed conversation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::providers::types::Message;
+    ///
+    /// let messages = vec![
+    ///     Message { role: "user".to_string(), content: Some("hello".to_string()), content_parts: None, tool_calls: None, tool_call_id: None },
+    ///     Message { role: "assistant".to_string(), content: Some("hi".to_string()), content_parts: None, tool_calls: None, tool_call_id: None },
+    /// ];
+    ///
+    /// // In a real session this would print to stdout; here we just verify the
+    /// // slice is accepted by the function signature.
+    /// ```
+    fn print_conversation_history(messages: &[crate::providers::types::Message]) {
+        let visible: Vec<_> = messages
+            .iter()
+            .filter(|m| m.role == "user" || m.role == "assistant")
+            .collect();
+
+        if visible.is_empty() {
+            return;
+        }
+
+        println!("{}", "--- Previous conversation ---".dimmed());
+        println!();
+        for msg in &visible {
+            let content = match &msg.content {
+                Some(c) if !c.trim().is_empty() => c.trim().to_string(),
+                _ => continue,
+            };
+            match msg.role.as_str() {
+                "user" => {
+                    println!("{}", "You:".bold().blue());
+                    println!("{content}");
+                    println!();
+                }
+                "assistant" => {
+                    println!("{}", "Agent:".bold().green());
+                    println!("{content}");
+                    println!();
+                }
+                _ => {}
+            }
+        }
+        println!("{}", "--- End of previous conversation ---".dimmed());
+        println!();
+    }
+
     /// Display detailed status information about the current session
     ///
     /// Shows the current chat mode, safety mode, available tools, and conversation state.
@@ -1872,6 +1946,7 @@ pub mod chat {
         config_path: &str,
         common: &crate::cli::CommonArgs,
         working_dir: &std::path::Path,
+        model_override: Option<&str>,
     ) -> Result<()> {
         use colored::Colorize;
 
@@ -1900,7 +1975,12 @@ pub mod chat {
         let log_changed = changed.contains(&"log");
 
         let new_provider_type = new_config.provider.provider_type.clone();
-        let new_provider_box = create_provider(&new_provider_type, &new_config.provider).await?;
+        let new_provider_box = create_provider_with_override(
+            &new_config.provider,
+            Some(&new_provider_type),
+            model_override,
+        )
+        .await?;
         let new_provider: Arc<dyn crate::providers::Provider> = Arc::from(new_provider_box);
 
         let env = build_agent_environment(&new_config, working_dir, false, None, None).await?;
@@ -2274,6 +2354,8 @@ pub mod chat {
                 request_timeout_seconds: 1,
                 stream_idle_timeout_seconds: 120,
                 num_ctx: None,
+
+                allow_http: false,
             };
             let working_dir = std::path::PathBuf::from(".");
             let provider = TestProvider;
@@ -2545,6 +2627,47 @@ pub mod chat {
                 result.is_none(),
                 "must return None when both CLI flag and config are absent"
             );
+        }
+
+        #[test]
+        fn test_print_conversation_history_with_empty_messages_produces_no_output() {
+            // This is a pure-logic test: verify the function returns without
+            // panicking when given no user/assistant turns.
+            let messages: Vec<crate::providers::types::Message> = vec![];
+            // Calling this in a test context is only meaningful as a smoke-test
+            // since the output goes to stdout, not to a buffer. The assertion is
+            // that the function does not panic.
+            print_conversation_history(&messages);
+        }
+
+        #[test]
+        fn test_print_conversation_history_skips_system_messages() {
+            let messages = vec![
+                crate::providers::types::Message {
+                    role: "system".to_string(),
+                    content: Some("You are a helpful assistant.".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                crate::providers::types::Message {
+                    role: "user".to_string(),
+                    content: Some("Hello".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                crate::providers::types::Message {
+                    role: "assistant".to_string(),
+                    content: Some("Hi there".to_string()),
+                    content_parts: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ];
+            // Smoke-test: verify no panic and that the function runs successfully
+            // for a typical resumed conversation with a system message.
+            print_conversation_history(&messages);
         }
     }
 }

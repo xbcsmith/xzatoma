@@ -251,7 +251,8 @@ render.
 ## 7. Manage Context Window Pressure
 
 Use `/context info` to see how much of the context window is in use. Use
-`/context summary` to compress the conversation and free up space.
+`/context summary` (or the shorthand `/compact`) to compress the conversation
+and free up space.
 
 **Check context window usage:**
 
@@ -283,6 +284,21 @@ compact summary. The conversation continues from that summary. Use this command
 when the context window approaches its limit and response quality begins to
 degrade.
 
+The shorthand commands `/compact` and `/summarize` are aliases that produce the
+same result:
+
+**Command:**
+
+```text
+[PLANNING][SAFE] >> /compact
+```
+
+**Expected response:**
+
+```text
+Conversation summarized. Context window reset.
+```
+
 **Mode note:** `/context info` is useful in both modes. In ACP/Zed mode, Zed
 also shows token counts in its UI, but `/context info` reports the values
 tracked by XZatoma's own conversation manager, which may differ.
@@ -290,8 +306,8 @@ tracked by XZatoma's own conversation manager, which may differ.
 ## 8. Reload Configuration Without Restarting
 
 Use `/config reload` to re-read `config.yaml` and apply it to the current
-session without restarting the process. This is useful after editing
-provider settings, skills, MCP servers, or agent behavior mid-session.
+session without restarting the process. This is useful after editing provider
+settings, skills, MCP servers, or agent behavior mid-session.
 
 **Check the active config file path:**
 
@@ -319,15 +335,14 @@ Config reloaded. Changed: provider, skills.
 
 `/config reload` rebuilds the provider, tool registry, skills, and MCP
 connections from the new config while preserving conversation history. Log
-level/format and persistence storage paths cannot be applied this way; if
-either changed, the response calls it out by name and still requires a
-restart.
+level/format and persistence storage paths cannot be applied this way; if either
+changed, the response calls it out by name and still requires a restart.
 
-**Mode note:** Works identically in terminal chat mode and ACP/Zed mode (no
-Zed dropdown needed — type `/config reload` directly in the Agent Panel
-thread). In ACP/Zed mode, the reload also applies to any new session created
-afterward in the same subprocess, but sibling sessions already open at
-reload time keep their existing agent until they also run `/config reload`.
+**Mode note:** Works identically in terminal chat mode and ACP/Zed mode (no Zed
+dropdown needed — type `/config reload` directly in the Agent Panel thread). In
+ACP/Zed mode, the reload also applies to any new session created afterward in
+the same subprocess, but sibling sessions already open at reload time keep their
+existing agent until they also run `/config reload`.
 
 ## Related Topics
 

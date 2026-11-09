@@ -2,10 +2,10 @@
 
 ## Goal
 
-Demonstrate the 13 unified slash commands available in XZatoma's chat interface.
-This demo runs non-interactively by piping a prepared script into `xzatoma chat`
-and capturing the output, so you can review every command and its response in
-one pass.
+Demonstrate the slash commands available in XZatoma's chat interface. This demo
+runs non-interactively by piping a prepared script into `xzatoma chat` and
+capturing the output, so you can review every command and its response in one
+pass.
 
 The commands exercised are:
 
@@ -20,6 +20,8 @@ The commands exercised are:
 - `/system <text>` - replace the system prompt mid-session
 - `/subagents status` - check subagent delegation state
 - `/context info` - inspect context window usage
+- `/compact` - compact conversation history (alias for `/context summary`)
+- `/summarize` - same as `/compact`
 
 ## Prerequisites
 
@@ -150,6 +152,9 @@ System prompt updated.
 [PLANNING][SAFE] >> /context info
 Context window: .../32000 tokens used
 Remaining: ... tokens
+
+[PLANNING][SAFE] >> /compact
+Conversation summarized. Context window reset.
 ```
 
 No AI inference is required for slash commands that query or change session

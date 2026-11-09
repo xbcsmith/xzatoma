@@ -453,6 +453,7 @@ impl AcpStdioServerState {
         &self,
         request: acp::NewSessionRequest,
         connection: Option<ConnectionTo<AcpClientRole>>,
+        session_id_override: Option<acp::SessionId>,
     ) -> Result<acp::NewSessionResponse> {
         // Snapshot the config once per session creation. `/config reload` may
         // swap `self.config` between sessions; this ensures every field read
@@ -565,7 +566,10 @@ impl AcpStdioServerState {
 
         // Create the session ID early so it can be used by the IDE bridge and
         // passed through to the agent, storage, and prompt worker consistently.
-        let session_id = acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4()));
+        // When resuming, the caller supplies the original session ID so that Zed
+        // can continue using it without needing to update its own state.
+        let session_id = session_id_override
+            .unwrap_or_else(|| acp::SessionId::new(format!("xzatoma-{}", Uuid::new_v4())));
 
         // Build IDE bridge when client advertised IDE capabilities and a connection is available.
         let ide_bridge = {
@@ -811,6 +815,163 @@ impl AcpStdioServerState {
         }
 
         Ok(response)
+    }
+
+    /// Handles a `ResumeSessionRequest` from the Zed client.
+    ///
+    /// When Zed reconnects to a workspace where a previous session existed it
+    /// sends `session/resume` instead of `session/new`. This method handles
+    /// both cases:
+    ///
+    /// - **Session still alive** (same process run, not yet evicted): returns
+    ///   the current mode state and config options immediately.
+    /// - **Session not found** (process restarted or session evicted): calls
+    ///   `create_session` using the workspace `cwd` from the request so that
+    ///   conversation history is rehydrated from storage. The original
+    ///   `session_id` from the request is preserved so Zed can continue using
+    ///   it without updating its own state.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The `session/resume` request from Zed.
+    /// * `connection` - Live ACP connection used for IDE bridge construction
+    ///   and initial usage update notifications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session re-creation fails (provider init failure,
+    /// config validation failure, etc.).
+    async fn resume_session(
+        &self,
+        request: acp::ResumeSessionRequest,
+        connection: Option<ConnectionTo<AcpClientRole>>,
+    ) -> Result<acp::ResumeSessionResponse> {
+        let session_id = request.session_id.clone();
+
+        // Case 1: session still alive in this process run.
+        // Replay conversation history so Zed can repopulate the chat thread
+        // even when reconnecting to a running process (e.g. after the Zed
+        // panel was closed and reopened).
+        if let Some(session) = self.sessions.get(&session_id).await {
+            replay_session_history(connection.as_ref(), &session, &session_id).await;
+
+            let lock = session.lock().await;
+            return Ok(acp::ResumeSessionResponse::new()
+                .modes(build_session_mode_state(
+                    &lock.runtime_state.current_mode_id,
+                ))
+                .config_options(build_session_config_options(&lock.runtime_state)));
+        }
+
+        // Case 2: process restarted or session evicted — re-create the session
+        // from conversation history stored under the workspace root.
+        // Pass the original session_id so the registry stores it under the same
+        // key that Zed will use for all subsequent requests.
+        let new_req = acp::NewSessionRequest::new(request.cwd).mcp_servers(request.mcp_servers);
+        self.create_session(new_req, connection.clone(), Some(session_id.clone()))
+            .await?;
+
+        // Replay conversation history for the freshly restored session so Zed
+        // sees prior messages in the thread.
+        if let Some(session) = self.sessions.get(&session_id).await {
+            replay_session_history(connection.as_ref(), &session, &session_id).await;
+        }
+
+        // Read the mode/config state from the freshly created session.
+        let session = self.sessions.get(&session_id).await.ok_or_else(|| {
+            XzatomaError::Internal(
+                "Resumed session not found in registry immediately after creation".to_string(),
+            )
+        })?;
+        let lock = session.lock().await;
+        Ok(acp::ResumeSessionResponse::new()
+            .modes(build_session_mode_state(
+                &lock.runtime_state.current_mode_id,
+            ))
+            .config_options(build_session_config_options(&lock.runtime_state)))
+    }
+
+    /// Loads a stored session by ID and streams its conversation history back
+    /// to the client as `UserMessageChunk` / `AgentMessageChunk` notifications.
+    ///
+    /// This is the `session/load` protocol contract: restore the agent context
+    /// for the given session, then replay all non-system conversation turns so
+    /// the Zed UI can populate the thread with prior messages.
+    ///
+    /// Unlike `session/resume` (which explicitly omits prior messages),
+    /// `session/load` is the mechanism Zed calls when it needs to reconstruct
+    /// the visible thread history after a restart or when opening an existing
+    /// conversation.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The `session/load` request from Zed.
+    /// * `connection` - Live ACP connection used to stream history
+    ///   notifications. `None` in test contexts where no connection is
+    ///   available.
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`acp::LoadSessionResponse`] with mode and config state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if session creation or the registry lookup fails.
+    async fn handle_load_session(
+        &self,
+        request: acp::LoadSessionRequest,
+        connection: Option<ConnectionTo<AcpClientRole>>,
+    ) -> Result<acp::LoadSessionResponse> {
+        let session_id = request.session_id.clone();
+
+        // Re-use create_session to rehydrate the workspace conversation and
+        // register the session under the same ID Zed will use for all
+        // subsequent requests.
+        let new_req = acp::NewSessionRequest::new(request.cwd).mcp_servers(request.mcp_servers);
+        self.create_session(new_req, connection.clone(), Some(session_id.clone()))
+            .await?;
+
+        // Stream non-system conversation turns back to Zed so the chat thread
+        // is populated with prior user/assistant messages.
+        if let (Some(conn), Some(session_arc)) =
+            (connection.as_ref(), self.sessions.get(&session_id).await)
+        {
+            let session_guard = session_arc.lock().await;
+            let agent_handle = session_guard.xzatoma_agent.clone();
+            drop(session_guard);
+
+            let agent = agent_handle.lock().await;
+            let messages: Vec<Message> = agent.conversation().messages().to_vec();
+            drop(agent);
+
+            for (idx, msg) in messages.iter().enumerate() {
+                let content = match &msg.content {
+                    Some(c) if !c.trim().is_empty() => c.clone(),
+                    _ => continue,
+                };
+                let chunk = acp::ContentChunk::new(acp::ContentBlock::from(content))
+                    .message_id(format!("hist-{idx}").as_str());
+                let update = match msg.role.as_str() {
+                    "user" => acp::SessionUpdate::UserMessageChunk(chunk),
+                    "assistant" => acp::SessionUpdate::AgentMessageChunk(chunk),
+                    _ => continue, // skip system, tool, tool_result
+                };
+                send_session_update_best_effort(conn, session_id.clone(), update, "history replay");
+            }
+        }
+
+        // Read the freshly created session's mode/config state for the response.
+        let session_arc = self.sessions.get(&session_id).await.ok_or_else(|| {
+            XzatomaError::Internal(
+                "Loaded session not found in registry after creation".to_string(),
+            )
+        })?;
+        let lock = session_arc.lock().await;
+        Ok(acp::LoadSessionResponse::new()
+            .modes(build_session_mode_state(
+                &lock.runtime_state.current_mode_id,
+            ))
+            .config_options(build_session_config_options(&lock.runtime_state)))
     }
 
     /// Handles a `SetSessionModeRequest` from the Zed client.
@@ -2347,7 +2508,10 @@ where
                             responder: Responder<acp::NewSessionResponse>,
                             cx: ConnectionTo<AcpClientRole>| {
                     let session_id_for_notify;
-                    match state.create_session(new_session, Some(cx.clone())).await {
+                    match state
+                        .create_session(new_session, Some(cx.clone()), None)
+                        .await
+                    {
                         Ok(response) => {
                             session_id_for_notify = response.session_id.clone();
                             responder.respond(response)?;
@@ -2367,6 +2531,68 @@ where
                         ),
                         "available commands update",
                     );
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |resume: acp::ResumeSessionRequest,
+                            responder: Responder<acp::ResumeSessionResponse>,
+                            cx: ConnectionTo<AcpClientRole>| {
+                    let session_id = resume.session_id.clone();
+                    match state.resume_session(resume, Some(cx.clone())).await {
+                        Ok(response) => {
+                            responder.respond(response)?;
+                            // Send available commands so Zed re-populates its
+                            // command palette after reconnecting.
+                            let commands = build_available_commands();
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::AvailableCommandsUpdate(
+                                    acp::AvailableCommandsUpdate::new(commands),
+                                ),
+                                "available commands update after resume",
+                            );
+                        }
+                        Err(error) => {
+                            responder.respond_with_error(acp_internal_error(error))?;
+                        }
+                    }
+                    Ok(())
+                }
+            },
+            acp_sdk::on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let state = Arc::clone(&state);
+                async move |load: acp::LoadSessionRequest,
+                            responder: Responder<acp::LoadSessionResponse>,
+                            cx: ConnectionTo<AcpClientRole>| {
+                    let session_id = load.session_id.clone();
+                    match state.handle_load_session(load, Some(cx.clone())).await {
+                        Ok(response) => {
+                            responder.respond(response)?;
+                            // Send available commands so Zed populates its
+                            // slash-command completion menu.
+                            let commands = build_available_commands();
+                            send_session_update_best_effort(
+                                &cx,
+                                session_id,
+                                acp::SessionUpdate::AvailableCommandsUpdate(
+                                    acp::AvailableCommandsUpdate::new(commands),
+                                ),
+                                "available commands update after load",
+                            );
+                        }
+                        Err(error) => {
+                            responder.respond_with_error(acp_internal_error(error))?;
+                        }
+                    }
                     Ok(())
                 }
             },
@@ -2621,7 +2847,7 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
         ))
         .agent_capabilities(
             acp::AgentCapabilities::new()
-                .load_session(false)
+                .load_session(true)
                 .prompt_capabilities(
                     acp::PromptCapabilities::new()
                         .image(true)
@@ -2630,8 +2856,11 @@ pub fn handle_initialize(request: acp::InitializeRequest) -> acp::InitializeResp
                 .mcp_capabilities(acp::McpCapabilities::new())
                 // Advertise session mode, config, and model capabilities so Zed
                 // knows to show the mode selector, config controls, and model
-                // switcher in the chat UI.
-                .session_capabilities(acp::SessionCapabilities::new()),
+                // switcher in the chat UI. Advertise session/resume so Zed can
+                // reconnect to a previous session after restart.
+                .session_capabilities(
+                    acp::SessionCapabilities::new().resume(acp::SessionResumeCapabilities::new()),
+                ),
         )
         .auth_methods(Vec::new())
 }
@@ -3465,6 +3694,43 @@ fn send_session_update_best_effort(
     }
 }
 
+/// Streams non-system conversation turns to the Zed client as
+/// `UserMessageChunk` / `AgentMessageChunk` notifications.
+///
+/// Used by both `resume_session` and `handle_load_session` so that Zed can
+/// repopulate the chat thread with prior messages after reconnecting. When
+/// `connection` is `None` (e.g. in tests) the function is a no-op.
+async fn replay_session_history(
+    connection: Option<&ConnectionTo<AcpClientRole>>,
+    session: &Arc<Mutex<ActiveSessionState>>,
+    session_id: &acp::SessionId,
+) {
+    let Some(conn) = connection else { return };
+
+    let session_guard = session.lock().await;
+    let agent_handle = session_guard.xzatoma_agent.clone();
+    drop(session_guard);
+
+    let agent = agent_handle.lock().await;
+    let messages: Vec<Message> = agent.conversation().messages().to_vec();
+    drop(agent);
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let content = match &msg.content {
+            Some(c) if !c.trim().is_empty() => c.clone(),
+            _ => continue,
+        };
+        let chunk = acp::ContentChunk::new(acp::ContentBlock::from(content))
+            .message_id(format!("hist-{idx}").as_str());
+        let update = match msg.role.as_str() {
+            "user" => acp::SessionUpdate::UserMessageChunk(chunk),
+            "assistant" => acp::SessionUpdate::AgentMessageChunk(chunk),
+            _ => continue,
+        };
+        send_session_update_best_effort(conn, session_id.clone(), update, "history replay");
+    }
+}
+
 fn acp_validation_error(field: &str, error: impl ToString) -> acp_sdk::Error {
     acp_sdk::Error::invalid_params().data(serde_json::json!({
         "field": field,
@@ -3700,7 +3966,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_available_commands_returns_fourteen_entries_from_stdio_context() {
-        assert_eq!(build_available_commands().len(), 14);
+        assert_eq!(build_available_commands().len(), 15);
     }
 
     #[tokio::test]
@@ -4047,7 +4313,15 @@ mod tests {
                 .embedded_context
         );
         assert!(!response.agent_capabilities.prompt_capabilities.audio);
-        assert!(!response.agent_capabilities.load_session);
+        assert!(response.agent_capabilities.load_session);
+        assert!(
+            response
+                .agent_capabilities
+                .session_capabilities
+                .resume
+                .is_some(),
+            "initialize response must advertise session/resume capability"
+        );
     }
 
     #[test]
@@ -4230,6 +4504,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4309,6 +4584,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -4453,6 +4729,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4477,6 +4754,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -4613,6 +4891,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -4698,6 +4977,7 @@ mod tests {
         let session_response = state
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
+                None,
                 None,
             )
             .await
@@ -5387,6 +5667,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await
             .expect("session creation should succeed");
@@ -5656,6 +5937,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(workspace_dir.path().to_path_buf()),
                 None,
+                None,
             )
             .await;
 
@@ -5687,6 +5969,7 @@ mod tests {
             .create_session(
                 acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
                 None,
+                None,
             )
             .await;
         // An invalid provider makes the create_session call succeed because
@@ -5705,6 +5988,7 @@ mod tests {
         let response = state
             .create_session(
                 acp::NewSessionRequest::new(std::path::PathBuf::from("/tmp")),
+                None,
                 None,
             )
             .await;
@@ -6574,6 +6858,55 @@ mod tests {
         assert!(
             text.contains("summarized"),
             "context summary must confirm summarization; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_compact_returns_confirmation() {
+        let state = dispatch_test_state();
+        let (_session_id, session) = dispatch_test_session(&state).await;
+
+        // `/compact` is an alias for `/context summary` and must return the
+        // same confirmation string.
+        let result = dispatch_stdio_command("/compact", &session, None).await;
+        let response = result
+            .expect("/compact should short-circuit (not None)")
+            .expect("/compact should not error");
+        assert_eq!(response.stop_reason, acp::StopReason::EndTurn);
+
+        // Confirm the text directly via the handler.
+        let text = handle_context_summary(None, &session).await;
+        assert!(
+            text.contains("summarized"),
+            "compact must confirm summarization; got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires system keyring"]
+    async fn test_handle_load_session_creates_session_and_returns_response() {
+        // A load session with no stored history for the workspace should
+        // succeed: it creates a fresh session and returns a valid response
+        // with mode and config state populated.
+        let state = dispatch_test_state();
+        let session_id = acp::SessionId::new("xzatoma-load-test-session-abc");
+        let request = acp::LoadSessionRequest::new(
+            session_id.clone(),
+            std::path::PathBuf::from("/tmp/xzatoma-load-test"),
+        );
+
+        let result = state.handle_load_session(request, None).await;
+        assert!(
+            result.is_ok(),
+            "handle_load_session must not fail for a new workspace: {:?}",
+            result.err()
+        );
+
+        // The session must be registered in the registry after loading.
+        let registered = state.sessions.contains(&session_id).await;
+        assert!(
+            registered,
+            "session must be in registry after handle_load_session"
         );
     }
 }

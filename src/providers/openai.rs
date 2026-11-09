@@ -500,7 +500,8 @@ impl OpenAIProvider {
     /// # Errors
     ///
     /// Returns `XzatomaError::Provider` if the underlying HTTP client cannot be
-    /// initialized (for example, if TLS initialization fails).
+    /// initialized (for example, if TLS initialization fails), or if `base_url`
+    /// uses plain HTTP for a non-loopback host and `allow_http` is `false`.
     ///
     /// # Examples
     ///
@@ -513,11 +514,19 @@ impl OpenAIProvider {
     /// assert!(provider.is_ok());
     /// ```
     pub fn new(mut config: OpenAIConfig) -> Result<Self> {
-        config.base_url = crate::security::validate_provider_base_url(
-            &config.base_url,
-            "provider.openai.base_url",
-        )
-        .map_err(|error| XzatomaError::Provider(error.to_string()))?;
+        // When allow_http is true, only validate structural correctness; skip
+        // the HTTPS-for-remote-hosts enforcement so the user can point xzatoma
+        // at a plaintext OpenAI-compatible server on a trusted LAN.
+        config.base_url = if config.allow_http {
+            crate::security::normalize_http_base_url(&config.base_url, "provider.openai.base_url")
+                .map_err(|error| XzatomaError::Provider(error.to_string()))?
+        } else {
+            crate::security::validate_provider_base_url(
+                &config.base_url,
+                "provider.openai.base_url",
+            )
+            .map_err(|error| XzatomaError::Provider(error.to_string()))?
+        };
 
         let client = Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_seconds))
@@ -1510,6 +1519,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         }
     }
 
@@ -1578,6 +1588,34 @@ mod tests {
         };
         let result = OpenAIProvider::new(config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_openai_provider_rejects_remote_http_without_allow_http() {
+        let config = OpenAIConfig {
+            base_url: "http://192.168.1.100:8080/v1".to_string(),
+            allow_http: false,
+            ..Default::default()
+        };
+        let result = OpenAIProvider::new(config);
+        assert!(
+            result.is_err(),
+            "remote http must be rejected when allow_http is false"
+        );
+    }
+
+    #[test]
+    fn test_openai_provider_allow_http_accepts_remote_http_url() {
+        let config = OpenAIConfig {
+            base_url: "http://192.168.1.100:8080/v1".to_string(),
+            allow_http: true,
+            ..Default::default()
+        };
+        let result = OpenAIProvider::new(config);
+        assert!(
+            result.is_ok(),
+            "remote http must be accepted when allow_http is true"
+        );
     }
 
     #[test]
@@ -2346,6 +2384,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2396,6 +2435,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2439,6 +2479,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
 
@@ -2629,6 +2670,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2685,6 +2727,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2723,6 +2766,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         assert!(
@@ -2742,6 +2786,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         assert!(
@@ -2774,6 +2819,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2815,6 +2861,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2844,6 +2891,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let result = provider.list_models().await;
@@ -2891,6 +2939,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -2926,6 +2975,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -3060,6 +3110,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).expect("provider should be created");
 
@@ -3116,6 +3167,7 @@ mod tests {
             request_timeout_seconds: 600,
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).expect("provider should be created");
 
@@ -3193,6 +3245,7 @@ mod tests {
             // Very short idle timeout so the test runs in ~1 s.
             stream_idle_timeout_seconds: 1,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];
@@ -3246,6 +3299,7 @@ mod tests {
             // Generous idle timeout: all chunks arrive well within this window.
             stream_idle_timeout_seconds: 30,
             reasoning_effort: None,
+            allow_http: false,
         };
         let provider = OpenAIProvider::new(config).unwrap();
         let messages = vec![Message::user("Hello")];

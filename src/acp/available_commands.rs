@@ -18,6 +18,7 @@
 //! | `/tools`     | None                           | Summarize available XZatoma and IDE tools      |
 //! | `/context`   | None                           | Show current conversation context usage        |
 //! | `/summarize` | None                           | Summarize and compact conversation history     |
+//! | `/compact`   | None                           | Compact conversation history (alias for /summarize) |
 //! | `/skills`    | None                           | List active skills for the current workspace   |
 //! | `/mcp`       | None                           | List connected MCP servers and tools           |
 //! | `/help`      | None                           | Show available special commands                |
@@ -33,7 +34,7 @@
 //! use xzatoma::acp::available_commands::build_available_commands;
 //!
 //! let commands = build_available_commands();
-//! assert_eq!(commands.len(), 14);
+//! assert_eq!(commands.len(), 15);
 //! assert!(!commands[0].description.is_empty());
 //! ```
 
@@ -49,7 +50,7 @@ use agent_client_protocol as acp_sdk;
 ///
 /// # Returns
 ///
-/// A `Vec<acp::AvailableCommand>` containing all fourteen XZatoma slash commands
+/// A `Vec<acp::AvailableCommand>` containing all fifteen XZatoma slash commands
 /// in display order.
 ///
 /// # Examples
@@ -58,7 +59,7 @@ use agent_client_protocol as acp_sdk;
 /// use xzatoma::acp::available_commands::build_available_commands;
 ///
 /// let commands = build_available_commands();
-/// assert_eq!(commands.len(), 14);
+/// assert_eq!(commands.len(), 15);
 ///
 /// let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
 /// assert!(names.contains(&"mode"));
@@ -76,6 +77,7 @@ pub fn build_available_commands() -> Vec<acp::AvailableCommand> {
         build_tools_command(),
         build_context_command(),
         build_summarize_command(),
+        build_compact_command(),
         build_skills_command(),
         build_mcp_command(),
         build_help_command(),
@@ -178,6 +180,19 @@ fn build_summarize_command() -> acp::AvailableCommand {
     acp::AvailableCommand::new(
         "summarize",
         "Summarize and compact the conversation history to free context budget.",
+    )
+}
+
+/// Builds the `/compact` command definition.
+///
+/// Takes no arguments. This command is an alias for `/summarize`: the agent
+/// compacts the conversation history by replacing earlier turns with a concise
+/// summary, freeing context budget for future work. Both names are advertised
+/// so that users who know either spelling find the command in the completion menu.
+fn build_compact_command() -> acp::AvailableCommand {
+    acp::AvailableCommand::new(
+        "compact",
+        "Compact the conversation history to free context budget. Alias for /summarize.",
     )
 }
 
@@ -300,7 +315,7 @@ mod tests {
     #[test]
     fn test_build_available_commands_returns_fourteen_entries() {
         let commands = build_available_commands();
-        assert_eq!(commands.len(), 14);
+        assert_eq!(commands.len(), 15);
     }
 
     #[test]
@@ -316,6 +331,7 @@ mod tests {
                 "tools",
                 "context",
                 "summarize",
+                "compact",
                 "skills",
                 "mcp",
                 "help",
@@ -427,6 +443,7 @@ mod tests {
             "tools",
             "context",
             "summarize",
+            "compact",
             "skills",
             "mcp",
             "help",
@@ -537,6 +554,15 @@ mod tests {
         assert!(
             commands.iter().any(|c| c.name == "streaming"),
             "/streaming must be present in the advertised command list"
+        );
+    }
+
+    #[test]
+    fn test_compact_command_is_present() {
+        let commands = build_available_commands();
+        assert!(
+            commands.iter().any(|c| c.name == "compact"),
+            "/compact must be present in the advertised command list"
         );
     }
 

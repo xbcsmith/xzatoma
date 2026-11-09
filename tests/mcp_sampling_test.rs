@@ -97,9 +97,12 @@ fn simple_request(system: Option<&str>, user_text: &str) -> CreateMessageRequest
 // MCP sampling approval policy tests
 // ---------------------------------------------------------------------------
 
-/// FullAutonomous mode must not auto-approve sampling without explicit policy.
+/// FullAutonomous headless mode must auto-approve sampling without prompting.
+///
+/// Phase 1 (Gap 9): `should_auto_approve` returns `true` for `FullAutonomous`
+/// regardless of the `headless` flag, so the provider is called immediately.
 #[tokio::test]
-async fn test_full_autonomous_mode_requires_explicit_approval_policy() {
+async fn test_full_autonomous_mode_headless_is_auto_approved() {
     let mock = Arc::new(MockProvider::new("the answer is 42"));
 
     let handler = XzatomaSamplingHandler {
@@ -111,17 +114,23 @@ async fn test_full_autonomous_mode_requires_explicit_approval_policy() {
     let req = simple_request(None, "what is 6 times 7?");
     let result = handler.create_message(req).await;
 
-    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
+    assert!(
+        result.is_ok(),
+        "FullAutonomous headless must be auto-approved"
+    );
     assert_eq!(
         mock.call_count(),
-        0,
-        "provider::complete must not be called without approval"
+        1,
+        "provider::complete must be called exactly once when auto-approved"
     );
 }
 
-/// Headless mode must reject sampling without explicit trust metadata.
+/// Headless Interactive mode must auto-approve sampling without stdin.
+///
+/// Phase 1 (Gap 9): `should_auto_approve` returns `true` whenever `headless`
+/// is `true`, regardless of `execution_mode`. No stdin prompt is issued.
 #[tokio::test]
-async fn test_headless_mode_rejects_without_trust_metadata() {
+async fn test_headless_mode_is_auto_approved_without_stdin() {
     let mock = Arc::new(MockProvider::new("headless result"));
 
     let handler = XzatomaSamplingHandler {
@@ -133,8 +142,8 @@ async fn test_headless_mode_rejects_without_trust_metadata() {
     let req = simple_request(Some("You are helpful."), "hello");
     let result = handler.create_message(req).await;
 
-    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
-    assert_eq!(mock.call_count(), 0);
+    assert!(result.is_ok(), "headless Interactive must be auto-approved");
+    assert_eq!(mock.call_count(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,9 +176,9 @@ fn test_interactive_mode_with_user_rejection_returns_mcp_elicitation_error() {
 // Additional coverage: result fields
 // ---------------------------------------------------------------------------
 
-/// Plain text sampling requires approval before provider execution.
+/// Plain text sampling is auto-approved in headless FullAutonomous mode.
 #[tokio::test]
-async fn test_plain_text_sampling_requires_approval() {
+async fn test_plain_text_sampling_is_auto_approved_in_headless_mode() {
     let mock = Arc::new(MockProvider::new("plain text"));
 
     let handler = XzatomaSamplingHandler {
@@ -181,13 +190,16 @@ async fn test_plain_text_sampling_requires_approval() {
     let req = simple_request(None, "summarise this");
     let result = handler.create_message(req).await;
 
-    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
-    assert_eq!(mock.call_count(), 0);
+    assert!(
+        result.is_ok(),
+        "plain text sampling must be auto-approved when headless"
+    );
+    assert_eq!(mock.call_count(), 1);
 }
 
-/// Sampling rejection happens before constructing a result model field.
+/// The result model field is populated when sampling is auto-approved.
 #[tokio::test]
-async fn test_result_model_field_not_constructed_without_approval() {
+async fn test_result_model_field_is_constructed_when_auto_approved() {
     let mock = Arc::new(MockProvider::new("hello"));
 
     let handler = XzatomaSamplingHandler {
@@ -199,13 +211,14 @@ async fn test_result_model_field_not_constructed_without_approval() {
     let req = simple_request(None, "hi");
     let result = handler.create_message(req).await;
 
-    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
-    assert_eq!(mock.call_count(), 0);
+    assert!(result.is_ok(), "auto-approved request must return Ok");
+    assert_eq!(mock.call_count(), 1);
 }
 
-/// Multiple user messages are rejected before provider execution without approval.
+/// Multiple messages are auto-approved in headless FullAutonomous mode and
+/// the provider is called exactly once with the full message list.
 #[tokio::test]
-async fn test_multiple_messages_require_approval_before_provider_execution() {
+async fn test_multiple_messages_are_auto_approved_in_headless_mode() {
     let mock = Arc::new(MockProvider::new("multi-turn answer"));
 
     let handler = XzatomaSamplingHandler {
@@ -251,6 +264,9 @@ async fn test_multiple_messages_require_approval_before_provider_execution() {
 
     let result = handler.create_message(req).await;
 
-    assert!(matches!(result, Err(XzatomaError::McpElicitation(_))));
-    assert_eq!(mock.call_count(), 0);
+    assert!(
+        result.is_ok(),
+        "multi-message request must be auto-approved when headless"
+    );
+    assert_eq!(mock.call_count(), 1);
 }
