@@ -3,8 +3,11 @@
 //! This module provides OS-level process isolation using Landlock (Linux) and
 //! Seatbelt (macOS) via the `nono` crate.
 //!
-//! Phase 1 provides the module skeleton, error types, and configuration schema.
-//! The sandbox engine is implemented in Phase 2.
+//! - Phase 1: error types, config schema, and module skeleton.
+//! - Phase 2: `SandboxPolicy` builder, `SandboxContext`, and `apply_sandbox` engine.
+//! - Phase 3: `TerminalTool` and `CommandValidator` integration.
+//! - Phase 4: host-filtering HTTP proxy and `FetchTool` hardening.
+//! - Phase 5: `SandboxGuard` for file-operation tools.
 
 pub mod engine;
 pub mod guard;

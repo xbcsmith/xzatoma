@@ -98,6 +98,9 @@ rand = "0.10.2"
 subtle = "2.6"          # Constant-time comparison for secret/token equality checks
 agent-client-protocol = { version = "1.2.0", default-features = false, features = ["unstable_end_turn_token_usage"] }
 
+# Phase 2: Kernel-enforced sandboxing (Landlock/Seatbelt via nono)
+nono = "0.81"
+
 # Unix-only: signal delivery to child processes from StdioTransport::drop
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

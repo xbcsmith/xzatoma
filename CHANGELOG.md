@@ -42,3 +42,31 @@ enforcement is active. Escape hatches:
   format, path entries, and tool key names.
 - `src/sandbox/` module registered in `src/lib.rs` with stub files for `engine`,
   `guard`, `policy`, and `proxy` submodules (implementations in Phases 2-5).
+- `SandboxPolicy` builder struct in `src/sandbox/policy.rs` with `allow_read`,
+  `allow_write`, `deny_write`, `allow_execute`, and `with_network` builder
+  methods, plus `SandboxPolicy::from_config` for deriving a policy from
+  `SandboxConfig`.
+- `SandboxContext` zero-sized proof type returned by a successful
+  `apply_sandbox` call.
+- `apply_sandbox` in `src/sandbox/engine.rs`: applies Landlock (Linux) or
+  Seatbelt (macOS) restrictions to the current process via the `nono` crate.
+- `nono = "0.81"` dependency added to `Cargo.toml`.
+- `network_blocked_programs: Vec<String>` field on `CommandValidator`; populated
+  by `CommandValidator::from_config` when sandbox is enabled and network is
+  disabled.
+- Two new unconditional denylist patterns in `CommandValidator::new`: `nc -l`
+  (netcat listen/execute) and `socat EXEC` (execute relay).
+- Network-blocking check added as the first step in
+  `CommandValidator::validate`; returns `DangerousCommand` with an actionable
+  message when a network tool is invoked with `sandbox.network_enabled = false`.
+- `CommandValidator::from_config` constructor.
+- `.git` directory path guard in `CommandValidator::validate_paths`; rejects any
+  argument whose resolved path contains a `.git` component.
+- `sandbox_policy` and `proxy_addr` fields on `TerminalTool`.
+- `TerminalTool::with_sandbox_policy` and `with_proxy_addr` builder methods.
+- `TerminalTool::from_config` constructor.
+- `execute_command` convenience function updated with
+  `sandbox_config: Option<&SandboxConfig>` parameter.
+- Combined `setpgid` and `apply_sandbox` in a single `pre_exec` closure; proxy
+  environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, etc.) injected into child
+  processes when `proxy_addr` is set.
