@@ -70,3 +70,22 @@ enforcement is active. Escape hatches:
 - Combined `setpgid` and `apply_sandbox` in a single `pre_exec` closure; proxy
   environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, etc.) injected into child
   processes when `proxy_addr` is set.
+- `SandboxProxy` struct in `src/sandbox/proxy.rs` with `start`, `addr`, and
+  `shutdown` methods; binds a local `TcpListener` and runs an accept loop that
+  enforces `network_allowed_hosts` plus SSRF double-check before relaying HTTP
+  CONNECT tunnels.
+- `Drop` implementation on `SandboxProxy` cancels the accept loop automatically
+  on drop so the background task does not outlive its owner.
+- `SsrfValidator::allowed_hosts` field and `with_allowed_hosts` builder method;
+  allowlist check inserted in `SsrfValidator::validate` before the private-IP
+  guard.
+- `FetchTool::new` updated with `sandbox_cfg: Option<&SandboxConfig>` third
+  parameter; passes `network_allowed_hosts` into `SsrfValidator` when sandbox is
+  enabled.
+- `ToolRegistryBuilder::with_config(Arc<Config>)` and
+  `ToolRegistryBuilder::with_proxy_addr(SocketAddr)` builder methods.
+- `AgentEnvironment::sandbox_proxy: Option<SandboxProxy>` field; proxy started
+  in `build_agent_environment` when
+  `sandbox.enabled && sandbox.network_enabled`.
+- `build_tools_for_mode` in `src/commands/mod.rs` chains `.with_config` so
+  sandbox policy is respected during hot-reload mode switches.

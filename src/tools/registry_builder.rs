@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
-use crate::config::{AcpClientConfig, TerminalConfig, ToolsConfig};
+use crate::config::{AcpClientConfig, Config, TerminalConfig, ToolsConfig};
 use crate::error::Result;
 
 use crate::tools::acp_agent::AcpAgentTool;
@@ -136,6 +136,17 @@ pub struct ToolRegistryBuilder {
     /// When `Some` and `default_timeout_seconds > 0`, `call_acp_agent` and
     /// `discover_acp_agents` are registered in Write mode.
     acp_client_config: Option<Arc<AcpClientConfig>>,
+    /// Full application configuration for sandbox-aware tool construction.
+    ///
+    /// When `Some`, `build_for_write` uses [`TerminalTool::from_config`] to
+    /// apply kernel sandbox policies to spawned commands.
+    config: Option<Arc<Config>>,
+    /// Address of the running host-filtering HTTP proxy.
+    ///
+    /// When `Some`, the proxy address is injected into the `TerminalTool` so
+    /// that child processes receive `HTTP_PROXY` / `HTTPS_PROXY` environment
+    /// variables pointing at the sandbox proxy.
+    proxy_addr: Option<std::net::SocketAddr>,
 }
 
 impl ToolRegistryBuilder {
@@ -159,6 +170,8 @@ impl ToolRegistryBuilder {
             terminal_config: TerminalConfig::default(),
             activate_skill_tool: None,
             acp_client_config: None,
+            config: None,
+            proxy_addr: None,
         }
     }
 
@@ -221,6 +234,41 @@ impl ToolRegistryBuilder {
     /// ```
     pub fn with_acp_client_config(mut self, config: Arc<AcpClientConfig>) -> Self {
         self.acp_client_config = Some(config);
+        self
+    }
+
+    /// Set the full application configuration for sandbox-aware tool construction.
+    ///
+    /// When set, `build_for_write` delegates terminal tool creation to
+    /// [`TerminalTool::from_config`], which applies the sandbox policy from
+    /// `config.sandbox` to each spawned command.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - Full application configuration wrapped in `Arc`
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_config(mut self, cfg: Arc<Config>) -> Self {
+        self.config = Some(cfg);
+        self
+    }
+
+    /// Set the address of the running host-filtering sandbox proxy.
+    ///
+    /// When set, the `TerminalTool` will inject `HTTP_PROXY` / `HTTPS_PROXY`
+    /// environment variables into every child process.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Socket address of the running `SandboxProxy`
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_proxy_addr(mut self, addr: std::net::SocketAddr) -> Self {
+        self.proxy_addr = Some(addr);
         self
     }
 
@@ -422,11 +470,22 @@ impl ToolRegistryBuilder {
         let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
         registry.register("edit_file", edit_tool_executor);
 
-        // Register terminal tool with safety mode
-        let terminal_validator =
-            CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
-        let terminal_tool = TerminalTool::new(terminal_validator, self.terminal_config.clone())
-            .with_safety_mode(self.safety_mode);
+        // Register terminal tool with safety mode.
+        // When a full Config is available, use TerminalTool::from_config so the
+        // kernel sandbox policy is applied to every spawned command.
+        let terminal_tool = if let Some(cfg) = &self.config {
+            let mut tool = TerminalTool::from_config(cfg, self.working_dir.clone())?;
+            tool = tool.with_safety_mode(self.safety_mode);
+            if let Some(addr) = self.proxy_addr {
+                tool = tool.with_proxy_addr(addr);
+            }
+            tool
+        } else {
+            let terminal_validator =
+                CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
+            TerminalTool::new(terminal_validator, self.terminal_config.clone())
+                .with_safety_mode(self.safety_mode)
+        };
         let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
         registry.register("terminal", terminal_tool_executor);
 

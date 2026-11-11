@@ -1710,7 +1710,8 @@ pub mod chat {
             working_dir.to_path_buf(),
         )
         .with_tools_config(config.agent.tools.clone())
-        .with_terminal_config(config.agent.terminal.clone());
+        .with_terminal_config(config.agent.terminal.clone())
+        .with_config(Arc::new(config.clone()));
 
         builder.build()
     }
