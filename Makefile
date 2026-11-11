@@ -62,6 +62,10 @@ lint: ; $(info $(M) running cargo clippy...) @ ## Runs a cargo clippy
 audit: ; $(info $(M) running cargo audit...) @ ## Runs cargo audit --deny warnings
 	$Q $(CARGO) audit --deny warnings
 
+# Run kernel-enforced sandbox integration tests (requires Linux 5.13+ or macOS)
+sandbox-test: ; $(info $(M) running sandbox integration tests...) @ ## Runs sandbox integration tests with kernel enforcement
+	$Q $(CARGO) test -p xzatoma --test sandbox_integration -- --include-ignored
+
 # Docs validation (link checks, emoji scan, filename and code-fence checks)
 docs-check: ; $(info $(M) running docs validation scripts...) @ ## Runs documentation validation scripts
 	$Q python3 scripts/doc_link_check.py
@@ -89,4 +93,4 @@ help:
 	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
         awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: all build release run sdk test clean format check lint audit install megalint doc help
+.PHONY: all build release run sdk test clean format check lint audit sandbox-test install megalint doc help

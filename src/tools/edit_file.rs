@@ -15,11 +15,13 @@ delegating to `file_utils::PathValidator`.
 */
 
 use crate::error::{Result, XzatomaError};
+use crate::sandbox::SandboxGuard;
 use crate::tools::{ToolExecutor, ToolResult, file_utils, parse_tool_args};
 use async_trait::async_trait;
 use metrics::counter;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
 
 use tokio::fs;
 
@@ -61,6 +63,11 @@ struct EditFileParams {
 pub struct EditFileTool {
     path_validator: file_utils::PathValidator,
     max_file_size: u64,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `execute` calls `check_write` on the resolved path
+    /// before performing any filesystem operation.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl EditFileTool {
@@ -74,7 +81,25 @@ impl EditFileTool {
         Self {
             path_validator: file_utils::PathValidator::new(working_dir),
             max_file_size,
+            sandbox_guard: None,
         }
+    }
+
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `execute` calls `check_write` on the resolved path before
+    /// performing any I/O. When `None`, no sandbox check is performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
     }
 
     /// Replace the first occurrence of `old` in `haystack` with `replacement`
@@ -157,6 +182,11 @@ impl ToolExecutor for EditFileTool {
 
         // Validate path (will return error on traversal/absolute paths)
         let full_path = self.path_validator.validate(&params.path)?;
+
+        // Enforce sandbox policy before any I/O.
+        if let Some(guard) = &self.sandbox_guard {
+            guard.check_write(&full_path)?;
+        }
 
         match params.mode {
             EditMode::Create => {

@@ -373,6 +373,13 @@ cargo test
 # Check code quality
 cargo fmt --check
 cargo clippy -- -D warnings
+
+# Audit dependencies for known security vulnerabilities
+make audit
+
+# Run sandbox integration tests (non-kernel; no special setup required)
+# Add -- --include-ignored to also run kernel-sandbox-gated tests
+make sandbox-test
 ```
 
 ## Technology Stack

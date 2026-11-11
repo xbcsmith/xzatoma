@@ -17,6 +17,7 @@ use tracing::debug;
 use crate::chat_mode::{ChatMode, SafetyMode};
 use crate::config::{AcpClientConfig, Config, TerminalConfig, ToolsConfig};
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 
 use crate::tools::acp_agent::AcpAgentTool;
 use crate::tools::acp_discover::DiscoverAcpAgentsTool;
@@ -363,22 +364,57 @@ impl ToolRegistryBuilder {
     pub fn build_for_planning(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
+        // Construct sandbox guard when config is available and file_ops sandboxing is enabled.
+        let guard: Option<Arc<SandboxGuard>> = if let Some(cfg) = &self.config {
+            let file_ops_sandboxed = cfg
+                .sandbox
+                .sandboxed_tools
+                .get("file_ops")
+                .copied()
+                .unwrap_or(true);
+            if cfg.sandbox.enabled && file_ops_sandboxed {
+                Some(Arc::new(SandboxGuard::new(
+                    cfg.sandbox.clone(),
+                    self.working_dir.clone(),
+                )))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Register read_file tool
         let read_tool = ReadFileTool::new(
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
             500, // max_outline_lines for file structure display
         );
+        let read_tool = if let Some(g) = &guard {
+            read_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            read_tool
+        };
         let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
         registry.register("read_file", read_tool_executor);
 
         // Register list_directory tool
         let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool = if let Some(g) = &guard {
+            list_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            list_tool
+        };
         let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
         registry.register("list_directory", list_tool_executor);
 
         // Register find_path tool
         let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool = if let Some(g) = &guard {
+            find_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            find_tool
+        };
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
 
@@ -415,12 +451,37 @@ impl ToolRegistryBuilder {
     pub fn build_for_write(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
+        // Construct sandbox guard when config is available and file_ops sandboxing is enabled.
+        let guard: Option<Arc<SandboxGuard>> = if let Some(cfg) = &self.config {
+            let file_ops_sandboxed = cfg
+                .sandbox
+                .sandboxed_tools
+                .get("file_ops")
+                .copied()
+                .unwrap_or(true);
+            if cfg.sandbox.enabled && file_ops_sandboxed {
+                Some(Arc::new(SandboxGuard::new(
+                    cfg.sandbox.clone(),
+                    self.working_dir.clone(),
+                )))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Register read_file tool
         let read_tool = ReadFileTool::new(
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
             500, // max_outline_lines for file structure display
         );
+        let read_tool = if let Some(g) = &guard {
+            read_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            read_tool
+        };
         let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
         registry.register("read_file", read_tool_executor);
 
@@ -429,36 +490,71 @@ impl ToolRegistryBuilder {
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
         );
+        let write_tool = if let Some(g) = &guard {
+            write_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            write_tool
+        };
         let write_tool_executor: Arc<dyn ToolExecutor> = Arc::new(write_tool);
         registry.register("write_file", write_tool_executor);
 
         // Register delete_path tool
         let delete_tool = DeletePathTool::new(self.working_dir.clone());
+        let delete_tool = if let Some(g) = &guard {
+            delete_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            delete_tool
+        };
         let delete_tool_executor: Arc<dyn ToolExecutor> = Arc::new(delete_tool);
         registry.register("delete_path", delete_tool_executor);
 
         // Register list_directory tool
         let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool = if let Some(g) = &guard {
+            list_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            list_tool
+        };
         let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
         registry.register("list_directory", list_tool_executor);
 
         // Register copy_path tool
         let copy_tool = CopyPathTool::new(self.working_dir.clone());
+        let copy_tool = if let Some(g) = &guard {
+            copy_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            copy_tool
+        };
         let copy_tool_executor: Arc<dyn ToolExecutor> = Arc::new(copy_tool);
         registry.register("copy_path", copy_tool_executor);
 
         // Register move_path tool
         let move_tool = MovePathTool::new(self.working_dir.clone());
+        let move_tool = if let Some(g) = &guard {
+            move_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            move_tool
+        };
         let move_tool_executor: Arc<dyn ToolExecutor> = Arc::new(move_tool);
         registry.register("move_path", move_tool_executor);
 
         // Register create_directory tool
         let create_tool = CreateDirectoryTool::new(self.working_dir.clone());
+        let create_tool = if let Some(g) = &guard {
+            create_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            create_tool
+        };
         let create_tool_executor: Arc<dyn ToolExecutor> = Arc::new(create_tool);
         registry.register("create_directory", create_tool_executor);
 
         // Register find_path tool
         let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool = if let Some(g) = &guard {
+            find_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            find_tool
+        };
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
 
@@ -467,6 +563,11 @@ impl ToolRegistryBuilder {
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
         );
+        let edit_tool = if let Some(g) = &guard {
+            edit_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            edit_tool
+        };
         let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
         registry.register("edit_file", edit_tool_executor);
 

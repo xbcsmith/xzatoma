@@ -89,3 +89,26 @@ enforcement is active. Escape hatches:
   `sandbox.enabled && sandbox.network_enabled`.
 - `build_tools_for_mode` in `src/commands/mod.rs` chains `.with_config` so
   sandbox policy is respected during hot-reload mode switches.
+- `SandboxGuard` struct in `src/sandbox/guard.rs` with `new`, `check_read`, and
+  `check_write` methods; enforces `filesystem_root`, `extra_read_paths`,
+  `extra_write_paths`, and `protect_git` policies in application code before any
+  syscall is attempted.
+- `sandboxed_tools["file_ops"] = false` opt-out respected inside
+  `SandboxGuard::check_read` / `check_write` and `ToolRegistryBuilder`.
+- `sandbox_guard: Option<Arc<SandboxGuard>>` field and `with_sandbox_guard`
+  builder method added to all ten file-operation tools: `WriteFileTool`,
+  `EditFileTool`, `CreateDirectoryTool`, `DeletePathTool`, `CopyPathTool`,
+  `MovePathTool`, `ReadFileTool`, `ListDirectoryTool`, `FindPathTool`,
+  `GrepTool`.
+- `ToolRegistryBuilder::build_for_write` and `build_for_planning` construct
+  `Arc<SandboxGuard>` from the stored config and distribute it to every
+  registered file-operation tool via `.with_sandbox_guard`.
+- `tests/sandbox_integration.rs` with 9 integration tests verifying guard
+  enforcement, per-tool opt-out, disabled-sandbox bypass, fetch allowlist, and
+  terminal git-write blocking.
+- `sandbox-test` Makefile target for running sandbox integration tests with
+  `--include-ignored` to exercise the kernel-sandbox test.
+- `docs/reference/sandbox_configuration.md` -- field reference table, valid
+  `sandboxed_tools` keys, platform requirements, and YAML example.
+- `docs/how-to/configure_sandboxing.md` -- five task-oriented recipes.
+- `docs/tutorials/sandboxing_quickstart.md` -- learning-oriented walkthrough.

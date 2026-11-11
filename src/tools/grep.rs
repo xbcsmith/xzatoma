@@ -4,6 +4,7 @@
 //! file filtering, case sensitivity control, and pagination.
 
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 use crate::tools::{ToolExecutor, ToolResult};
 use async_trait::async_trait;
 use glob::Pattern;
@@ -13,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::debug;
 
 /// Search result with file location and context
@@ -101,6 +103,11 @@ pub struct GrepTool {
     max_file_size: u64,
     /// File patterns to exclude from search
     excluded_patterns: Vec<String>,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `execute` calls `check_read` on the working directory
+    /// root before performing any filesystem traversal.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl GrepTool {
@@ -126,7 +133,26 @@ impl GrepTool {
             context_lines,
             max_file_size,
             excluded_patterns,
+            sandbox_guard: None,
         }
+    }
+
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `execute` calls `check_read` on the working directory root
+    /// before performing any traversal. When `None`, no sandbox check is
+    /// performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
     }
 
     /// Search for a pattern in files
@@ -410,6 +436,11 @@ impl ToolExecutor for GrepTool {
         let regex = args.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
             crate::error::XzatomaError::Search("Missing required parameter: regex".to_string())
         })?;
+
+        // Enforce sandbox policy before any filesystem traversal.
+        if let Some(guard) = &self.sandbox_guard {
+            guard.check_read(&self.working_dir)?;
+        }
 
         let include_pattern = args.get("include_pattern").and_then(|v| v.as_str());
         let case_sensitive = args
