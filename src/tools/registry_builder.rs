@@ -26,6 +26,7 @@ use crate::tools::create_directory::CreateDirectoryTool;
 use crate::tools::delete_path::DeletePathTool;
 use crate::tools::edit_file::EditFileTool;
 use crate::tools::find_path::FindPathTool;
+use crate::tools::grep::GrepTool;
 use crate::tools::list_directory::ListDirectoryTool;
 use crate::tools::move_path::MovePathTool;
 use crate::tools::read_file::ReadFileTool;
@@ -50,7 +51,7 @@ use crate::tools::{ToolExecutor, ToolRegistry};
 /// assert!(names.contains(&"find_path"));
 /// ```
 pub fn read_only_tool_names() -> &'static [&'static str] {
-    &["read_file", "list_directory", "find_path"]
+    &["read_file", "list_directory", "find_path", "grep"]
 }
 
 /// Return the canonical names of file mutation tools.
@@ -117,7 +118,7 @@ pub fn terminal_tool_names() -> &'static [&'static str] {
 /// );
 ///
 /// let registry = builder.build_for_planning().expect("Failed to build registry");
-/// assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
+/// assert_eq!(registry.len(), 4); // read_file, list_directory, find_path, grep
 /// ```
 pub struct ToolRegistryBuilder {
     /// The chat mode (Planning or Write)
@@ -332,7 +333,7 @@ impl ToolRegistryBuilder {
     /// );
     ///
     /// let registry = builder.build_for_chat(false).expect("Failed to build registry");
-    /// assert_eq!(registry.len(), 10); // All standard Write mode tools
+    /// assert_eq!(registry.len(), 11); // All standard Write mode tools
     /// ```
     pub fn build_for_chat(&self, subagents_enabled: bool) -> Result<ToolRegistry> {
         // Build the base registry for the current mode
@@ -353,6 +354,7 @@ impl ToolRegistryBuilder {
     /// - `read_file` - Read file contents with optional line range
     /// - `list_directory` - List directory contents with optional recursion and pattern matching
     /// - `find_path` - Find files by glob pattern
+    /// - `grep` - Search file contents by regular expression
     ///
     /// Excluded:
     /// - Terminal execution
@@ -418,6 +420,22 @@ impl ToolRegistryBuilder {
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
 
+        // Register grep tool (read-only content search)
+        let grep_tool = GrepTool::new(
+            self.working_dir.clone(),
+            self.tools_config.grep_max_results_per_page,
+            self.tools_config.grep_context_lines,
+            self.tools_config.grep_max_file_size,
+            self.tools_config.grep_excluded_patterns.clone(),
+        );
+        let grep_tool = if let Some(g) = &guard {
+            grep_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            grep_tool
+        };
+        let grep_tool_executor: Arc<dyn ToolExecutor> = Arc::new(grep_tool);
+        registry.register("grep", grep_tool_executor);
+
         self.register_activate_skill_tool(&mut registry);
 
         Ok(registry)
@@ -435,6 +453,7 @@ impl ToolRegistryBuilder {
     /// - `create_directory` - Create directories
     /// - `find_path` - Find files by glob pattern
     /// - `edit_file` - Edit files with targeted replacements or create new files
+    /// - `grep` - Search file contents by regular expression
     /// - `terminal` - Terminal command execution with safety validation
     ///
     /// The terminal tool respects the configured safety mode:
@@ -571,6 +590,22 @@ impl ToolRegistryBuilder {
         let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
         registry.register("edit_file", edit_tool_executor);
 
+        // Register grep tool (read-only content search, available in write mode)
+        let grep_tool = GrepTool::new(
+            self.working_dir.clone(),
+            self.tools_config.grep_max_results_per_page,
+            self.tools_config.grep_context_lines,
+            self.tools_config.grep_max_file_size,
+            self.tools_config.grep_excluded_patterns.clone(),
+        );
+        let grep_tool = if let Some(g) = &guard {
+            grep_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            grep_tool
+        };
+        let grep_tool_executor: Arc<dyn ToolExecutor> = Arc::new(grep_tool);
+        registry.register("grep", grep_tool_executor);
+
         // Register terminal tool with safety mode.
         // When a full Config is available, use TerminalTool::from_config so the
         // kernel sandbox policy is applied to every spawned command.
@@ -698,10 +733,11 @@ mod tests {
         let registry = builder
             .build_for_planning()
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.len(), 4);
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("list_directory").is_some());
         assert!(registry.get("find_path").is_some());
+        assert!(registry.get("grep").is_some());
         assert!(registry.get("terminal").is_none());
         assert!(registry.get("write_file").is_none());
     }
@@ -715,7 +751,7 @@ mod tests {
         );
 
         let registry = builder.build_for_write().expect("Failed to build registry");
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("write_file").is_some());
         assert!(registry.get("delete_path").is_some());
@@ -725,6 +761,7 @@ mod tests {
         assert!(registry.get("create_directory").is_some());
         assert!(registry.get("find_path").is_some());
         assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("grep").is_some());
         assert!(registry.get("terminal").is_some());
     }
 
@@ -737,7 +774,7 @@ mod tests {
         );
 
         let planning_registry = planning_builder.build().expect("Failed to build registry");
-        assert_eq!(planning_registry.len(), 3);
+        assert_eq!(planning_registry.len(), 4);
 
         let write_builder = ToolRegistryBuilder::new(
             ChatMode::Write,
@@ -746,7 +783,7 @@ mod tests {
         );
 
         let write_registry = write_builder.build().expect("Failed to build registry");
-        assert_eq!(write_registry.len(), 10);
+        assert_eq!(write_registry.len(), 11);
     }
 
     #[test]
@@ -773,10 +810,11 @@ mod tests {
         let registry = builder
             .build_for_chat(false)
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
+        assert_eq!(registry.len(), 4); // read_file, list_directory, find_path, grep
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("list_directory").is_some());
         assert!(registry.get("find_path").is_some());
+        assert!(registry.get("grep").is_some());
     }
 
     #[test]
@@ -790,7 +828,7 @@ mod tests {
         let registry = builder
             .build_for_chat(false)
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 10); // All standard Write mode tools
+        assert_eq!(registry.len(), 11); // All standard Write mode tools
     }
 
     #[test]
@@ -805,7 +843,7 @@ mod tests {
             .build_for_chat(true)
             .expect("Failed to build registry");
         // Currently returns the same tools, but flag is passed and logged
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 
     #[test]
@@ -814,7 +852,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"list_directory"));
         assert!(names.contains(&"find_path"));
-        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"grep"));
+        assert_eq!(names.len(), 4);
     }
 
     #[test]
@@ -899,7 +938,7 @@ mod tests {
             "discover_acp_agents should be registered when default_timeout_seconds > 0"
         );
         // Base tools still present.
-        assert_eq!(registry.len(), 12); // 10 standard + 2 ACP inter-agent
+        assert_eq!(registry.len(), 13); // 11 standard + 2 ACP inter-agent
     }
 
     #[test]
@@ -926,7 +965,7 @@ mod tests {
             registry.get("discover_acp_agents").is_none(),
             "discover_acp_agents should be absent when default_timeout_seconds = 0"
         );
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 
     #[test]
@@ -939,6 +978,6 @@ mod tests {
         let registry = builder.build_for_write().unwrap();
         assert!(registry.get("call_acp_agent").is_none());
         assert!(registry.get("discover_acp_agents").is_none());
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 }

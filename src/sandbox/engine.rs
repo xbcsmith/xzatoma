@@ -21,10 +21,19 @@ use std::path::Path;
 ///
 /// - `SandboxError::KernelVersionTooOld` on Linux when Landlock ABI v1 is
 ///   not available (kernel too old or Landlock not compiled in).
+/// - `SandboxError::KernelVersionTooOld` on platforms other than Linux and macOS
+///   (kernel sandboxing is not supported).
 /// - `SandboxError::SeatbeltApplyFailed` on macOS when `sandbox_init` fails.
 /// - `SandboxError::Engine` for other internal failures.
 pub fn apply_sandbox(policy: &SandboxPolicy) -> Result<SandboxContext, SandboxError> {
-    // On Linux, verify that Landlock ABI v1 or higher is available.
+    // On platforms other than Linux and macOS, kernel-enforced sandboxing is
+    // not supported. Return an explicit error rather than delegating silently
+    // to nono's UnsupportedPlatform error path.
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    return Err(SandboxError::KernelVersionTooOld { found: 0 });
+
+    // On Linux, verify that Landlock ABI v1 or higher is available before
+    // attempting to build a ruleset.
     #[cfg(target_os = "linux")]
     nono::detect_abi().map_err(|_| SandboxError::KernelVersionTooOld { found: 0 })?;
 
@@ -146,5 +155,97 @@ fn map_nono_error(e: nono::NonoError) -> SandboxError {
         nono::NonoError::SandboxInit(_) => SandboxError::SeatbeltApplyFailed { message: msg },
         nono::NonoError::UnsupportedPlatform(_) => SandboxError::KernelVersionTooOld { found: 0 },
         _ => SandboxError::Engine(msg),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::SandboxPolicy;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_absolute_path_with_absolute_input_returns_unchanged() {
+        let abs = PathBuf::from("/usr/bin/cargo");
+        let result = absolute_path(&abs);
+        assert_eq!(result, abs);
+    }
+
+    #[test]
+    fn test_absolute_path_with_relative_input_produces_absolute() {
+        let rel = PathBuf::from("some/relative/path");
+        let result = absolute_path(&rel);
+        assert!(
+            result.is_absolute(),
+            "relative input must produce an absolute path, got: {}",
+            result.display()
+        );
+    }
+
+    #[test]
+    fn test_build_capability_set_with_empty_policy_succeeds() {
+        // An empty policy (no paths granted, network disabled) must produce a
+        // CapabilitySet without error.  This is the baseline case.
+        let policy = SandboxPolicy::new();
+        let result = build_capability_set(&policy);
+        assert!(result.is_ok(), "empty policy capability set must not fail");
+    }
+
+    #[test]
+    fn test_build_capability_set_with_nonexistent_read_path_skips_gracefully() {
+        // Paths that do not exist on disk are silently skipped rather than
+        // causing an error.  Callers are not required to verify path existence
+        // before building the policy.
+        let policy =
+            SandboxPolicy::new().allow_read("/nonexistent/xzatoma/path/that/cannot/exist/abc123");
+        let result = build_capability_set(&policy);
+        assert!(
+            result.is_ok(),
+            "non-existent paths must be skipped, not rejected"
+        );
+    }
+
+    #[test]
+    fn test_build_capability_set_with_network_blocked_succeeds() {
+        let policy = SandboxPolicy::new().with_network(false);
+        let result = build_capability_set(&policy);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_capability_set_with_network_allowed_succeeds() {
+        let policy = SandboxPolicy::new().with_network(true);
+        let result = build_capability_set(&policy);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_capability_set_with_tmpdir_read_write_succeeds() {
+        // /tmp always exists; granting read+write access to it must not fail.
+        let tmpdir = std::env::temp_dir();
+        let policy = SandboxPolicy::new()
+            .allow_read(tmpdir.to_str().unwrap_or("/tmp"))
+            .allow_write(tmpdir.to_str().unwrap_or("/tmp"));
+        let result = build_capability_set(&policy);
+        assert!(result.is_ok());
+    }
+
+    /// Confirm that `apply_sandbox` with an empty policy completes without
+    /// panicking on the current platform.
+    ///
+    /// This test is ignored by default because `apply_sandbox` applies an
+    /// irreversible kernel sandbox restriction to the calling process, which
+    /// would interfere with the rest of the test suite.
+    #[test]
+    #[ignore = "applies irreversible kernel sandbox to the current process; run only in an isolated subprocess"]
+    fn test_apply_sandbox_with_empty_policy_returns_context() {
+        // Network is left enabled so that this test process can still resolve
+        // DNS / open sockets for any subsequent test tooling if un-ignored.
+        let policy = SandboxPolicy::new().with_network(true);
+        let result = apply_sandbox(&policy);
+        assert!(
+            result.is_ok(),
+            "apply_sandbox with empty policy must succeed"
+        );
     }
 }
