@@ -1,0 +1,13 @@
+# Exclude all generated runtime files from version control.
+# Static files (config.yaml, plans/) are tracked normally.
+
+# XZatoma runtime database files
+xzatoma.db
+xzatoma.db-shm
+xzatoma.db-wal
+
+# Output artifacts (all runtime output is written here)
+output/*
+
+# Keep the output directory itself
+!output/.gitkeep

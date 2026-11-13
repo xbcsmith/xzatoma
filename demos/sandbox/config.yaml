@@ -1,0 +1,59 @@
+# XZatoma Demo: Sandbox
+#
+# Demo-local configuration exercising sandbox enforcement. All sandbox options
+# are set explicitly so the configuration is self-documenting.
+#
+# Provider: Ollama (local)
+# Model:    granite4:3b
+# Usage:    xzatoma --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#             run --plan ./plans/sandbox_boundaries.yaml
+
+provider:
+  type: ollama
+  ollama:
+    host: http://127.0.0.1:11434
+    model: granite4:3b
+
+agent:
+  max_turns: 20
+  timeout_seconds: 300
+
+  conversation:
+    max_tokens: 32000
+    min_retain_turns: 3
+    prune_threshold: 0.8
+    warning_threshold: 0.85
+    auto_summary_threshold: 0.90
+
+  tools:
+    max_output_size: 262144
+    max_file_read_size: 1048576
+
+  terminal:
+    default_mode: restricted_autonomous
+    timeout_seconds: 30
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 65536
+
+  subagent:
+    max_depth: 1
+    default_max_turns: 5
+    output_max_size: 4096
+    chat_enabled: false
+
+sandbox:
+  enabled: true
+  filesystem_root: null       # resolved to the working directory at startup
+  protect_git: true
+  network_enabled: false
+  network_allowed_hosts: []
+  proxy_port: 8877
+  extra_read_paths: []
+  extra_write_paths: []
+  sandboxed_tools:
+    terminal: true
+    file_ops: true
+    fetch: true
+
+skills:
+  enabled: false

@@ -10,6 +10,7 @@ modification.
 | --------- | ---------------------------- | ------------------------------------------------------------- |
 | Chat      | `demos/chat/`                | Interactive conversation with a local Ollama model            |
 | Run       | `demos/run/`                 | Autonomous plan execution from a plan file or prompt          |
+| Sandbox   | `demos/sandbox/`             | Sandbox enforcement: filesystem root, git, and network        |
 | Skills    | `demos/skills/`              | Skill discovery, loading, and activation                      |
 | MCP       | `demos/mcp/`                 | Model Context Protocol server integration                     |
 | Subagents | `demos/subagents/`           | Nested agent delegation and parallel execution                |
@@ -27,6 +28,7 @@ No demo uses or references GitHub Copilot.
 | --------- | ------------------ | -------------------------------- |
 | Chat      | ollama             | `granite4:3b`                    |
 | Run       | ollama             | `granite4:3b`                    |
+| Sandbox   | ollama             | `granite4:3b`                    |
 | Skills    | ollama             | `granite4:3b`                    |
 | MCP       | ollama             | `granite4:3b`                    |
 | Subagents | ollama             | `granite4:3b`                    |
@@ -103,11 +105,11 @@ cd demos/<demo>
 ./run.sh
 ```
 
-Replace `<demo>` with one of: `chat`, `run`, `skills`, `mcp`, `subagents`,
-`vision`, `watcher`, or `providers/llama_cpp`.
+Replace `<demo>` with one of: `chat`, `run`, `sandbox`, `skills`, `mcp`,
+`subagents`, `vision`, `watcher`, or `providers/llama_cpp`.
 
-The llama.cpp demo requires `llama-server` to be running before `./setup.sh`
-is invoked. See `demos/providers/llama_cpp/README.md` for the startup command.
+The llama.cpp demo requires `llama-server` to be running before `./setup.sh` is
+invoked. See `demos/providers/llama_cpp/README.md` for the startup command.
 
 ### Resetting a Demo
 
@@ -190,6 +192,7 @@ directory is copied to a new filesystem location.
 | --------- | ---------- |
 | Chat      | Scaffolded |
 | Run       | Scaffolded |
+| Sandbox   | Complete   |
 | Skills    | Scaffolded |
 | MCP       | Scaffolded |
 | Subagents | Scaffolded |
