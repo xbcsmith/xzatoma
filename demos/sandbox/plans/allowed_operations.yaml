@@ -1,0 +1,58 @@
+# XZatoma Sandbox Demo: Allowed Operations Plan
+#
+# All steps in this plan succeed. The sandbox permits these operations because
+# they operate inside the sandbox filesystem root (the demo working directory).
+#
+# Usage:
+#   xzatoma run --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     --allow-dangerous --plan ./plans/allowed_operations.yaml
+
+name: Sandbox Allowed Operations
+description: >
+  Demonstrates that XZatoma can perform normal file and search operations
+  within the sandbox filesystem root. Every step in this plan must succeed.
+
+steps:
+  - name: Write inside sandbox root
+    action: >
+      Write exactly the following text to tmp/output/allowed_write.txt:
+
+        Sandbox test: file write inside sandbox root succeeded.
+        Path: tmp/output/allowed_write.txt
+
+      This path is inside the sandbox filesystem root (the demo working
+      directory). The write must succeed.
+
+  - name: Read a file inside sandbox root
+    action: >
+      Read the file config.yaml. Confirm that it contains a "sandbox:" section.
+      Report the first line of the sandbox section you find.
+
+  - name: Search for sandbox settings
+    action: >
+      Search config.yaml for the text "enabled" and report all matching lines.
+
+  - name: List files written so far
+    action: >
+      List the contents of the directory tmp/output/. Report the files present.
+
+  - name: Write allowed-operations report
+    action: >
+      Write a report to tmp/output/allowed_operations_report.txt with this
+      exact structure, filling in the actual results from the previous steps:
+
+        Sandbox Allowed-Operations Report
+        ==================================
+
+        Step 1 - Write to tmp/output/allowed_write.txt : SUCCEEDED
+        Step 2 - Read config.yaml                      : SUCCEEDED
+        Step 3 - Search config.yaml for "enabled"      : SUCCEEDED
+        Step 4 - List tmp/output/                      : SUCCEEDED
+
+        All operations ran inside the sandbox filesystem root.
+        The sandbox permitted them because they are within the allowed boundary.
+
+        Sandbox configuration observed:
+          filesystem_root : (working directory - this demo directory)
+          protect_git     : true
+          network_enabled : false
