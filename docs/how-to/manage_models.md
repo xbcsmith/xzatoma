@@ -335,11 +335,11 @@ provider:
 ```
 
 If `model` is left unset (or omitted entirely), XZatoma queries the provider's
-model list when it constructs the provider and automatically selects the
-latest available model — no need to keep this value in sync with whatever is
-actually installed or deployed. If a pinned model isn't found in the
-provider's list, XZatoma logs an error and falls back to the latest available
-model rather than failing.
+model list when it constructs the provider and automatically selects the latest
+available model — no need to keep this value in sync with whatever is actually
+installed or deployed. If a pinned model isn't found in the provider's list,
+XZatoma logs an error and falls back to the latest available model rather than
+failing.
 
 ### Multiple Providers
 

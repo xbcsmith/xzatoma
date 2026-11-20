@@ -125,30 +125,37 @@ Implementation Phases sections follow the following pattern:
 #### Task 2.6 Success Criteria
 ```
 
-Each phase should have a list of deliverables that can be checked off as they are completed, and a clear definition of success for the phase. The plan should be detailed enough that another engineer could pick it up and execute on it without needing to ask for additional context.
+Each phase should have a list of deliverables that can be checked off as they
+are completed, and a clear definition of success for the phase. The plan should
+be detailed enough that another engineer could pick it up and execute on it
+without needing to ask for additional context.
 
 ## General Rules
 
 The following general rules should be followed on all projects:
 
-- **API Endpoints** are versioned and the uri format should be `api/v1/<endpoint>`
+- **API Endpoints** are versioned and the uri format should be
+  `api/v1/<endpoint>`
 - **OpenAPI** documentation should be created for any service with endpoints
 - **JSON-RPC** is prefered over **XML-RPC** were applicable
 - **Test coverage** should be greater than 80%.
-- **Configuration** should be handled by environment variables, and/or command-line options, and/or configuration files.
+- **Configuration** should be handled by environment variables, and/or
+  command-line options, and/or configuration files.
 - **Unit Tests** are required.
-- **Documentation** preference is markdown and should follow the Diataxis Framework
+- **Documentation** preference is markdown and should follow the Diataxis
+  Framework
 - **ULID** prefered over UUID for unique identifiers
-- **RFC-3339 Format** prefered for timestamps, use proper format like `2025-11-07T18:12:07.982682Z
+- **RFC-3339 Format** prefered for timestamps, use proper format like
+  `2025-11-07T18:12:07.982682Z
 
 ## Architecture
 
-Servers should have a versioned API, client library, and a CLI wherever applicable.
-Services should be designed to run in container orchestration (like Kubernetes)
-and include health checks (readiness, liveness). Any REST APIs should include
-OpenAPI documents. Whenever possible, configuration should be handled by
-environment variables, and/or command-line options, and/or configuration files.
-The Pipeline should be event driven where ever possible.
+Servers should have a versioned API, client library, and a CLI wherever
+applicable. Services should be designed to run in container orchestration (like
+Kubernetes) and include health checks (readiness, liveness). Any REST APIs
+should include OpenAPI documents. Whenever possible, configuration should be
+handled by environment variables, and/or command-line options, and/or
+configuration files. The Pipeline should be event driven where ever possible.
 
 ### Service Checklist
 

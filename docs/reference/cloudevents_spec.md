@@ -126,8 +126,8 @@ Bindings MAY define formats that are dependent on the protocol.
 
 Events are transported from a source to a destination via messages.
 
-A "structured-mode message" is one where the event is fully encoded using
-a stand-alone event format and stored in the message body.
+A "structured-mode message" is one where the event is fully encoded using a
+stand-alone event format and stored in the message body.
 
 A "binary-mode message" is one where the event data is stored in the message
 body, and event attributes are stored as part of message meta-data.
@@ -178,8 +178,8 @@ descriptive and terse and SHOULD NOT exceed 20 characters in length.
 
 The following abstract data types are available for use in attributes. Each of
 these types MAY be represented differently by different event formats and in
-protocol metadata fields. This specification defines a canonical
-string-encoding for each type that MUST be supported by all implementations.
+protocol metadata fields. This specification defines a canonical string-encoding
+for each type that MUST be supported by all implementations.
 
 - `Boolean` - A boolean value of "true" or "false".
   - String encoding: a case-sensitive value of `true` or `false`.
@@ -189,7 +189,7 @@ string-encoding for each type that MUST be supported by all implementations.
   `Integer` values in this range.
   - String encoding: Integer component of the JSON Number per
     [RFC 7159, Section 6](https://tools.ietf.org/html/rfc7159#section-6)
-     optionally prefixed with a minus sign.
+    optionally prefixed with a minus sign.
 - `String` - Sequence of allowable Unicode characters. The following characters
   are disallowed:
   - the "control characters" in the ranges U+0000-U+001F and U+007F-U+009F (both
@@ -213,8 +213,8 @@ string-encoding for each type that MUST be supported by all implementations.
 - `Timestamp` - Date and time expression using the Gregorian Calendar.
   - String encoding: [RFC 3339](https://tools.ietf.org/html/rfc3339).
 
-All context attribute values MUST be of one of the types listed above.
-Attribute values MAY be presented as native types or canonical strings.
+All context attribute values MUST be of one of the types listed above. Attribute
+values MAY be presented as native types or canonical strings.
 
 A strongly-typed programming model that represents a CloudEvent or any extension
 MUST be able to convert from and to the canonical string-encoding to the
@@ -232,9 +232,8 @@ data type in the encoding or in protocol metadata fields.
 An attribute value of type `Timestamp` might indeed be routed as a string
 through multiple hops and only materialize as a native runtime/language type at
 the producer and ultimate consumer. The `Timestamp` might also be routed as a
-native protocol type and might be mapped to/from the respective
-language/runtime types at the producer and consumer ends, and never materialize
-as a string.
+native protocol type and might be mapped to/from the respective language/runtime
+types at the producer and consumer ends, and never materialize as a string.
 
 The choice of serialization mechanism will determine how the context attributes
 and the event data will be serialized. For example, in the case of a JSON
@@ -304,9 +303,8 @@ The following attributes are REQUIRED to be present in all CloudEvents:
 
   Currently, this attribute will only have the 'major' and 'minor' version
   numbers included in it. This allows for 'patch' changes to the specification
-  to be made without changing this property's value in the serialization.
-  Note: for 'release candidate' releases a suffix might be used for testing
-  purposes.
+  to be made without changing this property's value in the serialization. Note:
+  for 'release candidate' releases a suffix might be used for testing purposes.
 
 - Constraints:
   - REQUIRED
@@ -489,7 +487,7 @@ encapsulated within `data`.
 - Constraints:
   - OPTIONAL
 
-# Size Limits
+## Size Limits
 
 In many scenarios, CloudEvents will be forwarded through one or more generic
 intermediaries, each of which might impose limits on the size of forwarded
@@ -503,9 +501,9 @@ and event data, based on the chosen event format and the chosen protocol
 binding.
 
 If an application configuration requires for events to be routed across
-different protocols or for events to be re-encoded, the least efficient
-protocol and encoding used by the application SHOULD be considered for
-compliance with these size constraints:
+different protocols or for events to be re-encoded, the least efficient protocol
+and encoding used by the application SHOULD be considered for compliance with
+these size constraints:
 
 - Intermediaries MUST forward events of a size of 64 KByte or less.
 - Consumers SHOULD accept events of a size of at least 64 KByte.
@@ -524,7 +522,7 @@ event-related details through resolving links allows for differentiated access
 control and selective disclosure, rather than having sensitive details embedded
 in the event directly.
 
-# Privacy and Security
+## Privacy and Security
 
 Interoperability is the primary driver behind this specification, enabling such
 behavior requires some information to be made available _in the clear_ resulting
@@ -553,7 +551,7 @@ Consider the following to prevent inadvertent leakage especially when leveraging
   Protocol level security SHOULD be employed to ensure the trusted and secure
   exchange of CloudEvents.
 
-# Example
+## Example
 
 The following example shows a CloudEvent serialized as JSON:
 

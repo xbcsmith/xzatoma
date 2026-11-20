@@ -1,32 +1,38 @@
 # Using Subagents in Chat Mode
 
-This guide covers how to enable, control, and effectively use subagent delegation in XZatoma's interactive chat mode.
+This guide covers how to enable, control, and effectively use subagent
+delegation in XZatoma's interactive chat mode.
 
 ## Quick Start
 
 1. Start chat mode:
+
    ```bash
    xzatoma chat
    ```
 
 2. Enable subagents:
+
    ```
    /subagents on
    ```
 
 3. Delegate work:
+
    ```
    Use subagents to process these 10 files in parallel
    ```
 
 4. Check status:
+
    ```
    /status
    ```
 
 ## Understanding Subagents
 
-Subagents are autonomous AI agent instances that can handle specialized tasks, parallel operations, and delegated work. When enabled, you can:
+Subagents are autonomous AI agent instances that can handle specialized tasks,
+parallel operations, and delegated work. When enabled, you can:
 
 - **Delegate parallel tasks** to multiple subagents simultaneously
 - **Specialize subagents** for different types of work
@@ -35,13 +41,13 @@ Subagents are autonomous AI agent instances that can handle specialized tasks, p
 
 ### Subagent vs. Main Agent
 
-| Aspect | Main Agent | Subagent |
-|--------|-----------|----------|
+| Aspect       | Main Agent                    | Subagent                                |
+| ------------ | ----------------------------- | --------------------------------------- |
 | **Provider** | Your configured main provider | Override with `agent.subagent.provider` |
-| **Model** | Your main model | Override with `agent.subagent.model` |
-| **Cost** | Higher (powerful model) | Usually lower (cheaper/faster model) |
-| **Purpose** | Strategic reasoning, planning | Task execution, parallel work |
-| **Control** | You manage directly | Main agent delegates automatically |
+| **Model**    | Your main model               | Override with `agent.subagent.model`    |
+| **Cost**     | Higher (powerful model)       | Usually lower (cheaper/faster model)    |
+| **Purpose**  | Strategic reasoning, planning | Task execution, parallel work           |
+| **Control**  | You manage directly           | Main agent delegates automatically      |
 
 ## Enabling and Disabling Subagents
 
@@ -90,6 +96,7 @@ Toggles between on and off. Shows current state.
 ```
 
 Shows:
+
 - Chat mode (Planning or Write)
 - Safety mode (Safe or Yolo)
 - **Subagents state (Enabled or Disabled)**
@@ -98,6 +105,7 @@ Shows:
 - Current prompt format
 
 Example output:
+
 ```
 ╔══════════════════════════════════════════════════════════╗
 ║              XZatoma Session Status                      ║
@@ -124,7 +132,8 @@ cat ~/.xzatoma/config.yaml
 
 ## Automatic Subagent Activation
 
-XZatoma automatically enables subagents when it detects relevant keywords in your prompts. This works even if subagents are disabled.
+XZatoma automatically enables subagents when it detects relevant keywords in
+your prompts. This works even if subagents are disabled.
 
 ### Keywords That Trigger Automatic Enablement
 
@@ -166,7 +175,8 @@ When disabled, subagent tools are removed and auto-activation doesn't trigger.
 
 ## Using Subagent Tools
 
-Once enabled, you can use subagent delegation in prompts. The main agent decides whether to delegate:
+Once enabled, you can use subagent delegation in prompts. The main agent decides
+whether to delegate:
 
 ### Implicit Delegation
 
@@ -177,6 +187,7 @@ Process these 50 CSV files and create a summary report
 ```
 
 **What happens**:
+
 1. Main agent receives your request
 2. Sees complexity and number of files
 3. Creates subagents to process files in parallel
@@ -280,11 +291,13 @@ Process the files
 ### Performance Factors
 
 **Parallelization**:
+
 - 1-2 subagents: Sequential/fallback performance
 - 3-5 subagents: Excellent parallelism
 - 6+ subagents: Diminishing returns, higher overhead
 
 **Model Selection**:
+
 - Small, fast models: Quick responses (1-5 seconds)
 - Medium models: Balanced (5-15 seconds)
 - Large models: Slower but higher quality (15-60 seconds)
@@ -293,11 +306,11 @@ Process the files
 
 If using a paid provider (e.g., Copilot):
 
-| Configuration | Cost Impact | When to Use |
-|---------------|------------|-----------|
-| Cheap model for subagents | 70-80% less | High-volume work |
-| Fast model for subagents | 90% less tokens | Many small tasks |
-| Local Ollama subagents | Zero cost | Everything, if you can |
+| Configuration             | Cost Impact     | When to Use            |
+| ------------------------- | --------------- | ---------------------- |
+| Cheap model for subagents | 70-80% less     | High-volume work       |
+| Fast model for subagents  | 90% less tokens | Many small tasks       |
+| Local Ollama subagents    | Zero cost       | Everything, if you can |
 
 ### Monitor Usage
 
@@ -319,9 +332,11 @@ Shows context window and token usage for current session.
 
 ### Issue: "Subagents are disabled"
 
-**Problem**: You tried to use subagents but got an error saying they're disabled.
+**Problem**: You tried to use subagents but got an error saying they're
+disabled.
 
 **Solution**:
+
 ```
 /subagents on
 ```
@@ -330,15 +345,18 @@ Then try your request again.
 
 ### Issue: Subagents not responding
 
-**Problem**: Subagents are enabled but don't seem to execute delegation requests.
+**Problem**: Subagents are enabled but don't seem to execute delegation
+requests.
 
 **Possible causes**:
+
 1. Provider not configured correctly
 2. Model not available
 3. Authentication failed
 4. Resource limits exceeded
 
 **Solutions**:
+
 ```
 # Check configuration
 /status
@@ -358,12 +376,15 @@ Use a subagent to read one file
 **Problem**: Subagent delegation is much slower than expected.
 
 **Solutions**:
+
 1. Use a faster model:
+
    ```
    /model gpt-3.5-turbo
    ```
 
 2. Reduce subagent count:
+
    ```
    Limit to 2 subagents maximum for this task
    ```
@@ -377,15 +398,19 @@ Use a subagent to read one file
 **Problem**: Token usage from subagents is unexpectedly high.
 
 **Solutions**:
+
 1. Check token consumption:
+
    ```
    /context
    ```
 
 2. Use cheaper model for subagents:
+
    - Update config: `agent.subagent.model: gpt-3.5-turbo`
 
 3. Reduce max tokens:
+
    - Explicitly limit in prompts: "Keep responses under 100 tokens"
 
 4. Reduce parallelism:
@@ -455,11 +480,11 @@ Subagent behavior in chat mode respects your configuration:
 ```yaml
 agent:
   subagent:
-    provider: ollama                # Provider for subagents
-    model: llama3.2:latest          # Model for subagents
-    chat_enabled: true              # Enable by default in chat
-    max_executions: 5               # Max concurrent subagents
-    max_depth: 3                    # Max nesting depth
+    provider: ollama # Provider for subagents
+    model: llama3.2:latest # Model for subagents
+    chat_enabled: true # Enable by default in chat
+    max_executions: 5 # Max concurrent subagents
+    max_depth: 3 # Max nesting depth
 ```
 
 ### Override at Runtime
@@ -467,11 +492,13 @@ agent:
 You can't override config in chat mode, but you can:
 
 1. **Use `/model` to change main agent model**:
+
    ```
    /model gpt-4o-mini
    ```
 
 2. **Update config and restart chat**:
+
    ```
    # Edit config
    nano ~/.xzatoma/config.yaml
@@ -481,6 +508,7 @@ You can't override config in chat mode, but you can:
    ```
 
 3. **Use different config at startup**:
+
    ```
    xzatoma chat --config custom.yaml
    ```
@@ -522,7 +550,8 @@ Use subagents to create these 10 files with specific content
 
 ### Planning Mode
 
-In planning mode, subagents cannot execute tools. They can only suggest delegated work.
+In planning mode, subagents cannot execute tools. They can only suggest
+delegated work.
 
 ```
 /mode planning
@@ -580,15 +609,21 @@ To reset, explicitly disable:
 
 ## Related Documentation
 
-- **Configuration**: See `docs/how-to/configure_subagents.md` for setup and configuration
-- **Examples**: See `docs/tutorials/subagent_usage.md` for practical workflow examples
-- **Chat Modes**: See `docs/how-to/use_chat_modes.md` for planning vs. write mode details
-- **Safety**: See `docs/how-to/use_chat_modes.md#safety-mode` for safety mode in write mode
+- **Configuration**: See `docs/how-to/configure_subagents.md` for setup and
+  configuration
+- **Examples**: See `docs/tutorials/subagent_usage.md` for practical workflow
+  examples
+- **Chat Modes**: See `docs/how-to/use_chat_modes.md` for planning vs. write
+  mode details
+- **Safety**: See `docs/how-to/use_chat_modes.md#safety-mode` for safety mode in
+  write mode
 
 ---
 
-**Last updated**: 2024
-**Feedback**: Check project issues or documentation for questions
+**Last updated**: 2024 **Feedback**: Check project issues or documentation for
+questions
+
 ```
 
 Now I'll update the help text to include subagent commands:
+```

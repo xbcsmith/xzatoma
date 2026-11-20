@@ -2,7 +2,8 @@
 
 ## Understanding Context Window Limits
 
-Every AI model has a context window limit—a maximum number of tokens it can process in a single conversation. For example:
+Every AI model has a context window limit—a maximum number of tokens it can
+process in a single conversation. For example:
 
 - GPT-4o has a 128,000 token context window
 - GPT-4o-mini has a 128,000 token context window
@@ -12,7 +13,8 @@ Every AI model has a context window limit—a maximum number of tokens it can pr
 When your conversation approaches this limit, XZatoma can:
 
 1. **Warn you** (in chat mode) that context is running low
-2. **Automatically summarize** (in run mode) old conversation turns to preserve space
+2. **Automatically summarize** (in run mode) old conversation turns to preserve
+   space
 3. **Prune old turns** to reduce context before summarizing
 
 This guide explains how to configure and use these features.
@@ -38,15 +40,19 @@ This displays:
 
 The status shows three states:
 
-- **Normal**: Conversation is using less than the warning threshold (typically 85%)
-- **Warning**: Conversation exceeds the warning threshold but not the auto-summarize threshold
+- **Normal**: Conversation is using less than the warning threshold (typically
+  85%)
+- **Warning**: Conversation exceeds the warning threshold but not the
+  auto-summarize threshold
 - **Critical**: Conversation exceeds the auto-summarize threshold
 
-When you reach the **Warning** status in chat mode, XZatoma displays a notification showing your context usage percentage and available tokens.
+When you reach the **Warning** status in chat mode, XZatoma displays a
+notification showing your context usage percentage and available tokens.
 
 ## Manual Summarization in Chat Mode
 
-When you see the context window warning in chat mode, you can manually summarize and reset the conversation to make room for new content.
+When you see the context window warning in chat mode, you can manually summarize
+and reset the conversation to make room for new content.
 
 ### Basic Summarization
 
@@ -65,7 +71,8 @@ This:
 
 ### Summarization with a Specific Model
 
-By default, summarization uses the same model as your main conversation. To use a cheaper or faster model for summarization:
+By default, summarization uses the same model as your main conversation. To use
+a cheaper or faster model for summarization:
 
 ```bash
 /context summary -m gpt-4o-mini
@@ -77,21 +84,26 @@ or for Ollama:
 /context summary -m mistral:latest
 ```
 
-This is useful for cost optimization—use an expensive model for interactions but a cheaper model for generating summaries.
+This is useful for cost optimization—use an expensive model for interactions but
+a cheaper model for generating summaries.
 
 ## Automatic Summarization in Run Mode
 
-In run mode (executing a plan), XZatoma automatically handles context management:
+In run mode (executing a plan), XZatoma automatically handles context
+management:
 
-1. **Token Monitoring**: As the agent executes turns, XZatoma continuously monitors token usage
-2. **Warning Threshold**: When conversation exceeds 85% of the context window, the agent logs a warning
+1. **Token Monitoring**: As the agent executes turns, XZatoma continuously
+   monitors token usage
+2. **Warning Threshold**: When conversation exceeds 85% of the context window,
+   the agent logs a warning
 3. **Auto-Summarization**: When conversation exceeds 90% of the context window:
    - Old conversation turns are pruned (except the minimum configured)
    - Remaining conversation is summarized
    - Summary replaces the full history
    - Execution continues
 
-This happens automatically without user intervention, keeping the agent running even in very long executions.
+This happens automatically without user intervention, keeping the agent running
+even in very long executions.
 
 ## Configuring Context Management
 
@@ -121,11 +133,14 @@ agent:
 
 ### Understanding Configuration Options
 
-- `max_tokens`: The absolute limit—conversation will be summarized if it approaches this
-- `min_retain_turns`: Always keep at least this many recent turns during summarization
+- `max_tokens`: The absolute limit—conversation will be summarized if it
+  approaches this
+- `min_retain_turns`: Always keep at least this many recent turns during
+  summarization
 - `prune_threshold`: Before summarizing, trim old turns if over this percentage
 - `warning_threshold`: Show warning when over this percentage (chat mode only)
-- `auto_summary_threshold`: Automatically summarize when over this percentage (run mode only)
+- `auto_summary_threshold`: Automatically summarize when over this percentage
+  (run mode only)
 - `summary_model`: Optional model override for cost savings
 
 ### Example: Large Context Window for Long Conversations
@@ -140,7 +155,7 @@ agent:
     prune_threshold: 0.75
     warning_threshold: 0.85
     auto_summary_threshold: 0.95
-    summary_model: "gpt-4o-mini"  # Use cheaper model for summaries
+    summary_model: "gpt-4o-mini" # Use cheaper model for summaries
 ```
 
 ### Example: Conservative Settings for Cost Optimization
@@ -184,36 +199,46 @@ This is useful for temporary adjustments or testing different configurations.
 
 ### For Chat Mode
 
-1. **Monitor regularly**: Use `/context info` periodically, especially for long conversations
-2. **Summarize proactively**: Don't wait until critical—summarize at the warning stage
-3. **Review summaries**: After summarizing, review the summary to ensure important context is preserved
-4. **Use cheaper models for summaries**: Configure `summary_model` to optimize costs
+1. **Monitor regularly**: Use `/context info` periodically, especially for long
+   conversations
+2. **Summarize proactively**: Don't wait until critical—summarize at the warning
+   stage
+3. **Review summaries**: After summarizing, review the summary to ensure
+   important context is preserved
+4. **Use cheaper models for summaries**: Configure `summary_model` to optimize
+   costs
 
 ### For Run Mode
 
-1. **Conservative thresholds**: Set `warning_threshold` low (0.75-0.80) to start summarizing early
-2. **Preserve recent context**: Set `min_retain_turns` high enough to keep recent interactions
+1. **Conservative thresholds**: Set `warning_threshold` low (0.75-0.80) to start
+   summarizing early
+2. **Preserve recent context**: Set `min_retain_turns` high enough to keep
+   recent interactions
 3. **Use cost optimization**: Always configure `summary_model` for long runs
 4. **Monitor logs**: Watch agent logs to see when automatic summarization occurs
 
 ### For Both Modes
 
-1. **Adjust based on model**: Larger context windows (GPT-4o) allow higher thresholds
-2. **Test your settings**: Run a test conversation/plan to validate your configuration
+1. **Adjust based on model**: Larger context windows (GPT-4o) allow higher
+   thresholds
+2. **Test your settings**: Run a test conversation/plan to validate your
+   configuration
 3. **Consider complexity**: Complex tasks benefit from higher `min_retain_turns`
-4. **Balance cost vs. quality**: Summarization loses some nuance—adjust thresholds accordingly
+4. **Balance cost vs. quality**: Summarization loses some nuance—adjust
+   thresholds accordingly
 
 ## Troubleshooting
 
 ### "Context window approaching limit" warning appears frequently
 
-**Solution**: Increase `max_tokens` or lower `warning_threshold` to summarize more aggressively
+**Solution**: Increase `max_tokens` or lower `warning_threshold` to summarize
+more aggressively
 
 ```yaml
 agent:
   conversation:
     max_tokens: 150000
-    warning_threshold: 0.75  # Warn earlier
+    warning_threshold: 0.75 # Warn earlier
 ```
 
 ### Summaries are losing important information
@@ -223,7 +248,7 @@ agent:
 ```yaml
 agent:
   conversation:
-    min_retain_turns: 10  # Keep more recent turns
+    min_retain_turns: 10 # Keep more recent turns
 ```
 
 ### Summarization is happening too frequently in run mode
@@ -233,8 +258,8 @@ agent:
 ```yaml
 agent:
   conversation:
-    max_tokens: 150000  # Increase available space
-    auto_summary_threshold: 0.95  # Summarize less frequently
+    max_tokens: 150000 # Increase available space
+    auto_summary_threshold: 0.95 # Summarize less frequently
 ```
 
 ### Summarization is too expensive in run mode
@@ -244,7 +269,7 @@ agent:
 ```yaml
 agent:
   conversation:
-    summary_model: "gpt-4o-mini"  # Cheaper alternative
+    summary_model: "gpt-4o-mini" # Cheaper alternative
 ```
 
 ## Related Topics

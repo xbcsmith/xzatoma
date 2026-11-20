@@ -1,6 +1,7 @@
 # Contributing to XZatoma
 
-Thank you for your interest in contributing to XZatoma! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to XZatoma! This document provides
+guidelines and information for contributors.
 
 ## Table of Contents
 
@@ -15,7 +16,8 @@ Thank you for your interest in contributing to XZatoma! This document provides g
 
 ## Code of Conduct
 
-This project follows standard open source community guidelines. Be respectful, constructive, and collaborative.
+This project follows standard open source community guidelines. Be respectful,
+constructive, and collaborative.
 
 ## Getting Started
 
@@ -46,7 +48,10 @@ cargo clippy -- -D warnings
 
 ### Project Structure
 
-See [docs/reference/architecture.md](docs/reference/architecture.md) for detailed architecture and [docs/reference/quick_reference.md](docs/reference/quick_reference.md) for quick navigation.
+See [docs/reference/architecture.md](docs/reference/architecture.md) for
+detailed architecture and
+[docs/reference/quick_reference.md](docs/reference/quick_reference.md) for quick
+navigation.
 
 ## Development Workflow
 
@@ -72,6 +77,7 @@ git checkout -b docs/what-you-are-documenting
 ### 3. Make Changes
 
 Follow the guidelines in [AGENTS.md](AGENTS.md) which contains:
+
 - Detailed coding standards
 - Testing requirements
 - Documentation requirements
@@ -99,7 +105,7 @@ cargo build --release
 
 Follow conventional commit format:
 
-```
+```text
 <type>(<scope>): <description>
 
 [optional body]
@@ -108,6 +114,7 @@ Follow conventional commit format:
 ```
 
 Types:
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes
@@ -117,7 +124,8 @@ Types:
 - `chore`: Maintenance tasks
 
 Examples:
-```
+
+```text
 feat(provider): add support for Anthropic provider
 
 fix(agent): resolve context overflow issue
@@ -140,11 +148,13 @@ Then create a pull request on GitHub.
 ### Rust Style Guide
 
 1. **Follow Rust conventions**
+
    - Use `cargo fmt` for formatting
    - Follow Rust naming conventions
    - Use idiomatic Rust patterns
 
 2. **Error Handling**
+
    ```rust
    // Use Result for fallible operations
    pub fn load_config(path: &Path) -> Result<Config> {
@@ -157,6 +167,7 @@ Then create a pull request on GitHub.
    ```
 
 3. **Async Code**
+
    ```rust
    // Use async/await consistently
    pub async fn fetch_data(&self) -> Result<Data> {
@@ -170,7 +181,8 @@ Then create a pull request on GitHub.
    ```
 
 4. **Documentation**
-   ```rust
+
+   ````rust
    /// Loads configuration from the specified path.
    ///
    /// # Arguments
@@ -189,11 +201,12 @@ Then create a pull request on GitHub.
    pub fn load_config(path: &Path) -> Result<Config> {
        // Implementation
    }
-   ```
+   ````
 
 ### Project-Specific Guidelines
 
 See [AGENTS.md](AGENTS.md) for comprehensive guidelines including:
+
 - File naming conventions (use `.yaml` not `.yml`)
 - Documentation naming (lowercase with underscores)
 - No emojis in code or documentation
@@ -211,6 +224,7 @@ See [AGENTS.md](AGENTS.md) for comprehensive guidelines including:
 ### Test Types
 
 1. **Unit Tests**
+
    ```rust
    #[cfg(test)]
    mod tests {
@@ -231,6 +245,7 @@ See [AGENTS.md](AGENTS.md) for comprehensive guidelines including:
    ```
 
 2. **Integration Tests**
+
    - Place in `tests/integration/`
    - Test component interactions
    - Use fixtures from `tests/fixtures/`
@@ -264,14 +279,17 @@ cargo tarpaulin --out Html
 ### Documentation Types (Diataxis Framework)
 
 1. **Tutorials** (`docs/tutorials/`)
+
    - Learning-oriented, step-by-step guides
    - Example: Quickstart tutorial
 
 2. **How-To Guides** (`docs/how-to/`)
+
    - Task-oriented, problem-solving guides
    - Example: Configuring providers
 
 3. **Explanations** (`docs/explanation/`)
+
    - Understanding-oriented, conceptual discussion
    - Example: Architecture decisions
 
@@ -291,7 +309,7 @@ cargo tarpaulin --out Html
 
 All public APIs must have documentation:
 
-```rust
+````rust
 /// Brief description of the function.
 ///
 /// Longer description if needed.
@@ -317,7 +335,7 @@ All public APIs must have documentation:
 pub fn public_function(arg1: Type1, arg2: Type2) -> Result<ReturnType> {
     // Implementation
 }
-```
+````
 
 ## Pull Request Process
 
@@ -333,26 +351,31 @@ pub fn public_function(arg1: Type1, arg2: Type2) -> Result<ReturnType> {
 
 Your PR should include:
 
-**Description**
+#### Description
+
 - What does this PR do?
 - Why is this change needed?
 
-**Related Issues**
+#### Related Issues
+
 - Fixes #123
 - Relates to #456
 
-**Type of Change**
+#### Type of Change
+
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Breaking change
 - [ ] Documentation update
 
-**Testing**
+#### Testing
+
 - [ ] Unit tests added/updated
 - [ ] Integration tests added/updated
 - [ ] Manual testing completed
 
-**Checklist**
+#### Checklist
+
 - [ ] Code follows project style guidelines
 - [ ] Tests pass locally
 - [ ] Documentation updated
@@ -400,9 +423,12 @@ Use appropriate templates:
 
 ## Development Phases
 
-The project is implemented in 5 phases. See [docs/explanation/implementation_plan.md](docs/explanation/implementation_plan.md) for details.
+The project is implemented in 5 phases. See
+[docs/explanation/implementation_plan.md](docs/explanation/implementation_plan.md)
+for details.
 
 Current focus areas by phase:
+
 - **Phase 1**: Foundation, configuration, error handling
 - **Phase 2**: Provider integration (Copilot, Ollama)
 - **Phase 3**: Agent core, conversation management
@@ -421,13 +447,15 @@ Check the implementation plan to find tasks aligned with current phase.
 ## Recognition
 
 Contributors will be:
+
 - Listed in CONTRIBUTORS.md
 - Acknowledged in release notes
 - Credited in relevant documentation
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+By contributing, you agree that your contributions will be licensed under the
+Apache License 2.0.
 
 ## Additional Resources
 
@@ -437,11 +465,11 @@ By contributing, you agree that your contributions will be licensed under the Ap
 - [Agent Guidelines](AGENTS.md)
 - [Planning Guidelines](PLAN.md)
 
-## Thank You!
+## Thank You
 
-Your contributions help make XZatoma better for everyone. We appreciate your time and effort!
+Your contributions help make XZatoma better for everyone. We appreciate your
+time and effort!
 
 ---
 
-**Last Updated**: 2025-01-07
-**Maintained By**: XZatoma Development Team
+**Last Updated**: 2025-01-07 **Maintained By**: XZatoma Development Team

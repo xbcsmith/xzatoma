@@ -32,12 +32,12 @@ and
 
 ## Provider Comparison
 
-| Provider  | Status             | Auth Method    | Base URL              | Default Model             | Context Limit   | Streaming  | Tool Calls        |
-| --------- | ------------------ | -------------- | --------------------- | -------------------------- | --------------- | ---------- | ----------------- |
-| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | Auto-selected (latest)     | 128K            | SSE        | OpenAI-compatible |
-| Ollama    | Implemented        | None (local)   | localhost:11434       | Auto-selected (latest)     | Model-dependent | JSON Lines | Limited           |
-| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | Auto-selected (latest)     | Model-dependent | SSE        | OpenAI-compatible |
-| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0          | 200K            | SSE        | Content blocks    |
+| Provider  | Status             | Auth Method    | Base URL              | Default Model          | Context Limit   | Streaming  | Tool Calls        |
+| --------- | ------------------ | -------------- | --------------------- | ---------------------- | --------------- | ---------- | ----------------- |
+| Copilot   | Implemented        | OAuth Device   | api.githubcopilot.com | Auto-selected (latest) | 128K            | SSE        | OpenAI-compatible |
+| Ollama    | Implemented        | None (local)   | localhost:11434       | Auto-selected (latest) | Model-dependent | JSON Lines | Limited           |
+| OpenAI    | Implemented        | Bearer Token   | api.openai.com/v1     | Auto-selected (latest) | Model-dependent | SSE        | OpenAI-compatible |
+| Anthropic | API Reference Only | API Key Header | api.anthropic.com     | claude-sonnet-4-0      | 200K            | SSE        | Content blocks    |
 
 "Auto-selected (latest)" means: when no model is configured (or the configured
 model isn't found on the provider), XZatoma queries the provider's model list

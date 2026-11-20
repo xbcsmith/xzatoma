@@ -25,9 +25,9 @@ echo "Plan     : plans/hello_world.yaml"
 echo ""
 
 xzatoma \
+    run \
     --config ./config.yaml \
     --storage-path ./tmp/xzatoma.db \
-    run \
     --plan ./plans/hello_world.yaml \
     2>&1 | tee tmp/output/run_output.txt
 

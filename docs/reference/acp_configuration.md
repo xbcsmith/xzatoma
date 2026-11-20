@@ -661,17 +661,17 @@ unified UX contract:
 - **`/<command> <action>`** applies a change.
 
 This contract applies to `/mode`, `/model`, `/safety`, `/subagents`, `/system`,
-and `/config`. The `/streaming` command is advertised but is a no-op in ACP
-mode because Zed controls response streaming. Use `/streaming status` to see a
-note explaining this.
+and `/config`. The `/streaming` command is advertised but is a no-op in ACP mode
+because Zed controls response streaming. Use `/streaming status` to see a note
+explaining this.
 
-`/config reload` re-reads the config file used at startup and applies it to
-the current session -- provider, tool registry, skills, and MCP connections
-are rebuilt from the new config while conversation history is preserved. It
-works without any ACP-specific setup: type it directly in the chat input like
-any other command. Log level/format and persistence storage paths still
-require a full restart; the response text calls those out by name if they
-changed. See [Reload Configuration Without Restarting](../how-to/use_chat_commands.md#8-reload-configuration-without-restarting).
+`/config reload` re-reads the config file used at startup and applies it to the
+current session -- provider, tool registry, skills, and MCP connections are
+rebuilt from the new config while conversation history is preserved. It works
+without any ACP-specific setup: type it directly in the chat input like any
+other command. Log level/format and persistence storage paths still require a
+full restart; the response text calls those out by name if they changed. See
+[Reload Configuration Without Restarting](../how-to/use_chat_commands.md#8-reload-configuration-without-restarting).
 
 The full list of advertised commands with their descriptions is in
 `docs/reference/chat_commands.md`.

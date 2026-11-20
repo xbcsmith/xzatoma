@@ -218,4 +218,5 @@ one.
 
 ## Oneliner
 
-Answer the questions in the @input/sample_questions.txt  file. Use subagents to write each question and answer to individual files in ./tmp/output
+Answer the questions in the @input/sample_questions.txt file. Use subagents to
+write each question and answer to individual files in ./tmp/output

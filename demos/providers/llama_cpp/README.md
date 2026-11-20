@@ -27,7 +27,7 @@ The demo includes two plans:
 | Requirement              | Notes                                                                   |
 | ------------------------ | ----------------------------------------------------------------------- |
 | `llama-server` on PATH   | Via Homebrew (`brew install llama.cpp`) or pre-built binary — see below |
-| A GGUF model file        | Recommended: `granite-3.3-2b-instruct-Q4_K_M.gguf` — see below         |
+| A GGUF model file        | Recommended: `granite-3.3-2b-instruct-Q4_K_M.gguf` — see below          |
 | `xzatoma` binary on PATH | `cargo build --release && cargo install --path .`                       |
 | `curl` or `wget`         | Used by `setup.sh` to verify the server is running                      |
 | `jq` (optional)          | Pretty-prints the `/v1/models` response during setup                    |
@@ -49,7 +49,7 @@ installation the binary is on your PATH.
 
 Download the latest release for your platform from:
 
-```
+```text
 https://github.com/ggerganov/llama.cpp/releases
 ```
 
@@ -118,13 +118,13 @@ wget "https://huggingface.co/bartowski/granite-3.3-2b-instruct-GGUF/resolve/main
 Any instruction-tuned GGUF model works. `Q4_K_M` quantization offers a good
 balance of quality and size.
 
-| Model                          | Quant   | Size    | Notes                          |
-| ------------------------------ | ------- | ------- | ------------------------------ |
-| `granite-3.3-2b-instruct`      | Q4\_K\_M | ~1.8 GB | Primary recommendation         |
-| `granite-3.1-2b-instruct`      | Q4\_K\_M | ~1.8 GB | Stable alternative             |
-| `Llama-3.2-3B-Instruct`        | Q4\_K\_M | ~2.0 GB | Meta model (login required)    |
-| `Qwen2.5-3B-Instruct`          | Q4\_K\_M | ~2.0 GB | Strong small model             |
-| `Phi-3.5-mini-instruct`        | Q4\_K\_M | ~2.2 GB | Microsoft small model          |
+| Model                     | Quant  | Size    | Notes                       |
+| ------------------------- | ------ | ------- | --------------------------- |
+| `granite-3.3-2b-instruct` | Q4_K_M | ~1.8 GB | Primary recommendation      |
+| `granite-3.1-2b-instruct` | Q4_K_M | ~1.8 GB | Stable alternative          |
+| `Llama-3.2-3B-Instruct`   | Q4_K_M | ~2.0 GB | Meta model (login required) |
+| `Qwen2.5-3B-Instruct`     | Q4_K_M | ~2.0 GB | Strong small model          |
+| `Phi-3.5-mini-instruct`   | Q4_K_M | ~2.2 GB | Microsoft small model       |
 
 See `input/notes.txt` for the full download commands for each model.
 
@@ -154,14 +154,14 @@ demos/providers/llama_cpp/
 
 Generated at runtime (inside `tmp/`):
 
-| File                              | Description                              |
-| --------------------------------- | ---------------------------------------- |
-| `tmp/xzatoma.db`                  | SQLite conversation and history database |
-| `tmp/output/run_output.txt`       | Captured output from the last `run.sh`   |
-| `tmp/output/system_info_report.txt` | Report written by the system_info plan |
+| File                                | Description                              |
+| ----------------------------------- | ---------------------------------------- |
+| `tmp/xzatoma.db`                    | SQLite conversation and history database |
+| `tmp/output/run_output.txt`         | Captured output from the last `run.sh`   |
+| `tmp/output/system_info_report.txt` | Report written by the system_info plan   |
 
-The `models/` directory is not tracked by git. Add your GGUF files there so
-they stay local to the demo.
+The `models/` directory is not tracked by git. Add your GGUF files there so they
+stay local to the demo.
 
 ---
 
@@ -322,8 +322,8 @@ The reset script removes:
 - All files in `tmp/output/` except `.gitkeep`
 - Any other generated files under `tmp/` except `.gitignore`
 
-Static files — `README.md`, `config.yaml`, the scripts, `plans/`, `input/`,
-and any GGUF files in `models/` — are never removed by `reset.sh`.
+Static files — `README.md`, `config.yaml`, the scripts, `plans/`, `input/`, and
+any GGUF files in `models/` — are never removed by `reset.sh`.
 
 ---
 
@@ -336,9 +336,9 @@ llama.cpp server:
 provider:
   type: openai
   openai:
-    api_key: ""                          # not required for llama.cpp
+    api_key: "" # not required for llama.cpp
     base_url: "http://localhost:8080/v1" # llama-server default port
-    model: "granite-3.3-2b-instruct"     # must match --alias
+    model: "granite-3.3-2b-instruct" # must match --alias
     enable_streaming: true
 ```
 
@@ -347,11 +347,14 @@ provider:
 1. Download the GGUF file into `models/`.
 2. Start `llama-server` with `--alias <your-alias>`.
 3. Either update `config.yaml`:
+
    ```yaml
    openai:
      model: "<your-alias>"
    ```
+
    Or override at runtime without touching the file:
+
    ```sh
    XZATOMA_OPENAI_MODEL=<your-alias> sh ./run.sh
    ```
@@ -376,12 +379,12 @@ XZATOMA_OPENAI_BASE_URL=http://localhost:9090/v1 sh ./run.sh
 All OpenAI provider fields can be overridden at runtime without editing
 `config.yaml`:
 
-| Variable                    | Default (`config.yaml`)                  |
-| --------------------------- | ---------------------------------------- |
-| `XZATOMA_OPENAI_BASE_URL`   | `http://localhost:8080/v1`               |
-| `XZATOMA_OPENAI_MODEL`      | `granite-3.3-2b-instruct`                |
-| `XZATOMA_OPENAI_API_KEY`    | *(empty — not required for llama.cpp)*   |
-| `XZATOMA_OPENAI_STREAMING`  | `true`                                   |
+| Variable                   | Default (`config.yaml`)                |
+| -------------------------- | -------------------------------------- |
+| `XZATOMA_OPENAI_BASE_URL`  | `http://localhost:8080/v1`             |
+| `XZATOMA_OPENAI_MODEL`     | `granite-3.3-2b-instruct`              |
+| `XZATOMA_OPENAI_API_KEY`   | _(empty — not required for llama.cpp)_ |
+| `XZATOMA_OPENAI_STREAMING` | `true`                                 |
 
 ---
 
@@ -391,14 +394,15 @@ XZatoma is scoped to the demo directory during execution:
 
 1. `run.sh` changes into the demo root before invoking `xzatoma`, so the agent
    treats this directory as the working directory for all file operations.
-2. `--config ./config.yaml` ensures the repository-level `config/config.yaml`
-   is never loaded at demo runtime.
+2. `--config ./config.yaml` ensures the repository-level `config/config.yaml` is
+   never loaded at demo runtime.
 3. `--storage-path ./tmp/xzatoma.db` directs all history and session data into
    `tmp/`.
 4. `agent.terminal.default_mode: restricted_autonomous` limits the commands the
    agent may run without confirmation.
-5. The `system_info` plan writes its report to `tmp/output/system_info_report.txt`
-   only. No generated file may appear outside `tmp/`.
+5. The `system_info` plan writes its report to
+   `tmp/output/system_info_report.txt` only. No generated file may appear
+   outside `tmp/`.
 
 ---
 
@@ -426,7 +430,7 @@ brew install llama.cpp
 
 Or download a pre-built binary from:
 
-```
+```text
 https://github.com/ggerganov/llama.cpp/releases
 ```
 
@@ -484,15 +488,15 @@ llama-server --model ./models/<model>.gguf --port 8080 --n-gpu-layers 99
 llama-server --model ./models/<model>.gguf --port 8080 --n-gpu-layers 99
 ```
 
-For CPU-only inference, try a smaller quantization such as `Q2_K` or a
-smaller model (2B parameters rather than 7B+).
+For CPU-only inference, try a smaller quantization such as `Q2_K` or a smaller
+model (2B parameters rather than 7B+).
 
 ### Model name mismatch warning in `setup.sh`
 
-`setup.sh` compares the `model:` field in `config.yaml` with the alias
-reported by `llama-server`. If they differ, the warning is informational only —
-llama.cpp ignores the model field in requests when a single model is loaded.
-To silence the warning either:
+`setup.sh` compares the `model:` field in `config.yaml` with the alias reported
+by `llama-server`. If they differ, the warning is informational only — llama.cpp
+ignores the model field in requests when a single model is loaded. To silence
+the warning either:
 
 - Pass `--alias granite-3.3-2b-instruct` to `llama-server`, or
 - Set `model:` in `config.yaml` to match whatever the server reports.

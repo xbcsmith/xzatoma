@@ -69,15 +69,15 @@ The `model` setting for every provider is optional. When it is left unset (or
 set to an empty string), XZatoma queries the provider's model-listing API when
 constructing the provider and selects the latest available model — the most
 recently modified model for Ollama, the model with the newest `created`
-timestamp for OpenAI (when the server reports one), or the first entry
-returned for providers with no recency metadata (GitHub Copilot).
+timestamp for OpenAI (when the server reports one), or the first entry returned
+for providers with no recency metadata (GitHub Copilot).
 
-If a model *is* configured but isn't actually present on the provider, XZatoma
+If a model _is_ configured but isn't actually present on the provider, XZatoma
 logs an error and falls back to the latest available model instead of failing
 outright. If the provider's model-listing endpoint doesn't exist at all (for
 example, an OpenAI-compatible local server that doesn't implement `/models`),
-provider construction fails immediately with a clear error rather than
-deferring the failure to the first chat turn.
+provider construction fails immediately with a clear error rather than deferring
+the failure to the first chat turn.
 
 ## Environment Variables
 
@@ -259,8 +259,8 @@ For step-by-step config file examples for each of these servers see
 
 - Ollama model not found
 - If `OLLAMA_MODEL` names a model that isn't installed locally, XZatoma logs an
-  error and falls back to the most recently modified installed model instead
-  of failing. Confirm the intended model is correct and available, or leave
+  error and falls back to the most recently modified installed model instead of
+  failing. Confirm the intended model is correct and available, or leave
   `OLLAMA_MODEL` unset to always use the latest installed model.
 - Use the Ollama CLI (outside the scope of XZatoma) to list or pull models, e.g.
   `ollama pull <model>`.

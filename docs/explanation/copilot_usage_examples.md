@@ -2,7 +2,9 @@
 
 ## Overview
 
-This document provides practical examples of using the Copilot provider in XZatoma. Examples progress from basic setup to advanced scenarios including streaming, reasoning, and tool calling.
+This document provides practical examples of using the Copilot provider in
+XZatoma. Examples progress from basic setup to advanced scenarios including
+streaming, reasoning, and tool calling.
 
 ## Basic Chat Completion
 
@@ -35,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 This example:
+
 - Uses default model (gpt-5-mini)
 - Enables streaming by default
 - Returns a single completion response
@@ -78,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Key points:
+
 - Message history is maintained by the caller
 - Each response becomes input for the next turn
 - The model has full context of the conversation
@@ -120,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Configuration details:
+
 - `model: "o1-preview"` - Use reasoning model (also o1, o1-mini)
 - `reasoning_effort: "high"` - Control thinking depth (low/medium/high)
 - `include_reasoning: true` - Include thinking in output
@@ -198,6 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 This example shows:
+
 - Defining tool schemas with JSON parameters
 - Passing tools to the complete method
 - Checking for tool calls in the response
@@ -235,6 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Notes:
+
 - When `enable_streaming: false`, the entire response is buffered
 - Takes longer to get first token
 - Useful for non-interactive scenarios
@@ -272,6 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 This is useful for:
+
 - Unit testing with mock servers
 - Development against local API
 - Testing error handling
@@ -495,6 +503,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 System messages:
+
 - Set tone and behavior for the model
 - Should be the first message in conversations
 - Often more effective than user instructions
@@ -502,15 +511,15 @@ System messages:
 
 ## Complete Feature Matrix
 
-| Feature | Endpoint | Streaming | Tools | Reasoning | Status |
-|---------|----------|-----------|-------|-----------|--------|
-| Basic completion | Both | Yes/No | Yes | No | Fully supported |
-| Tool calling | Both | Yes | Yes | Yes | Fully supported |
-| Streaming | /responses | Yes | Yes | Yes | Fully supported |
-| Streaming | /chat/completions | Yes | Yes | No | Fully supported |
-| Reasoning | /responses | Yes | Yes | Yes | Supported on o1 family |
-| Reasoning | /chat/completions | Yes | Yes | No | Not applicable |
-| Fallback | Both | Yes | Yes | Yes | Configurable |
+| Feature          | Endpoint          | Streaming | Tools | Reasoning | Status                 |
+| ---------------- | ----------------- | --------- | ----- | --------- | ---------------------- |
+| Basic completion | Both              | Yes/No    | Yes   | No        | Fully supported        |
+| Tool calling     | Both              | Yes       | Yes   | Yes       | Fully supported        |
+| Streaming        | /responses        | Yes       | Yes   | Yes       | Fully supported        |
+| Streaming        | /chat/completions | Yes       | Yes   | No        | Fully supported        |
+| Reasoning        | /responses        | Yes       | Yes   | Yes       | Supported on o1 family |
+| Reasoning        | /chat/completions | Yes       | Yes   | No        | Not applicable         |
+| Fallback         | Both              | Yes       | Yes   | Yes       | Configurable           |
 
 ## Migration Guide
 
@@ -537,4 +546,5 @@ let config = CopilotConfig {
 let config = CopilotConfig::default();
 ```
 
-All new fields have sensible defaults, so existing code continues to work without changes.
+All new fields have sensible defaults, so existing code continues to work
+without changes.

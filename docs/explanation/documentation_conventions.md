@@ -2,16 +2,21 @@
 
 ## Overview
 
-This document captures the repository-wide documentation conventions used by the XZatoma project.
-It is a contributor-facing reference describing how to name, organize, and author markdown files so
-they are discoverable, consistent, and compatible with automated checks.
+This document captures the repository-wide documentation conventions used by the
+XZatoma project. It is a contributor-facing reference describing how to name,
+organize, and author markdown files so they are discoverable, consistent, and
+compatible with automated checks.
 
-This document complements `AGENTS.md` (the authoritative guidelines for automated checks and developer workflows) and the top-level `docs/README.md` (the user-facing documentation index).
+This document complements `AGENTS.md` (the authoritative guidelines for
+automated checks and developer workflows) and the top-level `docs/README.md`
+(the user-facing documentation index).
 
 ## Components
 
-- `docs/explanation/documentation_conventions.md` — This file (contributor-facing conventions).
-- Reference pointers to helper validation scripts (if present): `scripts/doc_link_check.py`, `scripts/emoji_check.py`.
+- `docs/explanation/documentation_conventions.md` — This file
+  (contributor-facing conventions).
+- Reference pointers to helper validation scripts (if present):
+  `scripts/doc_link_check.py`, `scripts/emoji_check.py`.
 - Guidance for PR authors and reviewers (see "PR checklist" below).
 
 ## Implementation Details
@@ -52,7 +57,9 @@ Place new content according to the Diataxis intent:
 - `docs/explanation/` — Explanations: conceptual/architectural discussions.
 - `docs/reference/` — Reference material: schemas, CLI reference, API reference.
 
-Decision rule: If it is step-by-step and learning oriented → `tutorials/`. If it's a focused task recipe → `how-to/`. If the content explains rationale or architecture → `explanation/`. If it documents interfaces/config → `reference/`.
+Decision rule: If it is step-by-step and learning oriented → `tutorials/`. If
+it's a focused task recipe → `how-to/`. If the content explains rationale or
+architecture → `explanation/`. If it documents interfaces/config → `reference/`.
 
 ### 3) Content Style & Format Requirements
 
@@ -64,7 +71,9 @@ Decision rule: If it is step-by-step and learning oriented → `tutorials/`. If 
 grep -R --line-number -P "[\x{1F600}-\x{1F64F}]" docs/ || true
 ```
 
-- Fenced code blocks MUST include a language (or path) tag (e.g., `rust, `bash, ```json).
+- Fenced code blocks MUST include a language (or path) tag (e.g., `rust,`bash,
+
+  ```json).
   - Good:
 
 ````markdown
@@ -84,11 +93,15 @@ fn main() { println!("hello"); }
 
 ```
 
-- Prefer relative links for internal docs (e.g., `../reference/cli.md`) and ensure links are updated after moves/renames.
+- Prefer relative links for internal docs (e.g., `../reference/cli.md`) and
+  ensure links are updated after moves/renames.
 
-- Small, focused files are preferred. Avoid overly long developer logs in top-level docs — archive those under `docs/archive/implementation_summaries/`.
+- Small, focused files are preferred. Avoid overly long developer logs in
+  top-level docs — archive those under `docs/archive/implementation_summaries/`.
 
-- For Rust code, public functions, types, and modules MUST have `///` doc comments including runnable examples when appropriate (these are tested by `cargo test`):
+- For Rust code, public functions, types, and modules MUST have `///` doc
+  comments including runnable examples when appropriate (these are tested by
+  `cargo test`):
 
 ````rust
 /// Computes factorial of `n`.
@@ -104,10 +117,13 @@ pub fn factorial(n: u64) -> Result<u64, MathError> { /* ... */ }
 
 ### 4) Move / Reclassification Policy
 
-- Prefer move-only PRs when reorganizing documentation (no content edits in that PR).
+- Prefer move-only PRs when reorganizing documentation (no content edits in that
+  PR).
 - Update all links when moving files.
-- Archive developer-focused content to `docs/archive/implementation_summaries/` rather than deleting without signoff.
-- Record move rationale in `docs/explanation/documentation_cleanup_summary.md` (or the PR description) so reviewers can validate the intent.
+- Archive developer-focused content to `docs/archive/implementation_summaries/`
+  rather than deleting without signoff.
+- Record move rationale in `docs/explanation/documentation_cleanup_summary.md`
+  (or the PR description) so reviewers can validate the intent.
 
 ## Testing / Validation
 
@@ -115,15 +131,24 @@ Before submitting a docs PR:
 
 1. Run doc-specific validation (if helper scripts exist):
 
-   - `python3 scripts/doc_link_check.py` — validate internal links (or run a link checker you prefer).
-   - `python3 scripts/emoji_check.py [--strict]` — scan for emoji characters. By default the checker uses a relaxed detection that avoids flagging box-drawing characters and simple dingbats (e.g., check marks); pass `--strict` to enable the legacy broader matching that will flag additional Unicode symbols.
-   - `python3 scripts/code_fence_check.py` — ensure all fenced code blocks include a language/path tag.
-   - `python3 scripts/docs_filename_check.py` — validate doc filenames and YAML extensions.
-   - Alternatively, run the Makefile helper: `make docs-check` (recommended; runs the above checks).
+   - `python3 scripts/doc_link_check.py` — validate internal links (or run a
+     link checker you prefer).
+   - `python3 scripts/emoji_check.py [--strict]` — scan for emoji characters. By
+     default the checker uses a relaxed detection that avoids flagging
+     box-drawing characters and simple dingbats (e.g., check marks); pass
+     `--strict` to enable the legacy broader matching that will flag additional
+     Unicode symbols.
+   - `python3 scripts/code_fence_check.py` — ensure all fenced code blocks
+     include a language/path tag.
+   - `python3 scripts/docs_filename_check.py` — validate doc filenames and YAML
+     extensions.
+   - Alternatively, run the Makefile helper: `make docs-check` (recommended;
+     runs the above checks).
 
 2. Verify code fence language usage and fix missing language tags.
 
-3. Run repository quality gates (these are mandatory for any change that touches source or docs per AGENTS.md):
+3. Run repository quality gates (these are mandatory for any change that touches
+   source or docs per AGENTS.md):
 
 ```bash
 cargo fmt --all
@@ -132,14 +157,18 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-4. Run a final manual pass:
+1. Run a final manual pass:
 
    - Read the doc as a new user and confirm steps/examples are reproducible.
-   - Confirm the doc is discoverable via `docs/README.md` (update the index if you add or move top-level pages).
+   - Confirm the doc is discoverable via `docs/README.md` (update the index if
+     you add or move top-level pages).
 
-5. CI & PR validation:
-   - A GitHub Actions workflow at `.github/workflows/docs_ci.yaml` runs these docs checks automatically on docs-only PRs (and when `scripts/` is changed).
-   - Ensure the CI job passes on your PR and address any failures before requesting review.
+2. CI & PR validation:
+   - A GitHub Actions workflow at `.github/workflows/docs_ci.yaml` runs these
+     docs checks automatically on docs-only PRs (and when `scripts/` is
+     changed).
+   - Ensure the CI job passes on your PR and address any failures before
+     requesting review.
 
 ## PR Checklist (copy into your PR description)
 

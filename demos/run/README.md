@@ -111,27 +111,30 @@ To run a different plan directly:
 
 ```sh
 xzatoma \
+  run \
   --config ./config.yaml \
   --storage-path ./tmp/xzatoma.db \
-  run --plan ./plans/system_info.yaml
+  --plan ./plans/system_info.yaml
 ```
 
 To run a direct prompt instead of a plan file:
 
 ```sh
 xzatoma \
+  run \
   --config ./config.yaml \
   --storage-path ./tmp/xzatoma.db \
-  run --prompt "List the files in the current directory and summarize what you find."
+  --prompt "List the files in the current directory and summarize what you find."
 ```
 
 To allow the agent to run commands without confirmation:
 
 ```sh
 xzatoma \
+  run \
   --config ./config.yaml \
   --storage-path ./tmp/xzatoma.db \
-  run --plan ./plans/system_info.yaml --allow-dangerous
+  --plan ./plans/system_info.yaml --allow-dangerous
 ```
 
 ## Expected Output

@@ -2,11 +2,15 @@
 
 ## Overview
 
-Phase 5 implements advanced execution patterns for subagent deployment in production environments. This document covers resource management, performance metrics, quotas, and tuning guidelines for optimizing subagent performance and scalability.
+Phase 5 implements advanced execution patterns for subagent deployment in
+production environments. This document covers resource management, performance
+metrics, quotas, and tuning guidelines for optimizing subagent performance and
+scalability.
 
 ## Resource Quotas
 
-XZatoma supports three types of resource quotas to prevent runaway executions and control costs:
+XZatoma supports three types of resource quotas to prevent runaway executions
+and control costs:
 
 ### Execution Quotas
 
@@ -19,6 +23,7 @@ agent:
 ```
 
 Use when:
+
 - Cost control is critical
 - You want to prevent accidental infinite loops
 - Operating under strict API rate limits
@@ -35,6 +40,7 @@ agent:
 ```
 
 Use when:
+
 - API billing is token-based
 - You need precise cost budgeting
 - Managing expensive LLM providers
@@ -47,10 +53,11 @@ Limits total wall-clock time for all subagent executions.
 ```yaml
 agent:
   subagent:
-    max_total_time: 300  # seconds
+    max_total_time: 300 # seconds
 ```
 
 Use when:
+
 - Operating in time-constrained environments
 - CI/CD pipelines with timeout requirements
 - Interactive sessions with time limits
@@ -68,7 +75,8 @@ SubagentMetrics automatically track execution performance:
 - `subagent_completions_total` - Completed executions
 - `subagent_errors_total` - Failed executions by error type
 
-Metrics are collected automatically for all subagent executions. Enable Prometheus export with the `prometheus` feature:
+Metrics are collected automatically for all subagent executions. Enable
+Prometheus export with the `prometheus` feature:
 
 ```bash
 cargo build --features prometheus
@@ -86,6 +94,7 @@ println!("Tokens used: {}", usage.total_tokens);
 ```
 
 If token consumption is high:
+
 1. Reduce `default_max_turns` in configuration
 2. Implement better prompt engineering
 3. Use smaller models for simpler tasks
@@ -102,6 +111,7 @@ let elapsed = metrics.elapsed();
 ```
 
 If execution is slow:
+
 1. Check network latency to provider
 2. Verify provider is not rate-limiting
 3. Consider parallelizing independent subtasks
@@ -232,8 +242,8 @@ assert!(tracker.check_and_reserve().is_err());
 ```yaml
 agent:
   subagent:
-    max_total_tokens: 50000  # Fixed budget
-    max_executions: 20        # Or hit execution limit first
+    max_total_tokens: 50000 # Fixed budget
+    max_executions: 20 # Or hit execution limit first
 ```
 
 Use for: Exploring solutions with budget constraints
@@ -243,8 +253,8 @@ Use for: Exploring solutions with budget constraints
 ```yaml
 agent:
   subagent:
-    max_total_time: 300      # 5 minutes
-    max_executions: 50       # Allow many attempts
+    max_total_time: 300 # 5 minutes
+    max_executions: 50 # Allow many attempts
     max_total_tokens: 500000 # Generous tokens
 ```
 
@@ -270,6 +280,7 @@ Use for: Untrusted prompts, safety-critical work
 **Cause**: Too many subagents spawned
 
 **Solution**:
+
 1. Increase `max_executions` if quota is too low
 2. Reduce `default_max_turns` to save retries
 3. Implement better task batching
@@ -280,6 +291,7 @@ Use for: Untrusted prompts, safety-critical work
 **Cause**: Average task costs too many tokens
 
 **Solution**:
+
 1. Increase `max_total_tokens` if budget allows
 2. Reduce `default_max_turns` per subagent
 3. Optimize prompts for brevity
@@ -290,6 +302,7 @@ Use for: Untrusted prompts, safety-critical work
 **Cause**: Subagents taking too long
 
 **Solution**:
+
 1. Increase `max_total_time` if deadline allows
 2. Check provider latency
 3. Reduce prompt complexity

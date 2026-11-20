@@ -2,9 +2,14 @@
 
 ## Executive Summary
 
-This document provides an honest, technical comparison of XZatoma against two established AI agent systems: Goose (Block/Square) and Zed's integrated assistant. The analysis focuses on architecture, capabilities, and positioning.
+This document provides an honest, technical comparison of XZatoma against two
+established AI agent systems: Goose (Block/Square) and Zed's integrated
+assistant. The analysis focuses on architecture, capabilities, and positioning.
 
-**TL;DR**: XZatoma is **intentionally simpler** than both competitors, focusing on a specific niche: CLI-based autonomous execution with minimal dependencies. It's not trying to compete feature-for-feature but rather provide a different approach.
+**TL;DR**: XZatoma is **intentionally simpler** than both competitors, focusing
+on a specific niche: CLI-based autonomous execution with minimal dependencies.
+It's not trying to compete feature-for-feature but rather provide a different
+approach.
 
 ## Comparison Matrix
 
@@ -61,7 +66,8 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 **XZatoma**: No extensions
 
-- Built-in only: `list_files`, `read_file`, `write_file`, `create_directory`, `delete_path`, `diff_files`, `execute_command`, `parse_plan`
+- Built-in only: `list_files`, `read_file`, `write_file`, `create_directory`,
+  `delete_path`, `diff_files`, `execute_command`, `parse_plan`
 - Hardcoded tools, no plugin system
 - Simple, predictable, limited
 
@@ -182,13 +188,15 @@ This document provides an honest, technical comparison of XZatoma against two es
 
 **XZatoma**:
 
-- **Best For**: Automated scripts, batch processing, CI/CD integration, server environments
+- **Best For**: Automated scripts, batch processing, CI/CD integration, server
+  environments
 - **Target User**: DevOps engineers, automation enthusiasts, CLI power users
 - **Example**: "Run this task overnight and email me the results"
 
 **Goose**:
 
-- **Best For**: Complex development tasks, multi-step workflows, extensible automation
+- **Best For**: Complex development tasks, multi-step workflows, extensible
+  automation
 - **Target User**: Software engineers, teams wanting customization
 - **Example**: "Build a web scraper, test it, document it, and deploy it"
 
@@ -511,7 +519,8 @@ XZatoma should position itself as:
 
 **Potential Tier**: B-tier (niche but valuable)
 
-XZatoma is **intentionally simpler** than both competitors. This is both its **strength** and **limitation**.
+XZatoma is **intentionally simpler** than both competitors. This is both its
+**strength** and **limitation**.
 
 **It's like comparing**:
 
@@ -519,9 +528,12 @@ XZatoma is **intentionally simpler** than both competitors. This is both its **s
 - Zed Agent = Specialized chef's knife (perfect for one job)
 - XZatoma = Simple fixed-blade knife (basic, reliable, versatile)
 
-All three have their place. XZatoma isn't trying to be the "best" - it's trying to be the "simplest that still works."
+All three have their place. XZatoma isn't trying to be the "best" - it's trying
+to be the "simplest that still works."
 
-**Verdict**: XZatoma has a viable niche if it executes well on its simplicity promise. It won't replace Goose or Zed Agent for their users, but it can serve users who want:
+**Verdict**: XZatoma has a viable niche if it executes well on its simplicity
+promise. It won't replace Goose or Zed Agent for their users, but it can serve
+users who want:
 
 - CLI-native automation
 - Minimal dependencies
@@ -529,10 +541,10 @@ All three have their place. XZatoma isn't trying to be the "best" - it's trying 
 - Local LLM support
 - Server/CI/CD deployment
 
-**Success metric**: If someone says "I just need simple CLI automation, not a whole platform" - they should pick XZatoma.
+**Success metric**: If someone says "I just need simple CLI automation, not a
+whole platform" - they should pick XZatoma.
 
 ---
 
-**Document Version**: 1.0
-**Date**: 2025-01-15
-**Next Review**: After XZatoma MVP implementation
+**Document Version**: 1.0 **Date**: 2025-01-15 **Next Review**: After XZatoma
+MVP implementation
