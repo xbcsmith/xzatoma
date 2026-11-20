@@ -3,10 +3,12 @@
 //! Provides a tool to write or overwrite file contents with automatic parent directory creation.
 
 use crate::error::{Result, XzatomaError};
+use crate::sandbox::SandboxGuard;
 use crate::tools::{ToolExecutor, ToolResult, file_utils, parse_tool_args};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Parameters for the write_file tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +41,11 @@ struct WriteFileParams {
 pub struct WriteFileTool {
     path_validator: file_utils::PathValidator,
     max_file_size: u64,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `execute` calls `check_write` on the resolved path
+    /// before performing any filesystem operation.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl WriteFileTool {
@@ -68,7 +75,25 @@ impl WriteFileTool {
         Self {
             path_validator: file_utils::PathValidator::new(working_dir),
             max_file_size,
+            sandbox_guard: None,
         }
+    }
+
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `execute` calls `check_write` on the resolved path before
+    /// performing any I/O. When `None`, no sandbox check is performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
     }
 }
 
@@ -109,6 +134,11 @@ impl ToolExecutor for WriteFileTool {
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;
+
+        // Enforce sandbox policy before any I/O.
+        if let Some(guard) = &self.sandbox_guard {
+            guard.check_write(&path)?;
+        }
 
         // Check if path exists and is a directory
         if path.exists() && path.is_dir() {

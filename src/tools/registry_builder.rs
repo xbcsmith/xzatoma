@@ -15,8 +15,9 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::chat_mode::{ChatMode, SafetyMode};
-use crate::config::{AcpClientConfig, TerminalConfig, ToolsConfig};
+use crate::config::{AcpClientConfig, Config, TerminalConfig, ToolsConfig};
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 
 use crate::tools::acp_agent::AcpAgentTool;
 use crate::tools::acp_discover::DiscoverAcpAgentsTool;
@@ -25,6 +26,7 @@ use crate::tools::create_directory::CreateDirectoryTool;
 use crate::tools::delete_path::DeletePathTool;
 use crate::tools::edit_file::EditFileTool;
 use crate::tools::find_path::FindPathTool;
+use crate::tools::grep::GrepTool;
 use crate::tools::list_directory::ListDirectoryTool;
 use crate::tools::move_path::MovePathTool;
 use crate::tools::read_file::ReadFileTool;
@@ -49,7 +51,7 @@ use crate::tools::{ToolExecutor, ToolRegistry};
 /// assert!(names.contains(&"find_path"));
 /// ```
 pub fn read_only_tool_names() -> &'static [&'static str] {
-    &["read_file", "list_directory", "find_path"]
+    &["read_file", "list_directory", "find_path", "grep"]
 }
 
 /// Return the canonical names of file mutation tools.
@@ -116,7 +118,7 @@ pub fn terminal_tool_names() -> &'static [&'static str] {
 /// );
 ///
 /// let registry = builder.build_for_planning().expect("Failed to build registry");
-/// assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
+/// assert_eq!(registry.len(), 4); // read_file, list_directory, find_path, grep
 /// ```
 pub struct ToolRegistryBuilder {
     /// The chat mode (Planning or Write)
@@ -136,6 +138,17 @@ pub struct ToolRegistryBuilder {
     /// When `Some` and `default_timeout_seconds > 0`, `call_acp_agent` and
     /// `discover_acp_agents` are registered in Write mode.
     acp_client_config: Option<Arc<AcpClientConfig>>,
+    /// Full application configuration for sandbox-aware tool construction.
+    ///
+    /// When `Some`, `build_for_write` uses [`TerminalTool::from_config`] to
+    /// apply kernel sandbox policies to spawned commands.
+    config: Option<Arc<Config>>,
+    /// Address of the running host-filtering HTTP proxy.
+    ///
+    /// When `Some`, the proxy address is injected into the `TerminalTool` so
+    /// that child processes receive `HTTP_PROXY` / `HTTPS_PROXY` environment
+    /// variables pointing at the sandbox proxy.
+    proxy_addr: Option<std::net::SocketAddr>,
 }
 
 impl ToolRegistryBuilder {
@@ -159,6 +172,8 @@ impl ToolRegistryBuilder {
             terminal_config: TerminalConfig::default(),
             activate_skill_tool: None,
             acp_client_config: None,
+            config: None,
+            proxy_addr: None,
         }
     }
 
@@ -224,6 +239,41 @@ impl ToolRegistryBuilder {
         self
     }
 
+    /// Set the full application configuration for sandbox-aware tool construction.
+    ///
+    /// When set, `build_for_write` delegates terminal tool creation to
+    /// [`TerminalTool::from_config`], which applies the sandbox policy from
+    /// `config.sandbox` to each spawned command.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - Full application configuration wrapped in `Arc`
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_config(mut self, cfg: Arc<Config>) -> Self {
+        self.config = Some(cfg);
+        self
+    }
+
+    /// Set the address of the running host-filtering sandbox proxy.
+    ///
+    /// When set, the `TerminalTool` will inject `HTTP_PROXY` / `HTTPS_PROXY`
+    /// environment variables into every child process.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Socket address of the running `SandboxProxy`
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining
+    pub fn with_proxy_addr(mut self, addr: std::net::SocketAddr) -> Self {
+        self.proxy_addr = Some(addr);
+        self
+    }
+
     /// Build a tool registry for the current mode
     ///
     /// Automatically selects the appropriate registry based on `mode`.
@@ -283,7 +333,7 @@ impl ToolRegistryBuilder {
     /// );
     ///
     /// let registry = builder.build_for_chat(false).expect("Failed to build registry");
-    /// assert_eq!(registry.len(), 10); // All standard Write mode tools
+    /// assert_eq!(registry.len(), 11); // All standard Write mode tools
     /// ```
     pub fn build_for_chat(&self, subagents_enabled: bool) -> Result<ToolRegistry> {
         // Build the base registry for the current mode
@@ -304,6 +354,7 @@ impl ToolRegistryBuilder {
     /// - `read_file` - Read file contents with optional line range
     /// - `list_directory` - List directory contents with optional recursion and pattern matching
     /// - `find_path` - Find files by glob pattern
+    /// - `grep` - Search file contents by regular expression
     ///
     /// Excluded:
     /// - Terminal execution
@@ -315,24 +366,75 @@ impl ToolRegistryBuilder {
     pub fn build_for_planning(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
+        // Construct sandbox guard when config is available and file_ops sandboxing is enabled.
+        let guard: Option<Arc<SandboxGuard>> = if let Some(cfg) = &self.config {
+            let file_ops_sandboxed = cfg
+                .sandbox
+                .sandboxed_tools
+                .get("file_ops")
+                .copied()
+                .unwrap_or(true);
+            if cfg.sandbox.enabled && file_ops_sandboxed {
+                Some(Arc::new(SandboxGuard::new(
+                    cfg.sandbox.clone(),
+                    self.working_dir.clone(),
+                )))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Register read_file tool
         let read_tool = ReadFileTool::new(
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
             500, // max_outline_lines for file structure display
         );
+        let read_tool = if let Some(g) = &guard {
+            read_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            read_tool
+        };
         let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
         registry.register("read_file", read_tool_executor);
 
         // Register list_directory tool
         let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool = if let Some(g) = &guard {
+            list_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            list_tool
+        };
         let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
         registry.register("list_directory", list_tool_executor);
 
         // Register find_path tool
         let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool = if let Some(g) = &guard {
+            find_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            find_tool
+        };
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
+
+        // Register grep tool (read-only content search)
+        let grep_tool = GrepTool::new(
+            self.working_dir.clone(),
+            self.tools_config.grep_max_results_per_page,
+            self.tools_config.grep_context_lines,
+            self.tools_config.grep_max_file_size,
+            self.tools_config.grep_excluded_patterns.clone(),
+        );
+        let grep_tool = if let Some(g) = &guard {
+            grep_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            grep_tool
+        };
+        let grep_tool_executor: Arc<dyn ToolExecutor> = Arc::new(grep_tool);
+        registry.register("grep", grep_tool_executor);
 
         self.register_activate_skill_tool(&mut registry);
 
@@ -351,6 +453,7 @@ impl ToolRegistryBuilder {
     /// - `create_directory` - Create directories
     /// - `find_path` - Find files by glob pattern
     /// - `edit_file` - Edit files with targeted replacements or create new files
+    /// - `grep` - Search file contents by regular expression
     /// - `terminal` - Terminal command execution with safety validation
     ///
     /// The terminal tool respects the configured safety mode:
@@ -367,12 +470,37 @@ impl ToolRegistryBuilder {
     pub fn build_for_write(&self) -> Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
 
+        // Construct sandbox guard when config is available and file_ops sandboxing is enabled.
+        let guard: Option<Arc<SandboxGuard>> = if let Some(cfg) = &self.config {
+            let file_ops_sandboxed = cfg
+                .sandbox
+                .sandboxed_tools
+                .get("file_ops")
+                .copied()
+                .unwrap_or(true);
+            if cfg.sandbox.enabled && file_ops_sandboxed {
+                Some(Arc::new(SandboxGuard::new(
+                    cfg.sandbox.clone(),
+                    self.working_dir.clone(),
+                )))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Register read_file tool
         let read_tool = ReadFileTool::new(
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
             500, // max_outline_lines for file structure display
         );
+        let read_tool = if let Some(g) = &guard {
+            read_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            read_tool
+        };
         let read_tool_executor: Arc<dyn ToolExecutor> = Arc::new(read_tool);
         registry.register("read_file", read_tool_executor);
 
@@ -381,36 +509,71 @@ impl ToolRegistryBuilder {
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
         );
+        let write_tool = if let Some(g) = &guard {
+            write_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            write_tool
+        };
         let write_tool_executor: Arc<dyn ToolExecutor> = Arc::new(write_tool);
         registry.register("write_file", write_tool_executor);
 
         // Register delete_path tool
         let delete_tool = DeletePathTool::new(self.working_dir.clone());
+        let delete_tool = if let Some(g) = &guard {
+            delete_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            delete_tool
+        };
         let delete_tool_executor: Arc<dyn ToolExecutor> = Arc::new(delete_tool);
         registry.register("delete_path", delete_tool_executor);
 
         // Register list_directory tool
         let list_tool = ListDirectoryTool::new(self.working_dir.clone());
+        let list_tool = if let Some(g) = &guard {
+            list_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            list_tool
+        };
         let list_tool_executor: Arc<dyn ToolExecutor> = Arc::new(list_tool);
         registry.register("list_directory", list_tool_executor);
 
         // Register copy_path tool
         let copy_tool = CopyPathTool::new(self.working_dir.clone());
+        let copy_tool = if let Some(g) = &guard {
+            copy_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            copy_tool
+        };
         let copy_tool_executor: Arc<dyn ToolExecutor> = Arc::new(copy_tool);
         registry.register("copy_path", copy_tool_executor);
 
         // Register move_path tool
         let move_tool = MovePathTool::new(self.working_dir.clone());
+        let move_tool = if let Some(g) = &guard {
+            move_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            move_tool
+        };
         let move_tool_executor: Arc<dyn ToolExecutor> = Arc::new(move_tool);
         registry.register("move_path", move_tool_executor);
 
         // Register create_directory tool
         let create_tool = CreateDirectoryTool::new(self.working_dir.clone());
+        let create_tool = if let Some(g) = &guard {
+            create_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            create_tool
+        };
         let create_tool_executor: Arc<dyn ToolExecutor> = Arc::new(create_tool);
         registry.register("create_directory", create_tool_executor);
 
         // Register find_path tool
         let find_tool = FindPathTool::new(self.working_dir.clone());
+        let find_tool = if let Some(g) = &guard {
+            find_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            find_tool
+        };
         let find_tool_executor: Arc<dyn ToolExecutor> = Arc::new(find_tool);
         registry.register("find_path", find_tool_executor);
 
@@ -419,14 +582,46 @@ impl ToolRegistryBuilder {
             self.working_dir.clone(),
             self.tools_config.max_file_read_size as u64,
         );
+        let edit_tool = if let Some(g) = &guard {
+            edit_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            edit_tool
+        };
         let edit_tool_executor: Arc<dyn ToolExecutor> = Arc::new(edit_tool);
         registry.register("edit_file", edit_tool_executor);
 
-        // Register terminal tool with safety mode
-        let terminal_validator =
-            CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
-        let terminal_tool = TerminalTool::new(terminal_validator, self.terminal_config.clone())
-            .with_safety_mode(self.safety_mode);
+        // Register grep tool (read-only content search, available in write mode)
+        let grep_tool = GrepTool::new(
+            self.working_dir.clone(),
+            self.tools_config.grep_max_results_per_page,
+            self.tools_config.grep_context_lines,
+            self.tools_config.grep_max_file_size,
+            self.tools_config.grep_excluded_patterns.clone(),
+        );
+        let grep_tool = if let Some(g) = &guard {
+            grep_tool.with_sandbox_guard(Arc::clone(g))
+        } else {
+            grep_tool
+        };
+        let grep_tool_executor: Arc<dyn ToolExecutor> = Arc::new(grep_tool);
+        registry.register("grep", grep_tool_executor);
+
+        // Register terminal tool with safety mode.
+        // When a full Config is available, use TerminalTool::from_config so the
+        // kernel sandbox policy is applied to every spawned command.
+        let terminal_tool = if let Some(cfg) = &self.config {
+            let mut tool = TerminalTool::from_config(cfg, self.working_dir.clone())?;
+            tool = tool.with_safety_mode(self.safety_mode);
+            if let Some(addr) = self.proxy_addr {
+                tool = tool.with_proxy_addr(addr);
+            }
+            tool
+        } else {
+            let terminal_validator =
+                CommandValidator::new(self.terminal_config.default_mode, self.working_dir.clone());
+            TerminalTool::new(terminal_validator, self.terminal_config.clone())
+                .with_safety_mode(self.safety_mode)
+        };
         let terminal_tool_executor: Arc<dyn ToolExecutor> = Arc::new(terminal_tool);
         registry.register("terminal", terminal_tool_executor);
 
@@ -538,10 +733,11 @@ mod tests {
         let registry = builder
             .build_for_planning()
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 3);
+        assert_eq!(registry.len(), 4);
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("list_directory").is_some());
         assert!(registry.get("find_path").is_some());
+        assert!(registry.get("grep").is_some());
         assert!(registry.get("terminal").is_none());
         assert!(registry.get("write_file").is_none());
     }
@@ -555,7 +751,7 @@ mod tests {
         );
 
         let registry = builder.build_for_write().expect("Failed to build registry");
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("write_file").is_some());
         assert!(registry.get("delete_path").is_some());
@@ -565,6 +761,7 @@ mod tests {
         assert!(registry.get("create_directory").is_some());
         assert!(registry.get("find_path").is_some());
         assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("grep").is_some());
         assert!(registry.get("terminal").is_some());
     }
 
@@ -577,7 +774,7 @@ mod tests {
         );
 
         let planning_registry = planning_builder.build().expect("Failed to build registry");
-        assert_eq!(planning_registry.len(), 3);
+        assert_eq!(planning_registry.len(), 4);
 
         let write_builder = ToolRegistryBuilder::new(
             ChatMode::Write,
@@ -586,7 +783,7 @@ mod tests {
         );
 
         let write_registry = write_builder.build().expect("Failed to build registry");
-        assert_eq!(write_registry.len(), 10);
+        assert_eq!(write_registry.len(), 11);
     }
 
     #[test]
@@ -613,10 +810,11 @@ mod tests {
         let registry = builder
             .build_for_chat(false)
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 3); // read_file, list_directory, find_path
+        assert_eq!(registry.len(), 4); // read_file, list_directory, find_path, grep
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("list_directory").is_some());
         assert!(registry.get("find_path").is_some());
+        assert!(registry.get("grep").is_some());
     }
 
     #[test]
@@ -630,7 +828,7 @@ mod tests {
         let registry = builder
             .build_for_chat(false)
             .expect("Failed to build registry");
-        assert_eq!(registry.len(), 10); // All standard Write mode tools
+        assert_eq!(registry.len(), 11); // All standard Write mode tools
     }
 
     #[test]
@@ -645,7 +843,7 @@ mod tests {
             .build_for_chat(true)
             .expect("Failed to build registry");
         // Currently returns the same tools, but flag is passed and logged
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 
     #[test]
@@ -654,7 +852,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"list_directory"));
         assert!(names.contains(&"find_path"));
-        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"grep"));
+        assert_eq!(names.len(), 4);
     }
 
     #[test]
@@ -739,7 +938,7 @@ mod tests {
             "discover_acp_agents should be registered when default_timeout_seconds > 0"
         );
         // Base tools still present.
-        assert_eq!(registry.len(), 12); // 10 standard + 2 ACP inter-agent
+        assert_eq!(registry.len(), 13); // 11 standard + 2 ACP inter-agent
     }
 
     #[test]
@@ -766,7 +965,7 @@ mod tests {
             registry.get("discover_acp_agents").is_none(),
             "discover_acp_agents should be absent when default_timeout_seconds = 0"
         );
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 
     #[test]
@@ -779,6 +978,6 @@ mod tests {
         let registry = builder.build_for_write().unwrap();
         assert!(registry.get("call_acp_agent").is_none());
         assert!(registry.get("discover_acp_agents").is_none());
-        assert_eq!(registry.len(), 10);
+        assert_eq!(registry.len(), 11);
     }
 }

@@ -3,10 +3,12 @@
 //! Provides a tool to list directory contents with optional recursive listing and pattern filtering.
 
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 use crate::tools::{ToolExecutor, ToolResult, file_utils, parse_tool_args};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 /// Parameters for the list_directory tool
@@ -43,6 +45,11 @@ struct ListDirectoryParams {
 /// ```
 pub struct ListDirectoryTool {
     path_validator: file_utils::PathValidator,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `execute` calls `check_read` on the resolved path
+    /// before performing any filesystem operation.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl ListDirectoryTool {
@@ -67,7 +74,25 @@ impl ListDirectoryTool {
     pub fn new(working_dir: PathBuf) -> Self {
         Self {
             path_validator: file_utils::PathValidator::new(working_dir),
+            sandbox_guard: None,
         }
+    }
+
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `execute` calls `check_read` on the resolved path before
+    /// performing any I/O. When `None`, no sandbox check is performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
     }
 }
 
@@ -103,6 +128,11 @@ impl ToolExecutor for ListDirectoryTool {
 
         // Validate path
         let path = self.path_validator.validate(&params.path)?;
+
+        // Enforce sandbox policy before any I/O.
+        if let Some(guard) = &self.sandbox_guard {
+            guard.check_read(&path)?;
+        }
 
         // Check if path exists
         if !path.exists() {

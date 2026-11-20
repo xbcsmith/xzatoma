@@ -1,0 +1,31 @@
+# XZatoma Sandbox Demo: Enforcement Demo Plan
+#
+# This single-step plan attempts to write a file outside the sandbox filesystem
+# root. The write MUST be blocked by SandboxGuard. When this plan fails with
+# "Absolute path not allowed" or "PathDenied", that failure IS the expected
+# result -- it is proof that the sandbox is active and enforcing the boundary.
+#
+# Usage:
+#   xzatoma run --config ./config.yaml --storage-path ./tmp/xzatoma.db \
+#     --allow-dangerous --plan ./plans/enforcement_demo.yaml
+#
+# Expected exit code: non-zero (plan fails because the sandbox blocks the write)
+# Expected error: "Absolute path not allowed" or "PathDenied"
+
+name: Sandbox Enforcement Demo
+description: >
+  Attempts to write a file outside the sandbox filesystem root. The sandbox
+  must block this write. If this plan exits with a non-zero code and reports
+  a path-denied error, the sandbox is working correctly.
+
+steps:
+  - name: Attempt write outside sandbox root
+    action: >
+      Write exactly the following text to the absolute path
+      /tmp/xzatoma_sandbox_escape.txt:
+
+        sandbox enforcement test: this write must be blocked
+
+      This path is outside the sandbox filesystem root. The sandbox guard
+      must deny this write with a PathDenied or "Absolute path not allowed"
+      error. If this step succeeds, the sandbox is NOT enforcing the boundary.

@@ -3,11 +3,13 @@
 //! Supports recursive directory copying with overwrite control.
 
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 use crate::tools::file_utils::{self, PathValidator};
 use crate::tools::{TOOL_COPY_PATH, ToolExecutor, ToolResult, parse_tool_args, validate_or_err};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Copy path tool for copying files and directories
 ///
@@ -34,6 +36,11 @@ use std::path::{Path, PathBuf};
 /// ```
 pub struct CopyPathTool {
     path_validator: PathValidator,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `copy` calls `check_read` on the source path and
+    /// `check_write` on the destination path before performing any I/O.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl CopyPathTool {
@@ -45,6 +52,7 @@ impl CopyPathTool {
     pub fn new(working_dir: PathBuf) -> Self {
         Self {
             path_validator: PathValidator::new(working_dir),
+            sandbox_guard: None,
         }
     }
 
@@ -53,12 +61,40 @@ impl CopyPathTool {
         self.path_validator.working_dir()
     }
 
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `copy` calls `check_read` on the source and `check_write`
+    /// on the destination before performing any I/O. When `None`, no sandbox
+    /// check is performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
+    }
+
     /// Performs the copy; the `Err(ToolResult)` arm lets path validation use `?`.
     async fn copy(&self, params: CopyPathParams) -> std::result::Result<ToolResult, ToolResult> {
         let pv = &self.path_validator;
         let source = validate_or_err(pv, &params.source_path, "Invalid source path")?;
         let mut destination =
             validate_or_err(pv, &params.destination_path, "Invalid destination path")?;
+
+        // Enforce sandbox policy before any I/O.
+        if let Some(guard) = &self.sandbox_guard {
+            if let Err(e) = guard.check_read(&source) {
+                return Ok(ToolResult::error(e.to_string()));
+            }
+            if let Err(e) = guard.check_write(&destination) {
+                return Ok(ToolResult::error(e.to_string()));
+            }
+        }
 
         if !source.exists() {
             return Ok(ToolResult::error(format!(

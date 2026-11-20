@@ -3,6 +3,7 @@
 //! Creates directories with automatic parent directory creation.
 
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 use crate::tools::file_utils::PathValidator;
 use crate::tools::{
     TOOL_CREATE_DIRECTORY, ToolExecutor, ToolResult, parse_tool_args, validate_or_err,
@@ -10,6 +11,7 @@ use crate::tools::{
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Create directory tool for creating directories
 ///
@@ -35,6 +37,11 @@ use std::path::{Path, PathBuf};
 /// ```
 pub struct CreateDirectoryTool {
     path_validator: PathValidator,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `create` calls `check_write` on the resolved path
+    /// before performing any filesystem operation.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl CreateDirectoryTool {
@@ -56,6 +63,7 @@ impl CreateDirectoryTool {
     pub fn new(working_dir: PathBuf) -> Self {
         Self {
             path_validator: PathValidator::new(working_dir),
+            sandbox_guard: None,
         }
     }
 
@@ -64,12 +72,36 @@ impl CreateDirectoryTool {
         self.path_validator.working_dir()
     }
 
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `create` calls `check_write` on the resolved path before
+    /// performing any I/O. When `None`, no sandbox check is performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
+    }
+
     /// Creates the directory; the `Err(ToolResult)` arm lets path validation use `?`.
     async fn create(
         &self,
         params: CreateDirectoryParams,
     ) -> std::result::Result<ToolResult, ToolResult> {
         let dir_path = validate_or_err(&self.path_validator, &params.path, "Invalid path")?;
+
+        // Enforce sandbox policy before any I/O.
+        if let Some(guard) = &self.sandbox_guard
+            && let Err(e) = guard.check_write(&dir_path)
+        {
+            return Ok(ToolResult::error(e.to_string()));
+        }
 
         if dir_path.exists() {
             if dir_path.is_dir() {

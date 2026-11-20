@@ -3,11 +3,13 @@
 //! Searches for files matching glob patterns with pagination support.
 
 use crate::error::Result;
+use crate::sandbox::SandboxGuard;
 use crate::tools::file_utils::{PathValidator, glob_match_pattern};
 use crate::tools::{TOOL_FIND_PATH, ToolExecutor, ToolResult, parse_tool_args};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -37,6 +39,11 @@ const DEFAULT_PAGE_SIZE: usize = 50;
 /// ```
 pub struct FindPathTool {
     path_validator: PathValidator,
+    /// Optional sandbox guard for pre-I/O path enforcement.
+    ///
+    /// When `Some`, `execute` calls `check_read` on the working directory
+    /// root before performing any filesystem traversal.
+    sandbox_guard: Option<Arc<SandboxGuard>>,
 }
 
 impl FindPathTool {
@@ -58,12 +65,31 @@ impl FindPathTool {
     pub fn new(working_dir: PathBuf) -> Self {
         Self {
             path_validator: PathValidator::new(working_dir),
+            sandbox_guard: None,
         }
     }
 
     /// Returns the working directory
     pub fn working_dir(&self) -> &Path {
         self.path_validator.working_dir()
+    }
+
+    /// Set the sandbox guard for path validation.
+    ///
+    /// When set, `execute` calls `check_read` on the working directory root
+    /// before performing any traversal. When `None`, no sandbox check is
+    /// performed.
+    ///
+    /// # Arguments
+    ///
+    /// * `guard` - The sandbox guard to enforce.
+    ///
+    /// # Returns
+    ///
+    /// Returns self for method chaining.
+    pub fn with_sandbox_guard(mut self, guard: Arc<SandboxGuard>) -> Self {
+        self.sandbox_guard = Some(guard);
+        self
     }
 }
 
@@ -125,6 +151,11 @@ impl ToolExecutor for FindPathTool {
             return Ok(ToolResult::error(
                 "Glob pattern cannot be empty".to_string(),
             ));
+        }
+
+        // Enforce sandbox policy before any filesystem traversal.
+        if let Some(guard) = &self.sandbox_guard {
+            guard.check_read(self.path_validator.working_dir())?;
         }
 
         // Collect all matching paths using glob-match

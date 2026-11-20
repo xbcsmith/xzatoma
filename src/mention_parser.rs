@@ -1148,8 +1148,11 @@ pub async fn load_url_content(
     }
 
     // Create fetch tool
-    let fetch_tool =
-        crate::tools::FetchTool::new(std::time::Duration::from_secs(30), max_size_bytes as usize);
+    let fetch_tool = crate::tools::FetchTool::new(
+        std::time::Duration::from_secs(30),
+        max_size_bytes as usize,
+        None,
+    );
 
     // Fetch the URL
     match fetch_tool.fetch(&url_mention.url).await {

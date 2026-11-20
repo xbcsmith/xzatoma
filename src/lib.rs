@@ -46,6 +46,7 @@ pub mod mcp;
 pub mod mention_parser;
 pub mod prompts;
 pub mod providers;
+pub mod sandbox;
 pub mod security;
 pub mod skills;
 pub mod storage;

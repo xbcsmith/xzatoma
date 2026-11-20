@@ -18,6 +18,39 @@
 /// ```
 use thiserror::Error;
 
+/// Errors produced by the sandbox engine.
+///
+/// # Examples
+///
+/// ```
+/// use xzatoma::error::SandboxError;
+///
+/// let err = SandboxError::Engine("test error".to_string());
+/// assert!(err.to_string().contains("test error"));
+/// ```
+#[derive(thiserror::Error, Debug)]
+pub enum SandboxError {
+    /// The kernel Landlock ABI version is below the minimum required.
+    #[error("Landlock ABI version {found} is below minimum required version 1")]
+    KernelVersionTooOld { found: u32 },
+
+    /// The Seatbelt / sandbox_init call failed.
+    #[error("Seatbelt sandbox_init failed: {message}")]
+    SeatbeltApplyFailed { message: String },
+
+    /// A path in the sandbox policy could not be resolved.
+    #[error("Sandbox policy path error: {path}: {reason}")]
+    PolicyPathError { path: String, reason: String },
+
+    /// A filesystem access was denied by the sandbox guard.
+    #[error("Sandbox denied access to {path}: {reason}")]
+    PathDenied { path: String, reason: String },
+
+    /// Generic sandbox engine error.
+    #[error("Sandbox error: {0}")]
+    Engine(String),
+}
+
 /// Main error type for XZatoma operations.
 ///
 /// This enum encompasses all possible errors that can occur during
@@ -344,6 +377,10 @@ pub enum XzatomaError {
     #[error("ACP error: {0}")]
     Acp(#[from] crate::acp::error::AcpError),
 
+    /// Sandbox enforcement error
+    #[error("Sandbox error: {0}")]
+    Sandbox(String),
+
     /// Execution was cancelled via a cancellation token.
     #[error("Execution cancelled")]
     Cancelled,
@@ -532,6 +569,13 @@ impl From<crate::watcher::xzepr::consumer::client::ClientError> for XzatomaError
 impl From<crate::watcher::xzepr::consumer::config::ConfigError> for XzatomaError {
     fn from(err: crate::watcher::xzepr::consumer::config::ConfigError) -> Self {
         XzatomaError::Config(err.to_string())
+    }
+}
+
+/// Converts `SandboxError` to `XzatomaError::Sandbox`.
+impl From<crate::sandbox::SandboxError> for XzatomaError {
+    fn from(e: crate::sandbox::SandboxError) -> Self {
+        XzatomaError::Sandbox(e.to_string())
     }
 }
 
@@ -909,5 +953,53 @@ mod tests {
     fn test_cancelled_error_display() {
         let error = XzatomaError::Cancelled;
         assert_eq!(error.to_string(), "Execution cancelled");
+    }
+
+    #[test]
+    fn test_sandbox_error_kernel_version_too_old_display() {
+        let err = SandboxError::KernelVersionTooOld { found: 0 };
+        assert!(err.to_string().contains("Landlock ABI version 0"));
+    }
+
+    #[test]
+    fn test_sandbox_error_seatbelt_apply_failed_display() {
+        let err = SandboxError::SeatbeltApplyFailed {
+            message: "permission denied".to_string(),
+        };
+        assert!(err.to_string().contains("permission denied"));
+    }
+
+    #[test]
+    fn test_sandbox_error_policy_path_error_display() {
+        let err = SandboxError::PolicyPathError {
+            path: "/bad/path".to_string(),
+            reason: "does not exist".to_string(),
+        };
+        assert!(err.to_string().contains("/bad/path"));
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_sandbox_error_path_denied_display() {
+        let err = SandboxError::PathDenied {
+            path: "/etc/passwd".to_string(),
+            reason: "write denied".to_string(),
+        };
+        assert!(err.to_string().contains("/etc/passwd"));
+        assert!(err.to_string().contains("write denied"));
+    }
+
+    #[test]
+    fn test_sandbox_error_engine_display() {
+        let err = SandboxError::Engine("internal failure".to_string());
+        assert!(err.to_string().contains("internal failure"));
+    }
+
+    #[test]
+    fn test_sandbox_error_converts_to_xzatoma_error() {
+        let sandbox_err = SandboxError::Engine("test".to_string());
+        let xzatoma_err: XzatomaError = sandbox_err.into();
+        assert!(matches!(xzatoma_err, XzatomaError::Sandbox(_)));
+        assert!(xzatoma_err.to_string().contains("test"));
     }
 }

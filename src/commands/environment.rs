@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::error::{Result, XzatomaError};
 use crate::mcp::manager::{McpClientManager, build_mcp_manager_from_config};
 use crate::mcp::tool_bridge::register_mcp_tools;
+use crate::sandbox::proxy::SandboxProxy;
 use crate::skills::ActiveSkillRegistry;
 use crate::tools::ToolRegistry;
 use crate::tools::registry_builder::ToolRegistryBuilder;
@@ -62,6 +63,12 @@ pub struct AgentEnvironment {
     /// Optional startup skill disclosure text for injection into the agent
     /// system prompt before the first turn.
     pub skill_disclosure: Option<String>,
+    /// Running host-filtering HTTP CONNECT proxy, or `None` when
+    /// `sandbox.network_enabled = false` or sandbox is disabled.
+    ///
+    /// The proxy is shut down automatically when this `AgentEnvironment` is
+    /// dropped via the `Drop` implementation on [`SandboxProxy`].
+    pub sandbox_proxy: Option<SandboxProxy>,
 }
 
 // ---------------------------------------------------------------------------
@@ -147,14 +154,38 @@ pub async fn build_agent_environment(
     let visible_skill_catalog = super::build_visible_skill_catalog(config, working_dir)?;
     let active_skill_registry = Arc::new(std::sync::Mutex::new(ActiveSkillRegistry::new()));
 
-    // 4. Build tool registry.
-    let mut tool_registry =
-        ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.to_path_buf())
-            .with_tools_config(config.agent.tools.clone())
-            .with_terminal_config(config.agent.terminal.clone())
-            .build()?;
+    // 4. Start the sandbox proxy when network sandboxing is enabled.
+    // The proxy runs on 127.0.0.1:<sandbox.proxy_port> and enforces
+    // network_allowed_hosts before relaying CONNECT tunnels.
+    let mut sandbox_proxy: Option<SandboxProxy> = None;
+    let mut proxy_addr: Option<std::net::SocketAddr> = None;
+    if config.sandbox.enabled && config.sandbox.network_enabled {
+        match SandboxProxy::start(&config.sandbox).await {
+            Ok(proxy) => {
+                proxy_addr = Some(proxy.addr());
+                sandbox_proxy = Some(proxy);
+                tracing::info!(
+                    addr = ?proxy_addr,
+                    "sandbox proxy started"
+                );
+            }
+            Err(e) => {
+                tracing::warn!("sandbox proxy failed to start: {}", e);
+            }
+        }
+    }
 
-    // 5. Register activate_skill tool.
+    // 5. Build tool registry.
+    let mut builder = ToolRegistryBuilder::new(chat_mode, safety_mode, working_dir.to_path_buf())
+        .with_tools_config(config.agent.tools.clone())
+        .with_terminal_config(config.agent.terminal.clone())
+        .with_config(std::sync::Arc::new(config.clone()));
+    if let Some(addr) = proxy_addr {
+        builder = builder.with_proxy_addr(addr);
+    }
+    let mut tool_registry = builder.build()?;
+
+    // 6. Register activate_skill tool.
     super::register_activate_skill_tool(
         &mut tool_registry,
         config,
@@ -162,7 +193,7 @@ pub async fn build_agent_environment(
         Arc::clone(&active_skill_registry),
     )?;
 
-    // 6. Build MCP client manager.
+    // 7. Build MCP client manager.
     let mcp_manager = build_mcp_manager_from_config(config).await?;
 
     // Set the execution context on the manager so that sampling and
@@ -199,6 +230,7 @@ pub async fn build_agent_environment(
         safety_mode,
         active_skill_registry,
         skill_disclosure,
+        sandbox_proxy,
     })
 }
 

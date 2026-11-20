@@ -38,7 +38,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let result = execute_command("echo hello", std::path::PathBuf::from("."), ExecutionMode::RestrictedAutonomous).await?;
+//!     let result = execute_command("echo hello", std::path::PathBuf::from("."), ExecutionMode::RestrictedAutonomous, None).await?;
 //!     println!("{}", result);
 //!     Ok(())
 //! }
@@ -84,11 +84,25 @@ impl ParsedCommand {
     }
 }
 
-/// Convenience wrapper to execute a single command using TerminalTool with a default config
+/// Convenience wrapper to execute a single command using `TerminalTool` with a default config.
+///
+/// # Arguments
+///
+/// * `command` - The command string to execute
+/// * `working_dir` - Directory to run the command in
+/// * `mode` - Execution mode governing validation policy
+/// * `sandbox_config` - Optional sandbox configuration; when `Some`, a
+///   `SandboxPolicy` is built and applied in the child process
+///
+/// # Errors
+///
+/// Returns `XzatomaError` if validation fails, the command fails, or the
+/// sandbox policy cannot be built.
 pub async fn execute_command(
     command: &str,
     working_dir: PathBuf,
     mode: ExecutionMode,
+    sandbox_config: Option<&crate::config::SandboxConfig>,
 ) -> Result<String> {
     let validator = CommandValidator::new(mode, working_dir.clone());
     let config = TerminalConfig {
@@ -96,7 +110,11 @@ pub async fn execute_command(
         ..Default::default()
     };
 
-    let tool = TerminalTool::new(validator, config);
+    let mut tool = TerminalTool::new(validator, config);
+    if let Some(cfg) = sandbox_config {
+        let policy = crate::sandbox::SandboxPolicy::from_config(cfg, &working_dir)?;
+        tool = tool.with_sandbox_policy(policy);
+    }
 
     let params = json!({
         "command": command,
@@ -127,6 +145,11 @@ pub struct CommandValidator {
     pub allowlist: Vec<String>,
     /// Denylist of dangerous patterns (regex)
     pub denylist: Vec<Regex>,
+    /// Programs blocked when `sandbox.network_enabled = false`.
+    ///
+    /// Populated by `CommandValidator::from_config`; empty when sandbox is
+    /// disabled or network is permitted.
+    pub network_blocked_programs: Vec<String>,
 }
 
 impl CommandValidator {
@@ -168,6 +191,8 @@ impl CommandValidator {
             r"/etc/shadow",
             r"~/.ssh/",
             r"\$HOME/\.ssh/",
+            r"\bnc\s+-[el]",
+            r"\bsocat\s+.*EXEC",
         ];
 
         // SAFETY: The denylist patterns are compile-time string constants whose
@@ -184,10 +209,51 @@ impl CommandValidator {
             working_dir,
             allowlist,
             denylist,
+            network_blocked_programs: Vec::new(),
         }
     }
 
-    /// Validate the passed command string for the configured execution mode
+    /// Construct a `CommandValidator` from the full application configuration.
+    ///
+    /// Sets `network_blocked_programs` to the fixed list of programs that open
+    /// raw TCP/UDP sockets and do not honour proxy environment variables when
+    /// `cfg.sandbox.enabled = true` and `cfg.sandbox.network_enabled = false`.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - Application configuration
+    /// * `working_dir` - Directory commands are constrained to
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::terminal::CommandValidator;
+    /// use xzatoma::config::Config;
+    ///
+    /// let cfg = Config::default();
+    /// let validator = CommandValidator::from_config(&cfg, std::path::PathBuf::from("/tmp"));
+    /// ```
+    pub fn from_config(cfg: &crate::config::Config, working_dir: PathBuf) -> Self {
+        let mut validator = Self::new(cfg.agent.terminal.default_mode, working_dir);
+        if cfg.sandbox.enabled
+            && !cfg.sandbox.network_enabled
+            && cfg.sandbox.sandboxed_tools.get("terminal") != Some(&false)
+        {
+            validator.network_blocked_programs = vec![
+                "ssh".to_string(),
+                "scp".to_string(),
+                "sftp".to_string(),
+                "ftp".to_string(),
+                "nc".to_string(),
+                "ncat".to_string(),
+                "netcat".to_string(),
+                "telnet".to_string(),
+                "socat".to_string(),
+                "nmap".to_string(),
+            ];
+        }
+        validator
+    }
     ///
     /// Returns:
     /// - Ok(()) if valid
@@ -196,6 +262,22 @@ impl CommandValidator {
     /// - Err(XzatomaError::PathOutsideWorkingDirectory(_)) if path escapes the working directory
     pub fn validate(&self, command: &str) -> std::result::Result<(), XzatomaError> {
         let parsed = parse_command_line(command)?;
+        // Network-blocked programs check: must come before the denylist loop
+        // so the error message is actionable (tells the user which config to change).
+        let program_basename = std::path::Path::new(&parsed.program)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&parsed.program);
+        if self
+            .network_blocked_programs
+            .contains(&program_basename.to_string())
+        {
+            return Err(XzatomaError::DangerousCommand(format!(
+                "program '{}' is blocked: sandbox network is disabled; \
+                 set sandbox.network_enabled = true to permit network tools",
+                program_basename
+            )));
+        }
         // Denylist first - block always
         for r in &self.denylist {
             if r.is_match(command) {
@@ -353,6 +435,16 @@ impl CommandValidator {
                 return Err(XzatomaError::PathOutsideWorkingDirectory(format!(
                     "Directory traversal not allowed: {}",
                     candidate
+                )));
+            }
+
+            // Belt-and-suspenders: reject paths that target .git directories in
+            // any argument position, regardless of kernel sandbox state, so the
+            // error message is always actionable.
+            if candidate_path.components().any(|c| c.as_os_str() == ".git") {
+                return Err(XzatomaError::PathOutsideWorkingDirectory(format!(
+                    "writes to .git directories are forbidden: {}",
+                    candidate_path.display()
                 )));
             }
 
@@ -529,6 +621,10 @@ pub struct TerminalTool {
     pub validator: CommandValidator,
     pub config: TerminalConfig,
     pub safety_mode: SafetyMode,
+    /// Kernel sandbox policy applied to each child process before execution.
+    pub sandbox_policy: Option<std::sync::Arc<crate::sandbox::SandboxPolicy>>,
+    /// Address of the running host-filtering HTTP proxy, if any.
+    pub proxy_addr: Option<std::net::SocketAddr>,
 }
 
 impl TerminalTool {
@@ -538,6 +634,8 @@ impl TerminalTool {
             validator,
             config,
             safety_mode: SafetyMode::AlwaysConfirm,
+            sandbox_policy: None,
+            proxy_addr: None,
         }
     }
 
@@ -553,6 +651,76 @@ impl TerminalTool {
     pub fn with_safety_mode(mut self, mode: SafetyMode) -> Self {
         self.safety_mode = mode;
         self
+    }
+
+    /// Attach a sandbox policy to this tool (builder pattern).
+    ///
+    /// The policy is applied to each child process in the `fork`-before-exec hook.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - The sandbox policy to apply
+    pub fn with_sandbox_policy(mut self, policy: crate::sandbox::SandboxPolicy) -> Self {
+        self.sandbox_policy = Some(std::sync::Arc::new(policy));
+        self
+    }
+
+    /// Set the address of the host-filtering HTTP proxy (builder pattern).
+    ///
+    /// When set, `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, and
+    /// `NO_PROXY` environment variables are injected into each child process.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Socket address of the running proxy
+    pub fn with_proxy_addr(mut self, addr: std::net::SocketAddr) -> Self {
+        self.proxy_addr = Some(addr);
+        self
+    }
+
+    /// Construct a `TerminalTool` from the full application configuration.
+    ///
+    /// Applies a sandbox policy when `cfg.sandbox.enabled = true` and the
+    /// `"terminal"` key is not `false` in `cfg.sandbox.sandboxed_tools`.
+    ///
+    /// # Arguments
+    ///
+    /// * `cfg` - Application configuration
+    /// * `working_dir` - Directory commands are constrained to
+    ///
+    /// # Errors
+    ///
+    /// Returns `XzatomaError` if `SandboxPolicy::from_config` fails to resolve
+    /// configured paths.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::terminal::TerminalTool;
+    /// use xzatoma::config::Config;
+    ///
+    /// let cfg = Config::default();
+    /// let tool = TerminalTool::from_config(&cfg, std::path::PathBuf::from("/tmp")).unwrap();
+    /// assert!(tool.sandbox_policy.is_some());
+    /// ```
+    pub fn from_config(
+        cfg: &crate::config::Config,
+        working_dir: PathBuf,
+    ) -> crate::error::Result<Self> {
+        let validator = CommandValidator::from_config(cfg, working_dir.clone());
+        let mut tool = Self {
+            validator,
+            config: cfg.agent.terminal.clone(),
+            safety_mode: SafetyMode::AlwaysConfirm,
+            sandbox_policy: None,
+            proxy_addr: None,
+        };
+        let terminal_sandboxed = cfg.sandbox.sandboxed_tools.get("terminal") != Some(&false);
+        if cfg.sandbox.enabled && terminal_sandboxed {
+            let policy = crate::sandbox::SandboxPolicy::from_config(&cfg.sandbox, &working_dir)?;
+            tool.sandbox_policy = Some(std::sync::Arc::new(policy));
+        }
+        Ok(tool)
     }
 }
 
@@ -627,15 +795,40 @@ impl ToolExecutor for TerminalTool {
 
         cmd.current_dir(self.validator.working_dir.clone());
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        // SAFETY: This closure runs in the child process after `fork` and before
+        // `exec`. It must be async-signal-safe (no heap allocation, no Rust
+        // runtime, no locking). `setpgid` is async-signal-safe. The Landlock
+        // ruleset application via `nono` must perform no heap allocation beyond
+        // what the kernel requires directly. The Seatbelt `sandbox_init` wrapper
+        // in `nono` is documented as signal-safe; verify against the nono
+        // release notes when updating the dependency version.
         #[cfg(unix)]
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setpgid(0, 0) == 0 {
+        {
+            let policy_for_exec = self.sandbox_policy.clone();
+            unsafe {
+                cmd.pre_exec(move || {
+                    // 1. Place child in its own process group.
+                    if libc::setpgid(0, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    // 2. Apply kernel sandbox, if configured.
+                    if let Some(policy) = &policy_for_exec {
+                        crate::sandbox::apply_sandbox(policy).map_err(|e| {
+                            std::io::Error::new(std::io::ErrorKind::PermissionDenied, e.to_string())
+                        })?;
+                    }
                     Ok(())
-                } else {
-                    Err(std::io::Error::last_os_error())
-                }
-            });
+                });
+            }
+        }
+        // Inject proxy environment variables when a host-filtering proxy is active.
+        if let Some(proxy_addr) = self.proxy_addr {
+            let proxy_url = format!("http://{}", proxy_addr);
+            cmd.env("HTTP_PROXY", &proxy_url)
+                .env("HTTPS_PROXY", &proxy_url)
+                .env("http_proxy", &proxy_url)
+                .env("https_proxy", &proxy_url)
+                .env("NO_PROXY", "127.0.0.1,localhost");
         }
 
         // Spawn and obtain a child
@@ -826,7 +1019,7 @@ pub fn parse_command(command: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::TerminalConfig;
+    use crate::config::{Config, TerminalConfig};
     use std::fs as stdfs;
     use tempfile::tempdir;
 
@@ -990,5 +1183,180 @@ mod tests {
         let v = CommandValidator::new(ExecutionMode::FullAutonomous, tmp);
         // echo is not an interpreter: FullAutonomous still allows it.
         assert!(v.validate("echo hi").is_ok());
+    }
+
+    // --- Phase 3: sandbox integration tests ---
+
+    #[test]
+    fn test_command_validator_from_config_blocks_ssh_when_network_disabled() {
+        // Default config: sandbox.enabled=true, network_enabled=false.
+        let cfg = Config::default();
+        assert!(cfg.sandbox.enabled);
+        assert!(!cfg.sandbox.network_enabled);
+        let validator = CommandValidator::from_config(&cfg, PathBuf::from("/tmp"));
+        let err = validator.validate("ssh user@host").unwrap_err();
+        assert!(
+            matches!(err, XzatomaError::DangerousCommand(ref msg) if msg.contains("network")),
+            "expected network-blocked DangerousCommand; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_command_validator_from_config_allows_ssh_when_network_enabled() {
+        let mut cfg = Config::default();
+        cfg.sandbox.network_enabled = true;
+        let validator = CommandValidator::from_config(&cfg, PathBuf::from("/tmp"));
+        let result = validator.validate("ssh user@host");
+        // Must not be blocked specifically for network reasons.
+        if let Err(XzatomaError::DangerousCommand(ref msg)) = result {
+            assert!(
+                !msg.contains("network"),
+                "ssh should not be blocked for network when network_enabled=true; got: {msg}"
+            );
+        }
+        // Other error variants (e.g. CommandRequiresConfirmation) are acceptable.
+    }
+
+    #[test]
+    fn test_command_validator_from_config_empty_blocked_list_when_sandbox_disabled() {
+        let mut cfg = Config::default();
+        cfg.sandbox.enabled = false;
+        let validator = CommandValidator::from_config(&cfg, PathBuf::from("/tmp"));
+        assert!(
+            validator.network_blocked_programs.is_empty(),
+            "network_blocked_programs must be empty when sandbox is disabled"
+        );
+    }
+
+    #[test]
+    fn test_command_validator_from_config_empty_blocked_list_when_terminal_opt_out() {
+        let mut cfg = Config::default();
+        cfg.sandbox
+            .sandboxed_tools
+            .insert("terminal".to_string(), false);
+        let validator = CommandValidator::from_config(&cfg, PathBuf::from("/tmp"));
+        assert!(
+            validator.network_blocked_programs.is_empty(),
+            "network_blocked_programs must be empty when terminal is opted out"
+        );
+    }
+
+    #[test]
+    fn test_command_validator_blocks_nc_listen() {
+        let v = CommandValidator::new(ExecutionMode::FullAutonomous, PathBuf::from("/tmp"));
+        let err = v.validate("nc -l 4444").unwrap_err();
+        assert!(
+            matches!(err, XzatomaError::DangerousCommand(_)),
+            "nc -l should match denylist; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_command_validator_blocks_socat_exec() {
+        let v = CommandValidator::new(ExecutionMode::FullAutonomous, PathBuf::from("/tmp"));
+        let err = v.validate("socat - EXEC:/bin/sh").unwrap_err();
+        assert!(
+            matches!(err, XzatomaError::DangerousCommand(_)),
+            "socat EXEC should match denylist; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_command_validator_git_path_blocked_in_write_position() {
+        let dir = tempdir().unwrap();
+        let v = CommandValidator::new(ExecutionMode::FullAutonomous, dir.path().to_path_buf());
+        let err = v.validate("touch .git/config").unwrap_err();
+        assert!(
+            matches!(err, XzatomaError::PathOutsideWorkingDirectory(_)),
+            "path containing .git should be rejected; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_from_config_sandbox_policy_present_when_enabled() {
+        let dir = tempdir().unwrap();
+        let cfg = Config::default();
+        assert!(
+            cfg.sandbox.enabled,
+            "default config must have sandbox enabled"
+        );
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        assert!(
+            tool.sandbox_policy.is_some(),
+            "sandbox_policy must be Some when sandbox.enabled=true"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_from_config_sandbox_policy_absent_when_disabled() {
+        let dir = tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.sandbox.enabled = false;
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        assert!(
+            tool.sandbox_policy.is_none(),
+            "sandbox_policy must be None when sandbox.enabled=false"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_from_config_sandbox_policy_absent_when_tool_opt_out() {
+        let dir = tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.sandbox
+            .sandboxed_tools
+            .insert("terminal".to_string(), false);
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        assert!(
+            tool.sandbox_policy.is_none(),
+            "sandbox_policy must be None when terminal is opted out"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_terminal_sandbox_allows_write_inside_root() {
+        let dir = tempdir().unwrap();
+        let mut cfg = Config::default();
+        // Use FullAutonomous so 'touch' does not require allowlist confirmation.
+        cfg.agent.terminal.default_mode = ExecutionMode::FullAutonomous;
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        let params = json!({ "command": "touch sandbox_write_test.txt" });
+        let res = tool.execute(params).await.unwrap();
+        assert!(
+            res.success,
+            "touch inside sandbox root should succeed; error: {:?}",
+            res.error
+        );
+    }
+
+    #[ignore = "requires kernel sandbox"]
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_terminal_sandbox_blocks_write_outside_root() {
+        let dir = tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.agent.terminal.default_mode = ExecutionMode::FullAutonomous;
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        // touch /tmp/xzatoma_escape is outside the sandbox root; expect failure
+        // (either application-level path rejection or kernel sandbox denial).
+        let params = json!({ "command": "touch /tmp/xzatoma_sandbox_escape_test" });
+        let res = tool.execute(params).await.unwrap();
+        assert!(!res.success, "write outside sandbox root must be denied");
+    }
+
+    #[ignore = "requires kernel sandbox"]
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_terminal_sandbox_blocks_git_write() {
+        let dir = tempdir().unwrap();
+        // Create a real .git directory so the path exists and reaches the kernel sandbox.
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        let mut cfg = Config::default();
+        cfg.agent.terminal.default_mode = ExecutionMode::FullAutonomous;
+        let tool = TerminalTool::from_config(&cfg, dir.path().to_path_buf()).unwrap();
+        let params = json!({ "command": "touch .git/ORIG_HEAD" });
+        let res = tool.execute(params).await.unwrap();
+        assert!(!res.success, "write to .git must be denied");
     }
 }

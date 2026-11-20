@@ -194,6 +194,10 @@ pub struct ResolvedTarget {
 pub struct SsrfValidator {
     /// Whether to allow private IPs (for testing)
     allow_private_ips: bool,
+    /// When `Some`, only the listed hostnames are permitted.
+    ///
+    /// When `None`, no additional hostname restriction is applied.
+    allowed_hosts: Option<Vec<String>>,
 }
 
 impl SsrfValidator {
@@ -205,6 +209,7 @@ impl SsrfValidator {
     pub fn new() -> Self {
         Self {
             allow_private_ips: false,
+            allowed_hosts: None,
         }
     }
 
@@ -216,7 +221,32 @@ impl SsrfValidator {
     pub fn allow_private_ips() -> Self {
         Self {
             allow_private_ips: true,
+            allowed_hosts: None,
         }
+    }
+
+    /// Restrict requests to only the listed hostnames (builder pattern).
+    ///
+    /// When set, `validate` rejects any hostname not in the list with an
+    /// `XzatomaError::Fetch` error. When unset (`None`, the default), no
+    /// extra host restriction is applied.
+    ///
+    /// # Arguments
+    ///
+    /// * `hosts` - Allowed hostnames (exact match against the URL host component)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use xzatoma::tools::fetch::SsrfValidator;
+    ///
+    /// let validator = SsrfValidator::new().with_allowed_hosts(vec!["example.com".to_string()]);
+    /// assert!(validator.validate("https://example.com/").is_ok());
+    /// assert!(validator.validate("https://evil.internal/").is_err());
+    /// ```
+    pub fn with_allowed_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.allowed_hosts = Some(hosts);
+        self
     }
 
     /// Validate a URL for SSRF attacks
@@ -235,6 +265,19 @@ impl SsrfValidator {
 
         // Validate scheme
         self.validate_scheme(parsed_url.scheme())?;
+
+        // Host allowlist: when set, only listed hostnames are permitted.
+        if let Some(allowed) = &self.allowed_hosts {
+            let host = parsed_url
+                .host_str()
+                .ok_or_else(|| XzatomaError::Fetch("URL has no host".to_string()))?;
+            if !allowed.iter().any(|h| h == host) {
+                return Err(XzatomaError::Fetch(format!(
+                    "Host '{}' is not in network_allowed_hosts",
+                    host
+                )));
+            }
+        }
 
         // Validate host
         if let Some(host) = parsed_url.host_str() {
@@ -634,11 +677,19 @@ impl FetchTool {
     ///
     /// * `timeout` - Timeout for HTTP requests
     /// * `max_size_bytes` - Maximum size for fetched content
+    /// * `sandbox_cfg` - Optional sandbox configuration; when `Some` and
+    ///   `sandbox_cfg.enabled` is `true` and `sandbox_cfg.sandboxed_tools.get("fetch") != Some(&false)`
+    ///   and `!sandbox_cfg.network_allowed_hosts.is_empty()`, the `SsrfValidator` is
+    ///   configured to permit only the listed hosts.
     ///
     /// # Returns
     ///
     /// Returns a new FetchTool instance
-    pub fn new(timeout: Duration, max_size_bytes: usize) -> Self {
+    pub fn new(
+        timeout: Duration,
+        max_size_bytes: usize,
+        sandbox_cfg: Option<&crate::config::SandboxConfig>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())
@@ -648,9 +699,18 @@ impl FetchTool {
                 reqwest::Client::new()
             });
 
+        let mut ssrf_validator = SsrfValidator::new();
+        if let Some(cfg) = sandbox_cfg
+            && cfg.enabled
+            && cfg.sandboxed_tools.get("fetch") != Some(&false)
+            && !cfg.network_allowed_hosts.is_empty()
+        {
+            ssrf_validator = ssrf_validator.with_allowed_hosts(cfg.network_allowed_hosts.clone());
+        }
+
         Self {
             client,
-            ssrf_validator: SsrfValidator::new(),
+            ssrf_validator,
             timeout,
             max_size_bytes,
             rate_limiter: std::sync::Arc::new(tokio::sync::Mutex::new(RateLimiter::new(10))),
@@ -1081,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_new() {
-        let tool = FetchTool::new(Duration::from_secs(30), 5 * 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 5 * 1024 * 1024, None);
         assert_eq!(tool.timeout, Duration::from_secs(30));
         assert_eq!(tool.max_size_bytes, 5 * 1024 * 1024);
     }
@@ -1104,19 +1164,19 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_is_binary_with_nul_byte() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         assert!(tool.is_binary(b"Hello\x00World"));
     }
 
     #[test]
     fn test_fetch_tool_is_binary_without_nul_byte() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         assert!(!tool.is_binary(b"Hello World"));
     }
 
     #[test]
     fn test_fetch_tool_html_to_markdown_headers() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = "<h1>Title</h1><h2>Subtitle</h2>";
         let markdown = tool.html_to_markdown(html);
         assert!(markdown.contains("# Title"));
@@ -1125,7 +1185,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_html_to_markdown_links() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = r#"<a href="https://example.com">Example</a>"#;
         let markdown = tool.html_to_markdown(html);
         assert!(markdown.contains("[Example](https://example.com)"));
@@ -1133,7 +1193,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_html_to_markdown_bold() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = "<b>Bold text</b>";
         let markdown = tool.html_to_markdown(html);
         assert!(markdown.contains("**Bold text**"));
@@ -1141,7 +1201,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_html_to_markdown_italic() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = "<i>Italic text</i>";
         let markdown = tool.html_to_markdown(html);
         assert!(markdown.contains("*Italic text*"));
@@ -1149,7 +1209,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_html_to_markdown_removes_scripts() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = "<p>Content</p><script>alert('xss')</script><p>More</p>";
         let markdown = tool.html_to_markdown(html);
         assert!(!markdown.contains("alert"));
@@ -1160,7 +1220,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_html_to_markdown_removes_styles() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let html = "<p>Content</p><style>body { color: red; }</style>";
         let markdown = tool.html_to_markdown(html);
         assert!(!markdown.contains("color"));
@@ -1170,7 +1230,7 @@ mod tests {
 
     #[test]
     fn test_fetch_tool_debug() {
-        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024);
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
         let debug_str = format!("{:?}", tool);
         assert!(debug_str.contains("FetchTool"));
         assert!(debug_str.contains("timeout"));
@@ -1240,5 +1300,76 @@ mod tests {
         let validator = SsrfValidator::allow_private_ips();
         let loopback = IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1));
         assert!(validator.validate_connected_ip(loopback).is_ok());
+    }
+
+    #[test]
+    fn test_ssrf_validator_with_allowed_hosts_blocks_unlisted() {
+        let v = SsrfValidator::new().with_allowed_hosts(vec!["example.com".to_string()]);
+        let err = v.validate("https://evil.internal/").unwrap_err();
+        assert!(
+            err.to_string().contains("not in network_allowed_hosts"),
+            "expected host-not-allowed error; got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_ssrf_validator_with_allowed_hosts_permits_listed() {
+        // 93.184.216.34 is example.com's well-known public IP.
+        let v2 = SsrfValidator::new().with_allowed_hosts(vec!["93.184.216.34".to_string()]);
+        assert!(
+            v2.validate("https://93.184.216.34/").is_ok(),
+            "IP literal in allowlist and not private should pass"
+        );
+    }
+
+    #[test]
+    fn test_ssrf_validator_no_allowed_hosts_no_restriction() {
+        // With no allowed_hosts set, the validator applies only SSRF rules (no extra host restriction).
+        let v = SsrfValidator::new();
+        // Should not produce "not in network_allowed_hosts" for any host.
+        let result = v.validate("https://93.184.216.34/");
+        // May succeed or fail for other SSRF reasons; must not fail with the allowlist message.
+        if let Err(ref e) = result {
+            assert!(
+                !e.to_string().contains("not in network_allowed_hosts"),
+                "No allowed_hosts configured: must not produce allowlist error; got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fetch_tool_new_with_sandbox_config_sets_allowed_hosts() {
+        use crate::config::SandboxConfig;
+        let cfg = SandboxConfig {
+            enabled: true,
+            network_allowed_hosts: vec!["example.com".to_string()],
+            ..Default::default()
+        };
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, Some(&cfg));
+        // Validate a URL for a host NOT in the list -- should fail.
+        let result = tool.ssrf_validator.validate("https://evil.internal/");
+        assert!(
+            result.is_err(),
+            "Unlisted host must be blocked when allowed_hosts is configured"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not in network_allowed_hosts"),
+            "got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_fetch_tool_new_without_sandbox_config_no_restriction() {
+        let tool = FetchTool::new(Duration::from_secs(30), 1024 * 1024, None);
+        // Without sandbox config, the SSRF validator has no host allowlist.
+        // A public IP should not be rejected with the allowlist message.
+        let result = tool.ssrf_validator.validate("https://93.184.216.34/");
+        if let Err(ref e) = result {
+            assert!(
+                !e.to_string().contains("not in network_allowed_hosts"),
+                "No sandbox config: must not produce allowlist error; got: {e}"
+            );
+        }
     }
 }
